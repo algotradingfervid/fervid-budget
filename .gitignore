@@ -1,0 +1,7 @@
+server
+data/*.db
+data/*.db-*
+data/attachments/*
+data/backups/*
+!data/attachments/.gitkeep
+!data/backups/.gitkeep

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Variance grid · Fervid Smart Solutions</title>
+<link rel="stylesheet" href="assets/fervid-ds.css">
+<style>
+  /* ---- v4 "Variance grid" layout-specific CSS (tokens reused from DS) ---- */
+  .main{padding:0;display:flex;flex-direction:column;min-height:100vh;background:var(--paper)}
+  .gridhead{padding:22px 28px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+  .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .toolbar .select{width:auto;min-width:150px}
+  .toolbar .input{width:auto;min-width:220px;flex:0 1 280px}
+  .toolbar .spacer{flex:1 1 auto}
+  .gridwrap{padding:18px 28px 40px;flex:1}
+
+  /* dense matrix */
+  table.matrix{width:100%;border-collapse:separate;border-spacing:0;font-size:.84rem}
+  table.matrix th{position:sticky;top:0;z-index:3;background:var(--ink);color:#e9e4df;
+    font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;font-weight:600;
+    padding:11px 14px;text-align:left;border-bottom:1px solid #000;white-space:nowrap}
+  table.matrix th.num{text-align:right}
+  table.matrix th.c{text-align:center}
+  table.matrix td{padding:8px 14px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+  table.matrix td.num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+  table.matrix td.c{text-align:center}
+
+  /* zebra on head rows for spreadsheet density */
+  tbody.proj tr.head:nth-child(odd){background:var(--surface)}
+  tbody.proj tr.head:nth-child(even){background:var(--surface-2)}
+  tbody.proj tr.head:hover{background:var(--brand-tint)}
+  .head .hname{padding-left:26px;color:var(--ink-2);font-weight:500}
+  .head .due{color:var(--muted);font-size:.78rem}
+
+  /* group (project) row */
+  tr.group td{background:var(--brand-tint)!important;border-top:1px solid var(--brand-tint-2);
+    border-bottom:1px solid var(--brand-tint-2);font-weight:700;cursor:pointer;
+    font-family:var(--font-display);color:var(--ink)}
+  tr.group:hover td{background:var(--brand-tint-2)!important}
+  tr.group .pname{display:flex;align-items:center;gap:8px;font-size:.92rem}
+  tr.group .caret{display:inline-block;width:14px;color:var(--brand);font-size:.7rem;
+    transition:transform .18s ease}
+  tr.group.collapsed .caret{transform:rotate(-90deg)}
+  tr.group .pmeta{font-weight:500;font-size:.72rem;color:var(--muted);font-family:var(--font-ui);margin-left:4px}
+
+  /* collapsed hides head + more rows */
+  tbody.proj.collapsed tr.head,
+  tbody.proj.collapsed tr.more{display:none}
+
+  tr.more td{background:var(--surface-2);color:var(--muted);font-size:.78rem;
+    font-style:italic;cursor:pointer;padding-left:40px}
+  tr.more td:hover{color:var(--brand)}
+
+  /* grand total */
+  tr.total td{background:var(--ink)!important;color:#fff;font-weight:700;font-size:.9rem;
+    border-bottom:none;padding:13px 14px}
+  tr.total td.num{color:#fff;font-family:var(--font-mono)}
+  tr.total .tlabel{display:flex;align-items:center;gap:8px;font-family:var(--font-display)}
+
+  /* compact vbar cell */
+  .usedcell{display:flex;align-items:center;gap:8px;min-width:130px}
+  .usedcell .vbar{flex:1;height:9px}
+  .usedcell .pctxt{font-family:var(--font-mono);font-size:.72rem;color:var(--muted);width:38px;text-align:right}
+  tr.group .usedcell .vbar{height:11px}
+
+  .varpos{color:var(--ok);font-weight:600}
+  .varneg{color:var(--bad);font-weight:600}
+  .varzero{color:var(--muted-2)}
+
+  /* legend strip under toolbar */
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:.74rem;color:var(--muted)}
+  .legend .lk{display:flex;align-items:center;gap:6px}
+  .legend .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  .countpill{font-family:var(--font-mono);font-size:.72rem;color:var(--muted);
+    background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-pill);padding:2px 9px}
+
+  @media (max-width:880px){
+    .gridhead{padding:16px}
+    .gridwrap{padding:12px 0 30px;overflow-x:auto}
+    table.matrix{min-width:840px}
+    .toolbar .input,.toolbar .select{flex:1 1 100%}
+  }
+</style>
+</head>
+<body>
+<div class="appshell">
+
+  <!-- ============================== SIDEBAR ============================== -->
+  <aside class="sidebar">
+    <img class="logo" src="assets/fervid-logo.svg" alt="Fervid Smart Solutions">
+    <a href="#" hx-get="/dashboard" hx-target="#app" hx-push-url="true"><span class="ico">▦</span> Dashboard</a>
+    <a href="#" class="active" hx-get="/variance" hx-target="#app"><span class="ico">▤</span> Variance grid</a>
+    <a href="#" hx-get="/payments" hx-target="#app"><span class="ico">₹</span> Payments</a>
+    <a href="#" hx-get="/budgets" hx-target="#app"><span class="ico">◴</span> Budgets</a>
+    <a href="#" hx-get="/reports" hx-target="#app"><span class="ico">⤓</span> Reports</a>
+
+    <div class="sgroup">Settings</div>
+    <a href="#" hx-get="/settings/projects" hx-target="#app"><span class="ico">▣</span> Projects</a>
+    <a href="#" hx-get="/settings/heads" hx-target="#app"><span class="ico">≡</span> Heads</a>
+    <a href="#" hx-get="/settings/users" hx-target="#app"><span class="ico">◍</span> Users</a>
+
+    <div style="margin-top:auto;padding:12px 12px 4px;border-top:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px">
+      <span class="user" style="width:30px;height:30px;border-radius:50%;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.74rem">FS</span>
+      <div style="line-height:1.25">
+        <div style="color:#fff;font-size:.8rem;font-weight:600">Accounts</div>
+        <div style="font-size:.7rem;color:#7d7872">Fervid Smart</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ================================ MAIN =============================== -->
+  <main class="main" id="app">
+
+    <!-- page head + toolbar -->
+    <div class="gridhead">
+      <div class="between">
+        <div>
+          <div class="eyebrow">Budget vs actuals</div>
+          <h1 style="margin-top:4px">Variance grid</h1>
+          <p class="sub muted" style="margin-top:4px">June 2026 · all projects · variance = budget − actual</p>
+        </div>
+        <span class="countpill">11 projects · 83 heads · as of 29 Jun 2026</span>
+      </div>
+
+      <div class="toolbar" role="toolbar" aria-label="Grid filters">
+        <select class="select" aria-label="Month"
+                hx-get="/variance" hx-target="#gridbody" hx-swap="innerHTML" hx-trigger="change">
+          <option>June 2026</option>
+          <option>May 2026</option>
+          <option>April 2026</option>
+          <option>Q1 FY26-27</option>
+        </select>
+
+        <div class="seg" role="tablist" aria-label="Status filter">
+          <button class="active" hx-get="/variance?status=all" hx-target="#gridbody">All</button>
+          <button hx-get="/variance?status=over" hx-target="#gridbody">Over</button>
+          <button hx-get="/variance?status=under" hx-target="#gridbody">Under</button>
+          <button hx-get="/variance?status=ontrack" hx-target="#gridbody">On track</button>
+        </div>
+
+        <input class="input" type="search" placeholder="Search head or project…"
+               aria-label="Search"
+               hx-get="/variance/search" hx-target="#gridbody" hx-trigger="keyup changed delay:300ms">
+
+        <div class="spacer"></div>
+
+        <button class="btn outline" hx-get="/variance/export.xlsx" hx-swap="none">⤓ Export</button>
+        <button class="btn primary" hx-get="/payments/new" hx-target="#drawer" hx-swap="innerHTML">+ Add payment</button>
+      </div>
+
+      <div class="legend">
+        <span class="lk"><span class="sw" style="background:var(--ok)"></span> Under budget (favorable)</span>
+        <span class="lk"><span class="sw" style="background:#5aa775"></span> On track</span>
+        <span class="lk"><span class="sw" style="background:var(--bad)"></span> Over budget</span>
+        <span class="lk"><span class="sw" style="background:var(--surface-2);border:1px solid var(--line-2)"></span> Not yet paid</span>
+        <span class="lk" style="margin-left:auto"><span class="mono" style="color:var(--ink)">│</span> = budget line (100%)</span>
+      </div>
+    </div>
+
+    <!-- the matrix -->
+    <div class="gridwrap">
+      <div class="card scroll" style="padding:0;overflow:hidden">
+        <table class="matrix" id="gridbody">
+          <thead>
+            <tr>
+              <th style="min-width:240px">Head</th>
+              <th class="c" style="width:64px">Due</th>
+              <th class="num" style="width:120px">Budget</th>
+              <th class="num" style="width:120px">Actual</th>
+              <th class="num" style="width:118px">Variance ₹</th>
+              <th class="num" style="width:64px">Var %</th>
+              <th class="c" style="min-width:150px">Used</th>
+              <th class="c" style="width:96px">Status</th>
+            </tr>
+          </thead>
+
+            <!-- ================= HEAD OFFICE (18 heads · 6 shown) ============= -->
+            <tbody class="proj" data-proj="head-office">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0"
+                  hx-get="/projects/head-office/heads" hx-trigger="none">
+                <td><span class="pname"><span class="caret">▾</span> Head Office <span class="pmeta">18 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹1,49,62,223</td>
+                <td class="num">₹1,39,69,921</td>
+                <td class="num varpos">+₹9,92,302</td>
+                <td class="num">93.4%</td>
+                <td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:93.4%"></i><span class="mark"></span></div><span class="pctxt">93%</span></div></td>
+                <td class="c"><span class="badge ontrack"><span class="dot"></span>On track</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">31st</td><td class="num">₹15,70,000</td><td class="num">₹17,11,049</td><td class="num varneg">−₹1,41,049</td><td class="num">109.0%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:109%"></i><span class="mark"></span></div><span class="pctxt">109%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Bank Interest</span></td><td class="c due">01st</td><td class="num">₹33,31,250</td><td class="num">₹31,90,038</td><td class="num varpos">+₹1,41,212</td><td class="num">95.8%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:95.8%"></i><span class="mark"></span></div><span class="pctxt">96%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Bang Paper Interest</span></td><td class="c due">—</td><td class="num">₹27,07,397</td><td class="num">₹23,21,539</td><td class="num varpos">+₹3,85,858</td><td class="num">85.7%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:85.7%"></i><span class="mark"></span></div><span class="pctxt">86%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">NSIC 02nd Payment Principle</span></td><td class="c due">—</td><td class="num">₹39,19,000</td><td class="num">₹34,44,409</td><td class="num varpos">+₹4,74,591</td><td class="num">87.9%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:87.9%"></i><span class="mark"></span></div><span class="pctxt">88%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Tenders</span></td><td class="c due">—</td><td class="num">₹15,00,000</td><td class="num">₹15,11,385</td><td class="num varneg">−₹11,385</td><td class="num">100.8%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:100.8%"></i><span class="mark"></span></div><span class="pctxt">101%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Advisory charges</span></td><td class="c due">31st</td><td class="num">₹1,35,000</td><td class="num">₹1,68,080</td><td class="num varneg">−₹33,080</td><td class="num">124.5%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:118%"></i><span class="mark"></span></div><span class="pctxt">125%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="more" onclick="expandMore(this)"
+                  hx-get="/projects/head-office/heads?from=7" hx-target="closest tr" hx-swap="outerHTML">
+                <td colspan="8">+ 12 more heads in Head Office (TDS, Rents, Garima Interest, Housekeeping …) — click to expand</td>
+              </tr>
+            </tbody>
+
+            <!-- ================= EDLP – MAURITIUS (over) ===================== -->
+            <tbody class="proj" data-proj="edlp-mauritius">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> EDLP – Mauritius <span class="pmeta">6 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹21,02,857</td>
+                <td class="num">₹22,38,426</td>
+                <td class="num varneg">−₹1,35,569</td>
+                <td class="num">106.4%</td>
+                <td><div class="usedcell"><div class="vbar is-over"><i style="--pct:106.4%"></i><span class="mark"></span></div><span class="pctxt">106%</span></div></td>
+                <td class="c"><span class="badge over"><span class="dot"></span>Over</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Mauritius budget for Aug'26</span></td><td class="c due">20th</td><td class="num">₹16,00,000</td><td class="num">₹17,92,384</td><td class="num varneg">−₹1,92,384</td><td class="num">112.0%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:112%"></i><span class="mark"></span></div><span class="pctxt">112%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Redington – AWS Charges</span></td><td class="c due">15th</td><td class="num">₹3,85,000</td><td class="num">₹3,55,197</td><td class="num varpos">+₹29,803</td><td class="num">92.3%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:92.3%"></i><span class="mark"></span></div><span class="pctxt">92%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Vikas Salaries (Akshara)</span></td><td class="c due">—</td><td class="num">₹76,357</td><td class="num">₹85,563</td><td class="num varneg">−₹9,206</td><td class="num">112.1%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:112.1%"></i><span class="mark"></span></div><span class="pctxt">112%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">TDS</span></td><td class="c due">—</td><td class="num">₹35,500</td><td class="num">₹0</td><td class="num varzero">+₹35,500</td><td class="num muted-2">—</td><td><div class="usedcell"><div class="vbar"><i style="--pct:0%"></i><span class="mark"></span></div><span class="pctxt">0%</span></div></td><td class="c"><span class="badge none">Not paid</span></td></tr>
+              <tr class="head"><td><span class="hname">Professional charges</span></td><td class="c due">—</td><td class="num">₹5,400</td><td class="num">₹4,930</td><td class="num varpos">+₹470</td><td class="num">91.3%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:91.3%"></i><span class="mark"></span></div><span class="pctxt">91%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Courier &amp; Others</span></td><td class="c due">—</td><td class="num">₹600</td><td class="num">₹352</td><td class="num varpos">+₹248</td><td class="num">58.7%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:58.7%"></i><span class="mark"></span></div><span class="pctxt">59%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+            </tbody>
+
+            <!-- ================= OCAC – KSL (10 heads · 6 shown) ============= -->
+            <tbody class="proj" data-proj="ocac-ksl">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> OCAC – KSL <span class="pmeta">10 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹30,21,516</td>
+                <td class="num">₹27,94,175</td>
+                <td class="num varpos">+₹2,27,341</td>
+                <td class="num">92.5%</td>
+                <td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:92.5%"></i><span class="mark"></span></div><span class="pctxt">93%</span></div></td>
+                <td class="c"><span class="badge ontrack"><span class="dot"></span>On track</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Bharti Airtel – Q2 bill</span></td><td class="c due">15th</td><td class="num">₹24,58,040</td><td class="num">₹23,54,262</td><td class="num varpos">+₹1,03,778</td><td class="num">95.8%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:95.8%"></i><span class="mark"></span></div><span class="pctxt">96%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">31st</td><td class="num">₹1,63,289</td><td class="num">₹1,21,601</td><td class="num varpos">+₹41,688</td><td class="num">74.5%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:74.5%"></i><span class="mark"></span></div><span class="pctxt">75%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Akshara Salaries</span></td><td class="c due">31st</td><td class="num">₹2,05,201</td><td class="num">₹1,78,746</td><td class="num varpos">+₹26,455</td><td class="num">87.1%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:87.1%"></i><span class="mark"></span></div><span class="pctxt">87%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">House keeping expenses</span></td><td class="c due">3rd</td><td class="num">₹8,000</td><td class="num">₹10,483</td><td class="num varneg">−₹2,483</td><td class="num">131.0%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:118%"></i><span class="mark"></span></div><span class="pctxt">131%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">TA &amp; DA for KSL project</span></td><td class="c due">5th &amp; 25th</td><td class="num">₹60,000</td><td class="num">₹42,837</td><td class="num varpos">+₹17,163</td><td class="num">71.4%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:71.4%"></i><span class="mark"></span></div><span class="pctxt">71%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">EPF, ESI &amp; PT</span></td><td class="c due">15th</td><td class="num">₹19,950</td><td class="num">₹0</td><td class="num varzero">+₹19,950</td><td class="num muted-2">—</td><td><div class="usedcell"><div class="vbar"><i style="--pct:0%"></i><span class="mark"></span></div><span class="pctxt">0%</span></div></td><td class="c"><span class="badge none">Not paid</span></td></tr>
+              <tr class="more" onclick="expandMore(this)" hx-get="/projects/ocac-ksl/heads?from=7" hx-target="closest tr" hx-swap="outerHTML">
+                <td colspan="8">+ 4 more heads in OCAC – KSL (Rent, Electricity, Purchases &amp; Repairs, Office expenses) — click to expand</td>
+              </tr>
+            </tbody>
+
+            <!-- ================= KSDC (10 heads · 6 shown) =================== -->
+            <tbody class="proj" data-proj="ksdc">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> KSDC <span class="pmeta">10 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹45,92,993</td>
+                <td class="num">₹39,78,474</td>
+                <td class="num varpos">+₹6,14,519</td>
+                <td class="num">86.6%</td>
+                <td><div class="usedcell"><div class="vbar is-under"><i style="--pct:86.6%"></i><span class="mark"></span></div><span class="pctxt">87%</span></div></td>
+                <td class="c"><span class="badge under"><span class="dot"></span>Under</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">—</td><td class="num">₹36,13,932</td><td class="num">₹32,13,147</td><td class="num varpos">+₹4,00,785</td><td class="num">88.9%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:88.9%"></i><span class="mark"></span></div><span class="pctxt">89%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">4M security for KSDC</span></td><td class="c due">15th</td><td class="num">₹3,50,000</td><td class="num">₹2,49,620</td><td class="num varpos">+₹1,00,380</td><td class="num">71.3%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:71.3%"></i><span class="mark"></span></div><span class="pctxt">71%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Seven83 Systems</span></td><td class="c due">15th</td><td class="num">₹3,24,000</td><td class="num">₹2,99,195</td><td class="num varpos">+₹24,805</td><td class="num">92.3%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:92.3%"></i><span class="mark"></span></div><span class="pctxt">92%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">EPF, ESI &amp; PT</span></td><td class="c due">—</td><td class="num">₹1,43,143</td><td class="num">₹1,44,254</td><td class="num varneg">−₹1,111</td><td class="num">100.8%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:100.8%"></i><span class="mark"></span></div><span class="pctxt">101%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Fuel for Generators</span></td><td class="c due">—</td><td class="num">₹75,000</td><td class="num">₹0</td><td class="num varzero">+₹75,000</td><td class="num muted-2">—</td><td><div class="usedcell"><div class="vbar"><i style="--pct:0%"></i><span class="mark"></span></div><span class="pctxt">0%</span></div></td><td class="c"><span class="badge none">Not paid</span></td></tr>
+              <tr class="head"><td><span class="hname">77 Spaces – Rent bill</span></td><td class="c due">10th</td><td class="num">₹8,260</td><td class="num">₹8,344</td><td class="num varneg">−₹84</td><td class="num">101.0%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:101%"></i><span class="mark"></span></div><span class="pctxt">101%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="more" onclick="expandMore(this)" hx-get="/projects/ksdc/heads?from=7" hx-target="closest tr" hx-swap="outerHTML">
+                <td colspan="8">+ 4 more heads in KSDC (TA &amp; DA, Office expenses, Employee Reimbursements, TDS) — click to expand</td>
+              </tr>
+            </tbody>
+
+            <!-- ================= IGRS – TG (7 heads) ========================= -->
+            <tbody class="proj" data-proj="igrs-tg">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> IGRS – TG <span class="pmeta">7 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹71,66,640</td>
+                <td class="num">₹65,55,722</td>
+                <td class="num varpos">+₹6,10,918</td>
+                <td class="num">91.5%</td>
+                <td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:91.5%"></i><span class="mark"></span></div><span class="pctxt">92%</span></div></td>
+                <td class="c"><span class="badge ontrack"><span class="dot"></span>On track</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Cartridges Procurement</span></td><td class="c due">—</td><td class="num">₹46,90,125</td><td class="num">₹44,24,336</td><td class="num varpos">+₹2,65,789</td><td class="num">94.3%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:94.3%"></i><span class="mark"></span></div><span class="pctxt">94%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">HPFS</span></td><td class="c due">—</td><td class="num">₹14,07,735</td><td class="num">₹11,75,248</td><td class="num varpos">+₹2,32,487</td><td class="num">83.5%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:83.5%"></i><span class="mark"></span></div><span class="pctxt">84%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">—</td><td class="num">₹8,04,037</td><td class="num">₹7,13,776</td><td class="num varpos">+₹90,261</td><td class="num">88.8%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:88.8%"></i><span class="mark"></span></div><span class="pctxt">89%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">EPF, ESI &amp; PT</span></td><td class="c due">—</td><td class="num">₹72,743</td><td class="num">₹73,394</td><td class="num varneg">−₹651</td><td class="num">100.9%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:100.9%"></i><span class="mark"></span></div><span class="pctxt">101%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Admin Staff TA &amp; DA</span></td><td class="c due">—</td><td class="num">₹50,000</td><td class="num">₹54,428</td><td class="num varneg">−₹4,428</td><td class="num">108.9%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:108.9%"></i><span class="mark"></span></div><span class="pctxt">109%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Freight Charges</span></td><td class="c due">—</td><td class="num">₹80,000</td><td class="num">₹78,282</td><td class="num varpos">+₹1,718</td><td class="num">97.9%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:97.9%"></i><span class="mark"></span></div><span class="pctxt">98%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">TA &amp; DA for IGRS project</span></td><td class="c due">—</td><td class="num">₹62,000</td><td class="num">₹36,258</td><td class="num varpos">+₹25,742</td><td class="num">58.5%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:58.5%"></i><span class="mark"></span></div><span class="pctxt">59%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+            </tbody>
+
+            <!-- ================= OAVS-2250 & GVHS-74 (6 heads) ============== -->
+            <tbody class="proj" data-proj="oavs">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> OAVS-2250 &amp; GVHS-74 <span class="pmeta">6 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹8,43,500</td>
+                <td class="num">₹7,58,004</td>
+                <td class="num varpos">+₹85,496</td>
+                <td class="num">89.9%</td>
+                <td><div class="usedcell"><div class="vbar is-under"><i style="--pct:89.9%"></i><span class="mark"></span></div><span class="pctxt">90%</span></div></td>
+                <td class="c"><span class="badge under"><span class="dot"></span>Under</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">—</td><td class="num">₹4,88,067</td><td class="num">₹4,49,954</td><td class="num varpos">+₹38,113</td><td class="num">92.2%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:92.2%"></i><span class="mark"></span></div><span class="pctxt">92%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Rashmi Sharma</span></td><td class="c due">—</td><td class="num">₹1,35,000</td><td class="num">₹1,25,330</td><td class="num varpos">+₹9,670</td><td class="num">92.8%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:92.8%"></i><span class="mark"></span></div><span class="pctxt">93%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">TA &amp; DA for OAVS project</span></td><td class="c due">—</td><td class="num">₹1,30,000</td><td class="num">₹1,24,268</td><td class="num varpos">+₹5,732</td><td class="num">95.6%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:95.6%"></i><span class="mark"></span></div><span class="pctxt">96%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">EPF, ESI &amp; PT</span></td><td class="c due">—</td><td class="num">₹52,933</td><td class="num">₹22,507</td><td class="num varpos">+₹30,426</td><td class="num">42.5%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:42.5%"></i><span class="mark"></span></div><span class="pctxt">43%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Purchase &amp; Repairs</span></td><td class="c due">—</td><td class="num">₹25,000</td><td class="num">₹22,750</td><td class="num varpos">+₹2,250</td><td class="num">91.0%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:91%"></i><span class="mark"></span></div><span class="pctxt">91%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">TDS</span></td><td class="c due">—</td><td class="num">₹12,500</td><td class="num">₹13,195</td><td class="num varneg">−₹695</td><td class="num">105.6%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:105.6%"></i><span class="mark"></span></div><span class="pctxt">106%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+            </tbody>
+
+            <!-- ================= IOT (4 heads) =============================== -->
+            <tbody class="proj" data-proj="iot">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> IOT <span class="pmeta">4 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹5,57,299</td>
+                <td class="num">₹4,64,730</td>
+                <td class="num varpos">+₹92,569</td>
+                <td class="num">83.4%</td>
+                <td><div class="usedcell"><div class="vbar is-under"><i style="--pct:83.4%"></i><span class="mark"></span></div><span class="pctxt">83%</span></div></td>
+                <td class="c"><span class="badge under"><span class="dot"></span>Under</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">—</td><td class="num">₹3,96,639</td><td class="num">₹3,67,081</td><td class="num varpos">+₹29,558</td><td class="num">92.5%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:92.5%"></i><span class="mark"></span></div><span class="pctxt">93%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Reimbursements</span></td><td class="c due">—</td><td class="num">₹1,00,000</td><td class="num">₹85,425</td><td class="num varpos">+₹14,575</td><td class="num">85.4%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:85.4%"></i><span class="mark"></span></div><span class="pctxt">85%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Purchases</span></td><td class="c due">—</td><td class="num">₹40,000</td><td class="num">₹12,224</td><td class="num varpos">+₹27,776</td><td class="num">30.6%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:30.6%"></i><span class="mark"></span></div><span class="pctxt">31%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">EPF, ESI &amp; PT</span></td><td class="c due">—</td><td class="num">₹20,660</td><td class="num">₹0</td><td class="num varzero">+₹20,660</td><td class="num muted-2">—</td><td><div class="usedcell"><div class="vbar"><i style="--pct:0%"></i><span class="mark"></span></div><span class="pctxt">0%</span></div></td><td class="c"><span class="badge none">Not paid</span></td></tr>
+            </tbody>
+
+            <!-- ================= AP GSWS (2 heads) =========================== -->
+            <tbody class="proj" data-proj="ap-gsws">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> AP GSWS <span class="pmeta">2 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹2,55,546</td>
+                <td class="num">₹2,44,619</td>
+                <td class="num varpos">+₹10,927</td>
+                <td class="num">95.7%</td>
+                <td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:95.7%"></i><span class="mark"></span></div><span class="pctxt">96%</span></div></td>
+                <td class="c"><span class="badge ontrack"><span class="dot"></span>On track</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Chaitanya enterprises</span></td><td class="c due">—</td><td class="num">₹2,35,546</td><td class="num">₹2,22,278</td><td class="num varpos">+₹13,268</td><td class="num">94.4%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:94.4%"></i><span class="mark"></span></div><span class="pctxt">94%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Travel expenses – IR purpose</span></td><td class="c due">—</td><td class="num">₹20,000</td><td class="num">₹22,341</td><td class="num varneg">−₹2,341</td><td class="num">111.7%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:111.7%"></i><span class="mark"></span></div><span class="pctxt">112%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+            </tbody>
+
+            <!-- ================= Delhi Office (9 heads · 6 shown) =========== -->
+            <tbody class="proj" data-proj="delhi-office">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> Delhi Office <span class="pmeta">9 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹1,96,209</td>
+                <td class="num">₹1,95,002</td>
+                <td class="num varpos">+₹1,207</td>
+                <td class="num">99.4%</td>
+                <td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:99.4%"></i><span class="mark"></span></div><span class="pctxt">99%</span></div></td>
+                <td class="c"><span class="badge ontrack"><span class="dot"></span>On track</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Rent</span></td><td class="c due">—</td><td class="num">₹81,000</td><td class="num">₹87,992</td><td class="num varneg">−₹6,992</td><td class="num">108.6%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:108.6%"></i><span class="mark"></span></div><span class="pctxt">109%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">—</td><td class="num">₹68,434</td><td class="num">₹61,147</td><td class="num varpos">+₹7,287</td><td class="num">89.4%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:89.4%"></i><span class="mark"></span></div><span class="pctxt">89%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Guesthouse expenses</span></td><td class="c due">—</td><td class="num">₹15,000</td><td class="num">₹14,668</td><td class="num varpos">+₹332</td><td class="num">97.8%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:97.8%"></i><span class="mark"></span></div><span class="pctxt">98%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">House keeping &amp; Security</span></td><td class="c due">—</td><td class="num">₹13,000</td><td class="num">₹13,154</td><td class="num varneg">−₹154</td><td class="num">101.2%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:101.2%"></i><span class="mark"></span></div><span class="pctxt">101%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">TDS on Rent</span></td><td class="c due">—</td><td class="num">₹7,500</td><td class="num">₹7,187</td><td class="num varpos">+₹313</td><td class="num">95.8%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:95.8%"></i><span class="mark"></span></div><span class="pctxt">96%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Admin Staff TA &amp; DA</span></td><td class="c due">—</td><td class="num">₹5,000</td><td class="num">₹4,779</td><td class="num varpos">+₹221</td><td class="num">95.6%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:95.6%"></i><span class="mark"></span></div><span class="pctxt">96%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="more" onclick="expandMore(this)" hx-get="/projects/delhi-office/heads?from=7" hx-target="closest tr" hx-swap="outerHTML">
+                <td colspan="8">+ 3 more heads in Delhi Office (Electricity bills, Internet, PF/ESI &amp; PT) — click to expand</td>
+              </tr>
+            </tbody>
+
+            <!-- ================= G10X (4 heads) ============================= -->
+            <tbody class="proj" data-proj="g10x">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> G10X <span class="pmeta">4 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹1,58,510</td>
+                <td class="num">₹1,08,771</td>
+                <td class="num varpos">+₹49,739</td>
+                <td class="num">68.6%</td>
+                <td><div class="usedcell"><div class="vbar is-under"><i style="--pct:68.6%"></i><span class="mark"></span></div><span class="pctxt">69%</span></div></td>
+                <td class="c"><span class="badge under"><span class="dot"></span>Under</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Laksh Ribbons – G10X</span></td><td class="c due">—</td><td class="num">₹1,02,854</td><td class="num">₹95,312</td><td class="num varpos">+₹7,542</td><td class="num">92.7%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:92.7%"></i><span class="mark"></span></div><span class="pctxt">93%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Salaries</span></td><td class="c due">—</td><td class="num">₹44,206</td><td class="num">₹0</td><td class="num varzero">+₹44,206</td><td class="num muted-2">—</td><td><div class="usedcell"><div class="vbar"><i style="--pct:0%"></i><span class="mark"></span></div><span class="pctxt">0%</span></div></td><td class="c"><span class="badge none">Not paid</span></td></tr>
+              <tr class="head"><td><span class="hname">ESI, EPF &amp; PT</span></td><td class="c due">—</td><td class="num">₹6,450</td><td class="num">₹8,672</td><td class="num varneg">−₹2,222</td><td class="num">134.4%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:118%"></i><span class="mark"></span></div><span class="pctxt">134%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Freight charges</span></td><td class="c due">—</td><td class="num">₹5,000</td><td class="num">₹4,787</td><td class="num varpos">+₹213</td><td class="num">95.7%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:95.7%"></i><span class="mark"></span></div><span class="pctxt">96%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+            </tbody>
+
+            <!-- ================= BBSR Office (7 heads) ====================== -->
+            <tbody class="proj" data-proj="bbsr-office">
+              <tr class="group" onclick="toggleGroup(this)" tabindex="0">
+                <td><span class="pname"><span class="caret">▾</span> BBSR Office <span class="pmeta">7 heads</span></span></td>
+                <td class="c muted">—</td>
+                <td class="num">₹1,13,262</td>
+                <td class="num">₹1,01,374</td>
+                <td class="num varpos">+₹11,888</td>
+                <td class="num">89.5%</td>
+                <td><div class="usedcell"><div class="vbar is-under"><i style="--pct:89.5%"></i><span class="mark"></span></div><span class="pctxt">90%</span></div></td>
+                <td class="c"><span class="badge under"><span class="dot"></span>Under</span></td>
+              </tr>
+              <tr class="head"><td><span class="hname">Rent</span></td><td class="c due">05th</td><td class="num">₹63,000</td><td class="num">₹66,342</td><td class="num varneg">−₹3,342</td><td class="num">105.3%</td><td><div class="usedcell"><div class="vbar is-over"><i style="--pct:105.3%"></i><span class="mark"></span></div><span class="pctxt">105%</span></div></td><td class="c"><span class="badge over">Over</span></td></tr>
+              <tr class="head"><td><span class="hname">Guesthouse expenses</span></td><td class="c due">—</td><td class="num">₹15,000</td><td class="num">₹13,668</td><td class="num varpos">+₹1,332</td><td class="num">91.1%</td><td><div class="usedcell"><div class="vbar is-ontrack"><i style="--pct:91.1%"></i><span class="mark"></span></div><span class="pctxt">91%</span></div></td><td class="c"><span class="badge ontrack">On track</span></td></tr>
+              <tr class="head"><td><span class="hname">Salaries (Hari)</span></td><td class="c due">31st</td><td class="num">₹14,401</td><td class="num">₹12,344</td><td class="num varpos">+₹2,057</td><td class="num">85.7%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:85.7%"></i><span class="mark"></span></div><span class="pctxt">86%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Electricity bills</span></td><td class="c due">—</td><td class="num">₹8,000</td><td class="num">₹0</td><td class="num varzero">+₹8,000</td><td class="num muted-2">—</td><td><div class="usedcell"><div class="vbar"><i style="--pct:0%"></i><span class="mark"></span></div><span class="pctxt">0%</span></div></td><td class="c"><span class="badge none">Not paid</span></td></tr>
+              <tr class="head"><td><span class="hname">House keeping</span></td><td class="c due">3rd</td><td class="num">₹3,500</td><td class="num">₹2,764</td><td class="num varpos">+₹736</td><td class="num">79.0%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:79%"></i><span class="mark"></span></div><span class="pctxt">79%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+              <tr class="head"><td><span class="hname">Internet</span></td><td class="c due">—</td><td class="num">₹2,361</td><td class="num">₹0</td><td class="num varzero">+₹2,361</td><td class="num muted-2">—</td><td><div class="usedcell"><div class="vbar"><i style="--pct:0%"></i><span class="mark"></span></div><span class="pctxt">0%</span></div></td><td class="c"><span class="badge none">Not paid</span></td></tr>
+              <tr class="head"><td><span class="hname">TDS</span></td><td class="c due">7th</td><td class="num">₹7,000</td><td class="num">₹6,256</td><td class="num varpos">+₹744</td><td class="num">89.4%</td><td><div class="usedcell"><div class="vbar is-under"><i style="--pct:89.4%"></i><span class="mark"></span></div><span class="pctxt">89%</span></div></td><td class="c"><span class="badge under">Under</span></td></tr>
+            </tbody>
+
+            <!-- ============================ GRAND TOTAL ===================== -->
+            <tbody>
+              <tr class="total">
+                <td><span class="tlabel">═ Company total</span></td>
+                <td class="c">—</td>
+                <td class="num">₹3,39,70,555</td>
+                <td class="num">₹3,14,09,218</td>
+                <td class="num" style="color:#7fe0a8">+₹25,61,337</td>
+                <td class="num">92.5%</td>
+                <td>
+                  <div class="usedcell">
+                    <div class="vbar is-under" style="border-color:#3a3a3c;background:#33332f">
+                      <i style="--pct:92.5%"></i><span class="mark" style="background:#fff;opacity:.8"></span>
+                    </div>
+                    <span class="pctxt" style="color:#cfcac6">93%</span>
+                  </div>
+                </td>
+                <td class="c"><span class="badge under" style="background:rgba(25,135,84,.25);border-color:transparent;color:#7fe0a8">Under</span></td>
+              </tr>
+            </tbody>
+
+        </table>
+      </div>
+
+      <p class="muted small" style="margin-top:12px">
+        Showing detail for all 11 projects. Large projects show their top heads by budget; expand a row
+        for the full list. Variance = budget − actual · positive (green) = under budget · negative (red) = over budget.
+      </p>
+    </div>
+
+  </main>
+</div>
+
+<script>
+/* demo only — real app uses HTMX */
+function toggleGroup(row){
+  row.classList.toggle('collapsed');
+  row.closest('tbody.proj').classList.toggle('collapsed');
+}
+function expandMore(row){           // reveal the "+N more" placeholder as if HTMX swapped rows in
+  row.textContent = '';
+  var td = document.createElement('td');
+  td.colSpan = 8;
+  td.className = 'muted small';
+  td.style.padding = '10px 40px';
+  td.textContent = 'Loading remaining heads… (demo — the real grid fetches them over HTMX)';
+  row.appendChild(td);
+}
+</script>
+</body>
+</html>
