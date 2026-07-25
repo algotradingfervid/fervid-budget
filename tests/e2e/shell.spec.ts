@@ -9,8 +9,9 @@ import { expect, test } from './fixtures';
  */
 
 const ROUTES = [
-  '/', '/payments', '/payments/new', '/budgets', '/months', '/reports/monthly',
-  '/projects', '/heads', '/vendors', '/vendors/new', '/users', '/roles', '/audit', '/backups',
+  '/', '/requests', '/requests/new', '/payments', '/payments/new', '/budgets', '/months',
+  '/reports/monthly', '/projects', '/heads', '/vendors', '/vendors/new', '/users', '/roles',
+  '/audit', '/backups',
 ];
 
 test.describe('app shell', () => {
