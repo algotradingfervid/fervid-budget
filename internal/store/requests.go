@@ -726,3 +726,98 @@ func (s *Store) ReturnRequest(ctx context.Context, actor User, id int64, comment
 func (s *Store) RejectRequest(ctx context.Context, actor User, id int64, reason string) error {
 	return s.decideRequest(ctx, actor, id, "rejected", "reject", reason, "a reason is required to reject a request")
 }
+
+func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerID int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("%w: a reason is required to reassign", ErrValidation)
+	}
+	if newManagerID <= 0 {
+		return fmt.Errorf("%w: choose an approver to reassign to", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.Status != "pending" {
+		return fmt.Errorf("%w: only a pending request can be reassigned", ErrValidation)
+	}
+	// G8 holds for reassignment too.
+	if newManagerID == before.RequesterID {
+		return fmt.Errorf("%w: a request cannot be reassigned to its own requester", ErrValidation)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET manager_id=?, decision_reason=?, reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`, newManagerID, reason, id); err != nil {
+		return classify(err)
+	}
+	after, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "reassign", EntityType: "payment_request", EntityID: &id,
+		Summary: actor.Name + " reassigned request " + before.Number + " to " + after.ManagerName + ": " + reason,
+		Before:  before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReraiseRequest copies a rejected request into a new one. D1: the copy is
+// created already pending with its own number — there is no draft to land in.
+func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	src, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return 0, err
+	}
+	if src.RequesterID != actor.ID {
+		return 0, ErrForbidden
+	}
+	if src.Status != "rejected" {
+		return 0, fmt.Errorf("%w: only a rejected request can be re-raised", ErrValidation)
+	}
+	year, err := requestNumberYear(tx, time.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	number, err := NextRequestNumber(tx, year)
+	if err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO payment_requests
+ (number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,head_id,
+  vendor_id,vendor_payee,short_title,amount,purpose,needed_by,invoice_no,invoice_date,expense_date,
+  advance_reason,counterparty,expected_return_date,repayment_notes,urgent,urgency_reason,
+  attachment_exception_reason,requester_id,manager_id,submitted_at)
+ SELECT ?, 'pending', treatment, type, recoverable_category, recoverable_category_id, project_id, head_id,
+  vendor_id, vendor_payee, short_title, amount, purpose, needed_by, invoice_no, invoice_date, expense_date,
+  advance_reason, counterparty, expected_return_date, repayment_notes, urgent, urgency_reason,
+  attachment_exception_reason, requester_id, manager_id, CURRENT_TIMESTAMP
+ FROM payment_requests WHERE id=?`, number, id)
+	if err != nil {
+		return 0, classify(err)
+	}
+	newID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "reraise", EntityType: "payment_request", EntityID: &newID,
+		Summary: actor.Name + " re-raised " + src.Number + " as " + number,
+		After:   map[string]any{"source": src.Number, "number": number}}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newID, nil
+}

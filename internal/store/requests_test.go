@@ -793,3 +793,73 @@ func TestReturnAndRejectRequireTextAndAreAssignedOnly(t *testing.T) {
 		t.Fatalf("resubmit rejected = %v, want ErrValidation", err)
 	}
 }
+
+func TestReassignAndReraise(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	admin, _ := s.UserByID(ctx, mgr.ID) // acts as admin reassigner
+	newMgrID, _ := s.CreateUser(ctx, "cover@example.com", "Cover Manager", "hash", "admin", true)
+	mk := func(managerID, amount int64) int64 {
+		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
+			ShortTitle: "Advance", ProjectID: 1, HeadID: headID, Amount: amount, Purpose: "advance",
+			ManagerID: managerID, VendorID: vendorID, AdvanceReason: "booking"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := mk(mgr.ID, 1000)
+
+	if err := s.ReassignRequest(ctx, admin, id, newMgrID, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("reassign without reason = %v, want ErrValidation", err)
+	}
+	if err := s.ReassignRequest(ctx, admin, id, newMgrID, "manager on leave"); err != nil {
+		t.Fatalf("ReassignRequest: %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.ManagerID != newMgrID || got.Status != "pending" {
+		t.Fatalf("after reassign manager=%d status=%q", got.ManagerID, got.Status)
+	}
+	audit, _ := s.Audit(ctx, "payment_request", id, 10)
+	var reassigned bool
+	for _, a := range audit {
+		reassigned = reassigned || a.Action == "reassign"
+	}
+	if !reassigned {
+		t.Fatal("reassign not recorded in history")
+	}
+
+	// D1: re-raising a rejected request creates a new PENDING request, not a draft.
+	rid := mk(newMgrID, 4000)
+	newMgr, _ := s.UserByID(ctx, newMgrID)
+	if err := s.RejectRequest(ctx, newMgr, rid, "out of budget"); err != nil {
+		t.Fatal(err)
+	}
+	copyID, err := s.ReraiseRequest(ctx, req, rid)
+	if err != nil {
+		t.Fatalf("ReraiseRequest: %v", err)
+	}
+	if copyID == rid {
+		t.Fatal("re-raise did not create a new request")
+	}
+	orig, _ := s.Request(ctx, rid)
+	fresh, _ := s.Request(ctx, copyID)
+	if fresh.Status != "pending" {
+		t.Fatalf("re-raised status = %q, want pending (D1: no drafts)", fresh.Status)
+	}
+	if fresh.SubmittedAt == nil {
+		t.Fatal("re-raised request was not submitted")
+	}
+	if fresh.Amount != 4000 || fresh.Number == orig.Number {
+		t.Fatalf("fresh copy = %+v (orig number %s)", fresh, orig.Number)
+	}
+	// Only the requester may re-raise, and only a rejected request.
+	if _, err := s.ReraiseRequest(ctx, newMgr, rid); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("re-raise by a non-requester = %v, want ErrForbidden", err)
+	}
+	if _, err := s.ReraiseRequest(ctx, req, copyID); !errors.Is(err, ErrValidation) {
+		t.Fatalf("re-raise of a pending request = %v, want ErrValidation", err)
+	}
+}
