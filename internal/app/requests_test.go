@@ -80,6 +80,38 @@ func (s *appTestServer) postFormHX(path string, form url.Values) *http.Response 
 	return resp
 }
 
+// grantAlso adds a second role carrying extra grants to a user who already
+// holds one. Phase 1's starter roles were never given request:cancel or
+// approval:cancel — both verbs entered the canonical vocabulary with this
+// phase's cancellation flow, and nothing back-filled the seeded Requester and
+// Manager roles with them. In the product an administrator grants them on the
+// Roles screen; the fixture does the same thing directly.
+func (s *appTestServer) grantAlso(userID int64, roleName string, grants []store.Grant, scopes []store.ScopeGrant) {
+	s.t.Helper()
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	roleID, err := s.st.CreateRole(s.ctx, admin, roleName, "")
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if err := s.st.UpdateRolePermissions(s.ctx, admin, roleID, grants, scopes); err != nil {
+		s.t.Fatal(err)
+	}
+	held, err := s.st.UserRoles(s.ctx, userID)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	ids := []int64{roleID}
+	for _, role := range held {
+		ids = append(ids, role.ID)
+	}
+	if err := s.st.SetUserRoles(s.ctx, admin, userID, ids); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
 // seedSecondApprover returns a user id that holds approval:approve and is never
 // the logged-in requester, so G8 cannot get in a fixture's way.
 func seedSecondApprover(t *testing.T, s *appTestServer) int64 {
@@ -839,6 +871,180 @@ func TestApprovalsQueueIsItsOwnScreen(t *testing.T) {
 	// A requester without approval:approve cannot reach the queue at all.
 	s.login("appreq@example.test", "RequesterPass123")
 	requireStatus(t, s.request(http.MethodGet, "/approvals", nil, ""), http.StatusForbidden)
+}
+
+// A19: the two detail mockups are one page. Only the action bar changes, and it
+// changes on permission, never on a role name and never on which URL you came
+// from. History and conversation are a single merged .thread.
+func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Detail")
+	mgrID := seedSecondApprover(t, s)
+	mgr, err := s.st.UserByID(s.ctx, mgrID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vendorID := s.seedVendor(store.VendorInput{Name: "Meridian Facility Services",
+		VendorType: "company", Status: "active"})
+	requester := s.seedRequester("sneha@example.test", "Sneha Pillai", "RequesterPass123")
+	s.grantAlso(requester.ID, "Requester who may cancel",
+		[]store.Grant{{Resource: "request", Action: "cancel"}},
+		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
+	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+		Type: "vendor_invoice", ShortTitle: "July housekeeping", ProjectID: 1, HeadID: headID,
+		Amount: 23500000, Purpose: "monthly contract", ManagerID: mgrID, VendorID: vendorID,
+		InvoiceNo: "MFS/26-27/0912", InvoiceDate: "2026-07-22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.AddRequestComment(s.ctx, requester, id, "Same as June."); err != nil {
+		t.Fatal(err)
+	}
+
+	// --- The approver sees the decision controls. ---
+	s.login("kavita@example.test", "ApproverPass123")
+	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	for _, want := range []string{
+		`class="req-head"`, `class="rh-no"`, `class="rh-amt"`, `class="rh-status"`,
+		`class="pill awaiting"`, `class="waiting you"`, `class="dl"`, `class="thread"`,
+		`class="comment-box"`, `class="action-bar"`,
+		`data-open="approve-sheet"`, `data-open="return-sheet"`, `data-open="reject-sheet"`,
+		`id="approve-sheet"`, `class="overlay"`, `class="sheet"`,
+		"MFS/26-27/0912", "Meridian Facility Services", "<h1>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("approver detail view is missing %q", want)
+		}
+	}
+	// A19: one merged stream, not two lists.
+	if strings.Count(body, `class="thread"`) != 1 {
+		t.Fatal("the detail page renders more than one thread")
+	}
+	if strings.Contains(body, "<h2>Conversation</h2>") && strings.Contains(body, "<h2>History</h2>") {
+		t.Fatal("history and conversation are still two separate lists")
+	}
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("the detail page still renders .badge")
+	}
+	// The submit event and the comment are both in the one stream.
+	if !strings.Contains(body, "submitted request") || !strings.Contains(body, "Same as June.") {
+		t.Fatalf("the thread is missing an event or a comment: %s", body)
+	}
+	// money.FormatPaise already carries the rupee sign, so the approve sheet's
+	// .money-field must not print a second one behind its own .cur prefix.
+	if strings.Contains(body, `value="₹`) {
+		t.Fatal("a money-field input carries a second rupee sign")
+	}
+
+	// --- The requester sees the same page, with a different action bar. ---
+	s.login("sneha@example.test", "RequesterPass123")
+	body = responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	if strings.Contains(body, `data-open="approve-sheet"`) {
+		t.Fatal("the requester is offered an approve control on their own request")
+	}
+	for _, want := range []string{`class="req-head"`, `class="thread"`,
+		`href="/requests/` + strconvFormat(id) + `/edit"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("requester detail view is missing %q", want)
+		}
+	}
+
+	// --- Approved: the requester is locked out of editing and offered cancellation. ---
+	if err := s.st.ApproveRequest(s.ctx, mgr, id, 23500000, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	body = responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	if strings.Contains(body, `href="/requests/`+strconvFormat(id)+`/edit"`) {
+		t.Fatal("an approved request still offers an edit link")
+	}
+	for _, want := range []string{`class="banner locked"`, `href="/requests/` + strconvFormat(id) + `/cancel"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("approved detail view is missing %q", want)
+		}
+	}
+
+	// --- The three shipped screens that already link here now resolve. ---
+	for _, path := range []string{"/requests/" + strconvFormat(id), "/requests/" + strconvFormat(id) + "/submitted"} {
+		resp := s.request(http.MethodGet, path, nil, "")
+		requireStatus(t, resp, http.StatusOK)
+		_ = responseBody(t, resp)
+	}
+
+	// --- A third party in neither seat cannot read it at all (Q5/R6). ---
+	s.seedRequester("nosy@example.test", "Nosy Parker", "OtherPass1234")
+	s.login("nosy@example.test", "OtherPass1234")
+	requireStatus(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""), http.StatusForbidden)
+}
+
+// The decisions the detail page's sheets post, through HTTP rather than through
+// the store, so the routes, the permission gates and the form field names are
+// all exercised the way a browser reaches them.
+func TestRequestDecisionsThroughTheDetailScreen(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Decide")
+	mgrID := seedSecondApprover(t, s)
+	requester := s.seedRequester("deciding@example.test", "Deciding Requester", "RequesterPass123")
+	mk := func(title string) int64 {
+		id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+			Type: "reimbursement", ShortTitle: title, ProjectID: 1, HeadID: headID, Amount: 500000,
+			Purpose: "p", ExpenseDate: "2026-07-17", ManagerID: mgrID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	approve, returned, rejected, withdrawn := mk("To approve"), mk("To return"), mk("To reject"), mk("To withdraw")
+
+	// The requester withdraws their own; nobody else's controls are offered.
+	s.login("deciding@example.test", "RequesterPass123")
+	resp := s.postForm("/requests/"+strconvFormat(withdrawn)+"/withdraw", url.Values{})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if got, _ := s.st.Request(s.ctx, withdrawn); got.Status != "withdrawn" {
+		t.Fatalf("withdraw left status %q", got.Status)
+	}
+	// A comment from the requester lands on the shared thread.
+	resp = s.postForm("/requests/"+strconvFormat(approve)+"/comment", url.Values{"body": {"Receipts attached."}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	s.login("kavita@example.test", "ApproverPass123")
+	// An adjusted approval is the point of the amount field in the sheet.
+	resp = s.postForm("/requests/"+strconvFormat(approve)+"/approve",
+		url.Values{"approved_amount": {"4,000.00"}, "note": {"Cut the cab fare"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	got, _ := s.st.Request(s.ctx, approve)
+	if got.Status != "approved" || got.ApprovedAmount == nil || *got.ApprovedAmount != 400000 {
+		t.Fatalf("approval = %q / %v, want approved at 400000", got.Status, got.ApprovedAmount)
+	}
+	// Return and reject both demand words, and refuse without them.
+	if resp := s.postForm("/requests/"+strconvFormat(returned)+"/return", url.Values{"comment": {""}}); resp.StatusCode == http.StatusSeeOther {
+		t.Fatal("a return with no comment was accepted")
+	}
+	resp = s.postForm("/requests/"+strconvFormat(returned)+"/return", url.Values{"comment": {"Attach the receipt"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if resp := s.postForm("/requests/"+strconvFormat(rejected)+"/reject", url.Values{"reason": {""}}); resp.StatusCode == http.StatusSeeOther {
+		t.Fatal("a rejection with no reason was accepted")
+	}
+	resp = s.postForm("/requests/"+strconvFormat(rejected)+"/reject", url.Values{"reason": {"Not budgeted"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if got, _ := s.st.Request(s.ctx, rejected); got.Status != "rejected" {
+		t.Fatalf("reject left status %q", got.Status)
+	}
+
+	// A rejected request is raised again as a new pending one (D1: never a draft).
+	s.login("deciding@example.test", "RequesterPass123")
+	resp = s.postForm("/requests/"+strconvFormat(rejected)+"/reraise", url.Values{})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	fresh, _ := s.st.ListRequests(s.ctx, store.RequestListOptions{Scope: "own", ViewerID: requester.ID,
+		Statuses: []string{"pending"}})
+	if len(fresh) != 1 || fresh[0].ID == rejected {
+		t.Fatalf("re-raise did not produce one new pending request: %+v", fresh)
+	}
 }
 
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.

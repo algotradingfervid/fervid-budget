@@ -1212,6 +1212,229 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The merged history-and-conversation stream — one .thread, not a history
+     list and a conversation list side by side. Everything that happened to a
+     request happened in one order, and that order is the story: an edit sits
+     between the comment that asked for it and the approval that followed.
+
+     The comment box is part of the thread rather than a separate screen,
+     because asking a question is the alternative to returning a request. */}}
+{{define "request_thread"}}
+<div class="section-head">
+  <h2>History and conversation</h2>
+  <span class="small muted">Everyone who can see this request sees this whole stream</span>
+</div>
+<ol class="thread">
+  {{range .Thread}}
+  <li{{if eq .Kind "comment"}} class="is-comment{{if eq .ActorID $.User.ID}} is-me{{end}}"{{end}}>
+    <span class="tl-dot {{threadDot .}}" aria-hidden="true">{{threadGlyph .}}</span>
+    <div class="tl-head"><b>{{if eq .Kind "comment"}}{{.ActorName}}{{else}}{{.Title}}{{end}}</b><time>{{date .CreatedAt}}</time></div>
+    <div class="tl-body">
+      {{if eq .Kind "comment"}}<p>{{.Body}}</p>{{end}}
+      {{if eq .Kind "attachment"}}<span class="tl-file">📎 {{.FileName}} · {{fileSize .FileSize}}</span>{{end}}
+      {{if .Changes}}<div class="tl-change">{{range .Changes}}{{threadField .Field}} <span class="was">{{threadValue .Field .Was}}</span> → <span class="now">{{threadValue .Field .Now}}</span><br>{{end}}</div>{{end}}
+    </div>
+  </li>
+  {{else}}<li><span class="tl-dot" aria-hidden="true">·</span><div class="tl-body muted">Nothing has happened yet.</div></li>{{end}}
+</ol>
+
+{{if .Perms.Can "request" "comment"}}
+<form class="comment-box" method="post" action="/requests/{{.Request2.ID}}/comment">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label for="cmt" class="flabel">Add a comment</label>
+  <textarea id="cmt" name="body" placeholder="Anyone who can see this request will see your comment." required></textarea>
+  <div class="cb-actions"><span class="row-end"></span><button class="btn primary small" type="submit">Post comment</button></div>
+</form>
+{{end}}
+{{end}}
+
+{{/* The approver's three decisions, each in its own .overlay > .sheet. None
+     of them is a bare inline button: returning and rejecting demand words, and
+     approving offers an amount, so each needs a moment and a form of its own.
+
+     The amount uses amountValue, not money: the .money-field draws its own ₹
+     in the .cur prefix and money.FormatPaise already carries one. */}}
+{{define "request_sheets"}}
+<div class="overlay" id="approve-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/approve">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="sh-head"><div><h2>Approve {{money .Request2.Amount}}?</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.Vendor}}</p></div><button class="sh-close" type="button" data-close="approve-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field money-field">
+        <label for="ap-amount">Amount approved</label>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="ap-amount" name="approved_amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <span class="in-words">{{inWords .Request2.Amount}}</span>
+        <span class="hint">You may approve a smaller amount than was asked for.</span>
+      </div>
+      <div class="field"><label for="ap-note">Note <span class="opt">optional</span></label><textarea id="ap-note" name="note" placeholder="Recorded in the history and visible to everyone."></textarea></div>
+      <p class="hint" style="margin:0">Accounts will be able to reserve this immediately. {{.Request2.RequesterName}} can no longer edit it.</p>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="approve-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Approve request</button></div>
+  </form>
+</div>
+
+<div class="overlay" id="return-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/return">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="sh-head"><div><h2>Return for correction</h2><p class="sh-sub">{{.Request2.RequesterName}} can edit and resubmit. The number and history stay.</p></div><button class="sh-close" type="button" data-close="return-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="rt-reason">What needs correcting <span class="req" aria-hidden="true">*</span></label><textarea id="rt-reason" name="comment" required placeholder="Be specific — this is the whole message they get."></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="return-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Return request</button></div>
+  </form>
+</div>
+
+<div class="overlay" id="reject-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/reject">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="sh-head"><div><h2>Reject this request?</h2><p class="sh-sub">Rejection is final and read-only. {{.Request2.RequesterName}} would have to raise a new request.</p></div><button class="sh-close" type="button" data-close="reject-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">!</span><div><b>This cannot be undone</b><p>If the request is fixable, return it for correction instead.</p></div></div>
+      <div class="field"><label for="rj-reason">Reason for rejection <span class="req" aria-hidden="true">*</span></label><textarea id="rj-reason" name="reason" required></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="reject-sheet">Cancel</button><span class="row-end"></span><button class="btn danger" type="submit">Reject permanently</button></div>
+  </form>
+</div>
+{{end}}
+
+{{/* The request head — number, amount, title, status and the plain sentence
+     naming whoever owes the next action. Shared by every screen that is about
+     one request, so the four of them cannot describe it four ways. */}}
+{{define "request_head"}}
+<div class="req-head">
+  <div class="rh-top">
+    <span class="rh-no">{{.Request2.Number}}</span>
+    <span class="rh-amt">{{money .Request2.Amount}}</span>
+  </div>
+  <h1>{{.Request2.ShortTitle}}</h1>
+  <p class="rh-meta">{{typeLabel .Request2.Type}}{{if .Request2.Project}} · {{.Request2.Project}}{{if .Request2.Head}} / {{.Request2.Head}}{{end}}{{end}} · raised by {{.Request2.RequesterName}} on {{date .Request2.CreatedAt}}</p>
+  <div class="rh-status">
+    {{if .Request2.Urgent}}<span class="pill urgent">Urgent</span>{{end}}
+    <span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
+  </div>
+</div>
+{{end}}
+
+{{/* One request, every audience — mockups/screens/request-detail-employee.html
+     and request-detail-manager.html are the same page.
+
+     Only the .action-bar changes between them, and it changes on permission
+     plus the reader's seat on this row: whether they raised it, whether they
+     are the approver it was sent to. Nothing here compares a role name, and
+     nothing depends on which link the reader followed to get here. */}}
+{{define "request_detail"}}
+{{template "top" .}}
+{{template "request_head" .}}
+
+{{if and (eq .Request2.RequesterID .User.ID) (eq .Request2.Status "approved")}}
+<div class="banner locked">
+  <span class="b-ico" aria-hidden="true">🔒</span>
+  <div>
+    <b>Approved requests are locked</b>
+    <p>You can no longer edit this. If it should not be paid, ask for it to be cancelled — payment
+      freezes while your approver decides.</p>
+  </div>
+</div>
+{{end}}
+{{if eq .Request2.Status "cancellation_requested"}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">⏸</span>
+  <div>
+    <b>Payment is frozen</b>
+    <p>No accountant can reserve or pay this request until {{.Request2.ManagerName}} decides.
+      Reason given: {{.Request2.CancelReason}}</p>
+  </div>
+</div>
+{{end}}
+{{if and (eq .Request2.Status "returned") .Request2.DecisionReason}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">↩</span>
+  <div><b>{{.Request2.ManagerName}} sent this back</b><p>“{{.Request2.DecisionReason}}”</p></div>
+</div>
+{{end}}
+{{if and (eq .Request2.Status "rejected") .Request2.DecisionReason}}
+<div class="banner bad">
+  <span class="b-ico" aria-hidden="true">✕</span>
+  <div><b>{{.Request2.ManagerName}} rejected this</b><p>“{{.Request2.DecisionReason}}”</p></div>
+</div>
+{{end}}
+{{if .Request2.AttachmentExceptionReason}}
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div><b>No document was attached</b><p>{{.Request2.AttachmentExceptionReason}}</p></div>
+</div>
+{{end}}
+
+<div class="card">
+  <div class="card-head"><h2>Details</h2><span class="pill neutral no-dot">{{if eq .Request2.Treatment "recoverable"}}Recoverable{{if .Request2.RecoverableCategory}} · {{recoverable .Request2.RecoverableCategory}}{{end}}{{else}}Budget expense{{end}}</span></div>
+  <dl class="dl">
+    <div><dt>Amount</dt><dd class="big">{{money .Request2.Amount}}</dd></div>
+    {{if .Request2.ApprovedAmount}}<div><dt>Approved</dt><dd class="big">{{money (deref .Request2.ApprovedAmount)}}</dd></div>{{end}}
+    {{if .Request2.NeededBy}}<div><dt>Needed by</dt><dd>{{dateLong .Request2.NeededBy}}</dd></div>{{end}}
+    {{if .Request2.Project}}<div><dt>Project</dt><dd>{{.Request2.Project}}</dd></div>{{end}}
+    {{if .Request2.Head}}<div><dt>Head</dt><dd>{{.Request2.Head}}</dd></div>{{end}}
+    <div><dt>{{if .Request2.VendorID}}Vendor{{else}}Paid to{{end}}</dt><dd>{{if and .Request2.VendorID (.Perms.Can "vendor" "view")}}<a href="/vendors/{{deref .Request2.VendorID}}">{{.Request2.Vendor}}</a>{{else}}{{.Request2.Vendor}}{{end}}</dd></div>
+    {{if .Request2.VendorGSTIN}}<div><dt>GSTIN</dt><dd class="num">{{.Request2.VendorGSTIN}}</dd></div>{{end}}
+    {{if .Request2.InvoiceNo}}<div><dt>Invoice number</dt><dd class="num">{{.Request2.InvoiceNo}}</dd></div>{{end}}
+    {{if .Request2.InvoiceDate}}<div><dt>Invoice date</dt><dd>{{dateLong .Request2.InvoiceDate}}</dd></div>{{end}}
+    {{if .Request2.ExpenseDate}}<div><dt>Expense date</dt><dd>{{dateLong .Request2.ExpenseDate}}</dd></div>{{end}}
+    {{if .Request2.AdvanceReason}}<div><dt>Advance reason</dt><dd>{{.Request2.AdvanceReason}}</dd></div>{{end}}
+    {{if .Request2.Counterparty}}<div><dt>Counterparty</dt><dd>{{.Request2.Counterparty}}</dd></div>{{end}}
+    {{if .Request2.ExpectedReturnDate}}<div><dt>Expected return</dt><dd>{{dateLong .Request2.ExpectedReturnDate}}</dd></div>{{end}}
+    {{if .Request2.RepaymentNotes}}<div><dt>Repayment terms</dt><dd>{{.Request2.RepaymentNotes}}</dd></div>{{end}}
+    <div><dt>Requested by</dt><dd>{{.Request2.RequesterName}}</dd></div>
+    <div><dt>Approver</dt><dd>{{.Request2.ManagerName}}</dd></div>
+    <div><dt>Urgency</dt><dd>{{if .Request2.Urgent}}Urgent — {{.Request2.UrgencyReason}}{{else}}Normal{{end}}</dd></div>
+    <div style="grid-column:1/-1"><dt>Purpose</dt><dd>{{.Request2.Purpose}}</dd></div>
+  </dl>
+</div>
+
+<div class="section-head"><h2>Attachments</h2><span class="small muted">{{len .RequestAtts}} {{plural (len .RequestAtts) "file" "files"}}</span></div>
+<div class="stack-8">
+  {{range .RequestAtts}}
+  <div class="file-row">
+    <span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span>
+    <span><b>{{.OriginalName}}</b><small>{{fileSize .SizeBytes}} · added {{date .CreatedAt}}</small></span>
+    {{if $.Perms.Can "attachment" "view"}}<span class="f-actions"><a class="btn small outline" href="/attachments/{{.ID}}">Download</a></span>{{end}}
+  </div>
+  {{else}}<p class="empty">No documents attached.</p>{{end}}
+</div>
+
+{{template "request_thread" .}}
+
+{{$mine := eq .Request2.RequesterID .User.ID}}{{$mineToDecide := eq .Request2.ManagerID .User.ID}}
+<div class="action-bar">
+  <span class="row-end"></span>
+  {{if and $mine (or (eq .Request2.Status "pending") (eq .Request2.Status "returned")) (.Perms.Can "request" "edit")}}
+    <a class="btn outline" href="/requests/{{.Request2.ID}}/edit">Edit request</a>
+  {{end}}
+  {{if and $mine (eq .Request2.Status "pending") (.Perms.Can "request" "withdraw")}}
+    <form method="post" action="/requests/{{.Request2.ID}}/withdraw"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn outline" type="submit">Withdraw</button></form>
+  {{end}}
+  {{if and $mine (eq .Request2.Status "approved") (.Perms.Can "request" "cancel")}}
+    <a class="btn outline" href="/requests/{{.Request2.ID}}/cancel">Request cancellation</a>
+  {{end}}
+  {{if and $mine (eq .Request2.Status "rejected") (.Perms.Can "request" "reraise")}}
+    <form method="post" action="/requests/{{.Request2.ID}}/reraise"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Raise it again</button></form>
+  {{end}}
+  {{if and $mineToDecide (eq .Request2.Status "pending")}}
+    {{if .Perms.Can "approval" "reject"}}<button class="btn danger outline" type="button" data-open="reject-sheet">Reject</button>{{end}}
+    {{if .Perms.Can "approval" "return"}}<button class="btn outline" type="button" data-open="return-sheet">Return for correction</button>{{end}}
+    {{if .Perms.Can "approval" "approve"}}<button class="btn primary" type="button" data-open="approve-sheet">Approve {{money .Request2.Amount}}</button>{{end}}
+  {{end}}
+  {{if and $mineToDecide (eq .Request2.Status "approved") (.Perms.Can "approval" "cancel")}}
+    <a class="btn danger outline" href="/requests/{{.Request2.ID}}/cancellation">Cancel with reason</a>
+  {{end}}
+  {{if and (eq .Request2.Status "cancellation_requested") $mineToDecide (.Perms.Can "approval" "cancel")}}
+    <a class="btn primary" href="/requests/{{.Request2.ID}}/cancellation">Decide the cancellation</a>
+  {{end}}
+</div>
+
+{{if and $mineToDecide (eq .Request2.Status "pending")}}{{template "request_sheets" .}}{{end}}
+{{template "bottom" .}}
+{{end}}
+
 {{/* The manager queue — mockups/screens/approvals-list.html.
 
      Its own route, because it answers a different question from the requests

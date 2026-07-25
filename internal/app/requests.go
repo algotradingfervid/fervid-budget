@@ -5,6 +5,8 @@ import (
 	"encoding/csv"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -469,6 +471,102 @@ func (a *App) requests(w http.ResponseWriter, r *http.Request) {
 		Counts: counts, Projects: projects})
 }
 
+// requestDetail is one screen for every audience. The two detail mockups are
+// the same page: only the `.action-bar` differs, and it differs on permission —
+// never on a role name, and never on which URL the reader arrived from.
+func (a *App) requestDetail(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	data, err := a.requestDetailData(r, req, req.Number)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "request_detail", data)
+}
+
+// requestDetailData loads the merged thread and the documents every screen that
+// shows one request needs, so the detail page, the returned-correction page and
+// the cancellation decision cannot drift into three different readings of the
+// same request.
+func (a *App) requestDetailData(r *http.Request, req store.Request, title string) (PageData, error) {
+	thread, err := a.st.RequestThread(r.Context(), req.ID)
+	if err != nil {
+		return PageData{}, err
+	}
+	atts, err := a.st.RequestAttachments(r.Context(), req.ID)
+	if err != nil {
+		return PageData{}, err
+	}
+	return PageData{Title: title, Request2: req, Thread: thread, RequestAtts: atts}, nil
+}
+
+// requestApprove is the approve sheet. The amount is editable there because an
+// approver may approve less than was asked for; the store is what refuses a
+// requester approving themselves, whatever this handler is sent.
+func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
+	amount, err := money.ParsePaise(r.FormValue("approved_amount"))
+	if err != nil {
+		a.respondError(w, r, http.StatusBadRequest, "Enter the amount you are approving.", err)
+		return
+	}
+	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
+}
+
+func (a *App) requestReturn(w http.ResponseWriter, r *http.Request) {
+	if err := a.st.ReturnRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("comment")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
+}
+
+func (a *App) requestReject(w http.ResponseWriter, r *http.Request) {
+	if err := a.st.RejectRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("reason")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
+}
+
+func (a *App) requestWithdraw(w http.ResponseWriter, r *http.Request) {
+	if err := a.st.WithdrawRequest(r.Context(), auth.CurrentUser(r), pathID(r)); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", pathID(r)), http.StatusSeeOther)
+}
+
+// requestReraise lands on the confirmation screen rather than the source, and
+// it lands there for the *new* request: D1 makes a re-raise a fresh pending
+// request with its own number, not a draft copy of the rejected one.
+func (a *App) requestReraise(w http.ResponseWriter, r *http.Request) {
+	id, err := a.st.ReraiseRequest(r.Context(), auth.CurrentUser(r), pathID(r))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d/submitted", id), http.StatusSeeOther)
+}
+
+func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	if _, err := a.st.AddRequestComment(r.Context(), auth.CurrentUser(r), req.ID, r.FormValue("body")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+}
+
 // approvalTab is one `.segmented` tab on the manager queue. The queue is its
 // own screen rather than a scope of /requests because it answers a different
 // question — "what is mine to decide" — and its tabs are statuses, not buckets.
@@ -643,6 +741,97 @@ func amountValue(paise int64) string {
 		return ""
 	}
 	return strings.TrimPrefix(money.FormatPaise(paise), "₹")
+}
+
+// threadDot and threadGlyph decorate one line of the merged thread. Kind wins
+// over Action: a comment is shown as the person who wrote it, whatever the
+// audit called the event behind it.
+func threadDot(e store.ThreadEntry) string {
+	switch e.Action {
+	case "submit", "reraise":
+		return "brand"
+	case "approve":
+		return "ok"
+	case "return", "cancel_request", "cancel_decline":
+		return "warn"
+	case "reject", "cancel", "withdraw":
+		return "bad"
+	default:
+		return ""
+	}
+}
+
+func threadGlyph(e store.ThreadEntry) string {
+	switch e.Kind {
+	case "comment":
+		return e.Initials
+	case "attachment":
+		return "⇪"
+	}
+	switch e.Action {
+	case "submit", "reraise":
+		return "＋"
+	case "approve":
+		return "✓"
+	case "return":
+		return "↩"
+	case "reject", "withdraw":
+		return "✕"
+	case "update":
+		return "✎"
+	case "cancel", "cancel_request", "cancel_decline":
+		return "⏸"
+	default:
+		return "·"
+	}
+}
+
+// threadValue renders one side of a `.tl-change` the way a person reads it. The
+// audit trail stores raw JSON, so an amount arrives as 2.35e+07 and a flag as
+// true — neither is a sentence anybody wants to find in their own history.
+func threadValue(field, raw string) string {
+	switch raw {
+	case "", "<nil>", "null":
+		return "—"
+	}
+	switch field {
+	case "amount", "approved_amount":
+		if paise, err := strconv.ParseFloat(raw, 64); err == nil {
+			return money.FormatPaise(int64(paise))
+		}
+	case "urgent":
+		if raw == "true" || raw == "1" {
+			return "Urgent"
+		}
+		return "Normal"
+	}
+	return raw
+}
+
+// threadField names a changed column for a reader. The audit records column
+// names, which are the right key and the wrong words.
+func threadField(column string) string {
+	if label, ok := map[string]string{
+		"amount": "Amount", "approved_amount": "Approved amount", "needed_by": "Needed by",
+		"invoice_no": "Invoice number", "invoice_date": "Invoice date", "expense_date": "Expense date",
+		"manager_id": "Approver", "short_title": "Short title", "purpose": "Purpose",
+		"urgent": "Urgency",
+	}[column]; ok {
+		return label
+	}
+	return strings.ReplaceAll(column, "_", " ")
+}
+
+// fileKind is the three-or-four letter tag the `.f-ico` square shows.
+func fileKind(name string) string {
+	ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(name), "."))
+	if ext == "" {
+		return "FILE"
+	}
+	if len(ext) > 4 {
+		ext = ext[:4]
+	}
+	return ext
 }
 
 func optionalID(id int64) *int64 {

@@ -121,6 +121,14 @@ type PageData struct {
 	TypeFilter string
 	Treatment  string
 	Counts     map[string]int
+	// Thread is the merged history-and-conversation stream the detail screens
+	// render as one `.thread`; RequestAtts is that request's own documents.
+	Thread      []store.ThreadEntry
+	RequestAtts []store.RequestAttachment
+	// Config is the Configuration screen's values. It is deliberately not
+	// Settings: Settings is what a *form* consults about the rules it must
+	// follow, Config is what the screen that edits those rules renders from.
+	Config map[string]string
 }
 
 type ReportSummary struct {
@@ -209,6 +217,11 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"requestTypes": func() []requestTypeOption { return requestTypeOptions },
 		"requestTabs":  func() []requestTab { return requestTabs },
 		"approvalTabs": func() []approvalTab { return approvalTabs },
+		"threadDot":    threadDot,
+		"threadGlyph":  threadGlyph,
+		"threadValue":  threadValue,
+		"threadField":  threadField,
+		"fileKind":     fileKind,
 		"waitingOn":    waitingOn,
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
@@ -305,6 +318,16 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /requests/duplicate-check", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestDuplicateCheck))))
 	mux.Handle("POST /requests", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestCreate))))
 	mux.Handle("GET /requests/{id}/submitted", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestSubmitted)))
+	// One detail screen for every audience: the action bar changes on
+	// permission, the page does not. Each decision posts to its own route so
+	// the gate is the verb the decision needs, not the one that opened the page.
+	mux.Handle("GET /requests/{id}", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestDetail)))
+	mux.Handle("POST /requests/{id}/comment", a.auth.RequirePermission("request", "comment", http.HandlerFunc(a.withCSRF(a.requestComment))))
+	mux.Handle("POST /requests/{id}/withdraw", a.auth.RequirePermission("request", "withdraw", http.HandlerFunc(a.withCSRF(a.requestWithdraw))))
+	mux.Handle("POST /requests/{id}/reraise", a.auth.RequirePermission("request", "reraise", http.HandlerFunc(a.withCSRF(a.requestReraise))))
+	mux.Handle("POST /requests/{id}/approve", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.withCSRF(a.requestApprove))))
+	mux.Handle("POST /requests/{id}/return", a.auth.RequirePermission("approval", "return", http.HandlerFunc(a.withCSRF(a.requestReturn))))
+	mux.Handle("POST /requests/{id}/reject", a.auth.RequirePermission("approval", "reject", http.HandlerFunc(a.withCSRF(a.requestReject))))
 	// The manager queue is its own screen (A15), gated on the verb that lets a
 	// person decide rather than on the one that lets them read.
 	mux.Handle("GET /approvals", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.approvals)))
