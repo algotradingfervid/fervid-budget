@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -8,9 +9,12 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,11 +30,13 @@ type App struct {
 	st   *store.Store
 	auth *auth.Manager
 	tpl  *template.Template
+	log  *slog.Logger
 }
 
 type PageData struct {
 	Title          string
 	User           store.User
+	Shell          Shell
 	CSRF           string
 	Error          string
 	Notice         string
@@ -44,6 +50,7 @@ type PageData struct {
 	Payments       []store.Payment
 	PaymentTotal   int64
 	Payment        store.Payment
+	PaymentAmount  string
 	Attachments    []store.Attachment
 	MonthPlans     []store.MonthPlan
 	Audit          []store.AuditEntry
@@ -60,6 +67,12 @@ type PageData struct {
 	AuditEntity    string
 	AuditAction    string
 	AuditActor     string
+	CloseGrid      store.GridData
+	Locked         bool
+	BudgetInputs   map[int64]string
+	BudgetErrors   map[int64]string
+	ErrorCode      int
+	RequestID      string
 }
 
 type ReportSummary struct {
@@ -80,7 +93,10 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, st: st, auth: am}
+	a := &App{cfg: cfg, st: st, auth: am, log: slog.Default()}
+	am.SetErrorHandler(func(w http.ResponseWriter, r *http.Request, status int, message string) {
+		a.respondError(w, r, status, message, nil)
+	})
 	a.tpl = template.Must(template.New("base").Funcs(template.FuncMap{
 		"money": money.FormatPaise,
 		"short": money.FormatShort,
@@ -120,7 +136,9 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"barClass":       barClass,
 		"varClass":       varClass,
 		"statusText":     statusText,
+		"statusFor":      statusForView,
 		"planStatusText": planStatusText,
+		"paymentMode":    paymentModeText,
 	}).Parse(templates))
 
 	ctx := contextWithTimeout()
@@ -135,7 +153,16 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 
 	mux := http.NewServeMux()
 	a.routes(mux)
-	return &http.Server{Addr: cfg.Addr, Handler: am.Middleware(mux)}, nil
+	return &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           a.httpObservability(am.Middleware(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
+		ErrorLog:          slog.NewLogLogger(a.log.Handler(), slog.LevelError),
+	}, nil
 }
 
 func contextWithTimeout() struct {
@@ -166,6 +193,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /payments/{id}/edit", a.auth.RequirePermission("payment", "update", http.HandlerFunc(a.withCSRF(a.paymentEdit))))
 	mux.Handle("POST /payments/{id}/void", a.auth.RequirePermission("payment", "void", http.HandlerFunc(a.withCSRF(a.paymentVoid))))
 	mux.Handle("POST /payments/{id}/attachments", a.auth.RequirePermission("payment_attachment", "create", http.HandlerFunc(a.withCSRF(a.attachmentUpload))))
+	mux.Handle("GET /attachments/{id}", a.auth.RequirePermission("payment_attachment", "read", http.HandlerFunc(a.attachmentDownload)))
 	mux.Handle("GET /export.csv", a.auth.RequirePermission("report", "export", http.HandlerFunc(a.exportGrid)))
 	mux.Handle("GET /reports/monthly", a.auth.RequirePermission("report", "read", http.HandlerFunc(a.report)))
 	mux.Handle("GET /reports/projects", a.auth.RequirePermission("report", "read", http.HandlerFunc(a.report)))
@@ -176,32 +204,40 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /months/{month}/lock", a.auth.RequirePermission("month_lock", "write", http.HandlerFunc(a.withCSRF(a.lockMonth))))
 	mux.Handle("POST /months/{month}/unlock", a.auth.RequirePermission("month_lock", "write", http.HandlerFunc(a.withCSRF(a.unlockMonth))))
 	mux.Handle("GET /projects", a.auth.RequirePermission("project", "read", http.HandlerFunc(a.projects)))
-	mux.Handle("POST /projects", a.auth.RequirePermission("project", "write", http.HandlerFunc(a.projectSave)))
+	mux.Handle("POST /projects", a.auth.RequirePermission("project", "write", http.HandlerFunc(a.withCSRF(a.projectSave))))
 	mux.Handle("GET /heads", a.auth.RequirePermission("head", "read", http.HandlerFunc(a.heads)))
-	mux.Handle("POST /heads", a.auth.RequirePermission("head", "write", http.HandlerFunc(a.headSave)))
+	mux.Handle("POST /heads", a.auth.RequirePermission("head", "write", http.HandlerFunc(a.withCSRF(a.headSave))))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "read", http.HandlerFunc(a.users)))
-	mux.Handle("POST /users", a.auth.RequirePermission("user", "write", http.HandlerFunc(a.userSave)))
+	mux.Handle("POST /users", a.auth.RequirePermission("user", "write", http.HandlerFunc(a.withCSRF(a.userSave))))
 	mux.Handle("GET /audit", a.auth.RequirePermission("audit", "read", http.HandlerFunc(a.auditLog)))
 	mux.Handle("GET /backups", a.auth.RequirePermission("backup", "read", http.HandlerFunc(a.backups)))
 	mux.Handle("POST /backups", a.auth.RequirePermission("backup", "create", http.HandlerFunc(a.withCSRF(a.backupCreate))))
 }
 
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data PageData) {
-	data.User = auth.CurrentUser(r)
-	data.CSRF = a.auth.EnsureCSRF(w, r)
-	if data.Month == "" {
-		data.Month = time.Now().Format("2006-01")
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.tpl.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, err.Error(), 500)
-	}
+	a.renderStatus(w, r, http.StatusOK, name, data)
 }
 
 func (a *App) withCSRF(fn func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		var err error
+		if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+			err = r.ParseMultipartForm(1 << 20)
+		} else {
+			err = r.ParseForm()
+		}
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				a.respondError(w, r, http.StatusRequestEntityTooLarge, "The submitted form is too large.", err)
+			} else {
+				a.respondError(w, r, http.StatusBadRequest, "The submitted form could not be read.", err)
+			}
+			return
+		}
 		if !a.auth.CheckCSRF(r) {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+			a.respondError(w, r, http.StatusForbidden, "Your form session expired. Refresh the page and try again.", nil)
 			return
 		}
 		fn(w, r)
@@ -214,58 +250,95 @@ func (a *App) loginForm(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		a.render(w, r, "login", PageData{Title: "Login", Error: "Invalid form"})
+		a.renderStatus(w, r, http.StatusBadRequest, "login", PageData{Title: "Login", Error: "Invalid form"})
 		return
 	}
-	u, err := a.st.UserByEmail(r.Context(), r.FormValue("email"))
+	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	u, err := a.st.UserByEmail(r.Context(), email)
+	if err == nil {
+		if locked, until, lockErr := a.st.LoginLocked(r.Context(), email); lockErr == nil && locked {
+			a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "login_failed", EntityType: "user", EntityID: &u.ID, Summary: "Login blocked until " + until.Format(time.RFC3339), IP: r.RemoteAddr})
+			a.render(w, r, "login", PageData{Title: "Login", Error: "Too many failed attempts. Try again later."})
+			return
+		}
+	}
 	if err != nil || !u.Active || !auth.CheckPassword(u.PasswordHash, r.FormValue("password")) {
+		if _, failureErr := a.st.RecordFailedLogin(r.Context(), email); failureErr != nil && !errors.Is(failureErr, store.ErrNotFound) {
+			a.log.ErrorContext(r.Context(), "failed to record login attempt", "request_id", requestID(r), "error", failureErr)
+		}
+		var actorID *int64
+		actorName := email
+		if err == nil {
+			actorID = &u.ID
+			actorName = u.Name
+		}
+		a.recordAudit(r, store.AuditInput{ActorID: actorID, ActorName: actorName, Action: "login_failed", EntityType: "user", EntityID: actorID, Summary: "Failed login attempt", IP: r.RemoteAddr})
 		a.render(w, r, "login", PageData{Title: "Login", Error: "Invalid email or password"})
 		return
 	}
+	if err := a.st.ResetLoginFailures(r.Context(), email); err != nil {
+		a.log.ErrorContext(r.Context(), "failed to reset login attempts", "request_id", requestID(r), "error", err)
+	}
 	a.auth.Login(w, r, u)
-	_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "login", EntityType: "user", EntityID: &u.ID, Summary: "Logged in", IP: r.RemoteAddr})
+	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "login", EntityType: "user", EntityID: &u.ID, Summary: "Logged in", IP: r.RemoteAddr})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	if u.ID != 0 {
-		_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "logout", EntityType: "user", EntityID: &u.ID, Summary: "Logged out", IP: r.RemoteAddr})
+		a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "logout", EntityType: "user", EntityID: &u.ID, Summary: "Logged out", IP: r.RemoteAddr})
 	}
 	a.auth.Logout(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (a *App) grid(w http.ResponseWriter, r *http.Request) {
-	month := queryDefault(r, "month", time.Now().Format("2006-01"))
+	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	status := r.URL.Query().Get("status")
 	q := r.URL.Query().Get("q")
 	grid, err := a.st.Grid(r.Context(), month, status, q)
 	if err != nil {
-		a.render(w, r, "grid", PageData{Title: "Variance Grid", Error: err.Error(), Month: month})
+		a.respondStoreError(w, r, err)
 		return
 	}
-	payments, _ := a.st.RecentPayments(r.Context(), 10)
-	a.render(w, r, "grid", PageData{Title: "Variance Grid", Grid: grid, Month: month, Status: status, Query: q, Payments: payments})
+	closeGrid, err := a.st.Grid(r.Context(), month, "", "")
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Month: month, Status: "active", Limit: 10})
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "grid", PageData{Title: "Variance Grid", Grid: grid, CloseGrid: closeGrid, Month: month, Status: status, Query: q, Payments: payments})
 }
 
 func (a *App) paymentForm(w http.ResponseWriter, r *http.Request) {
-	heads, _ := a.st.ListHeads(r.Context(), true)
+	heads, err := a.st.ListHeads(r.Context(), true)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
 	selectedHeadID := parseID(r.URL.Query().Get("head_id"))
 	paidOn := time.Now().Format("2006-01-02")
-	if month := r.URL.Query().Get("month"); validMonthInput(month) {
+	if date := r.URL.Query().Get("date"); validDateInput(date) {
+		paidOn = date
+	} else if month := r.URL.Query().Get("month"); validMonthInput(month) {
 		paidOn = month + "-01"
 	}
-	a.render(w, r, "payment_form", PageData{Title: "Add Payment", Heads: heads, SelectedHeadID: selectedHeadID, Payment: store.Payment{HeadID: selectedHeadID, PaidOn: paidOn}})
+	locked := a.st.IsLocked(r.Context(), paidOn[:7])
+	a.render(w, r, "payment_form", PageData{Title: "Add Payment", Heads: heads, SelectedHeadID: selectedHeadID, Payment: store.Payment{HeadID: selectedHeadID, PaidOn: paidOn}, Locked: locked})
 }
 
 func (a *App) payments(w http.ResponseWriter, r *http.Request) {
-	month := queryDefault(r, "month", time.Now().Format("2006-01"))
+	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	status := queryDefault(r, "status", "active")
 	q := r.URL.Query().Get("q")
 	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Month: month, Status: status, Query: q})
 	if err != nil {
-		a.render(w, r, "payments", PageData{Title: "Payments", Month: month, Status: status, Query: q, Error: friendly(err)})
+		a.respondStoreError(w, r, err)
 		return
 	}
 	var total int64
@@ -274,25 +347,38 @@ func (a *App) payments(w http.ResponseWriter, r *http.Request) {
 			total += payment.Amount
 		}
 	}
-	a.render(w, r, "payments", PageData{Title: "Payments", Month: month, Status: status, Query: q, Payments: payments, PaymentTotal: total})
+	a.render(w, r, "payments", PageData{Title: "Payments", Month: month, Status: status, Query: q, Payments: payments, PaymentTotal: total, Locked: a.st.IsLocked(r.Context(), month)})
 }
 
 func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	in, err := paymentInput(r)
-	var id int64
+	var attachment *store.AttachmentInput
+	var attachmentPath string
 	if err == nil {
-		id, err = a.st.CreatePayment(r.Context(), auth.CurrentUser(r), in)
+		attachment, attachmentPath, err = a.stageUploadedAttachment(r)
 	}
 	if err == nil {
-		err = a.saveUploadedAttachment(r, id)
+		_, err = a.st.CreatePaymentWithAttachment(r.Context(), auth.CurrentUser(r), in, attachment)
 	}
 	if err != nil {
-		heads, _ := a.st.ListHeads(r.Context(), true)
-		a.render(w, r, "payment_form", PageData{Title: "Add Payment", Heads: heads, SelectedHeadID: in.HeadID, Payment: paymentFromInput(in), Error: friendly(err)})
+		removeStagedAttachment(a.log, r, attachmentPath)
+		status := storeErrorStatus(err)
+		if status >= http.StatusInternalServerError {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		heads, headsErr := a.st.ListHeads(r.Context(), true)
+		if headsErr != nil {
+			a.respondStoreError(w, r, headsErr)
+			return
+		}
+		paidOn := in.PaidOn
+		locked := validDateInput(paidOn) && a.st.IsLocked(r.Context(), paidOn[:7])
+		a.renderStatus(w, r, status, "payment_form", PageData{Title: "Add Payment", Heads: heads, SelectedHeadID: in.HeadID, Payment: paymentFromInput(in), PaymentAmount: r.FormValue("amount"), Locked: locked, Error: friendly(err)})
 		return
 	}
 	if r.FormValue("submit_action") == "add_another" {
-		http.Redirect(w, r, fmt.Sprintf("/payments/new?month=%s&head_id=%d", in.PaidOn[:7], in.HeadID), http.StatusSeeOther)
+		http.Redirect(w, r, fmt.Sprintf("/payments/new?date=%s&head_id=%d", in.PaidOn, in.HeadID), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/?month="+in.PaidOn[:7], http.StatusSeeOther)
@@ -302,34 +388,63 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	p, err := a.st.Payment(r.Context(), id)
 	if err != nil {
-		http.NotFound(w, r)
+		a.respondStoreError(w, r, err)
 		return
 	}
-	atts, _ := a.st.Attachments(r.Context(), id)
-	audit, _ := a.st.Audit(r.Context(), "payment", id, 50)
-	a.render(w, r, "payment_detail", PageData{Title: "Payment Detail", Payment: p, Attachments: atts, Audit: audit})
+	atts, err := a.st.Attachments(r.Context(), id)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	audit, err := a.st.Audit(r.Context(), "payment", id, 50)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "payment_detail", PageData{Title: "Payment Detail", Payment: p, Attachments: atts, Audit: audit, Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7])})
 }
 
 func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 	p, err := a.st.Payment(r.Context(), pathID(r))
 	if err != nil {
-		http.NotFound(w, r)
+		a.respondStoreError(w, r, err)
 		return
 	}
-	heads, _ := a.st.ListHeads(r.Context(), true)
-	a.render(w, r, "payment_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads})
+	heads, err := a.st.ListHeads(r.Context(), true)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "payment_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads, Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7]) || p.VoidedAt != nil})
 }
 
 func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	in, err := paymentInput(r)
+	var attachment *store.AttachmentInput
+	var attachmentPath string
 	if err == nil {
-		err = a.st.UpdatePayment(r.Context(), auth.CurrentUser(r), id, in)
+		attachment, attachmentPath, err = a.stageUploadedAttachment(r)
+	}
+	if err == nil {
+		err = a.st.UpdatePaymentWithAttachment(r.Context(), auth.CurrentUser(r), id, in, attachment)
 	}
 	if err != nil {
-		p, _ := a.st.Payment(r.Context(), id)
-		heads, _ := a.st.ListHeads(r.Context(), true)
-		a.render(w, r, "payment_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads, Error: friendly(err)})
+		removeStagedAttachment(a.log, r, attachmentPath)
+		status := storeErrorStatus(err)
+		if status >= http.StatusInternalServerError {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		heads, headsErr := a.st.ListHeads(r.Context(), true)
+		if headsErr != nil {
+			a.respondStoreError(w, r, headsErr)
+			return
+		}
+		p := paymentFromInput(in)
+		p.ID = id
+		locked := validDateInput(in.PaidOn) && a.st.IsLocked(r.Context(), in.PaidOn[:7])
+		a.renderStatus(w, r, status, "payment_form", PageData{Title: "Edit Payment", Payment: p, PaymentAmount: r.FormValue("amount"), Heads: heads, Locked: locked, Error: friendly(err)})
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
@@ -339,7 +454,7 @@ func (a *App) paymentVoid(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	err := a.st.VoidPayment(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason"))
 	if err != nil {
-		http.Error(w, friendly(err), http.StatusBadRequest)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	if next := r.FormValue("next"); strings.HasPrefix(next, "/payments") {
@@ -351,47 +466,105 @@ func (a *App) paymentVoid(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
-	if err := r.ParseMultipartForm(20 << 20); err != nil {
-		http.Error(w, "invalid upload", 400)
+	attachment, attachmentPath, err := a.stageUploadedAttachment(r)
+	if err != nil {
+		removeStagedAttachment(a.log, r, attachmentPath)
+		a.respondStoreError(w, r, err)
 		return
 	}
-	if err := a.saveUploadedAttachment(r, id); err != nil {
-		http.Error(w, friendly(err), 500)
+	if attachment == nil {
+		a.respondError(w, r, http.StatusBadRequest, "Choose a file to upload.", nil)
+		return
+	}
+	if err := a.st.AddAttachment(r.Context(), auth.CurrentUser(r), id, attachment.OriginalName, attachment.StoredPath, attachment.MimeType, attachment.SizeBytes); err != nil {
+		removeStagedAttachment(a.log, r, attachmentPath)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
 }
 
-func (a *App) saveUploadedAttachment(r *http.Request, paymentID int64) error {
+func (a *App) attachmentDownload(w http.ResponseWriter, r *http.Request) {
+	att, err := a.st.AttachmentByID(r.Context(), pathID(r))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	root, err := filepath.Abs(a.cfg.AttachmentDir)
+	if err != nil {
+		a.respondError(w, r, http.StatusInternalServerError, "The attachment could not be opened.", err)
+		return
+	}
+	stored, err := filepath.Abs(att.StoredPath)
+	if err != nil || !strings.HasPrefix(stored, root+string(os.PathSeparator)) {
+		a.log.WarnContext(r.Context(), "unsafe attachment path rejected", "request_id", requestID(r), "attachment_id", att.ID)
+		a.respondError(w, r, http.StatusNotFound, "The requested attachment was not found.", nil)
+		return
+	}
+	if _, err := os.Stat(stored); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			a.respondError(w, r, http.StatusNotFound, "The requested attachment was not found.", nil)
+		} else {
+			a.respondError(w, r, http.StatusInternalServerError, "The attachment could not be opened.", err)
+		}
+		return
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": att.OriginalName}))
+	if att.MimeType != "" {
+		w.Header().Set("Content-Type", att.MimeType)
+	}
+	http.ServeFile(w, r, stored)
+}
+
+func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, string, error) {
 	file, header, err := r.FormFile("attachment")
 	if err != nil {
-		return nil
+		if errors.Is(err, http.ErrMissingFile) {
+			return nil, "", nil
+		}
+		return nil, "", fmt.Errorf("read attachment: %w", err)
 	}
 	defer file.Close()
 	if strings.TrimSpace(header.Filename) == "" {
-		return nil
+		return nil, "", nil
 	}
-	name := fmt.Sprintf("%d-%d-%s", paymentID, time.Now().UnixNano(), filepath.Base(header.Filename))
+	name := fmt.Sprintf("%d-%s", time.Now().UnixNano(), filepath.Base(header.Filename))
 	stored := filepath.Join(a.cfg.AttachmentDir, name)
-	out, err := os.Create(stored)
+	out, err := os.OpenFile(stored, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return err
+		return nil, "", fmt.Errorf("create attachment: %w", err)
 	}
-	size, err := io.Copy(out, file)
+	cleanup := func() {
+		if removeErr := os.Remove(stored); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			a.log.ErrorContext(r.Context(), "attachment cleanup failed", "request_id", requestID(r), "path", stored, "error", removeErr)
+		}
+	}
+	size, copyErr := io.Copy(out, io.LimitReader(file, maxAttachmentBytes+1))
 	cerr := out.Close()
-	if err != nil {
-		return err
+	if copyErr != nil {
+		cleanup()
+		return nil, "", fmt.Errorf("store attachment: %w", copyErr)
 	}
 	if cerr != nil {
-		return cerr
+		cleanup()
+		return nil, "", fmt.Errorf("close attachment: %w", cerr)
 	}
-	return a.st.AddAttachment(r.Context(), auth.CurrentUser(r), paymentID, header.Filename, stored, header.Header.Get("Content-Type"), size)
+	if size > maxAttachmentBytes {
+		cleanup()
+		return nil, "", fmt.Errorf("%w: files must be 20 MiB or smaller", store.ErrValidation)
+	}
+	return &store.AttachmentInput{
+		OriginalName: filepath.Base(header.Filename),
+		StoredPath:   stored,
+		MimeType:     header.Header.Get("Content-Type"),
+		SizeBytes:    size,
+	}, stored, nil
 }
 
 func (a *App) months(w http.ResponseWriter, r *http.Request) {
 	plans, err := a.st.ListMonthPlans(r.Context())
 	if err != nil {
-		a.render(w, r, "months", PageData{Title: "Monthly Plans", Error: friendly(err)})
+		a.respondStoreError(w, r, err)
 		return
 	}
 	target := defaultTargetMonth(plans)
@@ -406,35 +579,71 @@ func (a *App) monthCreate(w http.ResponseWriter, r *http.Request) {
 		source = strings.TrimSpace(r.FormValue("source_month"))
 	}
 	if err := a.st.CreateMonthPlan(r.Context(), auth.CurrentUser(r), target, source); err != nil {
-		plans, _ := a.st.ListMonthPlans(r.Context())
-		a.render(w, r, "months", PageData{Title: "Monthly Plans", MonthPlans: plans, TargetMonth: target, SourceMonth: source, Error: friendly(err)})
+		plans, listErr := a.st.ListMonthPlans(r.Context())
+		if listErr != nil {
+			a.respondStoreError(w, r, listErr)
+			return
+		}
+		a.renderStatus(w, r, http.StatusBadRequest, "months", PageData{Title: "Monthly Plans", MonthPlans: plans, TargetMonth: target, SourceMonth: source, Error: friendly(err)})
 		return
 	}
 	http.Redirect(w, r, "/budgets?month="+target, http.StatusSeeOther)
 }
 
 func (a *App) budgets(w http.ResponseWriter, r *http.Request) {
-	month := queryDefault(r, "month", time.Now().Format("2006-01"))
-	grid, _ := a.st.Grid(r.Context(), month, "", "")
-	heads, _ := a.st.ListHeads(r.Context(), true)
+	month := validMonthOrCurrent(r.URL.Query().Get("month"))
+	grid, err := a.st.Grid(r.Context(), month, "", "")
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	heads, err := a.st.ListHeads(r.Context(), true)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
 	a.render(w, r, "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads})
 }
 
 func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
-	month := r.FormValue("month")
+	month := strings.TrimSpace(r.FormValue("month"))
+	if !validMonthInput(month) {
+		a.respondError(w, r, http.StatusBadRequest, "A valid month is required.", nil)
+		return
+	}
 	u := auth.CurrentUser(r)
+	inputs := make(map[int64]string)
+	var updates []store.BudgetInput
+	var parseErr error
 	for k, v := range r.Form {
 		if !strings.HasPrefix(k, "budget_") {
 			continue
 		}
-		headID, _ := strconv.ParseInt(strings.TrimPrefix(k, "budget_"), 10, 64)
-		amt, err := money.ParsePaise(v[0])
-		if err == nil {
-			if err := a.st.SetBudget(r.Context(), u, headID, month, amt); err != nil {
-				http.Error(w, friendly(err), 400)
-				return
-			}
+		headID, idErr := strconv.ParseInt(strings.TrimPrefix(k, "budget_"), 10, 64)
+		raw := ""
+		if len(v) > 0 {
+			raw = v[0]
 		}
+		inputs[headID] = raw
+		amt, amountErr := money.ParsePaise(raw)
+		if idErr != nil || headID <= 0 || amountErr != nil {
+			parseErr = fmt.Errorf("%w: invalid budget amount for one or more heads", store.ErrValidation)
+			continue
+		}
+		updates = append(updates, store.BudgetInput{HeadID: headID, Amount: amt})
+	}
+	if parseErr == nil {
+		parseErr = a.st.SetBudgets(r.Context(), u, month, updates)
+	}
+	if parseErr != nil {
+		grid, gridErr := a.st.Grid(r.Context(), month, "", "")
+		heads, headsErr := a.st.ListHeads(r.Context(), true)
+		if gridErr != nil || headsErr != nil {
+			a.respondStoreError(w, r, errors.Join(gridErr, headsErr))
+			return
+		}
+		a.renderStatus(w, r, http.StatusBadRequest, "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, Error: friendly(parseErr)})
+		return
 	}
 	http.Redirect(w, r, "/budgets?month="+month, http.StatusSeeOther)
 }
@@ -442,7 +651,7 @@ func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 func (a *App) lockMonth(w http.ResponseWriter, r *http.Request) {
 	month := r.PathValue("month")
 	if err := a.st.LockMonth(r.Context(), auth.CurrentUser(r), month, r.FormValue("reason")); err != nil {
-		http.Error(w, friendly(err), 400)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/?month="+month, http.StatusSeeOther)
@@ -451,99 +660,126 @@ func (a *App) lockMonth(w http.ResponseWriter, r *http.Request) {
 func (a *App) unlockMonth(w http.ResponseWriter, r *http.Request) {
 	month := r.PathValue("month")
 	if err := a.st.UnlockMonth(r.Context(), auth.CurrentUser(r), month, r.FormValue("reason")); err != nil {
-		http.Error(w, friendly(err), 400)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/?month="+month, http.StatusSeeOther)
 }
 
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
-	projects, _ := a.st.ListProjects(r.Context(), false)
+	projects, err := a.st.ListProjects(r.Context(), false)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
 	a.render(w, r, "projects", PageData{Title: "Projects", Projects: projects})
 }
 
 func (a *App) projectSave(w http.ResponseWriter, r *http.Request) {
-	if !a.auth.CheckCSRF(r) {
-		http.Error(w, "invalid CSRF token", 403)
-		return
-	}
 	id := parseID(r.FormValue("id"))
 	sortOrder, _ := strconv.Atoi(r.FormValue("sort_order"))
-	pid, err := a.st.UpsertProject(r.Context(), id, r.FormValue("name"), r.FormValue("active") == "on" || id == 0, sortOrder)
+	pid, err := a.st.UpsertProject(r.Context(), id, r.FormValue("name"), r.FormValue("active") == "on", sortOrder)
 	if err == nil {
 		u := auth.CurrentUser(r)
-		_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "update", EntityType: "project", EntityID: &pid, Summary: "Saved project " + r.FormValue("name")})
+		action := "update"
+		if id == 0 {
+			action = "create"
+		}
+		a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: action, EntityType: "project", EntityID: &pid, Summary: strings.Title(action) + "d project " + strings.TrimSpace(r.FormValue("name"))})
 	}
 	if err != nil {
-		http.Error(w, friendly(err), 400)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/projects", http.StatusSeeOther)
 }
 
 func (a *App) heads(w http.ResponseWriter, r *http.Request) {
-	heads, _ := a.st.ListHeads(r.Context(), false)
-	projects, _ := a.st.ListProjects(r.Context(), true)
+	heads, err := a.st.ListHeads(r.Context(), false)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	projects, err := a.st.ListProjects(r.Context(), true)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
 	a.render(w, r, "heads", PageData{Title: "Heads", Heads: heads, Projects: projects})
 }
 
 func (a *App) headSave(w http.ResponseWriter, r *http.Request) {
-	if !a.auth.CheckCSRF(r) {
-		http.Error(w, "invalid CSRF token", 403)
-		return
-	}
 	id := parseID(r.FormValue("id"))
 	projectID := parseID(r.FormValue("project_id"))
 	sortOrder, _ := strconv.Atoi(r.FormValue("sort_order"))
-	hid, err := a.st.UpsertHead(r.Context(), id, projectID, r.FormValue("name"), r.FormValue("due_day"), r.FormValue("active") == "on" || id == 0, sortOrder)
+	hid, err := a.st.UpsertHead(r.Context(), id, projectID, r.FormValue("name"), r.FormValue("due_day"), r.FormValue("active") == "on", sortOrder)
 	if err == nil {
 		u := auth.CurrentUser(r)
-		_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "update", EntityType: "head", EntityID: &hid, Summary: "Saved head " + r.FormValue("name")})
+		action := "update"
+		if id == 0 {
+			action = "create"
+		}
+		a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: action, EntityType: "head", EntityID: &hid, Summary: strings.Title(action) + "d head " + strings.TrimSpace(r.FormValue("name"))})
 	}
 	if err != nil {
-		http.Error(w, friendly(err), 400)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/heads", http.StatusSeeOther)
 }
 
 func (a *App) users(w http.ResponseWriter, r *http.Request) {
-	users, _ := a.st.ListUsers(r.Context())
+	users, err := a.st.ListUsers(r.Context())
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
 	a.render(w, r, "users", PageData{Title: "Users", Users: users})
 }
 
 func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
-	if !a.auth.CheckCSRF(r) {
-		http.Error(w, "invalid CSRF token", 403)
-		return
-	}
 	id := parseID(r.FormValue("id"))
 	hash := ""
 	if pw := r.FormValue("password"); pw != "" {
+		if err := validatePassword(pw); err != nil {
+			a.respondError(w, r, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
 		var err error
 		hash, err = auth.HashPassword(pw)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			a.respondError(w, r, http.StatusInternalServerError, "The password could not be secured.", err)
 			return
 		}
 	}
-	active := r.FormValue("active") == "on" || id == 0
+	active := r.FormValue("active") == "on"
 	var err error
+	var savedID int64
 	if id == 0 {
 		if hash == "" {
-			http.Error(w, "password is required", 400)
+			a.respondError(w, r, http.StatusBadRequest, "A password is required.", nil)
 			return
 		}
-		_, err = a.st.CreateUser(r.Context(), r.FormValue("email"), r.FormValue("name"), hash, r.FormValue("role"), active)
+		savedID, err = a.st.CreateUser(r.Context(), r.FormValue("email"), r.FormValue("name"), hash, r.FormValue("role"), active)
 	} else {
+		current := auth.CurrentUser(r)
+		if id == current.ID && (!active || r.FormValue("role") != "admin") {
+			a.respondError(w, r, http.StatusBadRequest, "You cannot deactivate or demote your own administrator account.", nil)
+			return
+		}
 		err = a.st.UpdateUser(r.Context(), id, r.FormValue("name"), r.FormValue("role"), active, hash)
+		savedID = id
 	}
 	if err != nil {
-		http.Error(w, friendly(err), 400)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	u := auth.CurrentUser(r)
-	_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "update", EntityType: "user", Summary: "Saved user " + r.FormValue("email")})
+	action := "update"
+	if id == 0 {
+		action = "create"
+	}
+	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: action, EntityType: "user", EntityID: &savedID, Summary: strings.Title(action) + "d user " + strings.ToLower(strings.TrimSpace(r.FormValue("email")))})
 	http.Redirect(w, r, "/users", http.StatusSeeOther)
 }
 
@@ -551,7 +787,11 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 	entity := strings.TrimSpace(r.URL.Query().Get("entity"))
 	action := strings.TrimSpace(r.URL.Query().Get("action"))
 	actor := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("actor")))
-	audit, _ := a.st.Audit(r.Context(), entity, parseID(r.URL.Query().Get("id")), 1000)
+	audit, err := a.st.Audit(r.Context(), entity, parseID(r.URL.Query().Get("id")), 1000)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
 	if action != "" || actor != "" {
 		filtered := audit[:0]
 		for _, entry := range audit {
@@ -572,94 +812,128 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) backups(w http.ResponseWriter, r *http.Request) {
-	entries, _ := os.ReadDir(a.cfg.BackupDir)
+	entries, err := os.ReadDir(a.cfg.BackupDir)
+	if err != nil {
+		a.respondError(w, r, http.StatusInternalServerError, "Backups could not be listed.", err)
+		return
+	}
 	var names []string
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), "backup-") {
 			names = append(names, entry.Name())
 		}
 	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
 	a.render(w, r, "backups", PageData{Title: "Backups", Backups: names})
 }
 
 func (a *App) backupCreate(w http.ResponseWriter, r *http.Request) {
 	info, err := store.Backup(r.Context(), a.cfg.DBPath, a.cfg.AttachmentDir, a.cfg.BackupDir)
 	if err != nil {
-		a.render(w, r, "backups", PageData{Title: "Backups", Error: err.Error()})
+		a.respondError(w, r, http.StatusInternalServerError, "The backup could not be created.", err)
 		return
 	}
-	_ = store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, time.Now())
+	if err := store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, time.Now()); err != nil {
+		a.log.WarnContext(r.Context(), "backup pruning failed", "request_id", requestID(r), "error", err)
+	}
 	u := auth.CurrentUser(r)
-	_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "create", EntityType: "backup", Summary: "Created backup " + info.Path})
+	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "create", EntityType: "backup", Summary: "Created backup " + info.Path})
 	http.Redirect(w, r, "/backups", http.StatusSeeOther)
 }
 
 func (a *App) report(w http.ResponseWriter, r *http.Request) {
-	from := queryDefault(r, "from", queryDefault(r, "month", time.Now().Format("2006-01")))
-	to := queryDefault(r, "to", from)
+	from := validMonthOrCurrent(queryDefault(r, "from", r.URL.Query().Get("month")))
+	to := validMonthOrFallback(r.URL.Query().Get("to"), from)
+	if from > to {
+		from, to = to, from
+	}
 	mode := strings.TrimPrefix(r.URL.Path, "/reports/")
 	rows, err := a.st.Report(r.Context(), from, to, mode)
 	if err != nil {
-		a.render(w, r, "reports", PageData{Title: "Reports", Error: err.Error(), From: from, To: to, Mode: mode})
+		a.respondStoreError(w, r, err)
 		return
+	}
+	if mode != "monthly" {
+		rows = nonEmptyReportRows(rows)
 	}
 	a.render(w, r, "reports", PageData{Title: "Reports", Reports: rows, Summary: summarizeReports(rows), From: from, To: to, Mode: mode})
 }
 
 func (a *App) exportGrid(w http.ResponseWriter, r *http.Request) {
-	month := queryDefault(r, "month", time.Now().Format("2006-01"))
+	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	grid, err := a.st.Grid(r.Context(), month, r.URL.Query().Get("status"), r.URL.Query().Get("q"))
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	u := auth.CurrentUser(r)
-	_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported grid " + month})
-	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", `attachment; filename="variance-`+month+`.csv"`)
-	cw := csv.NewWriter(w)
+	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported grid " + month})
+	var body bytes.Buffer
+	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Project", "Head", "Budget", "Actual", "Variance", "Variance %", "Status"})
 	for _, row := range grid.Rows {
 		_ = cw.Write([]string{row.Project, row.Head, money.FormatPaise(row.Budget), money.FormatPaise(row.Actual), money.FormatPaise(row.Variance), row.VariancePercent, row.Status})
 	}
 	cw.Flush()
+	if err := cw.Error(); err != nil {
+		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="variance-`+month+`.csv"`)
+	if _, err := w.Write(body.Bytes()); err != nil {
+		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
+	}
 }
 
 func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 	year := queryDefault(r, "year", time.Now().Format("2006"))
-	from, to := year+"-01", year+"-12"
+	from := validMonthOrFallback(r.URL.Query().Get("from"), year+"-01")
+	to := validMonthOrFallback(r.URL.Query().Get("to"), year+"-12")
+	if from > to {
+		from, to = to, from
+	}
 	rows, err := a.st.Report(r.Context(), from, to, "heads")
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		a.respondStoreError(w, r, err)
 		return
 	}
 	u := auth.CurrentUser(r)
-	_ = a.st.RecordAudit(r.Context(), store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported YTD " + year})
-	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", `attachment; filename="ytd-`+year+`.csv"`)
-	cw := csv.NewWriter(w)
+	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported report " + from + " to " + to})
+	var body bytes.Buffer
+	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Period", "Project", "Head", "Budget", "Actual", "Variance", "Variance %"})
 	for _, row := range rows {
 		_ = cw.Write([]string{row.Period, row.Project, row.Head, money.FormatPaise(row.Budget), money.FormatPaise(row.Actual), money.FormatPaise(row.Variance), row.VariancePercent})
 	}
 	cw.Flush()
+	if err := cw.Error(); err != nil {
+		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="report-`+from+`-to-`+to+`.csv"`)
+	if _, err := w.Write(body.Bytes()); err != nil {
+		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
+	}
 }
 
 func paymentInput(r *http.Request) (store.PaymentInput, error) {
-	amount, err := money.ParsePaise(r.FormValue("amount"))
-	if err != nil {
-		return store.PaymentInput{}, err
-	}
-	return store.PaymentInput{
+	in := store.PaymentInput{
 		HeadID:      parseID(r.FormValue("head_id")),
 		PaidOn:      r.FormValue("paid_on"),
-		Amount:      amount,
 		VendorPayee: r.FormValue("vendor_payee"),
 		PaymentMode: r.FormValue("payment_mode"),
 		InvoiceNo:   r.FormValue("invoice_no"),
 		ReferenceNo: r.FormValue("reference_no"),
 		Remarks:     r.FormValue("remarks"),
-	}, nil
+	}
+	amount, err := money.ParsePaise(r.FormValue("amount"))
+	in.Amount = amount
+	if err != nil {
+		return in, fmt.Errorf("%w: invalid amount; enter a valid payment amount", store.ErrValidation)
+	}
+	return in, err
 }
 
 func queryDefault(r *http.Request, key, fallback string) string {
@@ -679,6 +953,42 @@ func parseID(s string) int64 {
 func validMonthInput(s string) bool {
 	_, err := time.Parse("2006-01", s)
 	return err == nil
+}
+
+func validMonthOrCurrent(s string) string {
+	return validMonthOrFallback(s, time.Now().Format("2006-01"))
+}
+
+func validMonthOrFallback(s, fallback string) string {
+	if validMonthInput(s) {
+		return s
+	}
+	if !validMonthInput(fallback) {
+		return time.Now().Format("2006-01")
+	}
+	return fallback
+}
+
+func validDateInput(s string) bool {
+	_, err := time.Parse("2006-01-02", s)
+	return err == nil
+}
+
+func validatePassword(password string) error {
+	if len(password) < 12 {
+		return fmt.Errorf("password must be at least 12 characters")
+	}
+	return nil
+}
+
+func nonEmptyReportRows(rows []store.ReportRow) []store.ReportRow {
+	out := rows[:0]
+	for _, row := range rows {
+		if row.Budget != 0 || row.Actual != 0 {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func defaultTargetMonth(plans []store.MonthPlan) string {
@@ -745,8 +1055,10 @@ func friendly(err error) string {
 		return "A record with this name already exists."
 	case errors.Is(err, store.ErrInactiveHead):
 		return "This project/head is inactive."
-	default:
+	case errors.Is(err, store.ErrValidation):
 		return err.Error()
+	default:
+		return "Something went wrong while processing your request."
 	}
 }
 
@@ -786,6 +1098,8 @@ func barClass(status string) string {
 		return "is-under"
 	case "on-track":
 		return "is-ontrack"
+	case "unbudgeted":
+		return "is-unbudgeted"
 	default:
 		return ""
 	}
@@ -812,6 +1126,8 @@ func statusText(status string) string {
 		return "On track"
 	case "not-paid":
 		return "Not paid"
+	case "unbudgeted":
+		return "Unbudgeted spend"
 	default:
 		return status
 	}
@@ -832,6 +1148,8 @@ func statusForView(budget, actual int64) string {
 	switch {
 	case actual == 0:
 		return "not-paid"
+	case budget == 0 && actual > 0:
+		return "unbudgeted"
 	case budget > 0 && actual > budget:
 		return "over"
 	case budget > 0 && actual == budget:
@@ -916,6 +1234,25 @@ func roleText(role string) string {
 	}
 }
 
+func paymentModeText(mode string) string {
+	switch mode {
+	case "bank_transfer":
+		return "Bank transfer"
+	case "cash":
+		return "Cash"
+	case "cheque":
+		return "Cheque"
+	case "card":
+		return "Card"
+	case "upi":
+		return "UPI"
+	case "other":
+		return "Other"
+	default:
+		return mode
+	}
+}
+
 func boolText(v bool) string {
 	if v {
 		return "Active"
@@ -941,6 +1278,10 @@ func actionText(action string) string {
 		return "Logged out"
 	case "export":
 		return "Exported"
+	case "attach":
+		return "Attached"
+	case "login_failed":
+		return "Login failed"
 	default:
 		return action
 	}
@@ -948,7 +1289,7 @@ func actionText(action string) string {
 
 func actionClass(action string) string {
 	switch action {
-	case "void":
+	case "void", "login_failed":
 		return "danger"
 	case "lock", "unlock":
 		return "warn"

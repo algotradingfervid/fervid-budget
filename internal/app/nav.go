@@ -1,6 +1,11 @@
 package app
 
-import "fervidbudget/internal/store"
+import (
+	"net/http"
+	"strings"
+
+	"fervidbudget/internal/store"
+)
 
 // The shell is permission-driven. Nothing in this file may branch on a role
 // name: every item declares the resource and action it needs and the
@@ -103,6 +108,65 @@ func buildShell(perms store.PermissionSet) []NavGroup {
 		groups = append(groups, NavGroup{Title: group.Title, Items: items})
 	}
 	return groups
+}
+
+// buildPageShell assembles everything the chrome needs for one render: the nav
+// the user may reach, their tab bar, the active item and the badge counts they
+// are entitled to see. A signed-out request gets no chrome at all.
+func (a *App) buildPageShell(r *http.Request, user store.User, title string) Shell {
+	if user.ID == 0 {
+		return Shell{Chrome: chromeNone}
+	}
+	perms := a.auth.Permissions(user)
+	shell := Shell{
+		Groups: buildShell(perms),
+		Tabs:   resolveTabs(perms),
+		Active: activeNavKey(r.URL.Path),
+		Chrome: chromeApp,
+		Title:  title,
+	}
+	badges, err := a.st.BadgeCounts(r.Context(), user.ID, perms)
+	if err != nil {
+		a.log.WarnContext(r.Context(), "badge counts unavailable",
+			"request_id", requestID(r),
+			"error", err,
+		)
+		badges = map[string]int{}
+	}
+	shell.Badges = badges
+	return shell
+}
+
+const (
+	chromeApp  = "app"
+	chromeNone = "none"
+)
+
+// activeNavKey marks the nav item that owns the current path. The longest
+// matching href wins, so /payments/42/edit still highlights the ledger.
+func activeNavKey(path string) string {
+	active := ""
+	matched := 0
+	for _, group := range navSpec {
+		for _, item := range group.Items {
+			if item.Href == "" {
+				continue
+			}
+			if item.Href == "/" {
+				if path == "/" && matched == 0 {
+					active, matched = item.Key, 1
+				}
+				continue
+			}
+			if path != item.Href && !strings.HasPrefix(path, item.Href+"/") {
+				continue
+			}
+			if len(item.Href) > matched {
+				active, matched = item.Key, len(item.Href)
+			}
+		}
+	}
+	return active
 }
 
 // centreActions is the priority order of the mobile tab bar's centre action.
