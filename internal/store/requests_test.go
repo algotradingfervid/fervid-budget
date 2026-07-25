@@ -863,3 +863,99 @@ func TestReassignAndReraise(t *testing.T) {
 		t.Fatalf("re-raise of a pending request = %v, want ErrValidation", err)
 	}
 }
+
+func TestCancellationRequestAcceptAndDecline(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Anand Steel Traders")
+	mkApproved := func() int64 {
+		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
+			ShortTitle: "Binding wire order", ProjectID: 1, HeadID: headID, Amount: 47000,
+			Purpose: "advance", ManagerID: mgr.ID, VendorID: vendorID, AdvanceReason: "40% booking"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ApproveRequest(ctx, mgr, id, 47000, ""); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	// --- Employee asks; payment freezes. ---
+	id := mkApproved()
+	if err := s.RequestCancellation(ctx, req, id, "  "); !errors.Is(err, ErrValidation) {
+		t.Fatalf("cancellation without a reason = %v, want ErrValidation", err)
+	}
+	if err := s.RequestCancellation(ctx, mgr, id, "not mine to cancel"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cancellation asked by a non-requester = %v, want ErrForbidden", err)
+	}
+	if err := s.RequestCancellation(ctx, req, id, "Site cancelled the order"); err != nil {
+		t.Fatalf("RequestCancellation: %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Status != "cancellation_requested" || got.CancelReason != "Site cancelled the order" {
+		t.Fatalf("after asking = %+v", got)
+	}
+
+	// --- Manager declines: it goes back to approved and Accounts may proceed. ---
+	if err := s.DecideCancellation(ctx, mgr, id, false, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("decline without a reason = %v, want ErrValidation", err)
+	}
+	if err := s.DecideCancellation(ctx, req, id, false, "keep it live"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("decision by a non-approver = %v, want ErrForbidden", err)
+	}
+	if err := s.DecideCancellation(ctx, mgr, id, false, "Vendor already dispatched; we owe them"); err != nil {
+		t.Fatalf("DecideCancellation decline: %v", err)
+	}
+	got, _ = s.Request(ctx, id)
+	if got.Status != "approved" {
+		t.Fatalf("declined cancellation left status %q, want approved", got.Status)
+	}
+
+	// --- Manager accepts: the request is cancelled and closed. ---
+	if err := s.RequestCancellation(ctx, req, id, "Order withdrawn by the site"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DecideCancellation(ctx, mgr, id, true, "Agreed, no cancellation charge"); err != nil {
+		t.Fatalf("DecideCancellation accept: %v", err)
+	}
+	got, _ = s.Request(ctx, id)
+	if got.Status != "cancelled" {
+		t.Fatalf("accepted cancellation left status %q, want cancelled", got.Status)
+	}
+	// Cancelled is terminal.
+	if err := s.RequestCancellation(ctx, req, id, "again"); !errors.Is(err, ErrValidation) {
+		t.Fatalf("cancellation of a cancelled request = %v, want ErrValidation", err)
+	}
+
+	// --- G2: the approver may cancel outright, with a reason. ---
+	direct := mkApproved()
+	if err := s.CancelRequest(ctx, mgr, direct, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("outright cancel without a reason = %v, want ErrValidation", err)
+	}
+	if err := s.CancelRequest(ctx, req, direct, "not my call"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("outright cancel by the requester = %v, want ErrForbidden", err)
+	}
+	if err := s.CancelRequest(ctx, mgr, direct, "Budget pulled for the quarter"); err != nil {
+		t.Fatalf("CancelRequest: %v", err)
+	}
+	got, _ = s.Request(ctx, direct)
+	if got.Status != "cancelled" || got.CancelReason != "Budget pulled for the quarter" {
+		t.Fatalf("outright cancel = %+v", got)
+	}
+
+	// Every step is on the audit trail, which is what `.thread` renders.
+	audit, _ := s.Audit(ctx, "payment_request", id, 20)
+	want := map[string]bool{"cancel_request": false, "cancel_decline": false, "cancel": false}
+	for _, a := range audit {
+		if _, ok := want[a.Action]; ok {
+			want[a.Action] = true
+		}
+	}
+	for action, seen := range want {
+		if !seen {
+			t.Fatalf("audit action %q missing from the thread", action)
+		}
+	}
+}

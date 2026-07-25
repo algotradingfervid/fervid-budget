@@ -821,3 +821,131 @@ func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64
 	}
 	return newID, nil
 }
+
+// RequestCancellation is G1: the requester asks for an approved request to be
+// cancelled. Payment freezes the moment this succeeds, because the request is
+// no longer in the `approved` state that Accounts reserves from.
+func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("%w: say why it should be cancelled", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.RequesterID != actor.ID {
+		return ErrForbidden
+	}
+	if !canTransition(before.Status, "cancellation_requested") {
+		return fmt.Errorf("%w: a %s request cannot be sent for cancellation", ErrValidation, before.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancellation_requested', cancel_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
+		return err
+	}
+	after, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	// P5 hook: notify the approver, and any accountant holding a reservation.
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "cancel_request", EntityType: "payment_request", EntityID: &id,
+		Summary: actor.Name + " asked for cancellation of " + before.Number + ": " + reason + ". Payment frozen.",
+		Before:  before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DecideCancellation is the approver's answer to G1. Accepting closes the
+// request permanently; declining unfreezes it back to approved and requires a
+// written reason, because Accounts and the requester both read it.
+func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, accept bool, note string) error {
+	note = strings.TrimSpace(note)
+	if !accept && note == "" {
+		return fmt.Errorf("%w: say why it should still be paid", ErrValidation)
+	}
+	// Accepting a cancellation *is* cancelling the request, so it lands on the
+	// thread under the same `cancel` action as an outright cancel — only the
+	// summary says who asked for it. A separate `cancel_accept` action would
+	// split one event across two names for no reader's benefit.
+	to, action := "cancelled", "cancel"
+	if !accept {
+		to, action = "approved", "cancel_decline"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.ManagerID != actor.ID {
+		return ErrForbidden
+	}
+	if before.Status != "cancellation_requested" || !canTransition(before.Status, to) {
+		return fmt.Errorf("%w: there is no cancellation to decide on a %s request", ErrValidation, before.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, to, note, id); err != nil {
+		return err
+	}
+	after, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	summary := actor.Name + " cancelled " + before.Number + " at the requester's asking"
+	if !accept {
+		summary = actor.Name + " declined the cancellation of " + before.Number + ": " + note + ". Payment unfrozen."
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: action, EntityType: "payment_request", EntityID: &id,
+		Summary: summary, Before: before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CancelRequest is G2: the approver cancels an approved request outright,
+// without the requester having asked. A reason is always required.
+func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("%w: a reason is required to cancel a request", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.ManagerID != actor.ID {
+		return ErrForbidden
+	}
+	if !canTransition(before.Status, "cancelled") {
+		return fmt.Errorf("%w: a %s request cannot be cancelled", ErrValidation, before.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancelled', cancel_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
+		return err
+	}
+	after, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "cancel", EntityType: "payment_request", EntityID: &id,
+		Summary: actor.Name + " cancelled request " + before.Number + ": " + reason,
+		Before:  before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
