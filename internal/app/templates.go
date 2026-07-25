@@ -1435,6 +1435,195 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The vendor control, shared by the new-request form and the edit screen so
+     the two cannot disagree about what a vendor is. The combobox is offered
+     only to somebody who may actually reach GET /vendors/search; everyone else,
+     and every browser with no JavaScript, gets the plain select. The visible
+     text is never trusted — the hidden id is what the server reads. */}}
+{{define "request_vendor_field"}}
+<div class="field span-6">
+  <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>
+  {{if .Perms.Can "vendor" "view"}}
+  <span class="combo">
+    <input class="combo-input" id="vendor" aria-required="true" autocomplete="off" value="{{.Request2.Vendor}}"
+           placeholder="Type a name, GSTIN or city"
+           hx-get="/vendors/search" hx-trigger="input changed delay:250ms" hx-target="#vendor-options">
+    <span class="combo-caret" aria-hidden="true">▾</span>
+  </span>
+  <div id="vendor-options"></div>
+  <noscript>
+    <label for="vendor-plain">Or pick from the list</label>
+    <select id="vendor-plain" name="vendor_id">
+      <option value="">Choose a vendor</option>
+      {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </noscript>
+  <input type="hidden" name="vendor_id" id="vendor-id" data-combo-value value="{{deref .Request2.VendorID}}">
+  <span class="hint">Bank details stay in the vendor record — never on this form.</span>
+  {{else}}
+  <select id="vendor" name="vendor_id" aria-required="true">
+    <option value="">Choose a vendor</option>
+    {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+  </select>
+  <span class="hint">Bank details stay in the vendor record — never on this form.</span>
+  {{end}}
+</div>
+{{end}}
+
+{{/* The correction screen — mockups/screens/request-edit.html.
+
+     Its whole job is to promise, before the person commits, the three things
+     the store already does: record the change in the history, tell the approver
+     again, and restart the three-day reminder clock. Changing the approver
+     moves the request to that person instead.
+
+     The type is not editable. It is what the request *is*, and it travels as
+     the same hidden input the new-request form carries (A16). */}}
+{{define "request_edit"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">{{.Request2.Number}} · {{reqStatus .Request2.Status}}</div>
+    <h1>Edit request</h1>
+    <p class="sub">{{.Request2.ShortTitle}}</p>
+  </div>
+</section>
+
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>Editing tells {{.Request2.ManagerName}} again</b>
+    <p>Every change is recorded in the history, notifies your approver, and restarts the three-day
+      reminder clock. Change the approver and it moves to that person instead.</p>
+  </div>
+</div>
+
+<form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="type" value="{{.FormType}}">
+  <input type="hidden" name="treatment" value="{{.Request2.Treatment}}">
+
+  <fieldset>
+    <legend>What is this for</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label for="short-title">Short title <span class="req" aria-hidden="true">*</span></label>
+        <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required>
+      </div>
+    </div>
+  </fieldset>
+
+  <div id="form-fields">{{template "request_form_fields" .}}</div>
+
+  <fieldset>
+    <legend>Amount and timing</legend>
+    <div class="form-grid">
+      <div class="field span-6 money-field">
+        <label for="amount">Amount <span class="req" aria-hidden="true">*</span></label>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="needed">Needed by</label>
+        <input id="needed" type="date" name="needed_by" value="{{.Request2.NeededBy}}">
+      </div>
+      {{if ne (index .Settings "urgency_mode") "disabled"}}
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" name="urgent" {{check .Request2.Urgent}}> Marked urgent</label>
+      </div>
+      {{if eq (index .Settings "urgency_mode") "reason"}}
+      <div class="field span-12" data-when="urgent:on" {{if not .Request2.Urgent}}hidden{{end}}>
+        <label for="ureason">Why is it urgent <span class="req" aria-hidden="true">*</span></label>
+        <input id="ureason" name="urgency_reason" aria-required="true" value="{{.Request2.UrgencyReason}}">
+      </div>
+      {{end}}
+      {{end}}
+    </div>
+  </fieldset>
+
+  {{if or (eq .FormType "vendor_invoice") (eq .FormType "vendor_advance")}}
+  <fieldset>
+    <legend>Vendor and {{if eq .FormType "vendor_invoice"}}invoice{{else}}advance{{end}}</legend>
+    <div class="form-grid">
+      {{template "request_vendor_field" .}}
+      {{if eq .FormType "vendor_invoice"}}
+      <div class="field span-3 m-half"><label for="inv">Invoice number <span class="req" aria-hidden="true">*</span></label><input id="inv" name="invoice_no" value="{{.Request2.InvoiceNo}}" required></div>
+      <div class="field span-3 m-half"><label for="idate">Invoice date <span class="req" aria-hidden="true">*</span></label><input id="idate" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required></div>
+      {{else}}
+      <div class="field span-6"><label for="areason">Reason for the advance <span class="req" aria-hidden="true">*</span></label><input id="areason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required></div>
+      {{end}}
+    </div>
+  </fieldset>
+  {{end}}
+
+  {{if eq .FormType "reimbursement"}}
+  <fieldset>
+    <legend>Your expense</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half"><label for="paid">Paid to</label><input id="paid" value="{{.Request2.RequesterName}}" readonly><span class="hint">Reimbursements always pay the person raising them.</span></div>
+      <div class="field span-6 m-half"><label for="edate">Expense date <span class="req" aria-hidden="true">*</span></label><input id="edate" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required></div>
+    </div>
+  </fieldset>
+  {{end}}
+
+  {{if eq .FormType "employee_advance"}}
+  <fieldset>
+    <legend>Advance details</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half"><label for="adv-to">Paid to</label><input id="adv-to" value="{{.Request2.RequesterName}}" readonly></div>
+      <div class="field span-12"><label for="areason2">What the money is for <span class="req" aria-hidden="true">*</span></label><input id="areason2" name="advance_reason" value="{{.Request2.AdvanceReason}}" required></div>
+    </div>
+  </fieldset>
+  {{end}}
+
+  <fieldset>
+    <legend>Purpose and documents</legend>
+    <div class="form-grid">
+      <div class="field span-12"><label for="purp">Purpose <span class="req" aria-hidden="true">*</span></label><textarea id="purp" name="purpose" required>{{.Request2.Purpose}}</textarea></div>
+      <div class="field span-12">
+        <span class="flabel">Documents</span>
+        <div class="stack-8">
+          {{range .RequestAtts}}<div class="file-row"><span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span><span><b>{{.OriginalName}}</b><small>{{fileSize .SizeBytes}}</small></span></div>{{end}}
+          <div class="uploader">
+            <div class="up-ico" aria-hidden="true">⇪</div>
+            <label for="attachment"><b>Add another document</b></label>
+            <small>PDF, JPG or PNG up to {{index .Settings "attachment_max_mb"}} MB</small>
+            <input type="file" id="attachment" name="attachment">
+          </div>
+        </div>
+      </div>
+      {{if eq (index .Settings "require_attachments") "1"}}
+      <div class="field span-12">
+        <label for="att-exception">If you cannot attach a document, say why <span class="req" aria-hidden="true">*</span></label>
+        <input id="att-exception" name="attachment_exception_reason" aria-required="true" value="{{.Request2.AttachmentExceptionReason}}">
+      </div>
+      {{end}}
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Who approves it</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="apr">Approver <span class="req" aria-hidden="true">*</span></label>
+        <select id="apr" name="manager_id" required>
+          {{range .Approvers}}<option value="{{.ID}}" {{if eq $.Request2.ManagerID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <span class="hint">Changing this moves the request to the new approver and notifies them. Your own name is never in this list.</span>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Every change is recorded in the history.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="/requests/{{.Request2.ID}}">Discard changes</a>
+    <button class="btn primary" type="submit">Save and notify {{.Request2.ManagerName}}</button>
+  </div>
+</form>
+{{template "bottom" .}}
+{{end}}
+
 {{/* The manager queue — mockups/screens/approvals-list.html.
 
      Its own route, because it answers a different question from the requests

@@ -1047,6 +1047,97 @@ func TestRequestDecisionsThroughTheDetailScreen(t *testing.T) {
 	}
 }
 
+// The edit screen's job is to promise, before the person commits, the three
+// things the store already does: record the change, tell the approver again,
+// and restart the reminder clock. Changing the approver moves the request.
+func TestRequestEditScreenAndReroute(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Edit")
+	mgrID := seedSecondApprover(t, s)
+	other := seedThirdApprover(t, s)
+	requester := s.seedRequester("arun@example.test", "Arun Mehta", "RequesterPass123")
+	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+		Type: "reimbursement", ShortTitle: "Hyderabad site visit", ProjectID: 1, HeadID: headID,
+		Amount: 1690000, Purpose: "flight and hotel", ExpenseDate: "2026-07-17", ManagerID: mgrID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("arun@example.test", "RequesterPass123")
+	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/edit", nil, ""))
+	for _, want := range []string{`class="banner info"`, ` money-field"`, `class="in-words"`,
+		`class="action-bar"`, `name="manager_id"`, `value="16,900.00"`, "restarts", "<h1>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("edit screen is missing %q", want)
+		}
+	}
+	// money.FormatPaise carries the rupee sign; the .money-field draws its own.
+	if strings.Contains(body, `value="₹`) {
+		t.Fatal("the amount field carries a second rupee sign")
+	}
+	// A16: the type is still not editable — it is what the request is.
+	if strings.Contains(body, `name="type"`) && !strings.Contains(body, `type="hidden" name="type"`) {
+		t.Fatal("the edit screen offers a type control rather than carrying the route parameter")
+	}
+	// Nobody else may open somebody's edit form, whatever they may read.
+	s.login("kavita@example.test", "ApproverPass123")
+	requireStatus(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/edit", nil, ""), http.StatusForbidden)
+
+	s.login("arun@example.test", "RequesterPass123")
+	resp := s.postForm("/requests/"+strconvFormat(id)+"/edit", url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Hyderabad site visit"},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"18,400.00"},
+		"purpose": {"flight, hotel and cabs"}, "expense_date": {"2026-07-17"},
+		"manager_id": {strconvFormat(other)},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	got, _ := s.st.Request(s.ctx, id)
+	if got.Amount != 1840000 || got.ManagerID != other {
+		t.Fatalf("edit not applied: amount=%d manager=%d", got.Amount, got.ManagerID)
+	}
+	if got.ReminderLastSent != nil {
+		t.Fatal("the reminder clock was not restarted")
+	}
+	// The change is on the merged thread with a before and an after.
+	thread, _ := s.st.RequestThread(s.ctx, id)
+	var sawDiff bool
+	for _, e := range thread {
+		if e.Action == "update" && len(e.Changes) > 0 {
+			sawDiff = true
+		}
+	}
+	if !sawDiff {
+		t.Fatal("the edit is not visible as a change in the thread")
+	}
+
+	// A rejected edit puts back what was typed rather than what is stored.
+	resp = s.postForm("/requests/"+strconvFormat(id)+"/edit", url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Renamed in the browser"},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"19,000.00"},
+		"purpose": {""}, "expense_date": {"2026-07-17"}, "manager_id": {strconvFormat(other)},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	rejected := responseBody(t, resp)
+	if !strings.Contains(rejected, "Renamed in the browser") || !strings.Contains(rejected, `value="19,000.00"`) {
+		t.Fatalf("a rejected edit lost the typing: %s", rejected)
+	}
+}
+
+func seedThirdApprover(t *testing.T, s *appTestServer) int64 {
+	t.Helper()
+	hash, err := auth.HashPassword("ApproverPass456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.st.CreateUser(s.ctx, "rakesh@example.test", "Rakesh Iyer", hash, "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.assignRole(id, "Manager")
+	return id
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

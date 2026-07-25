@@ -503,6 +503,148 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 	return PageData{Title: title, Request2: req, Thread: thread, RequestAtts: atts}, nil
 }
 
+// requestEditForm is the correction screen. Only the person who raised a
+// request may open it: holding request:edit says you may correct your own work,
+// not somebody else's, and an approver who wants a change returns the request
+// instead — which is a different verb with a different audit line.
+func (a *App) requestEditForm(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadEditableRequest(w, r)
+	if !ok {
+		return
+	}
+	data, err := a.requestEditData(r, req)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "request_edit", data)
+}
+
+// loadEditableRequest resolves the request and refuses anybody who is not its
+// requester, or any status the store would refuse to write anyway. Answering
+// 403 here rather than at the store keeps the screen honest: a control the
+// reader may not use is never rendered, and the URL says the same thing.
+func (a *App) loadEditableRequest(w http.ResponseWriter, r *http.Request) (store.Request, bool) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return store.Request{}, false
+	}
+	if req.RequesterID != auth.CurrentUser(r).ID {
+		a.respondError(w, r, http.StatusForbidden, "Only the person who raised a request may edit it.", nil)
+		return store.Request{}, false
+	}
+	if req.Status != "pending" && req.Status != "returned" {
+		a.respondError(w, r, http.StatusBadRequest,
+			"This request can no longer be edited. "+reqStatusExplain(req.Status), nil)
+		return store.Request{}, false
+	}
+	return req, true
+}
+
+func reqStatusExplain(status string) string {
+	switch status {
+	case "approved", "cancellation_requested":
+		return "It is approved and locked; ask for it to be cancelled instead."
+	case "rejected":
+		return "A rejected request is final — raise a new one."
+	default:
+		return "It is " + strings.ToLower(requestStatusText(status)) + "."
+	}
+}
+
+// requestEditData is the edit form's whole state: the same projects, heads,
+// approvers and settings the new-request form is built from, plus the request
+// as it stands and the documents already on it.
+func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, error) {
+	data, err := a.requestFormData(r, "Edit "+req.Number)
+	if err != nil {
+		return PageData{}, err
+	}
+	data.Request2 = req
+	data.FormType = req.Type
+	if data.Thread, err = a.st.RequestThread(r.Context(), req.ID); err != nil {
+		return PageData{}, err
+	}
+	if data.RequestAtts, err = a.st.RequestAttachments(r.Context(), req.ID); err != nil {
+		return PageData{}, err
+	}
+	if data.Vendors, err = a.vendorChoices(r, req.Type); err != nil {
+		return PageData{}, err
+	}
+	return data, nil
+}
+
+// requestEdit saves a correction. "resubmit" is the returned screen's primary
+// action: the corrections and the resubmission are one press, because saving
+// and then forgetting to send it back is how a returned request sits for a week
+// with nobody waiting on it.
+func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadEditableRequest(w, r)
+	if !ok {
+		return
+	}
+	u := auth.CurrentUser(r)
+	in, err := requestInput(r)
+	var attachment *store.AttachmentInput
+	var stagedPath string
+	if err == nil {
+		attachment, stagedPath, err = a.stageUploadedAttachment(r)
+	}
+	if err == nil {
+		err = a.st.UpdateRequest(r.Context(), u, req.ID, in)
+	}
+	if err == nil && attachment != nil {
+		_, err = a.st.AddRequestAttachment(r.Context(), u, req.ID, *attachment)
+	}
+	if err == nil && r.FormValue("submit_action") == "resubmit" {
+		err = a.st.SubmitRequest(r.Context(), u, req.ID)
+	}
+	if err != nil {
+		removeStagedAttachment(a.log, r, stagedPath)
+		status := storeErrorStatus(err)
+		if status >= http.StatusInternalServerError {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		a.renderRejectedEdit(w, r, req, in, status, friendly(err))
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+}
+
+// renderRejectedEdit puts the correction screen back with the message and
+// everything that was typed still in it, re-read from the row only for the
+// parts the form does not own.
+func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored store.Request, in store.RequestInput, status int, message string) {
+	data, err := a.requestEditData(r, editedRequest(stored, in))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	data.Error = message
+	name := "request_edit"
+	if stored.Status == "returned" {
+		name = "request_returned"
+	}
+	a.renderStatus(w, r, status, name, data)
+}
+
+// editedRequest overlays what was posted onto the stored row. Losing a page of
+// corrections to one bad field is the cruellest thing a form can do, and the
+// number, the status and the names were never the form's to change.
+func editedRequest(stored store.Request, in store.RequestInput) store.Request {
+	edited := requestFromInput(in)
+	edited.ID, edited.Number, edited.Status = stored.ID, stored.Number, stored.Status
+	edited.RequesterID, edited.RequesterName = stored.RequesterID, stored.RequesterName
+	edited.ManagerName = stored.ManagerName
+	edited.Vendor, edited.VendorGSTIN = stored.Vendor, stored.VendorGSTIN
+	edited.Project, edited.Head = stored.Project, stored.Head
+	edited.DecisionReason, edited.CancelReason = stored.DecisionReason, stored.CancelReason
+	edited.ApprovedAmount, edited.ApprovedAt = stored.ApprovedAmount, stored.ApprovedAt
+	edited.CreatedAt, edited.UpdatedAt, edited.SubmittedAt = stored.CreatedAt, stored.UpdatedAt, stored.SubmittedAt
+	return edited
+}
+
 // requestApprove is the approve sheet. The amount is editable there because an
 // approver may approve less than was asked for; the store is what refuses a
 // requester approving themselves, whatever this handler is sent.
