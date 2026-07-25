@@ -76,6 +76,58 @@ CREATE TABLE IF NOT EXISTS user_roles (
 			return addDefaultApproverColumn(tx)
 		},
 	},
+	// Phase 1V owns exactly one migration, v2: the vendor master. Bank columns
+	// live on the same row as the rest of the vendor — they are attributes of
+	// the vendor, not a separate entity — and are kept from the wrong eyes by
+	// the store never selecting them for a caller without vendor_bank:view
+	// (see vendors.go). Splitting them into a second table would move the
+	// secret without adding a boundary, because the same code would join it.
+	//
+	// payments.vendor_payee is deliberately untouched: it is the payee snapshot
+	// for reimbursements and employee advances, where no vendor row exists, and
+	// it keeps historical payments readable. Phase 2 adds vendor_id alongside
+	// it rather than replacing it.
+	{
+		Version: 2,
+		Name:    "vendors",
+		Up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS vendors (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
+  vendor_type TEXT NOT NULL DEFAULT 'company',   -- company | proprietor | individual
+  status TEXT NOT NULL DEFAULT 'active',         -- active | inactive
+  categories TEXT NOT NULL DEFAULT '',
+  gstin TEXT NOT NULL DEFAULT '',
+  pan TEXT NOT NULL DEFAULT '',
+  msme_udyam TEXT NOT NULL DEFAULT '',
+  tds_section TEXT NOT NULL DEFAULT '',
+  tds_rate TEXT NOT NULL DEFAULT '',
+  contact_person TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT '',
+  state_code TEXT NOT NULL DEFAULT '',
+  bank_account_name TEXT NOT NULL DEFAULT '',
+  bank_account_number TEXT NOT NULL DEFAULT '',
+  bank_ifsc TEXT NOT NULL DEFAULT '',
+  bank_name TEXT NOT NULL DEFAULT '',
+  bank_branch TEXT NOT NULL DEFAULT '',
+  upi_id TEXT NOT NULL DEFAULT '',
+  default_payment_mode TEXT NOT NULL DEFAULT '',
+  payment_terms_days INTEGER NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vendors_name_nocase ON vendors(lower(name));
+CREATE INDEX IF NOT EXISTS idx_vendors_status ON vendors(status);`)
+			return err
+		},
+	},
 }
 
 // addDefaultApproverColumn is additive and guarded by columnExists, so

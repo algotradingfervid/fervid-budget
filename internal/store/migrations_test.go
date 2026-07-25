@@ -73,6 +73,31 @@ func TestMigrationV1CreatesPermissionTables(t *testing.T) {
 	}
 }
 
+func TestMigrationV2CreatesVendors(t *testing.T) {
+	s := newTestStore(t)
+	for _, col := range []string{"id", "name", "display_name", "vendor_type", "status",
+		"categories", "gstin", "pan", "msme_udyam", "tds_section", "tds_rate",
+		"contact_person", "phone", "email", "address", "city", "state", "state_code",
+		"bank_account_name", "bank_account_number", "bank_ifsc", "bank_name",
+		"bank_branch", "upi_id", "default_payment_mode", "payment_terms_days",
+		"notes", "created_at", "updated_at"} {
+		var n int
+		if err := s.DB().QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('vendors') WHERE name = ?`, col,
+		).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("vendors.%s missing (n=%d err=%v)", col, n, err)
+		}
+	}
+	if _, err := s.DB().Exec(
+		`INSERT INTO vendors(name, vendor_type, status) VALUES('Acme','company','active')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, err := s.DB().Exec(
+		`INSERT INTO vendors(name, vendor_type, status) VALUES('acme','company','active')`); err == nil {
+		t.Fatal("duplicate vendor name accepted; case-insensitive unique index missing")
+	}
+}
+
 var _ = sql.ErrNoRows // keep database/sql imported for later tests in this file
 
 func TestMigrationBackfillsExistingUsers(t *testing.T) {
