@@ -1206,6 +1206,117 @@ func TestReturnedRequestScreenCorrectsAndResubmits(t *testing.T) {
 	}
 }
 
+// G1, G2, G3: an approved request cannot be withdrawn on your own. The
+// requester asks, payment freezes at that moment, and the approver accepts or
+// declines — or cancels outright with a reason, without being asked.
+func TestCancellationScreensEndToEnd(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Cancel")
+	mgrID := seedSecondApprover(t, s)
+	mgr, err := s.st.UserByID(s.ctx, mgrID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Neither seeded role carries the cancellation verbs: request:cancel and
+	// approval:cancel entered the vocabulary with this flow and Phase 1's
+	// starter roles were never back-filled. An administrator grants them on the
+	// Roles screen; this does the same thing directly.
+	s.grantAlso(mgrID, "Approver who may cancel",
+		[]store.Grant{{Resource: "approval", Action: "cancel"}},
+		[]store.ScopeGrant{{Resource: "request", Scope: "all"}})
+	vendorID := s.seedVendor(store.VendorInput{Name: "Anand Steel Traders", VendorType: "company", Status: "active"})
+	requester := s.seedRequester("cancelreq@example.test", "Cancel Requester", "RequesterPass123")
+	s.grantAlso(requester.ID, "Requester who may ask for cancellation",
+		[]store.Grant{{Resource: "request", Action: "cancel"}},
+		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
+	mk := func(title string, amount int64) int64 {
+		id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+			Type: "vendor_advance", ShortTitle: title, ProjectID: 1, HeadID: headID, Amount: amount,
+			Purpose: "advance", ManagerID: mgrID, VendorID: vendorID,
+			AdvanceReason: "40% booking against PO-2026-0417"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.st.ApproveRequest(s.ctx, mgr, id, amount, ""); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := mk("Binding wire order", 4700000)
+
+	// --- The employee asks. ---
+	s.login("cancelreq@example.test", "RequesterPass123")
+	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/cancel", nil, ""))
+	for _, want := range []string{`class="banner warn"`, "Payment freezes", `class="req-head"`,
+		`name="reason"`, `class="action-bar"`, "<h1>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("cancel screen is missing %q", want)
+		}
+	}
+	if resp := s.postForm("/requests/"+strconvFormat(id)+"/cancel-request", url.Values{"reason": {""}}); resp.StatusCode == http.StatusSeeOther {
+		t.Fatal("a cancellation with no reason was accepted")
+	}
+	resp := s.postForm("/requests/"+strconvFormat(id)+"/cancel-request", url.Values{"reason": {"Site cancelled the order"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if frozen, _ := s.st.Request(s.ctx, id); frozen.Status != "cancellation_requested" {
+		t.Fatalf("status = %q, want cancellation_requested", frozen.Status)
+	}
+	// The requester sees the freeze on the detail page.
+	detail := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	if !strings.Contains(detail, `class="pill cancelreq"`) || !strings.Contains(detail, "Payment is frozen") {
+		t.Fatalf("the frozen state is not shown to the requester: %s", detail)
+	}
+	// The requester cannot decide their own cancellation.
+	requireStatus(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/cancellation", nil, ""), http.StatusForbidden)
+
+	// --- The approver decides. ---
+	s.login("kavita@example.test", "ApproverPass123")
+	body = responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/cancellation", nil, ""))
+	for _, want := range []string{"Site cancelled the order", `data-open="accept-sheet"`,
+		`data-open="decline-sheet"`, `class="overlay"`, `class="sheet"`, `class="thread"`, "<h1>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("cancellation decision screen is missing %q", want)
+		}
+	}
+	// Declining requires a reason and unfreezes.
+	if resp := s.postForm("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"decline"}, "note": {""}}); resp.StatusCode == http.StatusSeeOther {
+		t.Fatal("a decline with no reason was accepted")
+	}
+	resp = s.postForm("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"decline"}, "note": {"Vendor already dispatched"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if got, _ := s.st.Request(s.ctx, id); got.Status != "approved" {
+		t.Fatalf("declined cancellation left status %q, want approved", got.Status)
+	}
+	// Accepting closes it.
+	if err := s.st.RequestCancellation(s.ctx, requester, id, "Order withdrawn"); err != nil {
+		t.Fatal(err)
+	}
+	resp = s.postForm("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"accept"}, "note": {"Agreed"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if got, _ := s.st.Request(s.ctx, id); got.Status != "cancelled" {
+		t.Fatalf("accepted cancellation left status %q, want cancelled", got.Status)
+	}
+
+	// --- G2: the approver cancels a different request outright. ---
+	other := mk("Second order", 100000)
+	outright := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(other)+"/cancellation", nil, ""))
+	if !strings.Contains(outright, `data-open="outright-sheet"`) {
+		t.Fatal("an approved request offers no outright cancellation to its approver")
+	}
+	if resp := s.postForm("/requests/"+strconvFormat(other)+"/cancel", url.Values{"reason": {""}}); resp.StatusCode == http.StatusSeeOther {
+		t.Fatal("an outright cancellation with no reason was accepted")
+	}
+	resp = s.postForm("/requests/"+strconvFormat(other)+"/cancel", url.Values{"reason": {"Budget pulled for the quarter"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if got, _ := s.st.Request(s.ctx, other); got.Status != "cancelled" || got.CancelReason == "" {
+		t.Fatalf("outright cancel = %+v", got)
+	}
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

@@ -330,6 +330,15 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /requests/{id}/approve", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.withCSRF(a.requestApprove))))
 	mux.Handle("POST /requests/{id}/return", a.auth.RequirePermission("approval", "return", http.HandlerFunc(a.withCSRF(a.requestReturn))))
 	mux.Handle("POST /requests/{id}/reject", a.auth.RequirePermission("approval", "reject", http.HandlerFunc(a.withCSRF(a.requestReject))))
+	// The cancellation flow. GET /cancel is the employee asking and POST /cancel
+	// is the approver cancelling outright: two verbs on one path, because they
+	// are the same sentence said by two people, and ServeMux gates each method
+	// on the permission its own actor needs.
+	mux.Handle("GET /requests/{id}/cancel", a.auth.RequirePermission("request", "cancel", http.HandlerFunc(a.requestCancelForm)))
+	mux.Handle("POST /requests/{id}/cancel-request", a.auth.RequirePermission("request", "cancel", http.HandlerFunc(a.withCSRF(a.requestCancelAsk))))
+	mux.Handle("POST /requests/{id}/cancel", a.auth.RequirePermission("approval", "cancel", http.HandlerFunc(a.withCSRF(a.requestCancelOutright))))
+	mux.Handle("GET /requests/{id}/cancellation", a.auth.RequirePermission("approval", "cancel", http.HandlerFunc(a.requestCancellationForm)))
+	mux.Handle("POST /requests/{id}/cancellation", a.auth.RequirePermission("approval", "cancel", http.HandlerFunc(a.withCSRF(a.requestCancellationDecide))))
 	// The manager queue is its own screen (A15), gated on the verb that lets a
 	// person decide rather than on the one that lets them read.
 	mux.Handle("GET /approvals", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.approvals)))

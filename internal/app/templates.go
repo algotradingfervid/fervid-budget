@@ -1722,6 +1722,157 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The employee's side of a cancellation — mockups/screens/request-cancel.html.
+
+     An approved request cannot be withdrawn on your own, so this screen asks
+     rather than acts, and it says what asking costs before you ask: payment
+     freezes the moment the request is sent, whether or not the approver ever
+     gets round to deciding. */}}
+{{define "request_cancel"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">{{.Request2.Number}} · {{reqStatus .Request2.Status}}</div>
+    <h1>Ask for this to be cancelled</h1>
+    <p class="sub">Approved requests cannot be withdrawn on your own. Your approver decides.</p>
+  </div>
+</section>
+
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">⏸</span>
+  <div>
+    <b>Payment freezes the moment you ask</b>
+    <p>Accounts cannot reserve or pay this request while a cancellation is pending. If an accountant
+      has already reserved it, they are told immediately.</p>
+  </div>
+</div>
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money .Request2.Amount}}</span></div>
+  <p class="rh-meta"><b>{{.Request2.ShortTitle}}</b> · approved by {{.Request2.ManagerName}}{{if .Request2.ApprovedAt}} on {{datep .Request2.ApprovedAt}}{{end}}</p>
+  <div class="rh-status"><span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span></div>
+</div>
+
+<form method="post" action="/requests/{{.Request2.ID}}/cancel-request">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <fieldset>
+    <legend>Why should it be cancelled</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label for="reason">Reason <span class="req" aria-hidden="true">*</span></label>
+        <textarea id="reason" name="reason" required placeholder="Say what changed. {{.Request2.ManagerName}} sees exactly this."></textarea>
+      </div>
+      <div class="field span-12">
+        <span class="flabel">What happens next</span>
+        <ul class="hint" style="margin:4px 0 0; padding-left:18px">
+          <li>{{.Request2.ManagerName}} is notified and the request shows <b>Cancellation requested</b>.</li>
+          <li>If they accept, the request is cancelled and closed. Nothing can be paid against it.</li>
+          <li>If they decline, it returns to <b>Approved — awaiting payment</b> and Accounts can proceed.</li>
+        </ul>
+      </div>
+    </div>
+  </fieldset>
+  <div class="action-bar">
+    <span class="row-end"></span>
+    <a class="btn outline" href="/requests/{{.Request2.ID}}">Never mind</a>
+    <button class="btn danger" type="submit">Send cancellation request</button>
+  </div>
+</form>
+{{template "bottom" .}}
+{{end}}
+
+{{/* The approver's side — mockups/screens/manager-cancellation-decision.html.
+
+     One screen for two questions, because they are the same question asked by
+     two people: should this still be paid. When a cancellation is pending the
+     answer is accept or decline; when none is, the approver may still cancel
+     outright with a reason (G2). Either way the reason is written down, because
+     the requester and Accounts both read it. */}}
+{{define "request_cancellation"}}
+{{template "top" .}}
+{{template "request_head" .}}
+
+{{if eq .Request2.Status "cancellation_requested"}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">⏸</span>
+  <div>
+    <b>Payment is frozen</b>
+    <p>No accountant can reserve or pay this request until you decide.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Why {{.Request2.RequesterName}} wants it cancelled</h2></div>
+  <div class="card-body"><p style="margin:0">“{{.Request2.CancelReason}}”</p></div>
+</div>
+{{end}}
+
+<div class="card" style="margin-top:12px">
+  <div class="card-head"><h2>What you approved</h2></div>
+  <dl class="dl">
+    <div><dt>Amount</dt><dd class="big">{{if .Request2.ApprovedAmount}}{{money (deref .Request2.ApprovedAmount)}}{{else}}{{money .Request2.Amount}}{{end}}</dd></div>
+    {{if .Request2.ApprovedAt}}<div><dt>Approved on</dt><dd>{{datep .Request2.ApprovedAt}}</dd></div>{{end}}
+    <div><dt>{{if .Request2.VendorID}}Vendor{{else}}Paid to{{end}}</dt><dd>{{.Request2.Vendor}}</dd></div>
+    {{if .Request2.AdvanceReason}}<div><dt>Advance reason</dt><dd>{{.Request2.AdvanceReason}}</dd></div>{{end}}
+    <div style="grid-column:1/-1"><dt>Purpose</dt><dd>{{.Request2.Purpose}}</dd></div>
+  </dl>
+</div>
+
+{{template "request_thread" .}}
+
+<div class="action-bar">
+  <span class="ab-note d-only">{{if eq .Request2.Status "cancellation_requested"}}Declining sends it back to Accounts to pay as approved.{{else}}Cancelling closes the request permanently.{{end}}</span>
+  <span class="row-end"></span>
+  {{if eq .Request2.Status "cancellation_requested"}}
+    <button class="btn outline" type="button" data-open="decline-sheet">Decline — keep it live</button>
+    <button class="btn danger" type="button" data-open="accept-sheet">Cancel the request</button>
+  {{else if eq .Request2.Status "approved"}}
+    <button class="btn danger" type="button" data-open="outright-sheet">Cancel with reason</button>
+  {{else}}
+    <a class="btn outline" href="/requests/{{.Request2.ID}}">Back to the request</a>
+  {{end}}
+</div>
+
+{{if eq .Request2.Status "cancellation_requested"}}
+<div class="overlay" id="accept-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/cancellation">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="decision" value="accept">
+    <div class="sh-head"><div><h2>Cancel {{.Request2.Number}}?</h2><p class="sh-sub">{{money .Request2.Amount}} to {{.Request2.Vendor}}</p></div><button class="sh-close" type="button" data-close="accept-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">!</span><div><b>The request closes permanently</b><p>Nothing can be paid against it. A new request is needed if the order comes back.</p></div></div>
+      <div class="field"><label for="cx-note">Note <span class="opt">optional</span></label><textarea id="cx-note" name="note" placeholder="Recorded in the history."></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="accept-sheet">Back</button><span class="row-end"></span><button class="btn danger" type="submit">Cancel request</button></div>
+  </form>
+</div>
+
+<div class="overlay" id="decline-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/cancellation">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="decision" value="decline">
+    <div class="sh-head"><div><h2>Decline the cancellation</h2><p class="sh-sub">The request returns to Approved — awaiting payment.</p></div><button class="sh-close" type="button" data-close="decline-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="dc-reason">Why it should still be paid <span class="req" aria-hidden="true">*</span></label><textarea id="dc-reason" name="note" required placeholder="{{.Request2.RequesterName}} and Accounts both see this."></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="decline-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Decline and unfreeze</button></div>
+  </form>
+</div>
+{{else if eq .Request2.Status "approved"}}
+<div class="overlay" id="outright-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/cancel">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="sh-head"><div><h2>Cancel {{.Request2.Number}}?</h2><p class="sh-sub">{{.Request2.RequesterName}} did not ask for this.</p></div><button class="sh-close" type="button" data-close="outright-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="oc-reason">Reason <span class="req" aria-hidden="true">*</span></label><textarea id="oc-reason" name="reason" required placeholder="{{.Request2.RequesterName}} and Accounts both see this."></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="outright-sheet">Back</button><span class="row-end"></span><button class="btn danger" type="submit">Cancel request</button></div>
+  </form>
+</div>
+{{end}}
+{{template "bottom" .}}
+{{end}}
+
 {{/* The manager queue — mockups/screens/approvals-list.html.
 
      Its own route, because it answers a different question from the requests

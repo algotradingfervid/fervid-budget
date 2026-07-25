@@ -727,6 +727,78 @@ func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
+// The cancellation flow (G1, G2, G3). An approved request cannot be withdrawn
+// on the requester's own say-so: they ask, payment freezes at that moment, and
+// the approver accepts or declines. The approver may also cancel outright with
+// a reason, without having been asked.
+
+// requestCancelForm is the employee's side. Asking is the requester's act, so
+// anybody else — including an administrator holding every verb — is refused
+// here rather than at the store, and the screen is never rendered to somebody
+// whose submit would bounce.
+func (a *App) requestCancelForm(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	if req.RequesterID != auth.CurrentUser(r).ID {
+		a.respondError(w, r, http.StatusForbidden,
+			"Only the person who raised a request may ask for it to be cancelled.", nil)
+		return
+	}
+	a.render(w, r, "request_cancel", PageData{Title: "Request cancellation", Request2: req})
+}
+
+func (a *App) requestCancelAsk(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	if err := a.st.RequestCancellation(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
+}
+
+// requestCancellationForm is the approver's side: the decision on a pending
+// cancellation, or the outright cancellation of a request nobody asked about.
+// Both are the same screen because both are the same question — should this
+// still be paid — and the answer is recorded the same way either way.
+func (a *App) requestCancellationForm(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	if req.ManagerID != auth.CurrentUser(r).ID {
+		a.respondError(w, r, http.StatusForbidden,
+			"Only the approver this request was sent to can decide its cancellation.", nil)
+		return
+	}
+	data, err := a.requestDetailData(r, req, "Cancellation · "+req.Number)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "request_cancellation", data)
+}
+
+func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	accept := r.FormValue("decision") == "accept"
+	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/approvals?bucket=cancellations", http.StatusSeeOther)
+}
+
+func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	if err := a.st.CancelRequest(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
+}
+
 // approvalTab is one `.segmented` tab on the manager queue. The queue is its
 // own screen rather than a scope of /requests because it answers a different
 // question — "what is mine to decide" — and its tabs are statuses, not buckets.
