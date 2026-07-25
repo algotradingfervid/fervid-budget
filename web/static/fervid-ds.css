@@ -4247,9 +4247,25 @@ td .t-sub {
 
   /* Mobile chrome ------------------------------------------------------ */
 
-  /* Nothing may sit under the fixed tab bar. */
+  /* Nothing may sit under the fixed tab bar. The bar is 96px plus whatever the
+     home indicator claims, so the page reserves the same. */
   .page {
-    padding-bottom: 96px;
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  /* Padding protects the *end* of the document. It does nothing for a control
+     in the middle of a long page: scrolling that into view aligns it with the
+     bottom edge, which is exactly where the fixed bar sits, and the tap lands
+     on the tab bar instead. scroll-margin-bottom reserves the band during
+     scroll-into-view, so anything the user can operate stops above it. */
+  .page a,
+  .page button,
+  .page summary,
+  .page input,
+  .page select,
+  .page textarea,
+  .page [tabindex] {
+    scroll-margin-bottom: calc(112px + env(safe-area-inset-bottom));
   }
 
   .m-topbar {
@@ -4288,12 +4304,15 @@ td .t-sub {
     grid-template-columns: 1fr;
   }
 
+  /* The mobile chrome replaces the sidebar outright — the top bar, tab bar and
+     More sheet carry the same nav the sidebar does. Leaving it on screen put
+     two "Primary" navigation landmarks in the accessibility tree and pushed
+     every page down by half a viewport before its first heading. */
   .sidebar,
   .app-sidebar {
-    position: static;
-    height: auto;
-    padding: 10px;
+    display: none;
   }
+
 
   .side-nav {
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -4455,16 +4474,9 @@ td .t-sub {
 }
 
 @media (max-width: 560px) {
-  .sidebar {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    max-height: 48vh;
-  }
-
-  .side-nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  /* The pre-redesign sidebar-as-sticky-panel and its two-column nav lived
+     here. Both are unreachable now that the 860px block hides the sidebar
+     outright, so they are gone rather than left to contradict it. */
 
   .toolbar > *,
   .toolbar label,
