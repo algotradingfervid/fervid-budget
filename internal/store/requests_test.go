@@ -540,3 +540,51 @@ func TestAttachmentPolicyAsksForAReasonInsteadOfBlocking(t *testing.T) {
 		t.Fatalf("resubmit without file or reason = %v, want ErrValidation", err)
 	}
 }
+
+func TestSelfApprovalIsRejectedAndNeverOffered(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+
+	// The store refuses to route a request to its own requester.
+	_, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
+		ShortTitle: "Lunch", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "p",
+		ExpenseDate: "2026-07-21", ManagerID: req.ID})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("self-approval create = %v, want ErrValidation", err)
+	}
+	// Pure-input form of the same rule.
+	if err := validateRequestInput(RequestInput{Treatment: "budget", Type: "reimbursement",
+		ShortTitle: "t", ProjectID: 1, HeadID: 2, Amount: 1, Purpose: "p",
+		ExpenseDate: "2026-07-21", ManagerID: 9, RequesterID: 9}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("validateRequestInput self-approval = %v, want ErrValidation", err)
+	}
+
+	// The approver list never contains the requester.
+	grantApprovalPermission(t, s, ctx, req.ID)
+	grantApprovalPermission(t, s, ctx, mgr.ID)
+	approvers, err := s.ListApprovers(ctx, req.ID)
+	if err != nil {
+		t.Fatalf("ListApprovers: %v", err)
+	}
+	if len(approvers) != 1 || approvers[0].ID != mgr.ID {
+		t.Fatalf("approvers = %#v, want only the manager", approvers)
+	}
+	for _, a := range approvers {
+		if a.ID == req.ID {
+			t.Fatal("the requester appears in their own approver list")
+		}
+	}
+}
+
+// grantApprovalPermission gives a user a role carrying approval:approve.
+func grantApprovalPermission(t *testing.T, s *Store, ctx context.Context, userID int64) {
+	t.Helper()
+	var roleID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM roles WHERE lower(name)='manager'`).Scan(&roleID); err != nil {
+		t.Fatalf("seeded Manager role missing: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO user_roles(user_id,role_id) VALUES(?,?) ON CONFLICT DO NOTHING`, userID, roleID); err != nil {
+		t.Fatal(err)
+	}
+}

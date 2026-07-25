@@ -124,6 +124,11 @@ func validateRequestInput(in RequestInput) error {
 	if in.ManagerID <= 0 {
 		return fmt.Errorf("%w: choose an approver", ErrValidation)
 	}
+	// G8: self-approval is never acceptable, whatever roles the requester holds.
+	// admin-configuration.html renders this as checked-and-disabled: not a setting.
+	if in.RequesterID > 0 && in.ManagerID == in.RequesterID {
+		return fmt.Errorf("%w: you cannot approve your own request — choose another approver", ErrValidation)
+	}
 	if in.Treatment != "budget" && in.Treatment != "recoverable" {
 		return fmt.Errorf("%w: treatment must be budget or recoverable", ErrValidation)
 	}
@@ -517,4 +522,29 @@ func validateAttachmentPolicy(required bool, attachmentCount int, exceptionReaso
 func (s *Store) attachmentsRequired(ctx context.Context) (bool, error) {
 	v, err := s.AppSetting(ctx, "require_attachments")
 	return v == "1", err
+}
+
+// ListApprovers returns the active users who may approve a request, never
+// including excludeUserID. The request form's approver control is built from
+// exactly this list, so a requester's own name is never selectable (G8).
+func (s *Store) ListApprovers(ctx context.Context, excludeUserID int64) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id,u.email,u.name,u.password_hash,u.role,u.active,u.created_at,u.updated_at,u.default_approver_id
+ FROM users u
+ JOIN user_roles ur ON ur.user_id=u.id
+ JOIN role_permissions rp ON rp.role_id=ur.role_id
+ WHERE u.active=1 AND rp.resource='approval' AND rp.action='approve' AND u.id<>?
+ ORDER BY u.name`, excludeUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
