@@ -214,3 +214,38 @@ func TestCopyRoleDuplicatesGrantsAndScopes(t *testing.T) {
 		t.Fatalf("copy missing source = %v, want %v", err, ErrNotFound)
 	}
 }
+
+func TestSetUserRolesReplacesAssignment(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+
+	uid, err := s.CreateUser(ctx, "member@example.com", "Member", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1, _ := s.CreateRole(ctx, actor, "Alpha", "")
+	r2, _ := s.CreateRole(ctx, actor, "Beta", "")
+
+	if err := s.SetUserRoles(ctx, actor, uid, []int64{r1, r2}); err != nil {
+		t.Fatalf("SetUserRoles: %v", err)
+	}
+	roles, err := s.UserRoles(ctx, uid)
+	if err != nil || len(roles) != 2 {
+		t.Fatalf("UserRoles = %+v, %v; want 2 roles", roles, err)
+	}
+
+	// Replacing the assignment fully overwrites the previous set.
+	if err := s.SetUserRoles(ctx, actor, uid, []int64{r2}); err != nil {
+		t.Fatal(err)
+	}
+	roles, _ = s.UserRoles(ctx, uid)
+	if len(roles) != 1 || roles[0].ID != r2 {
+		t.Fatalf("post-replace roles = %+v; want only Beta", roles)
+	}
+
+	// Unknown role ids are rejected as validation errors.
+	if err := s.SetUserRoles(ctx, actor, uid, []int64{r2, 999999}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("assign unknown role = %v, want %v", err, ErrValidation)
+	}
+}

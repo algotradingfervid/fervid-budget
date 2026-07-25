@@ -437,3 +437,57 @@ func (s *Store) CopyRole(ctx context.Context, actor User, srcID int64, name stri
 	}
 	return newID, nil
 }
+
+// SetUserRoles replaces a user's entire role assignment atomically. Every role
+// id must exist; unknown ids are rejected before any write.
+func (s *Store) SetUserRoles(ctx context.Context, actor User, userID int64, roleIDs []int64) error {
+	unique := map[int64]struct{}{}
+	for _, id := range roleIDs {
+		unique[id] = struct{}{}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for id := range unique {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM roles WHERE id=?`, id).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return fmt.Errorf("%w: role %d does not exist", ErrValidation, id)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_roles WHERE user_id=?`, userID); err != nil {
+		return err
+	}
+	for id := range unique {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_roles(user_id,role_id) VALUES(?,?)`, userID, id); err != nil {
+			return classify(err)
+		}
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "user", EntityID: &userID, Summary: fmt.Sprintf("Updated role assignment (%d roles)", len(unique)), After: map[string]any{"role_ids": roleIDs}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UserRoles(ctx context.Context, userID int64) ([]Role, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.name,r.description,r.is_system,r.created_at,r.updated_at
+		FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=? ORDER BY r.is_system DESC, r.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Role
+	for rows.Next() {
+		r, err := scanRole(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
