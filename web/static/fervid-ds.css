@@ -3271,9 +3271,9 @@ legend {
   background: var(--surface-3);
 }
 
-.area .a-list { display: grid; }
+.a-list { display: grid; }
 
-.area .a-list a {
+.a-list a {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -3283,25 +3283,25 @@ legend {
   text-decoration: none;
 }
 
-.area .a-list a:last-child { border-bottom: 0; }
+.a-list a:last-child { border-bottom: 0; }
 
-.area .a-list a:hover {
+.a-list a:hover {
   background: var(--surface-2);
   text-decoration: none;
 }
 
-.area .a-list .al-main {
+.a-list .al-main {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.area .a-list .al-main b {
+.a-list .al-main b {
   display: block;
   font-size: 13px;
   font-weight: 720;
 }
 
-.area .a-list .al-main small {
+.a-list .al-main small {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3311,7 +3311,7 @@ legend {
   font-size: 11.5px;
 }
 
-.area .a-list .al-amt {
+.a-list .al-amt {
   flex: none;
   font-size: 13.5px;
   font-weight: 750;
@@ -3327,7 +3327,7 @@ legend {
   font-weight: 700;
 }
 
-.area.is-empty .a-list {
+.is-empty .a-list {
   padding: 20px 13px;
   color: var(--muted);
   font-size: 12.5px;
