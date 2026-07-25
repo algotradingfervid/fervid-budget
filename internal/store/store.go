@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,15 +47,35 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) DB() *sql.DB  { return s.db }
 
 func (s *Store) CreateUser(ctx context.Context, email, name, hash, role string, active bool) (int64, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	name = strings.TrimSpace(name)
+	if err := validateUserFields(email, name, role); err != nil {
+		return 0, err
+	}
 	if role == "" {
 		role = "data_entry"
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO users(email,name,password_hash,role,active) VALUES(?,?,?,?,?)`,
-		strings.ToLower(strings.TrimSpace(email)), strings.TrimSpace(name), hash, role, boolInt(active))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `INSERT INTO users(email,name,password_hash,role,active) VALUES(?,?,?,?,?)`,
+		email, name, hash, role, boolInt(active))
 	if err != nil {
 		return 0, classify(err)
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := assignDefaultRoleTx(ctx, tx, id, role); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *Store) EnsureUser(ctx context.Context, email, name, hash, role string) error {
@@ -98,13 +119,110 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func (s *Store) UpdateUser(ctx context.Context, id int64, name, role string, active bool, passwordHash string) error {
+	name = strings.TrimSpace(name)
+	if err := validateUserFields("placeholder@example.invalid", name, role); err != nil {
+		return err
+	}
+	if err := s.RequireAnotherActiveAdmin(ctx, id, role, active); err != nil {
+		return err
+	}
 	if passwordHash != "" {
 		_, err := s.db.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-			strings.TrimSpace(name), role, boolInt(active), passwordHash, id)
+			name, role, boolInt(active), passwordHash, id)
 		return classify(err)
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		strings.TrimSpace(name), role, boolInt(active), id)
+		name, role, boolInt(active), id)
+	return classify(err)
+}
+
+// RequireAnotherActiveAdmin prevents disabling or demoting the final active
+// administrator. It is deliberately public so callers can surface a useful
+// validation message before displaying a confirmation form.
+func (s *Store) RequireAnotherActiveAdmin(ctx context.Context, userID int64, nextRole string, nextActive bool) error {
+	var currentRole string
+	var currentActive int
+	if err := s.db.QueryRowContext(ctx, `SELECT role,active FROM users WHERE id=?`, userID).Scan(&currentRole, &currentActive); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if currentRole != "admin" || currentActive != 1 || (nextRole == "admin" && nextActive) {
+		return nil
+	}
+	var others int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND id<>?`, userID).Scan(&others); err != nil {
+		return err
+	}
+	if others == 0 {
+		return fmt.Errorf("%w: at least one active administrator is required", ErrValidation)
+	}
+	return nil
+}
+
+// LoginLocked reports whether a known account remains temporarily locked.
+func (s *Store) LoginLocked(ctx context.Context, email string) (bool, time.Time, error) {
+	var locked sql.NullTime
+	err := s.db.QueryRowContext(ctx, `SELECT locked FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email))).Scan(&locked)
+	if err == sql.ErrNoRows {
+		return false, time.Time{}, ErrNotFound
+	}
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	if !locked.Valid || !locked.Time.After(time.Now()) {
+		return false, time.Time{}, nil
+	}
+	return true, locked.Time, nil
+}
+
+// RecordFailedLogin increments a known user's failure counter and locks the
+// account for fifteen minutes after five consecutive failures. It intentionally
+// returns no signal for unknown email addresses to avoid account enumeration.
+func (s *Store) RecordFailedLogin(ctx context.Context, email string) (time.Time, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer tx.Rollback()
+	var attempts int
+	var previousLock sql.NullTime
+	if err := tx.QueryRowContext(ctx, `SELECT attempt_count,locked FROM users WHERE email=?`, email).Scan(&attempts, &previousLock); err != nil {
+		if err == sql.ErrNoRows {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	if previousLock.Valid && !previousLock.Time.After(time.Now()) {
+		attempts = 0
+	}
+	attempts++
+	var locked any
+	var until time.Time
+	if attempts >= 5 {
+		until = time.Now().Add(15 * time.Minute).UTC()
+		locked = until
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET attempt_count=?, last_attempt=CURRENT_TIMESTAMP, locked=?, updated_at=CURRENT_TIMESTAMP WHERE email=?`, attempts, locked, email); err != nil {
+		return time.Time{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return time.Time{}, err
+	}
+	return until, nil
+}
+
+func (s *Store) ResetLoginAttempts(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET attempt_count=0,last_attempt=NULL,locked=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`, userID)
+	return classify(err)
+}
+
+// ResetLoginFailures is the email-oriented companion for login handlers that
+// do not retain a user ID after authentication has succeeded.
+func (s *Store) ResetLoginFailures(ctx context.Context, email string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET attempt_count=0,last_attempt=NULL,locked=NULL,updated_at=CURRENT_TIMESTAMP WHERE email=?`, strings.ToLower(strings.TrimSpace(email)))
 	return classify(err)
 }
 
@@ -149,19 +267,24 @@ func (s *Store) ListProjects(ctx context.Context, activeOnly bool) ([]Project, e
 }
 
 func (s *Store) UpsertHead(ctx context.Context, id, projectID int64, name, dueDay string, active bool, sortOrder int) (int64, error) {
-	if strings.TrimSpace(name) == "" || projectID == 0 {
+	name = strings.TrimSpace(name)
+	dueDay = strings.TrimSpace(dueDay)
+	if name == "" || projectID == 0 {
 		return 0, fmt.Errorf("%w: project and head name are required", ErrValidation)
+	}
+	if !validDueDay(dueDay) {
+		return 0, fmt.Errorf("%w: due day must be a day from 1 to 31", ErrValidation)
 	}
 	if id == 0 {
 		res, err := s.db.ExecContext(ctx, `INSERT INTO heads(project_id,name,due_day,active,sort_order) VALUES(?,?,?,?,?)`,
-			projectID, strings.TrimSpace(name), strings.TrimSpace(dueDay), boolInt(active), sortOrder)
+			projectID, name, dueDay, boolInt(active), sortOrder)
 		if err != nil {
 			return 0, classify(err)
 		}
 		return res.LastInsertId()
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE heads SET project_id=?, name=?, due_day=?, active=?, sort_order=? WHERE id=?`,
-		projectID, strings.TrimSpace(name), strings.TrimSpace(dueDay), boolInt(active), sortOrder, id)
+		projectID, name, dueDay, boolInt(active), sortOrder, id)
 	return id, classify(err)
 }
 
@@ -191,15 +314,73 @@ func (s *Store) ListHeads(ctx context.Context, activeOnly bool) ([]Head, error) 
 }
 
 func (s *Store) SetBudget(ctx context.Context, actor User, headID int64, month string, amount int64) error {
-	if amount <= 0 || !validMonth(month) {
-		return fmt.Errorf("%w: valid month and positive amount are required", ErrValidation)
+	return s.SetBudgets(ctx, actor, month, []BudgetInput{{HeadID: headID, Amount: amount}})
+}
+
+// SetBudgets writes an entire budget form atomically. Validation occurs before
+// any write, so a malformed row cannot leave a partially saved monthly plan.
+func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs []BudgetInput) error {
+	if !validMonth(month) || len(inputs) == 0 {
+		return fmt.Errorf("%w: valid month and at least one budget are required", ErrValidation)
+	}
+	seen := make(map[int64]struct{}, len(inputs))
+	for _, input := range inputs {
+		if input.HeadID <= 0 || input.Amount < 0 {
+			return fmt.Errorf("%w: valid head and non-negative amount are required", ErrValidation)
+		}
+		if _, exists := seen[input.HeadID]; exists {
+			return fmt.Errorf("%w: duplicate budget head", ErrValidation)
+		}
+		seen[input.HeadID] = struct{}{}
 	}
 	if s.IsLocked(ctx, month) {
 		return ErrLockedMonth
 	}
-	if err := s.ensureMonthPlan(ctx, actor, month, ""); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
+	var actorID any
+	if actor.ID != 0 {
+		actorID = actor.ID
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO budget_months(month,status,created_by) VALUES(?,'open',?) ON CONFLICT(month) DO UPDATE SET updated_at=CURRENT_TIMESTAMP`, month, actorID); err != nil {
+		return classify(err)
+	}
+	for _, input := range inputs {
+		var before *Budget
+		var b Budget
+		err := tx.QueryRowContext(ctx, `SELECT id,head_id,month,amount,created_at,updated_at FROM budgets WHERE head_id=? AND month=?`, input.HeadID, month).Scan(&b.ID, &b.HeadID, &b.Month, &b.Amount, &b.CreatedAt, &b.UpdatedAt)
+		if err == nil {
+			before = &b
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `INSERT INTO budgets(head_id,month,amount) VALUES(?,?,?) ON CONFLICT(head_id,month) DO UPDATE SET amount=excluded.amount, updated_at=CURRENT_TIMESTAMP`, input.HeadID, month, input.Amount)
+		if err != nil {
+			return classify(err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		after := Budget{ID: id, HeadID: input.HeadID, Month: month, Amount: input.Amount}
+		action := "create"
+		if before != nil {
+			action, after.ID = "update", before.ID
+		}
+		beforeJSON, _ := json.Marshal(before)
+		afterJSON, _ := json.Marshal(after)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID, "Saved budget "+money.FormatPaise(input.Amount), nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) setBudgetLegacy(ctx context.Context, actor User, headID int64, month string, amount int64) error {
+	// Kept as a small, explicit implementation reference for older callers.
 	var before *Budget
 	if b, err := s.Budget(ctx, headID, month); err == nil {
 		before = &b
@@ -245,6 +426,15 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 		return err
 	}
 	defer tx.Rollback()
+	if sourceMonth != "" {
+		var sourceBudgets int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM budgets WHERE month=? AND amount>0`, sourceMonth).Scan(&sourceBudgets); err != nil {
+			return err
+		}
+		if sourceBudgets == 0 {
+			return fmt.Errorf("%w: source month has no budgets to copy", ErrValidation)
+		}
+	}
 
 	var source any
 	if sourceMonth != "" {
@@ -338,25 +528,74 @@ func (s *Store) ListMonthPlans(ctx context.Context) ([]MonthPlan, error) {
 }
 
 func (s *Store) CreatePayment(ctx context.Context, actor User, in PaymentInput) (int64, error) {
+	return s.createPayment(ctx, actor, in, nil)
+}
+
+// CreatePaymentWithAttachment makes the database payment and attachment rows
+// one transaction. The caller remains responsible for removing an uploaded
+// file if this method returns an error.
+func (s *Store) CreatePaymentWithAttachment(ctx context.Context, actor User, in PaymentInput, attachment *AttachmentInput) (int64, error) {
+	return s.createPayment(ctx, actor, in, attachment)
+}
+
+func (s *Store) createPayment(ctx context.Context, actor User, in PaymentInput, attachment *AttachmentInput) (int64, error) {
 	if err := s.validatePayment(ctx, in); err != nil {
 		return 0, err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by)
-		VALUES(?,?,?,?,?,?,?,?,?)`, in.HeadID, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID)
+	if attachment != nil {
+		if err := validateAttachment(*attachment); err != nil {
+			return 0, err
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by) VALUES(?,?,?,?,?,?,?,?,?)`, in.HeadID, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID)
 	if err != nil {
 		return 0, classify(err)
 	}
-	id, _ := res.LastInsertId()
-	p, _ := s.Payment(ctx, id)
-	_ = s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment", EntityID: &id, Summary: "Recorded payment " + money.FormatPaise(in.Amount), After: p})
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	after := paymentFromInput(id, actor, in)
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment", EntityID: &id, Summary: "Recorded payment " + money.FormatPaise(in.Amount), After: after}); err != nil {
+		return 0, err
+	}
+	if attachment != nil {
+		if _, err := addAttachmentTx(ctx, tx, actor, id, *attachment); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
 func (s *Store) UpdatePayment(ctx context.Context, actor User, id int64, in PaymentInput) error {
+	return s.UpdatePaymentWithAttachment(ctx, actor, id, in, nil)
+}
+
+// UpdatePaymentWithAttachment updates payment fields, optionally adds a file,
+// and records both audit events in one transaction.
+func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id int64, in PaymentInput, attachment *AttachmentInput) error {
 	if err := s.validatePayment(ctx, in); err != nil {
 		return err
 	}
-	before, err := s.Payment(ctx, id)
+	if attachment != nil {
+		if err := validateAttachment(*attachment); err != nil {
+			return err
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := paymentInTx(ctx, tx, id)
 	if err != nil {
 		return err
 	}
@@ -366,35 +605,57 @@ func (s *Store) UpdatePayment(ctx context.Context, actor User, id int64, in Paym
 	if s.IsLocked(ctx, before.PaidOn[:7]) {
 		return ErrLockedMonth
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE payments SET head_id=?, paid_on=?, amount=?, vendor_payee=?, payment_mode=?, invoice_no=?, reference_no=?, remarks=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+	_, err = tx.ExecContext(ctx, `UPDATE payments SET head_id=?, paid_on=?, amount=?, vendor_payee=?, payment_mode=?, invoice_no=?, reference_no=?, remarks=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		in.HeadID, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, id)
 	if err != nil {
 		return classify(err)
 	}
-	after, _ := s.Payment(ctx, id)
-	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "payment", EntityID: &id, Summary: "Edited payment " + money.FormatPaise(in.Amount), Before: before, After: after})
+	after := paymentFromInput(id, actor, in)
+	after.EnteredBy, after.EnteredByName = before.EnteredBy, before.EnteredByName
+	after.UpdatedBy = &actor.ID
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "payment", EntityID: &id, Summary: "Edited payment " + money.FormatPaise(in.Amount), Before: before, After: after}); err != nil {
+		return err
+	}
+	if attachment != nil {
+		if _, err := addAttachmentTx(ctx, tx, actor, id, *attachment); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason string) error {
-	before, err := s.Payment(ctx, id)
+	reason = strings.TrimSpace(reason)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := paymentInTx(ctx, tx, id)
 	if err != nil {
 		return err
 	}
 	if before.VoidedAt != nil {
 		return nil
 	}
+	if reason == "" {
+		return fmt.Errorf("%w: void reason is required", ErrValidation)
+	}
 	if s.IsLocked(ctx, before.PaidOn[:7]) {
 		return ErrLockedMonth
 	}
-	if strings.TrimSpace(reason) == "" {
-		return fmt.Errorf("%w: void reason is required", ErrValidation)
-	}
-	_, err = s.db.ExecContext(ctx, `UPDATE payments SET voided_by=?, void_reason=?, voided_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`, actor.ID, reason, id)
+	_, err = tx.ExecContext(ctx, `UPDATE payments SET voided_by=?, void_reason=?, voided_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`, actor.ID, reason, id)
 	if err != nil {
 		return err
 	}
-	after, _ := s.Payment(ctx, id)
-	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "void", EntityType: "payment", EntityID: &id, Summary: "Voided payment " + money.FormatPaise(before.Amount), Before: before, After: after})
+	after := before
+	after.VoidedBy, after.VoidReason = &actor.ID, reason
+	now := time.Now().UTC()
+	after.VoidedAt = &now
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "void", EntityType: "payment", EntityID: &id, Summary: "Voided payment " + money.FormatPaise(before.Amount), Before: before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
@@ -408,6 +669,27 @@ func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
 		return p, ErrNotFound
 	}
 	return p, err
+}
+
+func paymentInTx(ctx context.Context, tx *sql.Tx, id int64) (Payment, error) {
+	var p Payment
+	err := tx.QueryRowContext(ctx, `SELECT id,head_id,paid_on,amount,COALESCE(vendor_payee,''),COALESCE(payment_mode,''),COALESCE(invoice_no,''),COALESCE(reference_no,''),COALESCE(remarks,''),entered_by,updated_by,voided_by,COALESCE(void_reason,''),voided_at,created_at,updated_at FROM payments WHERE id=?`, id).
+		Scan(&p.ID, &p.HeadID, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
+func paymentFromInput(id int64, actor User, in PaymentInput) Payment {
+	return Payment{ID: id, HeadID: in.HeadID, PaidOn: in.PaidOn, Amount: in.Amount, VendorPayee: in.VendorPayee, PaymentMode: in.PaymentMode, InvoiceNo: in.InvoiceNo, ReferenceNo: in.ReferenceNo, Remarks: in.Remarks, EnteredBy: actor.ID, EnteredByName: actor.Name}
+}
+
+func recordAuditTx(ctx context.Context, tx *sql.Tx, in AuditInput) error {
+	before, _ := json.Marshal(in.Before)
+	after, _ := json.Marshal(in.After)
+	_, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json,ip) VALUES(?,?,?,?,?,?,?,?,?)`, in.ActorID, in.ActorName, in.Action, in.EntityType, in.EntityID, in.Summary, nullJSON(before), nullJSON(after), in.IP)
+	return err
 }
 
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
@@ -455,7 +737,8 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	}
 	search := strings.ToLower(strings.TrimSpace(opts.Query))
 	if search != "" {
-		where = append(where, `(lower(p.name) LIKE ? OR lower(h.name) LIKE ? OR lower(COALESCE(py.vendor_payee,'')) LIKE ? OR lower(COALESCE(py.invoice_no,'')) LIKE ? OR lower(COALESCE(py.reference_no,'')) LIKE ? OR lower(COALESCE(py.remarks,'')) LIKE ?)`)
+		where = append(where, `(lower(p.name) LIKE ? ESCAPE '\' OR lower(h.name) LIKE ? ESCAPE '\' OR lower(COALESCE(py.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(py.invoice_no,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(py.reference_no,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(py.remarks,'')) LIKE ? ESCAPE '\')`)
+		search = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
 		needle := "%" + search + "%"
 		args = append(args, needle, needle, needle, needle, needle, needle)
 	}
@@ -481,16 +764,56 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 }
 
 func (s *Store) AddAttachment(ctx context.Context, actor User, paymentID int64, original, stored, mime string, size int64) error {
-	if _, err := s.Payment(ctx, paymentID); err != nil {
+	attachment := AttachmentInput{OriginalName: original, StoredPath: stored, MimeType: mime, SizeBytes: size}
+	if err := validateAttachment(attachment); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO payment_attachments(payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`,
-		paymentID, original, stored, mime, size, actor.ID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	id, _ := res.LastInsertId()
-	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment_attachment", EntityID: &paymentID, Summary: "Uploaded attachment " + original, After: map[string]any{"id": id, "name": original}})
+	defer tx.Rollback()
+	p, err := paymentInTx(ctx, tx, paymentID)
+	if err != nil {
+		return err
+	}
+	if p.VoidedAt != nil {
+		return fmt.Errorf("%w: cannot attach files to a voided payment", ErrValidation)
+	}
+	if s.IsLocked(ctx, p.PaidOn[:7]) {
+		return ErrLockedMonth
+	}
+	if _, err := addAttachmentTx(ctx, tx, actor, paymentID, attachment); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func addAttachmentTx(ctx context.Context, tx *sql.Tx, actor User, paymentID int64, attachment AttachmentInput) (int64, error) {
+	res, err := tx.ExecContext(ctx, `INSERT INTO payment_attachments(payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`, paymentID, attachment.OriginalName, attachment.StoredPath, attachment.MimeType, attachment.SizeBytes, actor.ID)
+	if err != nil {
+		return 0, classify(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "attach", EntityType: "payment", EntityID: &paymentID, Summary: "Uploaded attachment " + attachment.OriginalName, After: map[string]any{"id": id, "name": attachment.OriginalName}}); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// AttachmentByID retrieves a single attachment for authorized download
+// handlers. Authorization is intentionally left to the app's permission layer.
+func (s *Store) AttachmentByID(ctx context.Context, id int64) (Attachment, error) {
+	var a Attachment
+	err := s.db.QueryRowContext(ctx, `SELECT id,payment_id,original_name,stored_path,COALESCE(mime_type,''),size_bytes,uploaded_by,created_at FROM payment_attachments WHERE id=?`, id).
+		Scan(&a.ID, &a.PaymentID, &a.OriginalName, &a.StoredPath, &a.MimeType, &a.SizeBytes, &a.UploadedBy, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return a, ErrNotFound
+	}
+	return a, err
 }
 
 func (s *Store) Attachments(ctx context.Context, paymentID int64) ([]Attachment, error) {
@@ -556,6 +879,8 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 		switch r.Status {
 		case "over":
 			g.Over++
+		case "unbudgeted":
+			g.Unbudgeted++
 		case "under":
 			g.Under++
 		case "on-track":
@@ -775,6 +1100,31 @@ func validDate(s string) bool {
 	return err == nil
 }
 
+func validDueDay(s string) bool {
+	if s == "" {
+		return true
+	}
+	day, err := strconv.Atoi(s)
+	return err == nil && day >= 1 && day <= 31
+}
+
+func validateUserFields(email, name, role string) error {
+	if strings.TrimSpace(email) == "" || !strings.Contains(email, "@") || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: email and name are required", ErrValidation)
+	}
+	if role != "" && role != "admin" && role != "data_entry" {
+		return fmt.Errorf("%w: invalid user role", ErrValidation)
+	}
+	return nil
+}
+
+func validateAttachment(in AttachmentInput) error {
+	if strings.TrimSpace(in.OriginalName) == "" || strings.TrimSpace(in.StoredPath) == "" || in.SizeBytes < 0 {
+		return fmt.Errorf("%w: valid attachment metadata is required", ErrValidation)
+	}
+	return nil
+}
+
 func validMonth(s string) bool {
 	_, err := time.Parse("2006-01", s)
 	return err == nil
@@ -820,6 +1170,8 @@ func statusFor(budget, actual int64) string {
 	switch {
 	case actual == 0:
 		return "not-paid"
+	case budget == 0 && actual > 0:
+		return "unbudgeted"
 	case budget > 0 && actual > budget:
 		return "over"
 	case budget > 0 && actual == budget:
@@ -833,5 +1185,10 @@ func nullJSON(b []byte) any {
 	if string(b) == "null" {
 		return nil
 	}
+	return string(b)
+}
+
+func mustJSON(v any) string {
+	b, _ := json.Marshal(v)
 	return string(b)
 }

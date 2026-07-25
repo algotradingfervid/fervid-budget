@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -23,15 +24,17 @@ type migration struct {
 //	v5 — recoverable categories
 //	v6 — notification settings
 //
-// Phase 1 owns exactly one migration, v1: it creates all four permission tables
-// (overview §3 P1); a later task folds seeding of the system roles and the
-// user_roles back-fill into the same v1 Up.
+// Phase 1 owns exactly one migration, v1: it creates all four permission
+// tables (overview §3 P1), seeds the four system roles and back-fills
+// user_roles from the legacy users.role column. The whole Up is idempotent —
+// CREATE TABLE IF NOT EXISTS, upsert-by-name seeding and conflict-tolerant
+// back-fill — so re-applying it after a user_version reset is safe.
 var migrations = []migration{
 	{
 		Version: 1,
 		Name:    "permission schema",
 		Up: func(tx *sql.Tx) error {
-			_, err := tx.Exec(`
+			if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS roles (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -61,10 +64,181 @@ CREATE TABLE IF NOT EXISTS user_roles (
   role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
   PRIMARY KEY(user_id, role_id)
 );
-`)
-			return err
+`); err != nil {
+				return err
+			}
+			if err := seedSystemRoles(tx); err != nil {
+				return err
+			}
+			return backfillUserRoles(tx)
 		},
 	},
+}
+
+type systemRoleDef struct {
+	Name        string
+	Description string
+	Grants      []Grant
+	Scopes      []ScopeGrant
+}
+
+// systemRoleDefaults are the seeded starter roles (overview §5). Admin holds
+// every action in the canonical vocabulary.
+var systemRoleDefaults = []systemRoleDef{
+	{
+		Name:        "Requester",
+		Description: "Raise and manage your own payment requests.",
+		Grants: []Grant{
+			{"request", "view"}, {"request", "create"}, {"request", "edit"},
+			{"request", "withdraw"}, {"request", "reraise"}, {"request", "comment"},
+			{"attachment", "view"}, {"attachment", "create"},
+		},
+		Scopes: []ScopeGrant{{"request", "own"}},
+	},
+	{
+		Name:        "Manager",
+		Description: "Review and decide on payment requests.",
+		Grants: []Grant{
+			{"request", "view"}, {"request", "comment"},
+			{"approval", "approve"}, {"approval", "reject"}, {"approval", "return"},
+			{"approval", "reassign"}, {"approval", "accept_partial"},
+			{"grid", "view"}, {"report", "view"},
+		},
+		Scopes: []ScopeGrant{{"request", "all"}},
+	},
+	{
+		Name:        "Accounts",
+		Description: "Process approved requests and record payments.",
+		Grants: []Grant{
+			{"request", "view"}, {"request", "comment"},
+			{"payment", "view"}, {"payment", "create"}, {"payment", "edit"}, {"payment", "void"},
+			{"payment", "process"}, {"payment", "settle"}, {"payment", "mark_partial"}, {"payment", "hold"},
+			{"attachment", "view"}, {"attachment", "create"},
+			{"grid", "view"}, {"report", "view"}, {"report", "export"},
+			{"recoverable_report", "view"}, {"recoverable_report", "export"},
+		},
+		Scopes: []ScopeGrant{{"request", "all"}, {"payment", "all"}},
+	},
+	{
+		Name:        "Admin",
+		Description: "Full administrative access.",
+		Grants:      adminGrants(),
+		Scopes:      []ScopeGrant{{"request", "all"}, {"payment", "all"}},
+	},
+}
+
+func adminGrants() []Grant {
+	var out []Grant
+	for _, res := range resourceOrder {
+		for _, act := range resourceActions[res] {
+			out = append(out, Grant{res, act})
+		}
+	}
+	return out
+}
+
+// seedSystemRoles is idempotent: it upserts each system role by name and resets
+// its grants and scopes to the canonical defaults.
+func seedSystemRoles(tx *sql.Tx) error {
+	for _, def := range systemRoleDefaults {
+		var roleID int64
+		err := tx.QueryRow(`SELECT id FROM roles WHERE lower(name)=lower(?)`, def.Name).Scan(&roleID)
+		switch err {
+		case sql.ErrNoRows:
+			res, insErr := tx.Exec(`INSERT INTO roles(name,description,is_system) VALUES(?,?,1)`, def.Name, def.Description)
+			if insErr != nil {
+				return insErr
+			}
+			if roleID, err = res.LastInsertId(); err != nil {
+				return err
+			}
+		case nil:
+			if _, err := tx.Exec(`UPDATE roles SET is_system=1, description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, def.Description, roleID); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM role_permissions WHERE role_id=?`, roleID); err != nil {
+			return err
+		}
+		for _, g := range def.Grants {
+			if _, err := tx.Exec(`INSERT INTO role_permissions(role_id,resource,action) VALUES(?,?,?)`, roleID, g.Resource, g.Action); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`DELETE FROM role_data_scope WHERE role_id=?`, roleID); err != nil {
+			return err
+		}
+		for _, sc := range def.Scopes {
+			if _, err := tx.Exec(`INSERT INTO role_data_scope(role_id,resource,scope) VALUES(?,?,?)`, roleID, sc.Resource, sc.Scope); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// backfillUserRoles maps every existing user's legacy users.role to a system
+// role (admin->Admin, everything else->Accounts) and inserts user_roles rows.
+func backfillUserRoles(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, role FROM users`)
+	if err != nil {
+		return err
+	}
+	type u struct {
+		id   int64
+		role string
+	}
+	var users []u
+	for rows.Next() {
+		var one u
+		if err := rows.Scan(&one.id, &one.role); err != nil {
+			rows.Close()
+			return err
+		}
+		users = append(users, one)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, one := range users {
+		name := "Accounts"
+		if one.role == "admin" {
+			name = "Admin"
+		}
+		var roleID int64
+		if err := tx.QueryRow(`SELECT id FROM roles WHERE lower(name)=lower(?)`, name).Scan(&roleID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO user_roles(user_id,role_id) VALUES(?,?) ON CONFLICT(user_id,role_id) DO NOTHING`, one.id, roleID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// assignDefaultRoleTx gives a freshly created user a user_roles row derived from
+// its legacy role, so users created after the RBAC migration still resolve to a
+// concrete permission set. Tolerant if system roles are somehow absent.
+func assignDefaultRoleTx(ctx context.Context, tx *sql.Tx, userID int64, legacyRole string) error {
+	name := "Accounts"
+	if legacyRole == "admin" {
+		name = "Admin"
+	}
+	var roleID int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM roles WHERE lower(name)=lower(?)`, name).Scan(&roleID)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_roles(user_id,role_id) VALUES(?,?) ON CONFLICT(user_id,role_id) DO NOTHING`, userID, roleID)
+	return err
 }
 
 // migrate applies every registered migration whose Version is greater than the

@@ -289,3 +289,108 @@ func TestEffectivePermissionsUnionAndBroadestScope(t *testing.T) {
 		t.Fatalf("unset scope = %q, want empty string", got)
 	}
 }
+
+func TestSeedSystemRolesMatchDefaults(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	roles, err := s.AllRoles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Role{}
+	for _, r := range roles {
+		byName[r.Name] = r
+	}
+	for _, want := range []string{"Requester", "Manager", "Accounts", "Admin"} {
+		r, ok := byName[want]
+		if !ok {
+			t.Fatalf("system role %q not seeded", want)
+		}
+		if !r.IsSystem {
+			t.Fatalf("role %q must be is_system", want)
+		}
+	}
+
+	// Admin has every resource+action in the vocabulary and scope 'all'.
+	admin := byName["Admin"]
+	grants, scopes, err := s.RolePermissions(ctx, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, acts := range resourceActions {
+		total += len(acts)
+	}
+	if len(grants) != total {
+		t.Fatalf("Admin grants = %d, want every action %d", len(grants), total)
+	}
+	scopeAll := 0
+	for _, sc := range scopes {
+		if sc.Scope == "all" {
+			scopeAll++
+		}
+	}
+	if scopeAll != 2 {
+		t.Fatalf("Admin scopes = %+v, want request=all and payment=all", scopes)
+	}
+
+	// Requester default: request scope own, no approval permissions.
+	req := byName["Requester"]
+	rp, rs, _ := s.RolePermissions(ctx, req.ID)
+	hasApprove := false
+	for _, g := range rp {
+		if g.Resource == "approval" {
+			hasApprove = true
+		}
+	}
+	if hasApprove {
+		t.Fatal("Requester must not hold approval permissions")
+	}
+	if len(rs) != 1 || rs[0].Resource != "request" || rs[0].Scope != "own" {
+		t.Fatalf("Requester scope = %+v, want request=own", rs)
+	}
+}
+
+func TestDeleteRoleRejectsSystemRole(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+	roles, _ := s.AllRoles(ctx)
+	var adminID int64
+	for _, r := range roles {
+		if r.Name == "Admin" {
+			adminID = r.ID
+		}
+	}
+	if err := s.DeleteRole(ctx, actor, adminID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("delete system role = %v, want %v", err, ErrForbidden)
+	}
+}
+
+func TestCreateUserAssignsDefaultRole(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	adminID, err := s.CreateUser(ctx, "boss@example.com", "Boss", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles, err := s.UserRoles(ctx, adminID)
+	if err != nil || len(roles) != 1 || roles[0].Name != "Admin" {
+		t.Fatalf("admin default roles = %+v, %v; want [Admin]", roles, err)
+	}
+	ps, _ := s.EffectivePermissions(ctx, adminID)
+	if !ps.Can("role", "create") || !ps.Can("user", "edit") {
+		t.Fatal("bootstrap-style admin lacks administrative permissions")
+	}
+
+	entryID, err := s.CreateUser(ctx, "clerk@example.com", "Clerk", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles, _ = s.UserRoles(ctx, entryID)
+	if len(roles) != 1 || roles[0].Name != "Accounts" {
+		t.Fatalf("data_entry default roles = %+v; want [Accounts]", roles)
+	}
+}
