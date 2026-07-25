@@ -2012,6 +2012,74 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The Configuration screen — mockups/screens/admin-configuration.html.
+
+     One form of fieldsets closed by one action bar. The screen is a rendering
+     of configSections, so a later phase adds a section by appending to that
+     table and touches nothing here.
+
+     Two controls are deliberately not settings. "Block self-approval" renders
+     checked and disabled because G8 is structural, not configurable, and
+     "Second approval above a threshold" renders disabled as a stated non-goal.
+     Neither carries a name, so neither can be written. */}}
+{{define "configuration"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Administration</div>
+    <h1>Configuration</h1>
+    <p class="sub">The rules the request module runs on. Everything here is data — no code change needed.</p>
+  </div>
+</section>
+
+<form method="post" action="/configuration">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{range configSections}}
+  <fieldset>
+    <legend>{{.Title}}</legend>
+    <div class="form-grid">
+      {{range .Fields}}
+      <div class="field span-{{.Span}}{{if lt .Span 12}} m-half{{end}}">
+        {{if eq .Kind "toggle"}}
+          <label class="checkline"><input type="checkbox" name="{{.Key}}" {{if eq (index $.Config .Key) "1"}}checked{{end}}> {{.Label}}</label>
+        {{else if eq .Kind "select"}}
+          <label for="cf-{{.Key}}">{{.Label}}</label>
+          {{$current := index $.Config .Key}}
+          <select id="cf-{{.Key}}" name="{{.Key}}">
+            {{range .Options}}<option value="{{.Value}}" {{select $current .Value}}>{{.Label}}</option>{{end}}
+          </select>
+        {{else}}
+          <label for="cf-{{.Key}}">{{.Label}}</label>
+          <input id="cf-{{.Key}}" name="{{.Key}}" {{if eq .Kind "number"}}type="number" inputmode="numeric"{{end}} value="{{index $.Config .Key}}">
+        {{end}}
+        {{if .Hint}}<span class="hint">{{.Hint}}</span>{{end}}
+      </div>
+      {{end}}
+      {{if eq .Title "Approvals"}}
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" checked disabled> Block self-approval</label>
+        <span class="hint">Always on. A person can never approve a request they raised, whatever roles they hold.</span>
+      </div>
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" disabled> Second approval above a threshold</label>
+        <span class="hint">Reserved for a future version. The status model already has room for it.</span>
+      </div>
+      {{end}}
+    </div>
+    {{if .Note}}<p class="hint" style="margin:10px 0 0">{{.Note}}</p>{{end}}
+  </fieldset>
+  {{end}}
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Every change here is written to the audit log.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="/dashboard">Discard</a>
+    <button class="btn primary" type="submit">Save configuration</button>
+  </div>
+</form>
+{{template "bottom" .}}
+{{end}}
+
 {{define "audit"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Evidence</div><h1>Audit Log</h1><p class="sub muted">Review who changed financial records, when, and why.</p></div></section>

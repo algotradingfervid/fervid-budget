@@ -222,6 +222,9 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"threadValue":  threadValue,
 		"threadField":  threadField,
 		"fileKind":     fileKind,
+		// Configuration. The screen is a rendering of this table, so a later
+		// phase adds a section by appending to it and nothing else.
+		"configSections": func() []ConfigSection { return configSections },
 		"waitingOn":    waitingOn,
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
@@ -349,6 +352,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /roles/new", a.auth.RequirePermission("role", "create", http.HandlerFunc(a.withCSRF(a.roleCreate))))
 	mux.Handle("POST /roles/{id}/copy", a.auth.RequirePermission("role", "create", http.HandlerFunc(a.withCSRF(a.roleCopy))))
 	mux.Handle("POST /roles/{id}/delete", a.auth.RequirePermission("role", "delete", http.HandlerFunc(a.withCSRF(a.roleDelete))))
+	mux.Handle("GET /configuration", a.auth.RequirePermission("config", "view", http.HandlerFunc(a.configuration)))
+	mux.Handle("POST /configuration", a.auth.RequirePermission("config", "edit", http.HandlerFunc(a.withCSRF(a.configurationSave))))
 	mux.Handle("GET /audit", a.auth.RequirePermission("audit", "view", http.HandlerFunc(a.auditLog)))
 	mux.Handle("GET /backups", a.auth.RequirePermission("backup", "view", http.HandlerFunc(a.backups)))
 	mux.Handle("POST /backups", a.auth.RequirePermission("backup", "create", http.HandlerFunc(a.withCSRF(a.backupCreate))))

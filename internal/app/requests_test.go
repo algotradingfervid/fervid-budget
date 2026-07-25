@@ -1317,6 +1317,113 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 	}
 }
 
+// D6/G21: one screen, one form, one fieldset per section, one generic
+// app_settings-backed save. Phases 3-5 append a ConfigSection and touch nothing
+// else — if a later phase has to edit the handler, this task got the shape
+// wrong, so the test asserts the shape as much as the behaviour.
+func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
+	s := newAppTestServer(t)
+
+	// Permission-gated by URL, not by menu-hiding.
+	s.seedRequester("noconfig@example.test", "No Config", "RequesterPass123")
+	s.login("noconfig@example.test", "RequesterPass123")
+	requireStatus(t, s.request(http.MethodGet, "/configuration", nil, ""), http.StatusForbidden)
+	requireStatus(t, s.postForm("/configuration", url.Values{"number_prefix": {"HACK"}}), http.StatusForbidden)
+	if v, _ := s.st.AppSetting(s.ctx, "number_prefix"); v != "PR" {
+		t.Fatalf("an unprivileged POST changed a setting: %q", v)
+	}
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	for _, want := range []string{
+		"<legend>Request numbering</legend>", "<legend>Attachments</legend>",
+		"<legend>Urgency</legend>", "<legend>Approvals</legend>", "<legend>Payments</legend>",
+		`name="number_prefix"`, `name="require_attachments"`, `name="urgency_mode"`,
+		`name="allow_approver_choice"`, `name="allow_direct_payments"`, `class="action-bar"`,
+		"<h1>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("configuration screen is missing %q", want)
+		}
+	}
+	// One form of fieldsets closed by one action bar: that is the shape later
+	// phases append to.
+	if n := strings.Count(body, `class="action-bar"`); n != 1 {
+		t.Fatalf("the configuration screen has %d action bars, want 1", n)
+	}
+	if n := strings.Count(body, `action="/configuration"`); n != 1 {
+		t.Fatalf("the configuration screen posts from %d forms, want 1", n)
+	}
+	// The self-approval control exists and cannot be switched off.
+	if !strings.Contains(body, "Block self-approval") || !strings.Contains(body, "disabled") {
+		t.Fatal("the self-approval control must render checked and disabled")
+	}
+	if strings.Contains(body, `name="block_self_approval"`) {
+		t.Fatal("self-approval was rendered as a writable setting; it is structural")
+	}
+
+	// Saving writes every posted key in one transaction.
+	resp := s.postForm("/configuration", url.Values{
+		"number_prefix": {"REQ"}, "number_year_mode": {"financial"}, "number_width": {"5"},
+		"require_attachments": {"on"}, "attachment_max_mb": {"20"},
+		"urgency_mode": {"free"}, "allow_approver_choice": {""}, "allow_direct_payments": {""},
+		"payment_modes": {"NEFT, UPI"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	settings, err := s.st.AppSettings(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{
+		"number_prefix": "REQ", "number_year_mode": "financial", "number_width": "5",
+		"require_attachments": "1", "attachment_max_mb": "20", "urgency_mode": "free",
+		"allow_approver_choice": "0", "payment_modes": "NEFT, UPI",
+	} {
+		if settings[k] != want {
+			t.Fatalf("app_settings[%q] = %q, want %q", k, settings[k], want)
+		}
+	}
+	// The change is audited (C2).
+	audit, err := s.st.Audit(s.ctx, "app_setting", 0, 5)
+	if err != nil || len(audit) == 0 {
+		t.Fatalf("configuration save was not audited: %#v, %v", audit, err)
+	}
+	// And it is shown back, so the screen is a reading of the stored rules.
+	if !strings.Contains(responseBody(t, s.request(http.MethodGet, "/configuration", nil, "")), `value="REQ"`) {
+		t.Fatal("the saved prefix is not shown back")
+	}
+
+	// An unknown key posted by hand is ignored, not stored.
+	resp = s.postForm("/configuration", url.Values{"number_prefix": {"REQ"}, "smtp_password": {"hunter2"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if v, _ := s.st.AppSetting(s.ctx, "smtp_password"); v != "" {
+		t.Fatal("an unregistered key was written from the form")
+	}
+
+	// Every field a section declares is one the vocabulary and the store agree
+	// on: a Kind the template cannot render is a control nobody can use.
+	for _, section := range configSections {
+		if section.Title == "" || len(section.Fields) == 0 {
+			t.Fatalf("config section %#v has no title or no fields", section)
+		}
+		for _, f := range section.Fields {
+			switch f.Kind {
+			case "text", "number", "toggle", "select":
+			default:
+				t.Fatalf("config field %q declares unknown kind %q", f.Key, f.Kind)
+			}
+			if f.Kind == "select" && len(f.Options) == 0 {
+				t.Fatalf("config select %q offers no options", f.Key)
+			}
+			if f.Span < 1 || f.Span > 12 {
+				t.Fatalf("config field %q spans %d columns", f.Key, f.Span)
+			}
+		}
+	}
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)
