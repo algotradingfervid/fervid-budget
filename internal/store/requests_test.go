@@ -694,3 +694,51 @@ func TestWithdrawRequestFromPending(t *testing.T) {
 		t.Fatalf("withdraw by a non-requester = %v, want ErrForbidden", err)
 	}
 }
+
+func TestApproveRequestAdjustsAmountAndIsAssignedOnly(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	otherID, _ := s.CreateUser(ctx, "other@example.com", "Other Manager", "hash", "admin", true)
+	other, _ := s.UserByID(ctx, otherID)
+	mk := func(amount int64, purpose string) int64 {
+		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+			ShortTitle: purpose, ProjectID: 1, HeadID: headID, Amount: amount, Purpose: purpose,
+			ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "A/" + purpose, InvoiceDate: "2026-07-18"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := mk(100000, "inv")
+
+	// A non-assigned manager cannot approve.
+	if err := s.ApproveRequest(ctx, other, id, 100000, ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-assigned approve = %v, want ErrForbidden", err)
+	}
+	// Assigned manager approves with an adjusted amount.
+	if err := s.ApproveRequest(ctx, mgr, id, 90000, "approved for 90k"); err != nil {
+		t.Fatalf("ApproveRequest: %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Status != "approved" || got.ApprovedAmount == nil || *got.ApprovedAmount != 90000 {
+		t.Fatalf("approved = %+v", got)
+	}
+	if got.ApprovedBy == nil || *got.ApprovedBy != mgr.ID || got.ApprovedAt == nil {
+		t.Fatalf("approval metadata = %+v", got)
+	}
+	// Zero/negative approved amount is rejected.
+	id2 := mk(5000, "inv2")
+	if err := s.ApproveRequest(ctx, mgr, id2, 0, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("zero approved amount = %v, want ErrValidation", err)
+	}
+	// G8, defence in depth: even a row that somehow routed to its own requester
+	// cannot be self-approved.
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET manager_id=requester_id WHERE id=?`, id2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApproveRequest(ctx, req, id2, 5000, ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("self-approval at approve time = %v, want ErrForbidden", err)
+	}
+}

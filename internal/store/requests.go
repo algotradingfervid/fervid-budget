@@ -641,3 +641,43 @@ func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error
 	}
 	return tx.Commit()
 }
+
+func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmount int64, note string) error {
+	if approvedAmount <= 0 {
+		return fmt.Errorf("%w: approved amount must be positive", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.ManagerID != actor.ID {
+		return ErrForbidden
+	}
+	// G8: last line of defence. The form never offers it, validateRequestInput
+	// rejects it, and this refuses it even if a row reached that state.
+	if before.RequesterID == actor.ID {
+		return ErrForbidden
+	}
+	if !canTransition(before.Status, "approved") {
+		return fmt.Errorf("%w: a %s request cannot be approved", ErrValidation, before.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='approved', approved_amount=?, approved_by=?, approved_at=CURRENT_TIMESTAMP, decision_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, approvedAmount, actor.ID, strings.TrimSpace(note), id); err != nil {
+		return err
+	}
+	after, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "approve", EntityType: "payment_request", EntityID: &id,
+		Summary: actor.Name + " approved request " + before.Number + " for " + money.FormatPaise(approvedAmount),
+		Before:  before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
