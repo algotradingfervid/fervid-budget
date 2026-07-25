@@ -54,8 +54,20 @@ func visibleLabels(groups []NavGroup, includeSoon bool) []string {
 	return labels
 }
 
+// specLabels mirrors buildShell's Soon derivation so the expectation tracks
+// the unbuiltPrefixes switch instead of duplicating the list. When a phase
+// builds a screen and deletes its line there, this starts expecting it.
 func specLabels(includeSoon bool) []string {
-	return visibleLabels(navSpec, includeSoon)
+	spec := make([]NavGroup, 0, len(navSpec))
+	for _, group := range navSpec {
+		items := make([]NavItem, 0, len(group.Items))
+		for _, item := range group.Items {
+			item.Soon = item.Soon || !routeBuilt(item.Href)
+			items = append(items, item)
+		}
+		spec = append(spec, NavGroup{Title: group.Title, Items: items})
+	}
+	return visibleLabels(spec, includeSoon)
 }
 
 func groupTitles(groups []NavGroup) []string {
@@ -77,15 +89,19 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 			perms: adminPerms(),
 			want:  specLabels(false),
 		},
+		// These lists are the screens that exist *today*. "My requests",
+		// "Accounts queue" and "Recoverables" are permitted but not built yet,
+		// so they carry Soon and appear in the coming-soon count below instead.
+		// The phase that builds each one drops its flag and moves it here.
 		{
 			name:  "data entry sees only its own screens",
 			perms: dataEntryPerms(),
-			want:  []string{"Accounts queue", "Home", "My requests", "Payments ledger", "Recoverables", "Reports", "Variance grid"},
+			want:  []string{"Home", "Payments ledger", "Reports", "Variance grid"},
 		},
 		{
 			name:  "no grants leaves only ungated items",
 			perms: store.NewPermissionSet(nil, nil),
-			want:  []string{"Home", "My requests"},
+			want:  []string{"Home"},
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -110,19 +126,20 @@ func TestBuildShellKeepsComingSoonAndDropsEmptyGroups(t *testing.T) {
 			t.Fatalf("data_entry sees the %q group, which should be dropped when empty", title)
 		}
 	}
+	// Four future products (Invoices, Payments received, Inventory, Purchase
+	// orders) plus the three permitted-but-unbuilt request screens. A Soon item
+	// may carry the href its screen will occupy; the template renders it
+	// without one, so it cannot become a clickable dead end.
 	soon := 0
 	for _, group := range entryGroups {
 		for _, item := range group.Items {
 			if item.Soon {
 				soon++
-				if item.Href != "" {
-					t.Fatalf("coming-soon item %q must not link anywhere, got %q", item.Label, item.Href)
-				}
 			}
 		}
 	}
-	if soon != 4 {
-		t.Fatalf("coming-soon items visible to data_entry = %d, want 4", soon)
+	if soon != 7 {
+		t.Fatalf("coming-soon items visible to data_entry = %d, want 7", soon)
 	}
 }
 
@@ -142,11 +159,16 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 		wantHref  string
 		wantRight []string
 	}{
+		// The centre action falls through any candidate whose screen is not
+		// built: /approvals and /requests/new are still in unbuiltPrefixes, so
+		// an approver currently lands on Pay. Deleting those lines when Phase 2
+		// ships flips these expectations back to Approve and New, and
+		// TestTabBarNeverLinksToAnUnbuiltRoute is what keeps the two in step.
 		{
-			name:      "approver gets approve",
+			name:      "approver falls through to pay until /approvals exists",
 			perms:     store.NewPermissionSet([]store.Grant{{Resource: "approval", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}, nil),
-			wantLabel: "Approve",
-			wantHref:  "/approvals",
+			wantLabel: "Pay",
+			wantHref:  "/payments/new",
 			wantRight: []string{"Payments", "More"},
 		},
 		{
@@ -157,10 +179,10 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 			wantRight: []string{"Payments", "More"},
 		},
 		{
-			name:      "requester gets new",
+			name:      "requester falls back to home until /requests/new exists",
 			perms:     store.NewPermissionSet([]store.Grant{{Resource: "request", Action: "create"}}, nil),
-			wantLabel: "New",
-			wantHref:  "/requests/new",
+			wantLabel: "Home",
+			wantHref:  "/",
 			wantRight: []string{"Budget", "More"},
 		},
 		{
@@ -171,10 +193,10 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 			wantRight: []string{"Budget", "More"},
 		},
 		{
-			name:      "every grant takes the first match",
+			name:      "every grant takes the first built match",
 			perms:     adminPerms(),
-			wantLabel: "Approve",
-			wantHref:  "/approvals",
+			wantLabel: "Pay",
+			wantHref:  "/payments/new",
 			wantRight: []string{"Payments", "More"},
 		},
 	} {
@@ -186,8 +208,16 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 			if got := tabLabels(tabs.Right); strings.Join(got, "|") != strings.Join(testCase.wantRight, "|") {
 				t.Fatalf("right tabs = %v, want %v", got, testCase.wantRight)
 			}
-			if got := tabLabels(tabs.Left); strings.Join(got, "|") != "Home|Requests" {
-				t.Fatalf("left tabs = %v, want [Home Requests]", got)
+			// The Requests tab is replaced by Budget while /requests is
+			// unbuilt, and dropped entirely for a user without grid:view.
+			wantLeft := "Home"
+			if routeBuilt("/requests") {
+				wantLeft = "Home|Requests"
+			} else if testCase.perms != nil && testCase.perms.Can("grid", "view") {
+				wantLeft = "Home|Budget"
+			}
+			if got := tabLabels(tabs.Left); strings.Join(got, "|") != wantLeft {
+				t.Fatalf("left tabs = %v, want %s", got, wantLeft)
 			}
 			if len(tabs.Left) > 2 || len(tabs.Right) > 2 {
 				t.Fatalf("tab bar sides hold %d and %d items, want at most 2 each", len(tabs.Left), len(tabs.Right))
@@ -248,8 +278,13 @@ func TestNavItemsHaveKeysIconsAndReachableHrefs(t *testing.T) {
 				t.Fatalf("duplicate nav key %q", item.Key)
 			}
 			seen[item.Key] = true
-			if item.Soon == (item.Href != "") {
-				t.Fatalf("nav item %q: soon=%v with href %q", item.Key, item.Soon, item.Href)
+			// A Soon item may declare the href its screen will occupy — that is
+			// how the phase which builds it knows where to land, and
+			// TestEveryLinkedNavItemResolves starts checking it the moment the
+			// flag drops. The template renders Soon items without an href
+			// regardless, so declaring one cannot produce a clickable dead end.
+			if !item.Soon && item.Href == "" {
+				t.Fatalf("nav item %q is a link with no href", item.Key)
 			}
 			if item.Href != "" && !strings.HasPrefix(item.Href, "/") {
 				t.Fatalf("nav item %q href %q must be an absolute app path", item.Key, item.Href)
@@ -269,7 +304,9 @@ func TestEveryLinkedNavItemResolves(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 
-	for _, group := range navSpec {
+	// Iterate the built shell, not navSpec: buildShell is where Soon is derived
+	// from unbuiltPrefixes, so this checks what a user is actually shown.
+	for _, group := range buildShell(adminPerms()) {
 		for _, item := range group.Items {
 			if item.Soon || item.Href == "" {
 				continue
@@ -289,4 +326,20 @@ func truncateForLog(s string) string {
 		return s[:200] + "…"
 	}
 	return s
+}
+
+// The tab bar is the only navigation a phone has, so a tab pointing at a
+// screen that does not exist is a dead end with no way around it. This fails
+// until the phase that builds the screen removes its unbuiltPrefixes entry.
+func TestTabBarNeverLinksToAnUnbuiltRoute(t *testing.T) {
+	for _, perms := range []store.PermissionSet{adminPerms(), dataEntryPerms(), store.NewPermissionSet(nil, nil)} {
+		tabs := resolveTabs(perms)
+		all := append([]TabItem{tabs.Fab}, tabs.Left...)
+		all = append(all, tabs.Right...)
+		for _, tab := range all {
+			if !routeBuilt(tab.Href) {
+				t.Errorf("tab %q links to %s, which no route serves", tab.Label, tab.Href)
+			}
+		}
+	}
 }

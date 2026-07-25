@@ -58,10 +58,10 @@ var navSpec = []NavGroup{
 	// phase that builds the screen drops the flag, and
 	// TestEveryLinkedNavItemResolves fails until it does.
 	{Title: "Requests", Items: []NavItem{
-		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤", Soon: true},
-		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "approval", Action: "approve", Badge: "approvals", Soon: true},
-		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "payment", Action: "process", Badge: "accounts_queue", Soon: true},
-		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable_report", Action: "view", Soon: true},
+		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤"},
+		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "approval", Action: "approve", Badge: "approvals"},
+		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "payment", Action: "process", Badge: "accounts_queue"},
+		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable_report", Action: "view"},
 	}},
 	{Title: "Payments", Items: []NavItem{
 		{Key: "payments", Label: "Payments ledger", Href: "/payments", Icon: "▦", Resource: "payment", Action: "view", Badge: "receipts_missing"},
@@ -82,11 +82,11 @@ var navSpec = []NavGroup{
 	{Title: "Admin", Items: []NavItem{
 		{Key: "users", Label: "Users", Href: "/users", Icon: "◍", Resource: "user", Action: "view"},
 		{Key: "roles", Label: "Roles & permissions", Href: "/roles", Icon: "⚿", Resource: "role", Action: "view"},
-		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "view", Soon: true},
+		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "view"},
 		// Two different screens, per adoption spec D7: /admin/notifications is
 		// the rule editor, /notifications (the topbar bell) is the user's own
 		// in-app centre. Phase 5 builds both.
-		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification", Action: "view", Soon: true},
+		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification", Action: "view"},
 		{Key: "audit", Label: "Audit log", Href: "/audit", Icon: "◎", Resource: "audit", Action: "view"},
 		{Key: "backups", Label: "Backups", Href: "/backups", Icon: "⇪", Resource: "backup", Action: "view"},
 	}},
@@ -105,9 +105,14 @@ func buildShell(perms store.PermissionSet) []NavGroup {
 	for _, group := range navSpec {
 		items := make([]NavItem, 0, len(group.Items))
 		for _, item := range group.Items {
-			if navItemVisible(item, perms) {
-				items = append(items, item)
+			if !navItemVisible(item, perms) {
+				continue
 			}
+			// An item whose route does not exist yet is announced, never
+			// linked. Derived here rather than hand-flagged so the switch
+			// stays in one place.
+			item.Soon = item.Soon || !routeBuilt(item.Href)
+			items = append(items, item)
 		}
 		if len(items) == 0 {
 			continue
@@ -194,15 +199,17 @@ var moreTab = TabItem{Key: "more", Label: "More", Href: "#more", Icon: "⋯"}
 // resolveTabs builds the mobile tab bar from permissions alone. Left and right
 // hold at most two items each and More is always the last one.
 func resolveTabs(perms store.PermissionSet) TabBar {
-	tabs := TabBar{
-		Left: []TabItem{
-			homeTab,
-			{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"},
-		},
-		Fab: homeTab,
+	tabs := TabBar{Left: []TabItem{homeTab}, Fab: homeTab}
+	// The tab bar is the only navigation a phone has, so a tab pointing at an
+	// unbuilt screen is a dead end with no way around it. Skip those until
+	// their route exists.
+	if requests := (TabItem{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"}); routeBuilt(requests.Href) {
+		tabs.Left = append(tabs.Left, requests)
+	} else if can(perms, "grid", "view") {
+		tabs.Left = append(tabs.Left, TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"})
 	}
 	for _, candidate := range centreActions {
-		if can(perms, candidate.Resource, candidate.Action) {
+		if can(perms, candidate.Resource, candidate.Action) && routeBuilt(candidate.Tab.Href) {
 			tabs.Fab = candidate.Tab
 			break
 		}
@@ -220,10 +227,39 @@ func can(perms store.PermissionSet, resource, action string) bool {
 	return perms != nil && perms.Can(resource, action)
 }
 
-func navItemVisible(item NavItem, perms store.PermissionSet) bool {
-	if item.Soon {
-		return true
+// unbuiltPrefixes lists the screens the navigation knows about but no route
+// serves yet. It is the single switch: the sidebar renders these as Soon
+// announcements and the mobile tab bar skips them, so a phase that builds a
+// screen deletes one line here and the entry lights up in both places at once.
+// TestEveryLinkedNavItemResolves and TestTabBarNeverLinksToAnUnbuiltRoute fail
+// until the line goes, so it cannot be forgotten.
+var unbuiltPrefixes = []string{
+	"/requests",            // Phase 2
+	"/approvals",           // Phase 2
+	"/accounts-queue",      // Phase 2
+	"/configuration",       // Phase 2
+	"/recoverables",        // Phase 4
+	"/admin/notifications", // Phase 5
+}
+
+func routeBuilt(href string) bool {
+	if href == "" || strings.HasPrefix(href, "#") {
+		return true // not a route: an announcement, or the More sheet toggle
 	}
+	for _, prefix := range unbuiltPrefixes {
+		if href == prefix || strings.HasPrefix(href, prefix+"/") {
+			return false
+		}
+	}
+	return true
+}
+
+// navItemVisible gates on permission alone. Soon says a screen is not built
+// yet, not that it is ungated: announcing a screen the user will never be
+// allowed to open is noise, and it would resurrect group headings that should
+// stay hidden. Items with no resource (Home, and the product announcements in
+// "Coming soon") are visible to everyone.
+func navItemVisible(item NavItem, perms store.PermissionSet) bool {
 	if item.Resource == "" {
 		return true
 	}

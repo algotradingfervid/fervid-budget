@@ -77,9 +77,13 @@ test.describe('UI/UX quality', () => {
           for (const el of document.querySelectorAll('main.page a, main.page button, main.page input')) {
             const r = el.getBoundingClientRect();
             if (r.width === 0 || r.height === 0) continue;
-            // Fully below the fold is unreachable-by-scroll only if we are
-            // already at the bottom, which we are.
-            if (r.bottom > bar.top && r.top < window.innerHeight) {
+            // Must actually be on screen. An element scrolled out of a wide
+            // table's horizontal overflow is not covered by the tab bar; it is
+            // simply elsewhere, and flagging it says nothing about the bar.
+            if (r.right <= 0 || r.left >= window.innerWidth) continue;
+            // Overlap by more than a pixel: content that ends exactly at the
+            // bar's top edge is correctly cleared, not trapped.
+            if (r.bottom > bar.top + 1 && r.top < window.innerHeight) {
               hits.push((el.textContent || el.className).trim().slice(0, 30) || el.tagName);
             }
           }

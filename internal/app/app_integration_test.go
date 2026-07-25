@@ -495,7 +495,7 @@ func TestShellIsBuiltFromPermissionsAndSkippedForHTMXFragments(t *testing.T) {
 	handler, manager := s.shellProbeHandler(t)
 
 	adminShell := renderAs(t, handler, manager, admin, "/payments", nil)
-	for _, want := range []string{"chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=3", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log"} {
+	for _, want := range []string{"chrome=app", "active=payments", "fab=Pay", "groups=8", "badges=3", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log"} {
 		if !strings.Contains(adminShell, want) {
 			t.Fatalf("admin shell missing %q: %s", want, adminShell)
 		}
@@ -594,8 +594,16 @@ func TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach(t *testing.T
 	if !strings.Contains(body, `<span class="n">Soon</span>`) {
 		t.Fatal("coming-soon nav entries are missing their pill")
 	}
-	if !strings.Contains(body, `href="/requests"`) || !strings.Contains(body, `href="/configuration"`) {
-		t.Fatal("nav dropped the routes later phases will add")
+	// The screens later phases add are announced, not linked: their nav entries
+	// are present so the structure is stable, but they render without an href
+	// so nobody can click through to a route that does not exist yet.
+	for _, label := range []string{"My requests", "Configuration"} {
+		if !strings.Contains(body, label) {
+			t.Fatalf("nav dropped %q, which later phases will build", label)
+		}
+	}
+	if strings.Contains(body, `href="/requests"`) || strings.Contains(body, `href="/configuration"`) {
+		t.Fatal("an unbuilt screen is rendered as a link; it must be a Soon announcement")
 	}
 
 	hash, err := auth.HashPassword("EntryPassword123")
