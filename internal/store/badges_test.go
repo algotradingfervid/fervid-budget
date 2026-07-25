@@ -65,26 +65,26 @@ func TestBadgeCountsRunOnlyThePermittedSubSelects(t *testing.T) {
 		want     map[string]int
 	}{
 		{
-			name:     "wildcard runs every sub-select",
-			perms:    NewPermissionSet([]Grant{{Resource: "*", Action: "*"}}),
+			name:     "every canonical grant runs every sub-select",
+			perms:    NewPermissionSet(AllGrants(), nil),
 			wantKeys: []string{"my_payments", "open_months", "receipts_missing"},
 			want:     map[string]int{"my_payments": 2, "open_months": 1, "receipts_missing": 2},
 		},
 		{
 			name:     "payment view only counts payments",
-			perms:    NewPermissionSet([]Grant{{Resource: "payment", Action: "view"}}),
+			perms:    NewPermissionSet([]Grant{{Resource: "payment", Action: "view"}}, nil),
 			wantKeys: []string{"my_payments"},
 			want:     map[string]int{"my_payments": 2},
 		},
 		{
 			name:     "attachment creator only counts missing receipts",
-			perms:    NewPermissionSet([]Grant{{Resource: "attachment", Action: "create"}}),
+			perms:    NewPermissionSet([]Grant{{Resource: "attachment", Action: "create"}}, nil),
 			wantKeys: []string{"receipts_missing"},
 			want:     map[string]int{"receipts_missing": 2},
 		},
 		{
 			name:     "no grants queries nothing",
-			perms:    NewPermissionSet(nil),
+			perms:    NewPermissionSet(nil, nil),
 			wantKeys: []string{},
 		},
 		{
@@ -112,7 +112,7 @@ func TestBadgeCountsRunOnlyThePermittedSubSelects(t *testing.T) {
 
 func TestBadgeCountsAreMemoisedPerUserForTheCacheWindow(t *testing.T) {
 	s, ctx, actor, headID := newBadgeStore(t)
-	perms := NewPermissionSet([]Grant{{Resource: "*", Action: "*"}})
+	perms := NewPermissionSet(AllGrants(), nil)
 	for i := 0; i < 2; i++ {
 		if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-04-10", Amount: 1000, VendorPayee: "Cache Vendor", PaymentMode: "cash"}); err != nil {
 			t.Fatal(err)
@@ -177,9 +177,17 @@ func TestBadgeCountsAreMemoisedPerUserForTheCacheWindow(t *testing.T) {
 	}
 }
 
+func TestBadgeSpecsUseTheCanonicalVocabulary(t *testing.T) {
+	for _, spec := range badgeSpecs {
+		if !ValidGrant(spec.Resource, spec.Action) {
+			t.Fatalf("badge %q gates on %s:%s, which is not in the canonical vocabulary", spec.Key, spec.Resource, spec.Action)
+		}
+	}
+}
+
 func TestBadgeCountsAreSafeUnderConcurrentReaders(t *testing.T) {
 	s, ctx, actor, headID := newBadgeStore(t)
-	perms := NewPermissionSet([]Grant{{Resource: "*", Action: "*"}})
+	perms := NewPermissionSet(AllGrants(), nil)
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-04-10", Amount: 1000, VendorPayee: "Race Vendor", PaymentMode: "cash"}); err != nil {
 		t.Fatal(err)
 	}

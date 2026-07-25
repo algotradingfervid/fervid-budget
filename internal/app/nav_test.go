@@ -9,9 +9,10 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// adminPerms mirrors the wildcard policy the admin role carries today.
+// adminPerms is the seeded Admin role: every canonical (resource, action) pair.
+// There is no wildcard to lean on any more — matching is exact.
 func adminPerms() store.PermissionSet {
-	return store.NewPermissionSet([]store.Grant{{Resource: "*", Action: "*"}})
+	return store.NewPermissionSet(store.AllGrants(), nil)
 }
 
 // dataEntryPerms mirrors the seeded Accounts role, which is what a legacy
@@ -35,7 +36,7 @@ func dataEntryPerms() store.PermissionSet {
 		{Resource: "report", Action: "export"},
 		{Resource: "recoverable_report", Action: "view"},
 		{Resource: "recoverable_report", Action: "export"},
-	})
+	}, nil)
 }
 
 func visibleLabels(groups []NavGroup, includeSoon bool) []string {
@@ -82,7 +83,7 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 		},
 		{
 			name:  "no grants leaves only ungated items",
-			perms: store.NewPermissionSet(nil),
+			perms: store.NewPermissionSet(nil, nil),
 			want:  []string{"Home", "My requests"},
 		},
 	} {
@@ -142,34 +143,34 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 	}{
 		{
 			name:      "approver gets approve",
-			perms:     store.NewPermissionSet([]store.Grant{{Resource: "approval", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}),
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "approval", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}, nil),
 			wantLabel: "Approve",
 			wantHref:  "/approvals",
 			wantRight: []string{"Payments", "More"},
 		},
 		{
 			name:      "payer gets pay",
-			perms:     store.NewPermissionSet([]store.Grant{{Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}),
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}, nil),
 			wantLabel: "Pay",
 			wantHref:  "/payments/new",
 			wantRight: []string{"Payments", "More"},
 		},
 		{
 			name:      "requester gets new",
-			perms:     store.NewPermissionSet([]store.Grant{{Resource: "request", Action: "create"}}),
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "request", Action: "create"}}, nil),
 			wantLabel: "New",
 			wantHref:  "/requests/new",
 			wantRight: []string{"Budget", "More"},
 		},
 		{
 			name:      "no grants falls back to home",
-			perms:     store.NewPermissionSet(nil),
+			perms:     store.NewPermissionSet(nil, nil),
 			wantLabel: "Home",
 			wantHref:  "/",
 			wantRight: []string{"Budget", "More"},
 		},
 		{
-			name:      "wildcard takes the first match",
+			name:      "every grant takes the first match",
 			perms:     adminPerms(),
 			wantLabel: "Approve",
 			wantHref:  "/approvals",
@@ -210,6 +211,27 @@ func TestNavContainsNoRoleNames(t *testing.T) {
 	for _, forbidden := range []string{`"admin"`, `"data_entry"`, `.Role`, `User.Role`} {
 		if count := strings.Count(string(source), forbidden); count != 0 {
 			t.Fatalf("nav.go contains %s %d times; the shell must be permission-driven", forbidden, count)
+		}
+	}
+}
+
+// The gates and the engine have to speak one language. Phase 0 wrote these
+// against interim Casbin verbs; point the DB engine at a verb the vocabulary
+// does not carry and the item silently disappears for everyone, forever.
+func TestNavAndTabGatesUseTheCanonicalVocabulary(t *testing.T) {
+	for _, group := range navSpec {
+		for _, item := range group.Items {
+			if item.Resource == "" && item.Action == "" {
+				continue // available to every signed-in user
+			}
+			if !store.ValidGrant(item.Resource, item.Action) {
+				t.Fatalf("nav item %q gates on %s:%s, which is not in the canonical vocabulary", item.Key, item.Resource, item.Action)
+			}
+		}
+	}
+	for _, candidate := range centreActions {
+		if !store.ValidGrant(candidate.Resource, candidate.Action) {
+			t.Fatalf("tab bar centre action %q gates on %s:%s, which is not canonical", candidate.Tab.Key, candidate.Resource, candidate.Action)
 		}
 	}
 }

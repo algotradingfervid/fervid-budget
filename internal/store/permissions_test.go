@@ -130,6 +130,30 @@ func countGrants() int {
 	return total
 }
 
+// The Phase 0 stub matched "*" because Casbin's admin policy was a wildcard.
+// Once roles are data a stale wildcard row would grant everything to everyone,
+// which is precisely the failure mode this phase exists to remove: matching is
+// exact, and AllGrants is how a caller asks for everything.
+func TestNewPermissionSetMatchesExactlyAndAllGrantsIsTheWholeVocabulary(t *testing.T) {
+	wildcard := NewPermissionSet([]Grant{{Resource: "*", Action: "*"}}, nil)
+	if wildcard.Can("payment", "view") || wildcard.Scope("request") != "" {
+		t.Fatalf("a wildcard grant still opens the permission set: %+v", wildcard)
+	}
+	if got := len(AllGrants()); got != countGrants() {
+		t.Fatalf("AllGrants() = %d pairs, want the whole vocabulary (%d)", got, countGrants())
+	}
+	every := NewPermissionSet(AllGrants(), []ScopeGrant{{"request", "all"}})
+	if !every.Can("role", "delete") || !every.Can("backup", "create") {
+		t.Fatal("AllGrants() does not produce an all-powerful permission set")
+	}
+	if every.Scope("request") != "all" {
+		t.Fatalf("scopes were dropped: request = %q", every.Scope("request"))
+	}
+	if every.Can("payment", "read") {
+		t.Fatal("an exact-matching set admits a non-canonical action")
+	}
+}
+
 func TestUpdateRolePermissionsPersistsAndValidates(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

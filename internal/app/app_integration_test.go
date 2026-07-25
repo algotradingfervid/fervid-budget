@@ -221,15 +221,19 @@ func TestDataEntryHasRestrictedNavigationAndRoutes(t *testing.T) {
 	}
 	s.login("entry@example.test", "EntryPassword123")
 	body := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
-	for _, hidden := range []string{"Monthly plans", "href=\"/projects\"", "href=\"/users\"", "href=\"/audit\""} {
+	for _, hidden := range []string{"Monthly plans", "href=\"/projects\"", "href=\"/users\"", "href=\"/audit\"", "href=\"/roles\""} {
 		if strings.Contains(body, hidden) {
 			t.Fatalf("data-entry navigation exposes %q", hidden)
 		}
 	}
-	if !strings.Contains(body, "Add payment") || !strings.Contains(body, "Reports") {
-		t.Fatal("data entry user is missing allowed navigation")
+	// …and still offers everything the Accounts role does allow. The labels are
+	// the Phase 0 shell's, which this task does not change.
+	for _, shown := range []string{"Payments ledger", "Variance grid", "Reports"} {
+		if !strings.Contains(body, shown) {
+			t.Fatalf("data entry navigation is missing %q", shown)
+		}
 	}
-	for _, path := range []string{"/projects", "/heads", "/users", "/audit", "/budgets", "/months"} {
+	for _, path := range []string{"/projects", "/heads", "/users", "/audit", "/budgets", "/months", "/roles"} {
 		resp := s.request(http.MethodGet, path, nil, "")
 		requireStatus(t, resp, http.StatusForbidden)
 		_ = responseBody(t, resp)
@@ -969,5 +973,64 @@ func TestUsersScreenAssignsMultipleRoles(t *testing.T) {
 	saved, _ = s.st.UserByID(s.ctx, uid)
 	if saved.DefaultApproverID != adminID {
 		t.Fatalf("rejected self-approval still changed the stored value to %d", saved.DefaultApproverID)
+	}
+}
+
+// R6: permissions govern the data server-side. A least-privilege session is
+// blocked by URL, not by menu-hiding — the menu is only the second assertion.
+func TestRequesterOnlySessionForbiddenFromAdminRoutesByURL(t *testing.T) {
+	s := newAppTestServer(t)
+
+	// Create a user and give them ONLY the Requester role (override the default
+	// Accounts assignment) so we test a least-privilege session.
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPassword("RequesterPass123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, err := s.st.CreateUser(s.ctx, "requester@example.test", "Requester User", hash, "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles, err := s.st.AllRoles(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requesterID int64
+	for _, r := range roles {
+		if r.Name == "Requester" {
+			requesterID = r.ID
+		}
+	}
+	if err := s.st.SetUserRoles(s.ctx, admin, uid, []int64{requesterID}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("requester@example.test", "RequesterPass123")
+
+	// GET admin/screen routes are blocked by URL (server-side, not menu-hiding).
+	for _, path := range []string{"/roles", "/users", "/audit", "/projects", "/heads", "/budgets", "/months", "/payments", "/reports/monthly"} {
+		resp := s.request(http.MethodGet, path, nil, "")
+		requireStatus(t, resp, http.StatusForbidden)
+		_ = responseBody(t, resp)
+	}
+
+	// An admin POST is blocked even with a valid CSRF token.
+	resp := s.postForm("/roles/new", url.Values{"name": {"Sneaky"}})
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+	resp = s.postForm("/users", url.Values{"id": {"1"}, "name": {"x"}, "email": {s.cfg.AdminEmail}, "role": {"admin"}, "active": {"on"}})
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+
+	// The nav for a Requester exposes none of the admin destinations.
+	body := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	for _, hidden := range []string{"href=\"/roles\"", "href=\"/users\"", "href=\"/audit\"", "href=\"/projects\"", "href=\"/budgets\"", "Monthly plans"} {
+		if strings.Contains(body, hidden) {
+			t.Fatalf("Requester nav exposes %q", hidden)
+		}
 	}
 }
