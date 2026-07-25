@@ -30,6 +30,13 @@ Amended **2026-07-25** against `docs/superpowers/specs/2026-07-25-design-system-
 | A20 | Task 2 `NextRequestNumber` now reads `number_prefix` / `number_width` / `number_year_mode` from `app_settings`. Its pinned signature is unchanged. | D6 — the Configuration Numbering fieldset has to control something real. |
 | A21 | `payment_requests` also gains `recoverable_category TEXT` (the category **code**). This is one column beyond the adoption spec's literal list, and it is unavoidable: §4 requires Phase 2 validation to enforce "EMD/PBG project, ICD counterparty", which needs the category identity, and `recoverable_categories` is a **Phase 4** table. Phase 4's v5 migration back-fills `recoverable_category_id` from this code and replaces the Phase-2 `recoverableCategoryRules` map with rows from its table. | G-none; forced by adoption spec §4 Phase 2 "Task 3 validation gains … EMD/PBG project, ICD counterparty". |
 
+**Implementation notes recorded while executing Tasks 1-9 (2026-07-25) — the plan text above is wrong on these points:**
+
+- **Task 1, note B6 is factually wrong.** `store.Open` sets `PRAGMA foreign_keys=ON`, and under that pragma SQLite rejects *every* write to a child table whose parent table does not exist — even when the foreign-key value is NULL (verified: `INSERT ... VALUES(NULL)` into a table referencing a missing parent returns `no such table: main.<parent>`). So `recoverable_category_id INTEGER REFERENCES recoverable_categories(id)` would have made `CreateRequest` fail outright until Phase 4 ships. The column is created as plain `recoverable_category_id INTEGER`; Phase 4's v5 migration owns the link and the back-fill.
+- **Task 1's test could not run verbatim** for the same reason: it inserted `requester_id=1, manager_id=1` into an empty `users` table, so every insert failed on the users FK rather than on the constraint under test (which also made the two "must be rejected" assertions pass vacuously). The committed test seeds a real user first and parameterises both ids.
+- **Task 5's test depends on two later tasks.** `RequestAttachments` (Task 16) was implemented verbatim in `requests.go` as part of Task 5 so its test could compile — Task 16 must not declare it a second time. `ListRequests` (Task 11) was *not* implemented; the "nothing partial is left behind" assertion counts rows in `payment_requests` directly instead.
+- **Task 9 is already delivered by Phase 1 (decision D9)** and ships no new store code. `SetDefaultApprover`/`DefaultApprover` were not declared, `scanUser` was not touched (Phase 1 already selects `default_approver_id` in all three user queries and `User.DefaultApproverID` is `int64`, not `*int64`, so the plan's Task 9 test does not compile). `internal/store/approvers_test.go` pins the contract Phase 2 consumes through Phase 1's canonical API instead. Note the plan's expectation that a non-approver be rejected as a default approver is **not** enforced by the writer: `SetUserDefaultApprover` validates existence, activeness and self only, and `ListApprovers` is what keeps a non-approver off the form.
+
 **Cross-phase notes raised by this amendment — both now RESOLVED (2026-07-25):**
 
 - **Cancel verbs — accepted, handed to Phase 1.** Phase 1 Task 3's `resourceActions` adds `request`{cancel} and `approval`{cancel} alongside the `vendor`/`vendor_bank`/`reservation`/`config` entries D2 assigns it. The canonical total goes 64 → **66** pairs; Phase 1's vocabulary tests and Global Constraints table were updated with it. Phase 2's cancellation routes register behind those two verbs and must not invent their own.
@@ -94,7 +101,7 @@ Amended **2026-07-25** against `docs/superpowers/specs/2026-07-25-design-system-
 - Consumes: Phase-1 `migrations []migration`, `migrate(db)`, `columnExists`, `Open` (runs `migrate` after `schemaSQL`); Phase-1V `vendors`.
 - Produces: tables `payment_requests`, `request_attachments`, `request_comments`, `request_number_seq`, `app_settings` present after `store.Open`, at `PRAGMA user_version = 3`; `users.default_approver_id`; `app_settings` seeded with the Phase-2 configuration defaults.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package store
@@ -162,12 +169,12 @@ func TestMigrationV3CreatesRequestTables(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestMigrationV3CreatesRequestTables -v`
 Expected: FAIL — `table "payment_requests" missing after migrate`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append this migration to the `migrations` slice in `internal/store/migrations.go` (after Phase 1's `{Version: 1, ...}` and Phase 1V's `{Version: 2, ...}`; numbers are contiguous and never reordered):
 
@@ -291,12 +298,12 @@ ON CONFLICT(key) DO NOTHING;
 >
 > **vendor_id note:** `vendors` really does exist by now — Phase 1V's v2 runs first. The FK is live, not deferred.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestMigrationV3CreatesRequestTables -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/migrations.go internal/store/requests_schema_test.go
@@ -317,7 +324,7 @@ git commit -m "feat(store): migration v3 creates request tables with vendor link
 
 **Amendment (A20):** the signature is unchanged, but the prefix, the zero-pad width and the year segment now come from `app_settings`, so the Configuration screen's Numbering fieldset (Task 30) governs something real instead of being decorative. Both reads happen on the caller's `tx`, so a number reserved inside a transaction always uses the format in force at that instant.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package store
@@ -413,12 +420,12 @@ func TestRequestNumberYearSegmentModes(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestNextRequestNumber|TestRequestNumberYearSegmentModes' -v`
 Expected: FAIL — `undefined: NextRequestNumber`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `internal/store/requests.go`. **Import only what this task uses** — Go fails the build on an unused import, and the file grows an import per task: `context` and `fervidbudget/internal/money` arrive with Task 5, `encoding/json` and `sort` with Task 16.
 
@@ -496,12 +503,12 @@ func NextRequestNumber(tx *sql.Tx, year string) (string, error) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestNextRequestNumber|TestRequestNumberYearSegmentModes' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -522,7 +529,7 @@ git commit -m "feat(store): monotonic per-year request numbering driven by app_s
 
 **Amendments applied here:** A2 (`VendorID` replaces free-text payee for vendor types), A4 (short title, invoice number/date, expense date, advance reason), A5 (`cancellation_requested`, `cancelled` in; `draft` out), A21 (`RecoverableCategory` code drives the EMD/PBG project and ICD counterparty rules). Urgency reason (Task 6) and the self-approval rejection (Task 8) are deliberately **not** here — each is its own red-green task.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestValidateRequestInputPerType(t *testing.T) {
@@ -797,12 +804,12 @@ type ThreadChange struct {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestValidateRequestInputPerType|TestCanTransition' -v`
 Expected: FAIL — `undefined: validateRequestInput` / `undefined: canTransition`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -969,12 +976,12 @@ func forcesRequesterPayee(t string) bool {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestValidateRequestInputPerType|TestCanTransition' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/models.go internal/store/requests.go internal/store/requests_test.go
@@ -993,7 +1000,7 @@ git commit -m "feat(store): request types, per-type validation, draft-free statu
 - Consumes: the `app_settings` table + the Phase-2 defaults seeded by Task 1, `recordAuditTx`, `classify`.
 - Produces: `func (s *Store) AppSetting(ctx context.Context, key string) (string, error)` (returns `""` when the key is absent); `func (s *Store) AppSettings(ctx context.Context) (map[string]string, error)`; `func (s *Store) SetAppSetting(ctx context.Context, actor User, key, value string) error`; `func (s *Store) SetAppSettings(ctx context.Context, actor User, values map[string]string) error` (one transaction, one audit row — the Configuration screen saves a whole form at once, D6).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package store
@@ -1056,12 +1063,12 @@ func TestSetAppSettingsIsAtomicAndAudited(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestAppSetting|TestSetAppSettings' -v`
 Expected: FAIL — `s.AppSetting undefined` / `s.SetAppSettings undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `internal/store/settings.go`:
 
@@ -1150,12 +1157,12 @@ func (s *Store) SetAppSettings(ctx context.Context, actor User, values map[strin
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestAppSetting|TestSetAppSettings' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/settings.go internal/store/settings_test.go
@@ -1176,7 +1183,7 @@ git commit -m "feat(store): app_settings accessors with atomic batch save"
 
 **This task is the merge of the old Tasks 4 and 5 (amendment A6, decision D1).** There is no `draft` state, no separate "create then submit" pair, and no window in which an unnumbered request exists. `SubmitRequest` survives with one job: resubmitting a request the manager returned for correction (`request-returned.html`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
@@ -1403,12 +1410,12 @@ func seedTestVendor(t *testing.T, s *Store, ctx context.Context, name string) in
 
 > The C3 assertion calls `money.FormatPaise`, so add `"fervidbudget/internal/money"` to the imports of `internal/store/requests_test.go`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestCreateRequest|TestNoDraftStateExists|TestSubmitRequestResubmits' -v`
 Expected: FAIL — `s.CreateRequest undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -1604,12 +1611,12 @@ func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestCreateRequest|TestNoDraftStateExists|TestSubmitRequestResubmits|TestRequestRetainsHistorical' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -1629,7 +1636,7 @@ git commit -m "feat(store): atomic create-and-submit with no draft state (D1)"
 
 **Why a setting and not a constant:** `admin-configuration.html` offers Urgency = *Requires a reason* (the seeded default) · *Free to mark, no reason* · *Disabled*. Hard-coding the rule would make the Configuration control a lie (D6).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestUrgencyReasonIsRequiredWhenUrgent(t *testing.T) {
@@ -1675,12 +1682,12 @@ func TestUrgencyReasonIsRequiredWhenUrgent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestUrgencyReasonIsRequiredWhenUrgent -v`
 Expected: FAIL — the reasonless urgent request is accepted (`want ErrValidation`).
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -1735,12 +1742,12 @@ In `CreateRequest`, insert the check immediately after `validateRequestInput`:
 	}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestUrgencyReasonIsRequiredWhenUrgent -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -1761,7 +1768,7 @@ git commit -m "feat(store): require a reason when a request is marked urgent"
 
 **The rule, verbatim from `request-new-form.html`:** "Your administrator can make attachments compulsory. When that is on, submitting without one asks you for a reason instead of blocking you." So `require_attachments=1` + no file + no reason → `ErrValidation`; `require_attachments=1` + no file + a reason → **accepted**, and the reason is stored in `attachment_exception_reason` where the approver can see it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestAttachmentPolicyAsksForAReasonInsteadOfBlocking(t *testing.T) {
@@ -1817,12 +1824,12 @@ func TestAttachmentPolicyAsksForAReasonInsteadOfBlocking(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestAttachmentPolicy -v`
 Expected: FAIL — the fileless, reasonless create is accepted.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -1874,12 +1881,12 @@ In `SubmitRequest`, after the transition check:
 	}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestAttachmentPolicy -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -1900,7 +1907,7 @@ git commit -m "feat(store): attachment exception reason instead of a hard submit
 
 **Defence in depth:** the list excludes the requester (UI), the store rejects the input (Task 8), and `ApproveRequest` refuses when the actor is the requester even if a row somehow reached that state (Task 12). `admin-configuration.html` renders "Block self-approval" as *checked and disabled* — it is not configurable.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestSelfApprovalIsRejectedAndNeverOffered(t *testing.T) {
@@ -1952,12 +1959,12 @@ func grantApprovalPermission(t *testing.T, s *Store, ctx context.Context, userID
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestSelfApprovalIsRejected -v`
 Expected: FAIL — the self-routed create succeeds and `s.ListApprovers` is undefined.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `validateRequestInput`, immediately after the `in.ManagerID <= 0` check:
 
@@ -2000,12 +2007,12 @@ func (s *Store) ListApprovers(ctx context.Context, excludeUserID int64) ([]User,
 
 > `scanUser` gains the `default_approver_id` column in Task 9. Land Task 9's `scanUser`/`User` change first if you are implementing these out of order — the two tasks share that one scan list.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestSelfApprovalIsRejected -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -2026,7 +2033,7 @@ git commit -m "feat(store): block self-approval and exclude the requester from t
 - Consumes: `users.default_approver_id` (Task 1), `ListApprovers` (Task 8), `recordAuditTx`.
 - Produces: `User.DefaultApproverID *int64`; `func (s *Store) SetDefaultApprover(ctx context.Context, actor User, userID, approverID int64) error` (0 clears it); `func (s *Store) DefaultApprover(ctx context.Context, userID int64) (int64, error)`. The request form pre-selects this approver and lets the requester override it (`request-new-form.html`: "Kavita Rao — Manager, Operations (your default)"). `admin-configuration.html` · Approvals · "Let the employee choose a different approver" (`allow_approver_choice`) decides whether the override is offered.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package store
@@ -2081,12 +2088,12 @@ func TestDefaultApproverRoundTripAndGuards(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestDefaultApproverRoundTrip -v`
 Expected: FAIL — `s.DefaultApprover undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add to `User` in `internal/store/models.go`:
 
@@ -2185,13 +2192,13 @@ func (s *Store) SetDefaultApprover(ctx context.Context, actor User, userID, appr
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestDefaultApproverRoundTrip -v`
 Then: `go test ./internal/store/ -run TestUser -v` (the widened scan list must not have broken the existing user tests).
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/models.go internal/store/store.go internal/store/approvers.go internal/store/approvers_test.go
