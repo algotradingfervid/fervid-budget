@@ -340,7 +340,7 @@ test.describe('design system behaviours', () => {
   /* ------------------------------------------------------------------ */
 
   test('toggleProject still collapses the variance grid', async ({ adminPage }) => {
-    await adminPage.goto('/');
+    await adminPage.goto('/grid');
 
     const toggle = adminPage.locator('[data-project-toggle]').first();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');

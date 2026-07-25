@@ -54,22 +54,22 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-002 keeps month-close counts independent of grid filters', async ({ adminPage }) => {
-    await adminPage.goto('/?month=2026-07');
+    await adminPage.goto('/grid?month=2026-07');
     const baseline = await adminPage.getByText(/heads are unpaid.*over budget/i).textContent();
-    await adminPage.goto('/?month=2026-07&q=does-not-exist');
+    await adminPage.goto('/grid?month=2026-07&q=does-not-exist');
     await expect(adminPage.getByText(/heads are unpaid.*over budget/i)).toHaveText(baseline ?? '');
   });
 
   test('ISS-003 labels spend without a budget as unbudgeted', async ({ adminPage, runId }) => {
     await createPayment(adminPage, runId, { month: '2027-09', amount: '20.00' });
-    await adminPage.goto('/?month=2027-09&status=unbudgeted');
+    await adminPage.goto('/grid?month=2027-09&status=unbudgeted');
     await expect(adminPage.locator('.pill.unbudgeted', { hasText: 'Unbudgeted spend' }).first()).toBeVisible();
   });
 
   test('ISS-004 makes locked-month payment surfaces read-only', async ({ adminPage, runId }) => {
     const month = '2027-10';
     await createPayment(adminPage, runId, { month });
-    await adminPage.goto(`/?month=${month}`);
+    await adminPage.goto(`/grid?month=${month}`);
     await adminPage.getByLabel('Lock reason').fill('Regression close');
     adminPage.once('dialog', dialog => dialog.accept());
     await adminPage.getByRole('button', { name: 'Lock Month' }).click();
@@ -214,7 +214,7 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-014 normalizes malformed month parameters consistently', async ({ adminPage }) => {
-    for (const path of ['/?month=bad', '/payments?month=bad', '/budgets?month=bad']) {
+    for (const path of ['/grid?month=bad', '/payments?month=bad', '/budgets?month=bad']) {
       await adminPage.goto(path);
       await expect(adminPage.getByLabel('Month')).toHaveValue(/^\d{4}-\d{2}$/);
     }
@@ -238,7 +238,7 @@ test.describe('documented issue regression guards', () => {
   test('ISS-017 scopes recent payments to the selected month', async ({ adminPage, runId }) => {
     await createPayment(adminPage, `${runId}-jan`, { month: '2028-01' });
     await createPayment(adminPage, `${runId}-feb`, { month: '2028-02' });
-    await adminPage.goto('/?month=2028-01');
+    await adminPage.goto('/grid?month=2028-01');
     await expect(adminPage.getByText(`Vendor ${runId}-jan`)).toBeVisible();
     await expect(adminPage.getByText(`Vendor ${runId}-feb`)).toHaveCount(0);
   });
@@ -386,7 +386,7 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-029 gives project subtotal bars their utilization status', async ({ adminPage, runId }) => {
     await createPayment(adminPage, runId, { month: '2026-07', amount: '10.00' });
-    await adminPage.goto('/?month=2026-07');
+    await adminPage.goto('/grid?month=2026-07');
     await expect(adminPage.locator('tr.project-row .vbar.is-unbudgeted').first()).toBeVisible();
   });
 
@@ -428,7 +428,7 @@ test.describe('documented issue regression guards', () => {
   test('ISS-034 aligns sticky grid columns without clipping due badges', async ({ adminPage }) => {
     for (const width of [1440, 390]) {
       await adminPage.setViewportSize({ width, height: 1000 });
-      await adminPage.goto('/?month=2026-07');
+      await adminPage.goto('/grid?month=2026-07');
       const geometry = await adminPage.locator('table.matrix').evaluate(table => {
         const rect = (selector: string) =>
           (table.querySelector(selector) as HTMLElement).getBoundingClientRect();
@@ -457,7 +457,7 @@ test.describe('responsive and visual smoke', () => {
   test('core pages render at desktop and mobile dimensions', async ({ adminPage }, testInfo) => {
     for (const [name, size] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
       await adminPage.setViewportSize(size);
-      await adminPage.goto('/?month=2026-07');
+      await adminPage.goto('/grid?month=2026-07');
       await expect(adminPage.getByRole('heading', { name: 'Variance grid' })).toBeVisible();
       await adminPage.screenshot({ path: testInfo.outputPath(`grid-${name}.png`), fullPage: true });
     }

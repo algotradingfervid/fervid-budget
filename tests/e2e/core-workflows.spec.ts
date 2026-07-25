@@ -4,7 +4,9 @@ import { test, expect, capturePageErrors, createDataEntryUser, createPayment, lo
 test.describe('authentication, permissions, and navigation', () => {
   test('admin can log in, traverse primary navigation, and log out without browser errors', async ({ adminPage }) => {
     const errors = capturePageErrors(adminPage);
-    await expect(adminPage.getByRole('heading', { name: 'Variance grid' })).toBeVisible();
+    // Login lands on Home, which is the dashboard. The variance grid has its
+    // own /grid entry and is reached through the nav below.
+    await expect(adminPage.locator('h1')).toBeVisible();
     // The two devices navigate through different chrome: the sidebar on
     // desktop, the More sheet on a phone. Driving whichever is actually on
     // screen keeps this a real navigation test on both.
@@ -27,7 +29,7 @@ test.describe('authentication, permissions, and navigation', () => {
   });
 
   test('exactly one navigation chrome is on screen, and the tab bar never covers a control', async ({ adminPage }) => {
-    await adminPage.goto('/?month=2026-06');
+    await adminPage.goto('/grid?month=2026-06');
     const mobile = adminPage.viewportSize()!.width <= 860;
 
     // Sidebar and tab bar are alternatives, never both: two visible "Primary"
@@ -81,7 +83,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await adminPage.getByRole('button', { name: 'Save Payment' }).click();
     await expect(adminPage.locator('dd', { hasText: `edited ${runId}` })).toBeVisible();
     const download = adminPage.waitForEvent('download');
-    await adminPage.goto('/?month=2026-06');
+    await adminPage.goto('/grid?month=2026-06');
     await adminPage.getByRole('link', { name: /Export/ }).click();
     await expect(await download).toBeTruthy();
     expect(errors).toEqual([]);
@@ -99,7 +101,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
   });
 
   test('the primary grid is keyboard reachable and has no detectable axe violations', async ({ adminPage }) => {
-    await adminPage.goto('/?month=2026-06');
+    await adminPage.goto('/grid?month=2026-06');
     await adminPage.keyboard.press('Tab');
     await expect(adminPage.locator(':focus')).toBeVisible();
     const report = await new AxeBuilder({ page: adminPage }).analyze();

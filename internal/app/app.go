@@ -277,7 +277,11 @@ func (a *App) routes(mux *http.ServeMux) {
 	// a catch-all, so every URL the app does not serve — including nav items
 	// whose screens are not built yet — silently rendered the dashboard under
 	// the wrong address instead of saying the page does not exist.
-	mux.Handle("GET /{$}", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
+	// Home is the dashboard: the approved design's screen 01, "one home, four
+	// sets of work areas, permission controlled". The nav key for "/" has
+	// always been "dashboard" while the variance grid has its own /grid entry;
+	// both simply rendered the grid until the dashboard existed.
+	mux.Handle("GET /{$}", a.auth.RequireLogin(http.HandlerFunc(a.dashboard)))
 	mux.Handle("GET /", a.auth.RequireLogin(http.HandlerFunc(a.notFound)))
 	mux.Handle("GET /grid", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
 	// The work dashboard. It is ungated beyond being signed in, because every

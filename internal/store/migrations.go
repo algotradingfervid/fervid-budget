@@ -282,6 +282,9 @@ var systemRoleDefaults = []systemRoleDef{
 		Grants: []Grant{
 			{"request", "view"}, {"request", "create"}, {"request", "edit"},
 			{"request", "withdraw"}, {"request", "reraise"}, {"request", "comment"},
+			// G1: after approval it is too late to withdraw, so the requester
+			// asks for cancellation and an approver decides.
+			{"request", "cancel"},
 			{"attachment", "view"}, {"attachment", "create"},
 		},
 		Scopes: []ScopeGrant{{"request", "own"}},
@@ -293,6 +296,9 @@ var systemRoleDefaults = []systemRoleDef{
 			{"request", "view"}, {"request", "comment"},
 			{"approval", "approve"}, {"approval", "reject"}, {"approval", "return"},
 			{"approval", "reassign"}, {"approval", "accept_partial"},
+			// G1 decides a requester's cancellation; G2 cancels an approved
+			// request outright, with a reason.
+			{"approval", "cancel"},
 			{"grid", "view"}, {"report", "view"},
 		},
 		Scopes: []ScopeGrant{{"request", "all"}},

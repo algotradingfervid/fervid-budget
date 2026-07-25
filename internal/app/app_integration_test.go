@@ -243,7 +243,7 @@ func TestDataEntryHasRestrictedNavigationAndRoutes(t *testing.T) {
 func TestMonthNormalizationAndReportRangeExport(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/?month=not-a-month", nil, ""))
+	body := responseBody(t, s.request(http.MethodGet, "/grid?month=not-a-month", nil, ""))
 	current := time.Now().Format("2006-01")
 	if !strings.Contains(body, `name="month" value="`+current+`"`) {
 		t.Fatalf("invalid grid month was not normalized to %s", current)
@@ -766,18 +766,19 @@ func TestPageBodyGatesOnTheRequestPermissionSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Month Close renders from the dashboard body, gated on month_lock:write —
+	// Month Close renders from the variance grid, gated on month_lock:write —
 	// the same permission /months/{m}/lock is guarded by. It needs no rows, so
-	// it isolates the gate from the data.
+	// it isolates the gate from the data. (Home is the dashboard; the grid
+	// moved to /grid when the dashboard shipped.)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
-	admin := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	admin := responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
 	if !strings.Contains(admin, "Month Close") {
 		t.Fatal("admin cannot see Month Close despite holding month_lock:write")
 	}
 
 	entry := newAppTestClient(t, s)
 	entry.login("entry@example.test", "EntryPassword123")
-	restricted := responseBody(t, entry.request(http.MethodGet, "/", nil, ""))
+	restricted := responseBody(t, entry.request(http.MethodGet, "/grid", nil, ""))
 	if strings.Contains(restricted, "Month Close") {
 		t.Fatal("data-entry user sees Month Close despite lacking month_lock:write")
 	}
