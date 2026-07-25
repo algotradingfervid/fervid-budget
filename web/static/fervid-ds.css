@@ -33,6 +33,11 @@
   --info: #245b8f;
   --info-soft: #e2ecf6;
   --track: #5aa775;
+  /* Tint borders — the 1px rules that sit on the *-soft fills. */
+  --ok-line: #bfdccc;
+  --bad-line: #edc3bd;
+  --warn-line: #ecd39a;
+  --info-line: #c5daed;
 
   --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: Georgia, "Times New Roman", serif;
@@ -767,27 +772,27 @@ tfoot td {
   border: 1px solid var(--fb-border);
   border-radius: var(--fb-radius);
   background: var(--fb-info-soft);
-  color: #1f415f;
+  color: var(--info);
 }
 
 .locked-banner,
 .lock-banner,
 .alert-warning {
-  color: #684000;
+  color: var(--warn);
   background: var(--fb-warn-soft);
-  border-color: #e1bd72;
+  border-color: var(--warn-line);
 }
 
 .alert-danger {
-  color: #702522;
+  color: var(--bad);
   background: var(--fb-danger-soft);
-  border-color: #e5aaa5;
+  border-color: var(--bad-line);
 }
 
 .alert-success {
-  color: #1f5736;
+  color: var(--ok);
   background: var(--fb-success-soft);
-  border-color: #add7bc;
+  border-color: var(--ok-line);
 }
 
 .badge,
@@ -824,7 +829,7 @@ tfoot td {
 [data-status="over"] {
   color: var(--fb-danger);
   background: var(--fb-danger-soft);
-  border-color: #e5aaa5;
+  border-color: var(--bad-line);
 }
 
 .badge.unbudgeted,
@@ -832,7 +837,7 @@ tfoot td {
 [data-status="unbudgeted"] {
   color: var(--fb-warn);
   background: var(--fb-warn-soft);
-  border-color: #e1bd72;
+  border-color: var(--warn-line);
 }
 
 .badge.under,
@@ -840,7 +845,7 @@ tfoot td {
 [data-status="under"] {
   color: var(--fb-success);
   background: var(--fb-success-soft);
-  border-color: #add7bc;
+  border-color: var(--ok-line);
 }
 
 .badge.on-track,
@@ -849,7 +854,7 @@ tfoot td {
 [data-status="on_track"] {
   color: var(--fb-accent-strong);
   background: var(--fb-accent-soft);
-  border-color: #afd3cc;
+  border-color: var(--brand-tint-2);
 }
 
 .badge.not-paid,
@@ -865,7 +870,7 @@ tfoot td {
 [data-status="locked"] {
   color: var(--fb-warn);
   background: var(--fb-warn-soft);
-  border-color: #e1bd72;
+  border-color: var(--warn-line);
 }
 
 .role-admin {
@@ -1728,26 +1733,26 @@ tr.total .pctxt {
 
 .badge.under {
   color: var(--ok);
-  background: rgba(25, 135, 84, .12);
-  border-color: rgba(25, 135, 84, .25);
+  background: var(--ok-soft);
+  border-color: var(--ok-line);
 }
 
 .badge.on-track {
-  color: #3b7b53;
-  background: rgba(90, 167, 117, .13);
-  border-color: rgba(90, 167, 117, .28);
+  color: var(--brand-2);
+  background: var(--brand-tint);
+  border-color: var(--brand-tint-2);
 }
 
 .badge.over {
   color: var(--bad);
-  background: rgba(180, 35, 24, .11);
-  border-color: rgba(180, 35, 24, .24);
+  background: var(--bad-soft);
+  border-color: var(--bad-line);
 }
 
 .badge.unbudgeted {
   color: var(--warn);
   background: var(--warn-soft);
-  border-color: #e1bd72;
+  border-color: var(--warn-line);
 }
 
 .badge.not-paid {
@@ -2014,18 +2019,19 @@ tr.total .pctxt {
 .badge.warn {
   color: var(--warn);
   background: var(--warn-soft);
-  border-color: #e1bd72;
+  border-color: var(--warn-line);
 }
 
 .badge.good {
   color: var(--ok);
-  background: rgba(25, 135, 84, .12);
-  border-color: rgba(25, 135, 84, .25);
+  background: var(--ok-soft);
+  border-color: var(--ok-line);
 }
 
 .badge.info {
-  color: var(--fb-info);
-  background: var(--fb-info-soft);
+  color: var(--info);
+  background: var(--info-soft);
+  border-color: var(--info-line);
 }
 
 .badge.danger {
@@ -2051,21 +2057,21 @@ tr.total .pctxt {
 }
 
 .locked {
-  color: #684000;
+  color: var(--warn);
   background: var(--warn-soft);
-  border: 1px solid #e1bd72;
+  border: 1px solid var(--warn-line);
 }
 
 .alert.error {
-  color: #702522;
+  color: var(--bad);
   background: var(--fb-danger-soft);
-  border-color: #e5aaa5;
+  border-color: var(--bad-line);
 }
 
 .alert.success {
-  color: #1f5736;
+  color: var(--ok);
   background: var(--fb-success-soft);
-  border-color: #add7bc;
+  border-color: var(--ok-line);
 }
 
 .due {
@@ -2093,25 +2099,26 @@ tr.total .pctxt {
 
 .duepill.overdue {
   color: var(--bad);
-  background: rgba(180, 35, 24, .11);
-  border-color: rgba(180, 35, 24, .24);
+  background: var(--bad-soft);
+  border-color: var(--bad-line);
 }
 
 .duepill.today {
   color: var(--warn);
   background: var(--warn-soft);
-  border-color: #e1bd72;
+  border-color: var(--warn-line);
 }
 
 .duepill.upcoming {
-  color: var(--fb-info);
-  background: var(--fb-info-soft);
+  color: var(--info);
+  background: var(--info-soft);
+  border-color: var(--info-line);
 }
 
 .duepill.settled {
   color: var(--ok);
-  background: rgba(25, 135, 84, .12);
-  border-color: rgba(25, 135, 84, .25);
+  background: var(--ok-soft);
+  border-color: var(--ok-line);
 }
 
 .payment-form {
@@ -2235,7 +2242,7 @@ tr.total .pctxt {
 }
 
 .timeline-item.info::before {
-  background: var(--fb-info);
+  background: var(--info);
 }
 
 .timeline-item.warn::before {
@@ -2420,14 +2427,14 @@ pre {
   gap: 1.5rem;
   align-items: start;
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+  border-radius: var(--r);
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-1);
 }
 
 .error-code {
   min-width: 4.5rem;
-  color: var(--danger);
+  color: var(--bad);
   font-family: var(--font-display);
   font-size: clamp(2rem, 5vw, 3.5rem);
   font-weight: 700;
