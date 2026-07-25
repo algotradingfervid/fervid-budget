@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -109,6 +110,96 @@ func TestBuildShellKeepsComingSoonAndDropsEmptyGroups(t *testing.T) {
 	}
 	if soon != 4 {
 		t.Fatalf("coming-soon items visible to data_entry = %d, want 4", soon)
+	}
+}
+
+func tabLabels(items []TabItem) []string {
+	labels := []string{}
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	return labels
+}
+
+func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		perms     store.PermissionSet
+		wantLabel string
+		wantHref  string
+		wantRight []string
+	}{
+		{
+			name:      "approver gets approve",
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "request", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "read"}}),
+			wantLabel: "Approve",
+			wantHref:  "/approvals",
+			wantRight: []string{"Payments", "More"},
+		},
+		{
+			name:      "payer gets pay",
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "read"}}),
+			wantLabel: "Pay",
+			wantHref:  "/payments/new",
+			wantRight: []string{"Payments", "More"},
+		},
+		{
+			name:      "requester gets new",
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "request", Action: "create"}}),
+			wantLabel: "New",
+			wantHref:  "/requests/new",
+			wantRight: []string{"Budget", "More"},
+		},
+		{
+			name:      "no grants falls back to home",
+			perms:     store.NewPermissionSet(nil),
+			wantLabel: "Home",
+			wantHref:  "/",
+			wantRight: []string{"Budget", "More"},
+		},
+		{
+			name:      "wildcard takes the first match",
+			perms:     adminPerms(),
+			wantLabel: "Approve",
+			wantHref:  "/approvals",
+			wantRight: []string{"Payments", "More"},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			tabs := resolveTabs(testCase.perms)
+			if tabs.Fab.Label != testCase.wantLabel || tabs.Fab.Href != testCase.wantHref {
+				t.Fatalf("fab = %q %q, want %q %q", tabs.Fab.Label, tabs.Fab.Href, testCase.wantLabel, testCase.wantHref)
+			}
+			if got := tabLabels(tabs.Right); strings.Join(got, "|") != strings.Join(testCase.wantRight, "|") {
+				t.Fatalf("right tabs = %v, want %v", got, testCase.wantRight)
+			}
+			if got := tabLabels(tabs.Left); strings.Join(got, "|") != "Home|Requests" {
+				t.Fatalf("left tabs = %v, want [Home Requests]", got)
+			}
+			if len(tabs.Left) > 2 || len(tabs.Right) > 2 {
+				t.Fatalf("tab bar sides hold %d and %d items, want at most 2 each", len(tabs.Left), len(tabs.Right))
+			}
+			if last := tabs.Right[len(tabs.Right)-1]; last.Key != "more" {
+				t.Fatalf("last right tab = %q, want the More sheet", last.Key)
+			}
+			for _, item := range append(append([]TabItem{}, tabs.Left...), tabs.Right...) {
+				if item.Key == "" || item.Icon == "" || item.Href == "" {
+					t.Fatalf("tab %#v is missing key, icon or href", item)
+				}
+			}
+		})
+	}
+}
+
+func TestNavContainsNoRoleNames(t *testing.T) {
+	source, err := os.ReadFile("nav.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{`"admin"`, `"data_entry"`, `.Role`, `User.Role`} {
+		if count := strings.Count(string(source), forbidden); count != 0 {
+			t.Fatalf("nav.go contains %s %d times; the shell must be permission-driven", forbidden, count)
+		}
 	}
 }
 

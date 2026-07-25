@@ -105,6 +105,50 @@ func buildShell(perms store.PermissionSet) []NavGroup {
 	return groups
 }
 
+// centreActions is the priority order of the mobile tab bar's centre action.
+// The first action the holder is permitted to take wins; Home is the floor, so
+// the bar always has a centre.
+var centreActions = []struct {
+	Resource, Action string
+	Tab              TabItem
+}{
+	{Resource: "request", Action: "approve", Tab: TabItem{Key: "approvals", Label: "Approve", Href: "/approvals", Icon: "✓"}},
+	{Resource: "payment", Action: "create", Tab: TabItem{Key: "pay", Label: "Pay", Href: "/payments/new", Icon: "₹"}},
+	{Resource: "request", Action: "create", Tab: TabItem{Key: "new", Label: "New", Href: "/requests/new", Icon: "＋"}},
+}
+
+var homeTab = TabItem{Key: "dashboard", Label: "Home", Href: "/", Icon: "⌂"}
+var moreTab = TabItem{Key: "more", Label: "More", Href: "#more", Icon: "⋯"}
+
+// resolveTabs builds the mobile tab bar from permissions alone. Left and right
+// hold at most two items each and More is always the last one.
+func resolveTabs(perms store.PermissionSet) TabBar {
+	tabs := TabBar{
+		Left: []TabItem{
+			homeTab,
+			{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"},
+		},
+		Fab: homeTab,
+	}
+	for _, candidate := range centreActions {
+		if can(perms, candidate.Resource, candidate.Action) {
+			tabs.Fab = candidate.Tab
+			break
+		}
+	}
+	if can(perms, "payment", "read") {
+		tabs.Right = append(tabs.Right, TabItem{Key: "payments", Label: "Payments", Href: "/payments", Icon: "▦"})
+	} else {
+		tabs.Right = append(tabs.Right, TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"})
+	}
+	tabs.Right = append(tabs.Right, moreTab)
+	return tabs
+}
+
+func can(perms store.PermissionSet, resource, action string) bool {
+	return perms != nil && perms.Can(resource, action)
+}
+
 func navItemVisible(item NavItem, perms store.PermissionSet) bool {
 	if item.Soon {
 		return true
