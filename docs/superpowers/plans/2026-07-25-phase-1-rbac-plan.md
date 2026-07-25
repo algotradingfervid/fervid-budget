@@ -1189,6 +1189,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 6 — `SetUserRoles` / `UserRoles` (R4 assignment)
 
+> **Status: DONE** — shipped as commit `5768ca7`. Body kept as the record of what was built.
+
 **Files**
 - Modify: `internal/store/permissions.go`
 - Test: `internal/store/permissions_test.go`
@@ -1330,6 +1332,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 7 — `EffectivePermissions`: union of grants + broadest scope (R3, R4; scope mechanism for Q5/D2)
 
+> **Status: DONE** — shipped as commit `06465be`. Body kept as the record of what was built.
+
 **Files**
 - Modify: `internal/store/permissions.go`
 - Test: `internal/store/permissions_test.go`
@@ -1465,6 +1469,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ---
 
 ## Task 8 — Extend migration v1: seed 4 system roles + back-fill `user_roles`; CreateUser default role (R7, R8, R9)
+
+> **Status: DONE** — shipped as commit `9e94013`. Body kept as the record of what was built. Two stale details: Step 3's prose says "Append v2 + helpers" but the code below it (and the shipped change) correctly folds seeding and back-fill into the existing **v1** `Up` — there is no v2 here; and `assignDefaultRoleTx` was placed in `migrations.go`, which the step allows.
 
 **Files**
 - Modify: `internal/store/migrations.go` (extend the v1 `Up` to seed + back-fill; add `seedSystemRoles`, `backfillUserRoles`, `systemRoleDefaults`)
@@ -1898,6 +1904,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ---
 
 ## Task 9 — Auth engine rewrite: DB-driven `Can`/`Scope`/`RequirePermission` (R1, R6 foundation)
+
+> **Status: DONE** — shipped as commit `a73e92a`. Body kept as the record of what was planned; the shipped change is wider than the scope note below, because that note is wrong:
+>
+> 1. **The scope note's claim that this task "commits no knowingly-red test" cannot hold.** Leaving the Phase 0 gates on the interim Casbin verbs while the engine answers from the canonical vocabulary empties the entire sidebar — five `internal/app` tests went red (`TestDataEntryHasRestrictedNavigationAndRoutes`, `TestShellIsBuiltFromPermissionsAndSkippedForHTMXFragments`, `TestEveryScreenRendersTheAppShell`, `TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach`, `TestPageBodyGatesOnTheRequestPermissionSet`), and the running app's nav really is empty in that state. Task 13's step 3a hand-over table was therefore applied here, verbatim, to `internal/app/nav.go`, `internal/store/badges.go` and the four `Perms.Can` gates in `internal/app/templates.go` (`month_lock:write`→`month:lock`, `payment:update`→`payment:edit` ×2, `budget:read`→`budget:view`), with the matching fixture updates in `internal/app/nav_test.go` and `internal/store/badges_test.go`.
+> 2. **`TestCanAndPermissionsSnapshotAgree` also needed rewriting** and the task body does not mention it. Three of its rows encoded Casbin semantics that are deliberately gone: Accounts genuinely holds `payment:void`, and `Scope` now answers `""` for every resource outside `request`/`payment`, so `admin Scope(role) == ScopeAll` is no longer meaningful. The rows were re-pointed, not weakened.
+> 3. `GET /export.csv` moved from `report:export` to `grid:export` as the route block specifies.
+>
+> **Still outstanding for Task 13:** deleting the stub `staticPermissionSet`/wildcard `NewPermissionSet` and exporting `AllGrants`, the two drift-guard tests, the `TestDataEntryHasRestrictedNavigationAndRoutes` rewrite, and `TestRequesterOnlySessionForbiddenFromAdminRoutesByURL`. Step 3a of that task is already done — re-applying it is a no-op.
 
 **Files**
 - Modify: `internal/auth/auth.go` (remove Casbin; add DB engine)
