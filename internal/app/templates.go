@@ -1086,6 +1086,66 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The confirmation — mockups/screens/request-submitted.html.
+
+     It exists to answer the only question a person has after pressing Submit:
+     what happens now, and who has it. The three-step .thread is a forecast, not
+     a history; the request's real history lives on its detail screen. */}}
+{{define "request_submitted"}}
+{{template "top" .}}
+<div class="banner good">
+  <span class="b-ico" aria-hidden="true">✓</span>
+  <div>
+    <b>Submitted. {{.Request2.ManagerName}} has been notified.</b>
+    <p>You can still edit this request until they act on it. Every edit tells them again and restarts
+      the three-day reminder clock.</p>
+  </div>
+</div>
+
+<div class="req-head">
+  <div class="rh-top">
+    <span class="rh-no">{{.Request2.Number}}</span>
+    <span class="rh-amt">{{money .Request2.Amount}}</span>
+  </div>
+  <h1>{{.Request2.ShortTitle}}</h1>
+  <p class="rh-meta">{{typeLabel .Request2.Type}}{{if eq .Request2.Treatment "recoverable"}} · {{recoverable .Request2.RecoverableCategory}}{{end}}{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{if .Request2.Head}} · {{.Request2.Head}}{{end}}{{if .Request2.NeededBy}} · needed by {{dateLong .Request2.NeededBy}}{{end}}</p>
+  <div class="rh-status">
+    <span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    <span class="waiting">Waiting on {{.Request2.ManagerName}}</span>
+  </div>
+</div>
+
+<div class="section-head"><h2>What happens next</h2></div>
+<ol class="thread">
+  <li>
+    <span class="tl-dot brand" aria-hidden="true">1</span>
+    <div class="tl-head"><b>{{.Request2.ManagerName}} reviews it</b></div>
+    <div class="tl-body">They can approve, return it to you for a correction, or reject it. A reminder
+      goes out daily if nothing happens after three calendar days.</div>
+  </li>
+  <li>
+    <span class="tl-dot" aria-hidden="true">2</span>
+    <div class="tl-head"><b>Accounts picks it up</b></div>
+    <div class="tl-body">Once approved, an accountant reserves the request and records the payment
+      against it. Nobody else can process it while it is reserved.</div>
+  </li>
+  <li>
+    <span class="tl-dot" aria-hidden="true">3</span>
+    <div class="tl-head"><b>It settles</b></div>
+    <div class="tl-body">Accounts confirms the payment covers the obligation and the request closes.
+      You are notified at every step.</div>
+  </li>
+</ol>
+
+<div class="action-bar">
+  <span class="row-end"></span>
+  <a class="btn outline" href="/requests/new">Raise another</a>
+  <a class="btn" href="/requests">My requests</a>
+  <a class="btn primary" href="/requests/{{.Request2.ID}}">View this request</a>
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{define "audit"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Evidence</div><h1>Audit Log</h1><p class="sub muted">Review who changed financial records, when, and why.</p></div></section>

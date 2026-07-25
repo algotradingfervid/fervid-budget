@@ -450,6 +450,119 @@ func TestRenderPartialOmitsTheShell(t *testing.T) {
 	}
 }
 
+// D1: there is exactly one submit button and exactly one POST. The request is
+// created, numbered and already pending when that POST returns.
+func TestRequesterCreatesAndSubmitsInOnePost(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("One")
+	mgrID := seedSecondApprover(t, s)
+	s.seedRequester("rhea2@example.test", "Rhea Two", "RequesterPass123")
+	s.login("rhea2@example.test", "RequesterPass123")
+
+	resp := s.postForm("/requests", url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Hyderabad site visit"},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"1,000.00"},
+		"purpose": {"flight and hotel"}, "expense_date": {"2026-07-17"},
+		"manager_id": {strconvFormat(mgrID)},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	loc := resp.Header.Get("Location")
+	if !strings.HasSuffix(loc, "/submitted") {
+		t.Fatalf("redirect = %q, want the submitted confirmation", loc)
+	}
+	_ = responseBody(t, resp)
+
+	list, err := s.st.ListRequests(s.ctx, store.RequestListOptions{Scope: "all"})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %#v, %v", list, err)
+	}
+	if list[0].Status != "pending" || list[0].Number == "" || list[0].SubmittedAt == nil {
+		t.Fatalf("request after one POST = %+v; D1 wants it created, numbered and pending", list[0])
+	}
+	// The comma-grouped amount the money field writes back parses correctly.
+	if list[0].Amount != 100000 {
+		t.Fatalf("amount = %d, want 100000 paise", list[0].Amount)
+	}
+
+	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(list[0].ID)+"/submitted", nil, ""))
+	for _, want := range []string{`class="banner good"`, `class="req-head"`, `class="thread"`,
+		`class="pill awaiting"`, `class="waiting"`, list[0].Number, "Kavita Rao",
+		`href="/requests/new"`, "<h1>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the confirmation screen is missing %q", want)
+		}
+	}
+
+	// A failed submit re-renders the form with the message and keeps nothing.
+	bad := s.postForm("/requests", url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {""},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"1000.00"},
+		"purpose": {"x"}, "expense_date": {"2026-07-17"}, "manager_id": {strconvFormat(mgrID)},
+	})
+	if bad.StatusCode == http.StatusSeeOther {
+		t.Fatal("a request with no short title was accepted")
+	}
+	badBody := responseBody(t, bad)
+	if !strings.Contains(badBody, "short title") {
+		t.Fatalf("the error was not shown on the form: %s", badBody)
+	}
+	// …and what was typed survives, so nobody retypes a form to fix one field.
+	if !strings.Contains(badBody, "flight") && !strings.Contains(badBody, ">x<") {
+		t.Fatalf("the rejected form lost the purpose the requester typed: %s", badBody)
+	}
+	again, _ := s.st.ListRequests(s.ctx, store.RequestListOptions{Scope: "all"})
+	if len(again) != 1 {
+		t.Fatalf("a failed submit created %d extra rows", len(again)-1)
+	}
+}
+
+// A16.4: hidden is not validation. A hand-rolled POST that fills a field the
+// form would never have shown is still refused by the store's own rules.
+func TestAHandRolledPostCannotEscapeTheTypeRules(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Forge")
+	mgrID := seedSecondApprover(t, s)
+	vendorID := s.seedVendor(store.VendorInput{Name: "Anand Steel Traders", VendorType: "company", Status: "active"})
+	s.seedRequester("forger@example.test", "Forger", "RequesterPass123")
+	s.login("forger@example.test", "RequesterPass123")
+
+	// A vendor invoice is a budget expense. The form never offers it any other
+	// way, and posting past the form does not change that.
+	resp := s.postForm("/requests", url.Values{
+		"type": {"vendor_invoice"}, "treatment": {"recoverable"},
+		"recoverable_category": {"icd"}, "short_title": {"Sneaky"},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)},
+		"amount": {"1000.00"}, "purpose": {"x"}, "manager_id": {strconvFormat(mgrID)},
+		"invoice_no": {"A/1"}, "invoice_date": {"2026-07-18"},
+		"vendor_id": {strconvFormat(vendorID)},
+	})
+	if resp.StatusCode == http.StatusSeeOther {
+		t.Fatal("a vendor invoice was accepted with recoverable treatment; the server is not authoritative")
+	}
+	requireStatus(t, resp, http.StatusBadRequest)
+	_ = responseBody(t, resp)
+
+	// G8: nor can a requester route a request to themselves.
+	me, err := s.st.UserByEmail(s.ctx, "forger@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := s.postForm("/requests", url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Self"},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"100.00"},
+		"purpose": {"x"}, "expense_date": {"2026-07-17"}, "manager_id": {strconvFormat(me.ID)},
+	})
+	requireStatus(t, self, http.StatusBadRequest)
+	if body := responseBody(t, self); !strings.Contains(strings.ToLower(body), "cannot approve your own request") {
+		t.Fatalf("self-approval was not refused in so many words: %s", body)
+	}
+
+	all, _ := s.st.ListRequests(s.ctx, store.RequestListOptions{Scope: "all"})
+	if len(all) != 0 {
+		t.Fatalf("%d requests exist; every one of those posts should have been refused", len(all))
+	}
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

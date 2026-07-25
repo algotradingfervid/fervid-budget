@@ -135,6 +135,106 @@ func normalizeRecoverableCategory(code, formType string) string {
 	return "emd"
 }
 
+// requestCreate is the whole of D1 in one handler: stage the file, create the
+// request already pending, redirect to the confirmation. There is no draft to
+// save and no second submit step, so the row, its number, its submission
+// timestamp and the requester's document all commit together — or none of them
+// do, and the staged file is removed behind them.
+func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
+	in, err := requestInput(r)
+	var stagedPath string
+	if err == nil {
+		var attachment *store.AttachmentInput
+		attachment, stagedPath, err = a.stageUploadedAttachment(r)
+		if err == nil && attachment != nil {
+			in.Attachments = []store.AttachmentInput{*attachment}
+		}
+	}
+	var id int64
+	if err == nil {
+		id, err = a.st.CreateRequest(r.Context(), auth.CurrentUser(r), in)
+	}
+	if err != nil {
+		// Nothing was written, so nothing may be left on disk either.
+		removeStagedAttachment(a.log, r, stagedPath)
+		status := storeErrorStatus(err)
+		if status >= http.StatusInternalServerError {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		a.renderRejectedRequestForm(w, r, status, in, friendly(err))
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d/submitted", id), http.StatusSeeOther)
+}
+
+// renderRejectedRequestForm puts the form back with the message and everything
+// the requester had typed still in it. Losing a page of typing to one bad field
+// is the cruellest thing a form can do.
+func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, status int, in store.RequestInput, message string) {
+	label, known := requestTypeLabels[in.Type]
+	if !known {
+		a.respondError(w, r, http.StatusBadRequest, "That is not a kind of request this system raises.", nil)
+		return
+	}
+	data, err := a.requestFormData(r, label)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	data.Error = message
+	data.FormType = in.Type
+	data.Request2 = requestFromInput(in)
+	if data.Vendors, err = a.vendorChoices(r, in.Type); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.renderStatus(w, r, status, "request_form", data)
+}
+
+// requestFromInput turns what was posted back into the shape the form renders
+// from, so a rejected submission re-renders as itself.
+func requestFromInput(in store.RequestInput) store.Request {
+	req := store.Request{
+		Treatment: in.Treatment, Type: in.Type, RecoverableCategory: in.RecoverableCategory,
+		VendorPayee: in.VendorPayee, ShortTitle: in.ShortTitle, Amount: in.Amount,
+		Purpose: in.Purpose, NeededBy: in.NeededBy, InvoiceNo: in.InvoiceNo,
+		InvoiceDate: in.InvoiceDate, ExpenseDate: in.ExpenseDate, AdvanceReason: in.AdvanceReason,
+		Counterparty: in.Counterparty, ExpectedReturnDate: in.ExpectedReturnDate,
+		RepaymentNotes: in.RepaymentNotes, Urgent: in.Urgent, UrgencyReason: in.UrgencyReason,
+		AttachmentExceptionReason: in.AttachmentExceptionReason, ManagerID: in.ManagerID,
+	}
+	req.ProjectID = optionalID(in.ProjectID)
+	req.HeadID = optionalID(in.HeadID)
+	req.VendorID = optionalID(in.VendorID)
+	return req
+}
+
+func (a *App) requestSubmitted(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	a.render(w, r, "request_submitted", PageData{Title: "Request submitted", Request2: req})
+}
+
+// loadViewableRequest resolves the {id} in the path and refuses it to anybody
+// whose data scope does not reach it — holding request:view somewhere is not
+// the same as being allowed to read this one (Q5/R6).
+func (a *App) loadViewableRequest(w http.ResponseWriter, r *http.Request) (store.Request, bool) {
+	u := auth.CurrentUser(r)
+	req, err := a.st.Request(r.Context(), pathID(r))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return store.Request{}, false
+	}
+	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+		a.respondError(w, r, http.StatusForbidden, "You do not have permission to view this request.", nil)
+		return store.Request{}, false
+	}
+	return req, true
+}
+
 // vendorChoices backs the plain <select> the form falls back to when the
 // combobox cannot run — no JavaScript, or a requester who does not hold
 // vendor:view and so cannot reach GET /vendors/search. Types that never carry a

@@ -295,6 +295,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /requests/export.csv", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestsExport)))
 	mux.Handle("GET /requests/new", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.requestNew)))
 	mux.Handle("GET /requests/new/fields", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.requestFormFields)))
+	mux.Handle("POST /requests", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestCreate))))
+	mux.Handle("GET /requests/{id}/submitted", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestSubmitted)))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
 	mux.Handle("POST /users", a.auth.RequirePermission("user", "edit", http.HandlerFunc(a.withCSRF(a.userSave))))
 	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))
@@ -636,7 +638,9 @@ func (a *App) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, string, error) {
 	file, header, err := r.FormFile("attachment")
 	if err != nil {
-		if errors.Is(err, http.ErrMissingFile) {
+		// No file, or no multipart body to hold one: either way the caller sent
+		// no attachment, which is not an error on any of the forms that offer one.
+		if errors.Is(err, http.ErrMissingFile) || errors.Is(err, http.ErrNotMultipart) {
 			return nil, "", nil
 		}
 		return nil, "", fmt.Errorf("read attachment: %w", err)
