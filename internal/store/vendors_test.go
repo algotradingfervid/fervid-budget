@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testIFSC = "HDFC0000521"
@@ -376,6 +377,90 @@ func TestUpdateVendorRejectsMissingRowAndDuplicateName(t *testing.T) {
 	same.Name = "Sundaram Electricals PVT Ltd"
 	if err := s.UpdateVendor(ctx, actor, first, same, bankBlind()); err != nil {
 		t.Fatalf("re-casing a vendor's own name = %v, want nil", err)
+	}
+}
+
+func TestVendorStatsAndCategories(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status,gstin,categories) VALUES
+		('Sundaram Electricals Pvt Ltd','company','active','29AABCS1429B1ZQ','Materials, Switchgear'),
+		('Nova Print Works','company','active','','Printing'),
+		('Kaveri Logistics','proprietor','active','','Logistics, Materials'),
+		('Perfect Tools','proprietor','inactive','','')`); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := s.VendorStats(ctx)
+	if err != nil {
+		t.Fatalf("VendorStats: %v", err)
+	}
+	if stats.Total != 4 || stats.Active != 3 || stats.Inactive != 1 {
+		t.Fatalf("VendorStats = %+v; want total 4, active 3, inactive 1", stats)
+	}
+	// The gap the warning banner reports is about vendors in use, so an
+	// inactive vendor without a GSTIN is not a gap worth chasing.
+	if stats.MissingGSTIN != 2 {
+		t.Fatalf("MissingGSTIN = %d, want 2 (active vendors only)", stats.MissingGSTIN)
+	}
+
+	cats, err := s.VendorCategories(ctx)
+	if err != nil {
+		t.Fatalf("VendorCategories: %v", err)
+	}
+	if strings.Join(cats, "|") != "Logistics|Materials|Printing|Switchgear" {
+		t.Fatalf("VendorCategories = %v; want the distinct tokens, sorted", cats)
+	}
+}
+
+// The list screen's "Paid this year" column. Until Phase 3 links payments to
+// vendor_id, the only link is the payee snapshot, so the match is exact: it
+// may under-count a payment whose payee was typed differently, but it can
+// never attribute one to the wrong vendor.
+func TestListVendorsTotalsPaymentsRecordedAgainstTheVendorName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	actor, headID := seedActorAndHead(t, s, ctx)
+	year := time.Now().Format("2006")
+
+	if _, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status) VALUES
+		('Sundaram Electricals Pvt Ltd','company','active'),
+		('Meridian Facility Services','company','active')`); err != nil {
+		t.Fatal(err)
+	}
+	pay := func(payee, paidOn string, amount int64) int64 {
+		t.Helper()
+		id, err := s.CreatePayment(ctx, actor, PaymentInput{
+			HeadID: headID, PaidOn: paidOn, Amount: amount,
+			VendorPayee: payee, PaymentMode: "bank_transfer",
+		})
+		if err != nil {
+			t.Fatalf("CreatePayment(%s): %v", payee, err)
+		}
+		return id
+	}
+	pay("Sundaram Electricals Pvt Ltd", year+"-04-15", 500000)
+	pay("sundaram electricals pvt ltd", year+"-05-15", 250000) // case-insensitive
+	pay("Sundaram Electricals", year+"-06-15", 999999)         // not the same payee
+	pay("Sundaram Electricals Pvt Ltd", "2019-04-15", 111111)  // a different year
+	voided := pay("Sundaram Electricals Pvt Ltd", year+"-07-15", 777777)
+	if err := s.VoidPayment(ctx, actor, voided, "duplicate entry"); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := s.ListVendors(ctx, VendorListOptions{}, bankBlind())
+	if err != nil {
+		t.Fatalf("ListVendors: %v", err)
+	}
+	byName := map[string]Vendor{}
+	for _, v := range rows {
+		byName[v.Name] = v
+	}
+	if got := byName["Sundaram Electricals Pvt Ltd"].PaidThisYear; got != 750000 {
+		t.Fatalf("PaidThisYear = %d, want 750000 (voided, prior-year and other-payee rows excluded)", got)
+	}
+	if got := byName["Meridian Facility Services"].PaidThisYear; got != 0 {
+		t.Fatalf("a vendor with no payments has PaidThisYear = %d, want 0", got)
 	}
 }
 

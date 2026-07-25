@@ -316,6 +316,98 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* Vendors list — mockups/screens/vendors-list.html.
+
+     The page banner keeps its h1 on every width: the mobile top bar carries a
+     title too, but the shell contract is that every screen has a visible h1,
+     so this is not a d-only banner.
+
+     Two filter renderings, one dataset: the desktop .toolbar and the mobile
+     .m-filters are both real GET forms, so filtering works with no JavaScript
+     at all, and the stylesheet hides whichever one does not belong at that
+     width. Every <td> carries data-label because t-cards restacks into cards
+     below 860px and the attribute is what captions each field. */}}
+{{define "vendors_list"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Masters</div>
+    <h1>Vendors</h1>
+    <p class="sub">{{.VendorStats.Active}} active · {{.VendorStats.MissingGSTIN}} missing a GSTIN · bank details visible only with permission</p>
+  </div>
+  <div class="pb-actions">{{if .Perms.Can "vendor" "create"}}<a class="btn primary" href="/vendors/new">＋ Add vendor</a>{{end}}</div>
+</section>
+
+{{if .VendorStats.MissingGSTIN}}
+<div class="banner warn">
+  <span class="b-ico">⚠</span>
+  <div>
+    <b>{{.VendorStats.MissingGSTIN}} {{plural .VendorStats.MissingGSTIN "vendor has" "vendors have"}} no GSTIN</b>
+    <p>They can still be paid. The gap shows up in vendor reporting until someone fills it in.</p>
+  </div>
+  <span class="b-actions">{{if eq .VendorGap "gstin"}}<a class="btn small outline" href="/vendors">Show all</a>{{else}}<a class="btn small outline" href="/vendors?gap=gstin">Show them</a>{{end}}</span>
+</div>
+{{end}}
+
+<form class="toolbar" method="get" action="/vendors">
+  {{if .VendorGap}}<input type="hidden" name="gap" value="{{.VendorGap}}">{{end}}
+  <div class="field search"><label for="q">Search</label><input id="q" name="q" value="{{.Query}}" placeholder="Name, GSTIN, PAN, city"></div>
+  <div class="field"><label for="ty">Type</label><select id="ty" name="type">
+    <option value="">All types</option>
+    <option value="company" {{select .VendorType "company"}}>Company</option>
+    <option value="proprietor" {{select .VendorType "proprietor"}}>Proprietor</option>
+    <option value="individual" {{select .VendorType "individual"}}>Individual</option>
+  </select></div>
+  <div class="field"><label for="ct">Category</label><select id="ct" name="category">
+    <option value="">All categories</option>
+    {{range .VendorCategories}}<option value="{{.}}" {{select $.VendorCategory .}}>{{.}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="st">Status</label><select id="st" name="status">
+    <option value="active" {{select .Status "active"}}>Active</option>
+    <option value="inactive" {{select .Status "inactive"}}>Inactive</option>
+    <option value="all" {{select .Status "all"}}>All</option>
+  </select></div>
+  <span class="row-end"></span><button class="btn">Apply</button>
+</form>
+
+<form class="m-filters" method="get" action="/vendors">
+  <input type="hidden" name="status" value="{{.Status}}">
+  <span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search vendors…" aria-label="Search vendors"></span>
+  <button class="btn filter-btn" type="submit">Filters</button>
+</form>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Vendor</th><th>Type</th><th>GSTIN</th><th>City</th><th class="num">Paid this year</th><th class="c">Open requests</th><th class="c">Status</th></tr></thead>
+    <tbody>
+      {{range .Vendors}}
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="/vendors/{{.ID}}">{{.Name}}</a>{{if .Categories}}<span class="t-sub">{{categories .Categories}}</span>{{end}}</td>
+        <td data-label="Type">{{vendorType .VendorType}}</td>
+        <td class="num" data-label="GSTIN">{{if .GSTIN}}{{.GSTIN}}{{else}}<span class="pill warn no-dot">Missing</span>{{end}}</td>
+        <td data-label="City">{{if .City}}{{.City}}{{else}}—{{end}}</td>
+        <td class="num" data-label="Paid this year">{{money .PaidThisYear}}</td>
+        <td class="c" data-label="Open requests">{{.OpenRequests}}</td>
+        <td class="c" data-label="Status"><span class="pill {{if eq .Status "active"}}good{{else}}neutral{{end}}">{{vendorStatus .Status}}</span></td>
+      </tr>
+      {{else}}
+      <tr><td colspan="7" class="empty">No vendors match these filters.</td></tr>
+      {{end}}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td data-label="">{{len .Vendors}} shown of {{.VendorStats.Total}}</td>
+        <td data-label=""></td><td data-label=""></td><td data-label=""></td>
+        <td class="num" data-label="Paid this year">{{money .VendorPaidTotal}}</td>
+        <td class="c" data-label="Open">{{.VendorOpenTotal}}</td>
+        <td data-label=""></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{/* The two scope pill groups render the same state under two names. Same-name
      radios are one group across the whole form, so the mobile set must not
      borrow the desktop names: enabling it would silently clear the desktop

@@ -1046,3 +1046,111 @@ func TestRequesterOnlySessionForbiddenFromAdminRoutesByURL(t *testing.T) {
 		}
 	}
 }
+
+// seedUserWithGrants creates a signed-in-able user holding exactly the grants
+// named — the seeded system roles cannot express "vendor:view but not
+// vendor_bank:view", which is the distinction Phase 1V exists to enforce.
+func (s *appTestServer) seedUserWithGrants(email, password, roleName string, grants []store.Grant) {
+	s.t.Helper()
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	uid, err := s.st.CreateUser(s.ctx, email, roleName+" User", hash, "data_entry", true)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	roleID, err := s.st.CreateRole(s.ctx, admin, roleName, "")
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if err := s.st.UpdateRolePermissions(s.ctx, admin, roleID, grants, nil); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := s.st.SetUserRoles(s.ctx, admin, uid, []int64{roleID}); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+func (s *appTestServer) seedVendor(in store.VendorInput) int64 {
+	s.t.Helper()
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	id, err := s.st.CreateVendor(s.ctx, admin, in)
+	if err != nil {
+		s.t.Fatalf("CreateVendor(%s): %v", in.Name, err)
+	}
+	return id
+}
+
+func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
+	s := newAppTestServer(t)
+	s.seedVendor(store.VendorInput{
+		Name: "Sundaram Electricals Pvt Ltd", DisplayName: "Sundaram Elec",
+		VendorType: "company", Status: "active", Categories: "Materials, Switchgear",
+		GSTIN: "29AABCS1429B1ZQ", City: "Bengaluru",
+	})
+	s.seedVendor(store.VendorInput{
+		Name: "Nova Print Works", VendorType: "company", Status: "active",
+		Categories: "Printing", City: "Chennai",
+	})
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	resp := s.request(http.MethodGet, "/vendors", nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+
+	for _, want := range []string{
+		`class="page-banner"`, `class="pb-actions"`,
+		`class="banner warn"`, `class="b-ico"`, `class="b-actions"`,
+		`class="toolbar"`, `class="m-filters"`, `class="m-search"`, `class="btn filter-btn"`,
+		`class="table-wrap"`, `class="t-cards"`,
+		`class="t-lead" data-label="Vendor"`, `class="t-sub"`,
+		`data-label="Type"`, `data-label="GSTIN"`, `data-label="City"`,
+		`data-label="Paid this year"`, `data-label="Open requests"`, `data-label="Status"`,
+		`class="pill good"`, `<tfoot>`,
+		"Sundaram Electricals Pvt Ltd", "Nova Print Works",
+		// Categories are stored comma-separated and read back as a · chain.
+		"Materials · Switchgear",
+		// A vendor with no GSTIN says so rather than rendering an empty cell.
+		`class="pill warn no-dot"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/vendors is missing the approved markup %q", want)
+		}
+	}
+	// One vendor has no GSTIN, so the warning banner counts exactly one.
+	if !strings.Contains(body, "1 vendor has no GSTIN") {
+		t.Fatalf("/vendors did not report the missing-GSTIN gap: %s", body)
+	}
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("/vendors renders the retired .badge class")
+	}
+
+	// The nav link that has pointed at a 404 since Phase 1 now resolves.
+	if !strings.Contains(body, `<a class="active" href="/vendors" aria-current="page">`) {
+		t.Fatal("/vendors does not mark its own nav item active")
+	}
+
+	// Filters narrow the list rather than being decorative.
+	filtered := responseBody(t, s.request(http.MethodGet, "/vendors?q=chennai", nil, ""))
+	if strings.Contains(filtered, "Sundaram Electricals Pvt Ltd") || !strings.Contains(filtered, "Nova Print Works") {
+		t.Fatal("/vendors?q= did not filter the list")
+	}
+
+	// R6: the route is gated server-side, not by hiding the menu entry.
+	s.seedUserWithGrants("no-vendor@example.test", "NoVendorPass123", "No Vendors", []store.Grant{{Resource: "request", Action: "view"}})
+	blocked := newAppTestClient(t, s)
+	blocked.login("no-vendor@example.test", "NoVendorPass123")
+	denied := blocked.request(http.MethodGet, "/vendors", nil, "")
+	requireStatus(t, denied, http.StatusForbidden)
+	if strings.Contains(responseBody(t, denied), "Sundaram Electricals Pvt Ltd") {
+		t.Fatal("a 403 response still leaked vendor data")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -146,9 +147,22 @@ func vendorSelect(withBank bool) string {
 	return vendorColumns
 }
 
-// scanVendor reads one row. withBank must match the projection vendorSelect
-// produced, so the scan targets and the column list can never drift apart.
-func scanVendor(scanner interface{ Scan(...any) error }, withBank bool) (Vendor, error) {
+// vendorPaidThisYear is the list screen's "Paid this year" column. Until Phase
+// 3 gives payments a vendor_id, the payee snapshot is the only link there is,
+// so the match is EXACT: a payment counts towards a vendor only when its
+// recorded payee is that vendor's name. It therefore under-counts a payment
+// whose payee was typed differently, and can never attribute one to the wrong
+// vendor — vendor names are uniquely indexed. On a financial screen, missing a
+// row is recoverable; crediting the wrong vendor is not.
+const vendorPaidThisYear = `,COALESCE((SELECT SUM(py.amount) FROM payments py
+	WHERE py.voided_at IS NULL
+	  AND lower(trim(COALESCE(py.vendor_payee,''))) = lower(trim(v.name))
+	  AND substr(py.paid_on,1,4) = ?), 0)`
+
+// scanVendor reads one row. withBank and withTotals must match the projection
+// vendorSelect produced, so the scan targets and the column list can never
+// drift apart.
+func scanVendor(scanner interface{ Scan(...any) error }, withBank, withTotals bool) (Vendor, error) {
 	var v Vendor
 	dest := []any{
 		&v.ID, &v.Name, &v.DisplayName, &v.VendorType, &v.Status, &v.Categories,
@@ -162,6 +176,9 @@ func scanVendor(scanner interface{ Scan(...any) error }, withBank bool) (Vendor,
 			&bank.AccountName, &bank.AccountNumber, &bank.IFSC,
 			&bank.BankName, &bank.Branch, &bank.UPIID,
 			&bank.DefaultPaymentMode, &bank.PaymentTermsDays)
+	}
+	if withTotals {
+		dest = append(dest, &v.PaidThisYear)
 	}
 	if err := scanner.Scan(dest...); err != nil {
 		if err == sql.ErrNoRows {
@@ -179,7 +196,7 @@ func scanVendor(scanner interface{ Scan(...any) error }, withBank bool) (Vendor,
 func (s *Store) Vendor(ctx context.Context, id int64, perms PermissionSet) (Vendor, error) {
 	withBank := canSeeBank(perms)
 	row := s.db.QueryRowContext(ctx, `SELECT `+vendorSelect(withBank)+` FROM vendors WHERE id=?`, id)
-	return scanVendor(row, withBank)
+	return scanVendor(row, withBank, false)
 }
 
 // ListVendors is the list screen's query. It applies the same bank gate as
@@ -190,8 +207,10 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 		opt.Limit = 300
 	}
 
+	// The paid-this-year subquery is in the projection, so its parameter binds
+	// before any WHERE parameter.
+	args := []any{time.Now().Format("2006")}
 	var where []string
-	var args []any
 	switch strings.ToLower(strings.TrimSpace(opt.Status)) {
 	case "all":
 	case "inactive":
@@ -217,7 +236,7 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 		where = append(where, `trim(gstin)=''`)
 	}
 
-	query := `SELECT ` + vendorSelect(withBank) + ` FROM vendors`
+	query := `SELECT ` + vendorSelect(withBank) + vendorPaidThisYear + ` FROM vendors v`
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
@@ -231,13 +250,77 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 	defer rows.Close()
 	var out []Vendor
 	for rows.Next() {
-		v, err := scanVendor(rows, withBank)
+		v, err := scanVendor(rows, withBank, true)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// VendorStats is the header line and the missing-GSTIN banner on the list
+// screen. It is deliberately independent of the active filters: "3 missing a
+// GSTIN" is a fact about the master, not about the current search.
+type VendorStats struct {
+	Total        int
+	Active       int
+	Inactive     int
+	MissingGSTIN int
+}
+
+func (s *Store) VendorStats(ctx context.Context) (VendorStats, error) {
+	var out VendorStats
+	err := s.db.QueryRowContext(ctx, `SELECT
+		COUNT(*),
+		COALESCE(SUM(status='active'),0),
+		COALESCE(SUM(status='inactive'),0),
+		COALESCE(SUM(status='active' AND trim(gstin)=''),0)
+		FROM vendors`).Scan(&out.Total, &out.Active, &out.Inactive, &out.MissingGSTIN)
+	return out, err
+}
+
+// VendorCategories is the list screen's category filter. Categories are a
+// comma-separated free-text field on the vendor, so the option list is derived
+// from what is actually in use rather than from a fixed enum nobody maintains.
+func (s *Store) VendorCategories(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT categories FROM vendors WHERE trim(categories) <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]string{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		for _, token := range SplitCategories(raw) {
+			seen[strings.ToLower(token)] = token
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(seen))
+	for _, token := range seen {
+		out = append(out, token)
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out, nil
+}
+
+// SplitCategories turns the stored comma-separated field into its tokens. It
+// is exported because the list screen renders the same tokens as a "·" chain
+// and both readings must agree on where the boundaries are.
+func SplitCategories(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if token := strings.TrimSpace(part); token != "" {
+			out = append(out, token)
+		}
+	}
+	return out
 }
 
 // SearchVendors backs the request form's combobox. It takes no PermissionSet
@@ -277,7 +360,7 @@ func (s *Store) SearchVendors(ctx context.Context, q string, limit int) ([]Vendo
 	defer rows.Close()
 	var out []Vendor
 	for rows.Next() {
-		v, err := scanVendor(rows, false)
+		v, err := scanVendor(rows, false, false)
 		if err != nil {
 			return nil, err
 		}

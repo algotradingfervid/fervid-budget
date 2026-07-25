@@ -91,6 +91,19 @@ type PageData struct {
 	UserRoleIDs   map[int64]map[int64]bool
 	Approvers     []store.User
 	ApproverNames map[int64]string
+
+	// Vendor master. Vendor.Bank is nil for a caller without vendor_bank:view
+	// — the store leaves the columns out of the query rather than the template
+	// leaving them out of the markup.
+	Vendors          []store.Vendor
+	Vendor           store.Vendor
+	VendorStats      store.VendorStats
+	VendorCategories []string
+	VendorPaidTotal  int64
+	VendorOpenTotal  int
+	VendorType       string
+	VendorCategory   string
+	VendorGap        string
 }
 
 type ReportSummary struct {
@@ -157,6 +170,10 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"statusFor":      statusForView,
 		"planStatusText": planStatusText,
 		"paymentMode":    paymentModeText,
+		"vendorType":     vendorTypeText,
+		"vendorStatus":   vendorStatusText,
+		"categories":     categoryChain,
+		"plural":         plural,
 	}).Parse(templates))
 
 	ctx := contextWithTimeout()
@@ -225,6 +242,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /projects", a.auth.RequirePermission("project", "edit", http.HandlerFunc(a.withCSRF(a.projectSave))))
 	mux.Handle("GET /heads", a.auth.RequirePermission("head", "view", http.HandlerFunc(a.heads)))
 	mux.Handle("POST /heads", a.auth.RequirePermission("head", "edit", http.HandlerFunc(a.withCSRF(a.headSave))))
+	mux.Handle("GET /vendors", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorsList)))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
 	mux.Handle("POST /users", a.auth.RequirePermission("user", "edit", http.HandlerFunc(a.withCSRF(a.userSave))))
 	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))
@@ -1456,6 +1474,47 @@ func paymentModeText(mode string) string {
 	default:
 		return mode
 	}
+}
+
+func vendorTypeText(t string) string {
+	switch t {
+	case "company":
+		return "Company"
+	case "proprietor":
+		return "Proprietor"
+	case "individual":
+		return "Individual"
+	default:
+		return t
+	}
+}
+
+func vendorStatusText(status string) string {
+	switch status {
+	case "active":
+		return "Active"
+	case "inactive":
+		return "Inactive"
+	default:
+		return status
+	}
+}
+
+// categoryChain renders the stored comma-separated categories the way the
+// approved list screen does, as a "·" chain. store.SplitCategories is what
+// decides the boundaries, so the filter's option list and this reading can
+// never disagree about what a category is.
+func categoryChain(raw string) string {
+	return strings.Join(store.SplitCategories(raw), " · ")
+}
+
+// plural picks between two whole phrases rather than appending an "s", because
+// "1 vendor has" and "2 vendors have" differ in more than one place.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func boolText(v bool) string {
