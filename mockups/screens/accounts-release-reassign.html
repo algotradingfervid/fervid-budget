@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Release or reassign · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Release reservation" data-sub="PR-2026-000128" data-nav="accounts-queue" data-back="payment-entry.html" data-persona-default="accounts">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Accounts · reservation</div>
+    <h1>Release or reassign this request</h1>
+    <p class="sub">PR-2026-000128 · Sundaram Electricals Pvt Ltd · ₹1,00,000</p>
+  </div>
+</section>
+
+<div class="reserve-bar">
+  <span class="rb-dot"></span>
+  <b>Reserved by you</b>
+  <span class="rb-meta">since 14:02 today · 41 minutes</span>
+</div>
+
+<div class="banner bad">
+  <span class="b-ico">!</span>
+  <div>
+    <b>Confirm no payment has been started</b>
+    <p>Releasing puts the request back in the open queue and anyone in Accounts can take it. If you
+      have already initiated a transfer in the bank portal, do not release — finish recording it.</p>
+  </div>
+</div>
+
+<form onsubmit="return false">
+  <fieldset>
+    <legend>What do you want to do</legend>
+    <div class="choice">
+      <label class="is-on">
+        <input type="radio" name="action" value="release" checked>
+        <span><b>Release it</b><small>Back to Approved — awaiting payment. Anyone in Accounts can pick it up.</small></span>
+      </label>
+      <label>
+        <input type="radio" name="action" value="reassign">
+        <span><b>Reassign to someone else</b><small>Stays in Processing, assigned to the person you choose. Needs reassign permission.</small></span>
+      </label>
+    </div>
+
+    <div class="form-grid" style="margin-top:13px">
+      <div class="field span-6" data-when="action:reassign" hidden>
+        <label for="who">Reassign to <span class="req">*</span></label>
+        <select id="who"><option>Deepak Menon — Accounts</option><option>Lakshmi Iyer — Accounts</option><option>Naren Dhupati — Administrator</option></select>
+      </div>
+      <div class="field span-12">
+        <label for="reason">Reason <span class="req">*</span></label>
+        <textarea id="reason" placeholder="Recorded in the history and visible to everyone who can see this request.">Vendor bank details need confirming before I can transfer. Handing it back so it is not blocked on me.</textarea>
+      </div>
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" checked> I confirm no payment has been initiated for this request</label>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">The requester and the approver are both notified.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="payment-entry.html">Keep working on it</a>
+    <a class="btn danger" href="accounts-queue.html">Release reservation</a>
+  </div>
+</form>
+
+<div class="section-head"><h2>Reservation history</h2></div>
+<ol class="thread">
+  <li><span class="tl-dot brand">◷</span><div class="tl-head"><b>Priya Nair reserved it</b><time>25 Jul, 14:02</time></div><div class="tl-body">Taken from the Accounts queue.</div></li>
+  <li><span class="tl-dot">◷</span><div class="tl-head"><b>Deepak Menon released it</b><time>24 Jul, 17:30</time></div><div class="tl-body">“Going on leave, someone else should take this.” No payment had been initiated.</div></li>
+  <li><span class="tl-dot">◷</span><div class="tl-head"><b>Deepak Menon reserved it</b><time>24 Jul, 16:12</time></div><div class="tl-body">Taken from the payment form dropdown.</div></li>
+</ol>
+
+</body>
+</html>

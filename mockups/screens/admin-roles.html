@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roles & permissions · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Roles" data-sub="Accounts — editing" data-nav="roles" data-back="dashboard.html" data-action="＋ Role" data-action-href="admin-roles.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Access control</div>
+    <h1>Roles &amp; permissions</h1>
+    <p class="sub">Roles are data, not code. Create them, copy them, and set what each one may do and see.</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="#">Copy this role</a>
+    <a class="btn primary" href="#">＋ New role</a>
+  </div>
+</section>
+
+<div class="proto-note">
+  <b>Buttons are not security.</b> Every permission here is enforced on the data as well as the
+  screen. Hiding a button never protects a record on its own.
+</div>
+
+<div class="segmented" style="margin-bottom:12px">
+  <a href="#">Employee</a>
+  <a href="#">Manager</a>
+  <a class="is-active" href="#">Accounts</a>
+  <a href="#">Administrator</a>
+  <a href="#">Auditor <span class="n">custom</span></a>
+  <a href="#">Site engineer <span class="n">custom</span></a>
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-head"><h2>Accounts</h2><span class="pill good">4 users</span></div>
+  <div class="card-body">
+    <div class="form-grid">
+      <div class="field span-4 m-half"><label for="rname">Role name</label><input id="rname" value="Accounts"></div>
+      <div class="field span-8"><label for="rdesc">Description</label><input id="rdesc" value="Records payments against approved requests and manages the payment queue"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Desktop matrix -->
+<div class="table-wrap d-only">
+  <table class="perm-table">
+    <thead>
+      <tr><th>Page</th><th class="c">View</th><th class="c">Create</th><th class="c">Edit</th><th class="c">Approve</th><th class="c">Process</th><th class="c">Cancel</th><th class="c">Export</th><th>Records it can see</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="perm-row-head">Payment requests</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox" checked></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td>
+        <td><span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Payments</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox" checked></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td>
+        <td><span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Reservations</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox" checked></td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox" checked></td>
+        <td class="c"><input type="checkbox"></td>
+        <td><span class="perm-scope"><label class="is-on">Own</label><label>Assigned</label><label>All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Recoverables</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td>
+        <td><span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Vendors</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox" checked></td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td>
+        <td><span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Vendor bank details</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td>
+        <td><span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Budgets &amp; variance grid</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td>
+        <td><span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Reports</td>
+        <td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox" checked></td>
+        <td><span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></td>
+      </tr>
+      <tr>
+        <td class="perm-row-head">Administration</td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td>
+        <td class="c"><input type="checkbox"></td>
+        <td><span class="perm-scope"><label class="is-on">None</label></span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Mobile: one page per expandable row -->
+<div class="perm-acc m-only">
+  <div class="pa-item is-open">
+    <button class="pa-head" type="button"><span class="chev">›</span><b>Payment requests</b><span class="n">4 of 7</span></button>
+    <div class="pa-body">
+      <label class="checkline"><input type="checkbox" checked> View</label>
+      <label class="checkline"><input type="checkbox" checked> Create</label>
+      <label class="checkline"><input type="checkbox"> Edit</label>
+      <label class="checkline"><input type="checkbox"> Approve</label>
+      <label class="checkline"><input type="checkbox" checked> Process</label>
+      <label class="checkline"><input type="checkbox"> Cancel</label>
+      <label class="checkline"><input type="checkbox" checked> Export</label>
+      <div class="field" style="margin-top:8px"><span class="flabel">Records it can see</span>
+        <span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span></div>
+    </div>
+  </div>
+  <div class="pa-item"><button class="pa-head" type="button"><span class="chev">›</span><b>Payments</b><span class="n">4 of 7</span></button>
+    <div class="pa-body"><label class="checkline"><input type="checkbox" checked> View</label><label class="checkline"><input type="checkbox" checked> Create</label><label class="checkline"><input type="checkbox" checked> Process</label><label class="checkline"><input type="checkbox" checked> Export</label></div></div>
+  <div class="pa-item"><button class="pa-head" type="button"><span class="chev">›</span><b>Reservations</b><span class="n">5 of 7</span></button>
+    <div class="pa-body"><label class="checkline"><input type="checkbox" checked> View</label><label class="checkline"><input type="checkbox" checked> Take</label><label class="checkline"><input type="checkbox" checked> Release own</label><label class="checkline"><input type="checkbox"> Reassign anyone's</label></div></div>
+  <div class="pa-item"><button class="pa-head" type="button"><span class="chev">›</span><b>Vendors</b><span class="n">4 of 7</span></button>
+    <div class="pa-body"><label class="checkline"><input type="checkbox" checked> View</label><label class="checkline"><input type="checkbox" checked> Create</label><label class="checkline"><input type="checkbox" checked> Edit</label><label class="checkline"><input type="checkbox" checked> See bank details</label></div></div>
+  <div class="pa-item"><button class="pa-head" type="button"><span class="chev">›</span><b>Recoverables</b><span class="n">2 of 7</span></button>
+    <div class="pa-body"><label class="checkline"><input type="checkbox" checked> View</label><label class="checkline"><input type="checkbox" checked> Export</label></div></div>
+  <div class="pa-item"><button class="pa-head" type="button"><span class="chev">›</span><b>Budgets &amp; variance grid</b><span class="n">3 of 7</span></button>
+    <div class="pa-body"><label class="checkline"><input type="checkbox" checked> View</label><label class="checkline"><input type="checkbox" checked> Edit</label><label class="checkline"><input type="checkbox" checked> Export</label></div></div>
+  <div class="pa-item"><button class="pa-head" type="button"><span class="chev">›</span><b>Administration</b><span class="n">0 of 7</span></button>
+    <div class="pa-body"><p class="hint" style="margin:0">No access.</p></div></div>
+</div>
+
+<div class="action-bar">
+  <span class="ab-note d-only">Changes apply to all 4 users holding this role.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="dashboard.html">Discard</a>
+  <a class="btn primary" href="admin-users.html">Save role</a>
+</div>
+
+</body>
+</html>

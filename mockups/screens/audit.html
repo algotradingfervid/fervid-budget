@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit log · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Audit log" data-sub="Last 7 days" data-nav="audit" data-back="dashboard.html" data-action="⤓ Export" data-action-href="audit.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Evidence</div>
+    <h1>Audit log</h1>
+    <p class="sub">Who changed a financial record, when, and why</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="#">⤓ Export CSV</a></div>
+</section>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field"><label for="en">Entity</label><select id="en"><option>All</option><option>Payment request</option><option>Payment</option><option>Reservation</option><option>Vendor</option><option>Budget</option><option>Role</option><option>User</option><option>Configuration</option></select></div>
+  <div class="field"><label for="ac">Action</label><select id="ac"><option>All</option><option>Created</option><option>Edited</option><option>Approved</option><option>Returned</option><option>Rejected</option><option>Reserved</option><option>Released</option><option>Paid</option><option>Settled</option><option>Cancelled</option></select></div>
+  <div class="field search"><label for="ao">Actor</label><input id="ao" placeholder="Name"></div>
+  <span class="row-end"></span><button class="btn">Filter</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search the log…" aria-label="Search audit"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>When</th><th>Actor</th><th>Entity</th><th>Action</th><th>What happened</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="When">25 Jul, 14:43</td><td data-label="Actor">Priya Nair</td>
+        <td data-label="Entity">Payment</td><td data-label="Action"><span class="pill completed">Settled</span></td>
+        <td data-label="What happened">₹98,000 recorded against PR-2026-000128, confirmed fully settled. Difference ₹2,000.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">25 Jul, 14:02</td><td data-label="Actor">Priya Nair</td>
+        <td data-label="Entity">Reservation</td><td data-label="Action"><span class="pill processing">Reserved</span></td>
+        <td data-label="What happened">PR-2026-000128 taken for processing from the Accounts queue.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">25 Jul, 11:20</td><td data-label="Actor">Naren Dhupati</td>
+        <td data-label="Entity">Role</td><td data-label="Action"><span class="pill info">Edited</span></td>
+        <td data-label="What happened">Role “Accounts” — vendor bank details view granted.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">24 Jul, 17:20</td><td data-label="Actor">Sneha Pillai</td>
+        <td data-label="Entity">Payment request</td><td data-label="Action"><span class="pill cancelreq">Cancellation asked</span></td>
+        <td data-label="What happened">PR-2026-000126 frozen pending Kavita Rao's decision.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">24 Jul, 17:24</td><td data-label="Actor">Priya Nair</td>
+        <td data-label="Entity">Reservation</td><td data-label="Action"><span class="pill neutral">Released</span></td>
+        <td data-label="What happened">PR-2026-000126 released. Confirmed no payment initiated.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">23 Jul, 12:08</td><td data-label="Actor">Priya Nair</td>
+        <td data-label="Entity">Payment</td><td data-label="Action"><span class="pill partial">Partial</span></td>
+        <td data-label="What happened">₹60,000 of ₹95,000 recorded against PR-2026-000119 and sent for manager review.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">22 Jul, 08:55</td><td data-label="Actor">Kavita Rao</td>
+        <td data-label="Entity">Payment request</td><td data-label="Action"><span class="pill returned">Returned</span></td>
+        <td data-label="What happened">PR-2026-000131 returned — wrong month's invoice attached.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">21 Jul, 09:41</td><td data-label="Actor">Kavita Rao</td>
+        <td data-label="Entity">Payment request</td><td data-label="Action"><span class="pill completed">Approved</span></td>
+        <td data-label="What happened">PR-2026-000128 approved for ₹1,00,000.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">20 Jul, 11:02</td><td data-label="Actor">Arun Mehta</td>
+        <td data-label="Entity">Payment request</td><td data-label="Action"><span class="pill info">Edited</span></td>
+        <td data-label="What happened">PR-2026-000128 · amount ₹96,000 → ₹1,00,000, invoice SE/26-27/1180 → SE/26-27/1184.</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="When">20 Jul, 09:15</td><td data-label="Actor">Naren Dhupati</td>
+        <td data-label="Entity">Configuration</td><td data-label="Action"><span class="pill info">Edited</span></td>
+        <td data-label="What happened">Reminder threshold 5 → 3 calendar days.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

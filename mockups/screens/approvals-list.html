@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approvals · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Approvals" data-sub="4 waiting on you" data-nav="approvals" data-back="dashboard.html" data-action="⤓ Export" data-action-href="approvals-list.html" data-persona-default="manager">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Manager queue</div>
+    <h1>Waiting on you</h1>
+    <p class="sub">4 requests · ₹4,86,900 · oldest has been waiting 6 days</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="#">⤓ Export CSV</a></div>
+</section>
+
+<div class="proto-note">
+  <b>No bulk approval, by design.</b> There is no checkbox column and no "approve selected" button.
+  Every approval is a decision made after opening the request.
+</div>
+
+<div class="segmented" style="margin-bottom:12px">
+  <a class="is-active" href="#">To approve <span class="n">4</span></a>
+  <a href="#">Partial review <span class="n">1</span></a>
+  <a href="#">Cancellations <span class="n">1</span></a>
+  <a href="#">Decided <span class="n">31</span></a>
+</div>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search approvals…" aria-label="Search approvals"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="req-list">
+  <a class="req-card is-urgent" href="request-detail-manager.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000134</span><span class="rc-amt">₹18,400</span></span>
+    <span class="rc-title">Travel reimbursement — Hyderabad site visit</span>
+    <span class="rc-meta">Arun Mehta · Operations / Travel · <span class="pill urgent">Urgent</span> personal card due 29 Jul</span>
+    <span class="rc-foot"><span class="pill awaiting">Awaiting approval</span><span class="waiting you">2 days · reminder starts tomorrow</span></span>
+  </a>
+
+  <a class="req-card" href="request-detail-manager.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000133</span><span class="rc-amt">₹2,35,000</span></span>
+    <span class="rc-title">Meridian Facility Services — July housekeeping</span>
+    <span class="rc-meta">Sneha Pillai · Operations / Facilities · invoice MFS/26-27/0912</span>
+    <span class="rc-foot"><span class="pill awaiting">Awaiting approval</span><span class="waiting you">1 day</span></span>
+  </a>
+
+  <a class="req-card" href="request-detail-manager.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000132</span><span class="rc-amt">₹2,00,000</span></span>
+    <span class="rc-title">EMD for Ridge Metro Phase II tender</span>
+    <span class="rc-meta">Rakesh Iyer · <span class="pill recoverable">Recoverable · EMD</span> returns by 30 Nov</span>
+    <span class="rc-foot"><span class="pill awaiting">Awaiting approval</span><span class="waiting you">1 day · not against budget</span></span>
+  </a>
+
+  <a class="req-card" href="request-detail-manager.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000121</span><span class="rc-amt">₹1,12,000</span></span>
+    <span class="rc-title">Anand Steel Traders — TMT bar advance</span>
+    <span class="rc-meta">Vikram Shah · Ridge Metro Phase II / Materials · vendor advance</span>
+    <span class="rc-foot"><span class="pill awaiting">Awaiting approval</span><span class="waiting you">6 days · reminding daily</span></span>
+  </a>
+</div>
+
+<div class="section-head"><h2>Decisions only you can make</h2></div>
+<div class="req-list">
+  <a class="req-card" href="payment-partial-review.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000119</span><span class="rc-amt">₹35,000</span></span>
+    <span class="rc-title">Nova Print Works — balance unpaid</span>
+    <span class="rc-meta">Approved ₹95,000 · paid ₹60,000 · Accounts marked it a partial settlement</span>
+    <span class="rc-foot"><span class="pill partial">Partial — manager review</span><span class="waiting you">Accept and close, or raise a concern</span></span>
+  </a>
+  <a class="req-card" href="manager-cancellation-decision.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000126</span><span class="rc-amt">₹47,000</span></span>
+    <span class="rc-title">Cancellation requested by Sneha Pillai</span>
+    <span class="rc-meta">Payment is frozen until you decide</span>
+    <span class="rc-foot"><span class="pill cancelreq">Cancellation requested</span><span class="waiting you">Waiting on you</span></span>
+  </a>
+</div>
+
+</body>
+</html>

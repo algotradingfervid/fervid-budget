@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Budgets · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Budgets" data-sub="July 2026" data-nav="budgets" data-back="dashboard.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Monthly plan</div>
+    <h1>Budgets</h1>
+    <p class="sub">Planned spend per head for July 2026</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="monthly-plans.html">Month history</a><a class="btn primary" href="#">Save budgets</a></div>
+</section>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field"><label for="mo">Month</label><input id="mo" type="month" value="2026-07"></div>
+  <span class="row-end"></span>
+  <a class="btn" href="variance-grid.html">View grid</a>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input type="month" value="2026-07" aria-label="Month"></span>
+</div>
+
+<!-- Desktop table -->
+<div class="table-wrap d-only">
+  <table>
+    <thead><tr><th>Project</th><th>Head</th><th class="c">Status</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Used</th></tr></thead>
+    <tbody>
+      <tr><td>Operations</td><td>Office rent</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="2,50,000" class="num"></td><td class="num">₹1,75,000</td><td class="num">70%</td></tr>
+      <tr><td>Operations</td><td>Utilities</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="45,000" class="num"></td><td class="num">₹18,400</td><td class="num">41%</td></tr>
+      <tr><td>Operations</td><td>Transport</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="17,500" class="num"></td><td class="num">₹11,400</td><td class="num">65%</td></tr>
+      <tr><td>People</td><td>Payroll</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="8,50,000" class="num"></td><td class="num">₹8,50,000</td><td class="num">100%</td></tr>
+      <tr><td>People</td><td>Contractor fees</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="1,80,000" class="num"></td><td class="num">₹1,18,000</td><td class="num">66%</td></tr>
+      <tr><td>People</td><td>Staff welfare</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="30,000" class="num"></td><td class="num">₹13,200</td><td class="num">44%</td></tr>
+      <tr><td>Growth</td><td>Marketing</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="1,20,000" class="num"></td><td class="num">₹1,61,400</td><td class="num bad-num">135%</td></tr>
+      <tr><td>Growth</td><td>Travel</td><td class="c"><span class="pill good">Active</span></td><td class="num"><input value="65,000" class="num"></td><td class="num">₹58,000</td><td class="num">89%</td></tr>
+      <tr><td>Growth</td><td>Events</td><td class="c"><span class="pill neutral">Retired</span></td><td class="num"><input value="50,000" class="num" disabled></td><td class="num">₹42,000</td><td class="num">84%</td></tr>
+    </tbody>
+    <tfoot><tr><td colspan="3">Total</td><td class="num">₹16,07,500</td><td class="num">₹14,47,400</td><td class="num">90%</td></tr></tfoot>
+  </table>
+</div>
+
+<!-- Mobile: one head per card -->
+<div class="req-list m-only">
+  <div class="card panel-pad-sm"><div class="row"><b>Operations · Office rent</b><span class="row-end"></span><span class="pill good">Active</span></div>
+    <div class="field" style="margin-top:8px"><label for="b1">Budget</label><input id="b1" value="2,50,000" class="num"></div>
+    <p class="hint" style="margin:6px 0 0">Actual ₹1,75,000 · 70% used</p></div>
+  <div class="card panel-pad-sm"><div class="row"><b>Operations · Utilities</b><span class="row-end"></span><span class="pill good">Active</span></div>
+    <div class="field" style="margin-top:8px"><label for="b2">Budget</label><input id="b2" value="45,000" class="num"></div>
+    <p class="hint" style="margin:6px 0 0">Actual ₹18,400 · 41% used</p></div>
+  <div class="card panel-pad-sm"><div class="row"><b>People · Payroll</b><span class="row-end"></span><span class="pill good">Active</span></div>
+    <div class="field" style="margin-top:8px"><label for="b3">Budget</label><input id="b3" value="8,50,000" class="num"></div>
+    <p class="hint" style="margin:6px 0 0">Actual ₹8,50,000 · 100% used</p></div>
+  <div class="card panel-pad-sm"><div class="row"><b>Growth · Marketing</b><span class="row-end"></span><span class="pill bad">Over</span></div>
+    <div class="field" style="margin-top:8px"><label for="b4">Budget</label><input id="b4" value="1,20,000" class="num"></div>
+    <p class="hint" style="margin:6px 0 0">Actual ₹1,61,400 · 135% used</p></div>
+  <div class="card panel-pad-sm"><div class="row"><b>Growth · Events</b><span class="row-end"></span><span class="pill neutral">Retired</span></div>
+    <div class="field" style="margin-top:8px"><label for="b5">Budget</label><input id="b5" value="50,000" class="num" disabled></div>
+    <p class="hint" style="margin:6px 0 0">Retired heads stay visible on history but cannot be edited.</p></div>
+</div>
+
+<div class="action-bar">
+  <span class="ab-note d-only">9 heads · saving is recorded in the audit log.</span>
+  <span class="row-end"></span>
+  <a class="btn primary wide" href="variance-grid.html">Save budgets</a>
+</div>
+
+</body>
+</html>

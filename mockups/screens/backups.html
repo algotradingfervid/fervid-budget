@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backups · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Backups" data-sub="Last run today" data-nav="backups" data-back="dashboard.html" data-action="Back up now" data-action-href="backups.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Operations</div>
+    <h1>Backups</h1>
+    <p class="sub">Timestamped copies of the database and every attachment</p>
+  </div>
+  <div class="pb-actions"><a class="btn primary" href="#">Create a backup now</a></div>
+</section>
+
+<div class="metric-strip cols-3">
+  <div class="metric good"><span class="metric-label">Last backup</span><span class="metric-value">02:00</span><span class="metric-foot">Today, automatic</span></div>
+  <div class="metric"><span class="metric-label">Kept</span><span class="metric-value">30 days</span><span class="metric-foot">14 backups on disk</span></div>
+  <div class="metric"><span class="metric-label">Size</span><span class="metric-value">184 MB</span><span class="metric-foot">Database and attachments</span></div>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Backup</th><th>Created</th><th>Trigger</th><th class="num">Size</th><th class="c">Status</th><th class="c">Download</th></tr></thead>
+    <tbody>
+      <tr><td class="t-lead" data-label="Backup">backup-20260725-020000</td><td data-label="Created">25 Jul 2026, 02:00</td><td data-label="Trigger">Scheduled</td><td class="num" data-label="Size">184 MB</td><td class="c" data-label="Status"><span class="pill good">Verified</span></td><td class="c" data-label=""><a class="btn small outline" href="#">⤓</a></td></tr>
+      <tr><td class="t-lead" data-label="Backup">backup-20260724-143012</td><td data-label="Created">24 Jul 2026, 14:30</td><td data-label="Trigger">Naren Dhupati</td><td class="num" data-label="Size">183 MB</td><td class="c" data-label="Status"><span class="pill good">Verified</span></td><td class="c" data-label=""><a class="btn small outline" href="#">⤓</a></td></tr>
+      <tr><td class="t-lead" data-label="Backup">backup-20260724-020000</td><td data-label="Created">24 Jul 2026, 02:00</td><td data-label="Trigger">Scheduled</td><td class="num" data-label="Size">181 MB</td><td class="c" data-label="Status"><span class="pill good">Verified</span></td><td class="c" data-label=""><a class="btn small outline" href="#">⤓</a></td></tr>
+      <tr><td class="t-lead" data-label="Backup">backup-20260723-020000</td><td data-label="Created">23 Jul 2026, 02:00</td><td data-label="Trigger">Scheduled</td><td class="num" data-label="Size">179 MB</td><td class="c" data-label="Status"><span class="pill good">Verified</span></td><td class="c" data-label=""><a class="btn small outline" href="#">⤓</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="banner info" style="margin-top:14px">
+  <span class="b-ico">i</span>
+  <div>
+    <b>Attachments are included</b>
+    <p>Invoices, receipts and payment advices sit alongside the database in each backup folder, so a
+      restore brings back the evidence as well as the numbers.</p>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sundaram Electricals · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Sundaram Electricals" data-sub="Vendor record" data-nav="vendors" data-back="vendors-list.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Masters · vendor</div>
+    <h1>Sundaram Electricals Pvt Ltd</h1>
+    <p class="sub">Company · Bengaluru · ₹8,40,000 paid this year across 9 payments</p>
+  </div>
+  <div class="pb-actions" data-for="accounts,admin"><a class="btn outline" href="vendors-list.html">Cancel</a><a class="btn primary" href="vendors-list.html">Save vendor</a></div>
+  <div class="pb-actions" data-for="employee,manager"><a class="btn outline" href="vendors-list.html">Back to vendors</a></div>
+</section>
+
+<div class="segmented" style="margin-bottom:12px">
+  <a class="is-active" href="#">Record</a>
+  <a href="#">Requests <span class="n">9</span></a>
+  <a href="#">Payments <span class="n">9</span></a>
+  <a href="#">History</a>
+</div>
+
+<form onsubmit="return false">
+  <fieldset>
+    <legend>Identity</legend>
+    <div class="form-grid">
+      <div class="field span-6"><label for="v-name">Vendor name <span class="req">*</span></label><input id="v-name" value="Sundaram Electricals Pvt Ltd"></div>
+      <div class="field span-3 m-half"><label for="v-short">Short name</label><input id="v-short" value="Sundaram Elec"><span class="hint">Used in lists and dropdowns.</span></div>
+      <div class="field span-3 m-half"><label for="v-type">Type <span class="req">*</span></label><select id="v-type"><option selected>Company</option><option>Proprietor</option><option>Individual</option></select></div>
+      <div class="field span-6"><label for="v-cat">Categories</label><input id="v-cat" value="Materials, Switchgear"><span class="hint">Comma separated. Used for vendor reporting.</span></div>
+      <div class="field span-6 m-half"><label for="v-status">Status</label><select id="v-status"><option selected>Active</option><option>Inactive</option></select><span class="hint">Inactive vendors disappear from new requests but stay on old ones.</span></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Statutory</legend>
+    <div class="form-grid">
+      <div class="field span-4 m-half"><label for="v-gst">GSTIN</label><input id="v-gst" class="num" value="29AABCS1429B1ZQ"></div>
+      <div class="field span-4 m-half"><label for="v-pan">PAN</label><input id="v-pan" class="num" value="AABCS1429B"></div>
+      <div class="field span-4 m-half"><label for="v-msme">MSME / Udyam number</label><input id="v-msme" class="num" value="UDYAM-KR-03-0091284"></div>
+      <div class="field span-4 m-half"><label for="v-tds">TDS section</label><select id="v-tds"><option selected>194C — contractors</option><option>194J — professional</option><option>194Q — purchase of goods</option><option>Not applicable</option></select></div>
+      <div class="field span-4 m-half"><label for="v-rate">Default TDS rate</label><input id="v-rate" value="2%"></div>
+      <div class="field span-4 m-half" style="align-self:end">
+        <p class="hint" style="margin:0">Recorded for reference only. This system never computes tax —
+          Accounts confirms deductions outside it.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Contact</legend>
+    <div class="form-grid">
+      <div class="field span-4 m-half"><label for="v-person">Contact person</label><input id="v-person" value="R. Subramanian"></div>
+      <div class="field span-4 m-half"><label for="v-phone">Phone</label><input id="v-phone" class="num" value="+91 98450 21184"></div>
+      <div class="field span-4"><label for="v-email">Email</label><input id="v-email" value="accounts@sundaramelectricals.co.in"></div>
+      <div class="field span-12"><label for="v-addr">Billing address</label><textarea id="v-addr" style="min-height:64px">Plot 41, Peenya Industrial Area Phase II, Bengaluru 560058</textarea></div>
+      <div class="field span-4 m-half"><label for="v-city">City</label><input id="v-city" value="Bengaluru"></div>
+      <div class="field span-4 m-half"><label for="v-state">State</label><select id="v-state"><option selected>Karnataka</option><option>Tamil Nadu</option><option>Maharashtra</option></select></div>
+      <div class="field span-4 m-half"><label for="v-code">State code</label><input id="v-code" class="num" value="29" readonly></div>
+    </div>
+  </fieldset>
+
+  <fieldset data-for="accounts,admin">
+    <legend>Payment details — restricted</legend>
+    <div class="banner locked" style="margin-bottom:12px">
+      <span class="b-ico">🔒</span>
+      <div>
+        <b>Visible only with vendor bank permission</b>
+        <p>This is where bank details live. They are deliberately kept off the employee request form —
+          an employee raising a request never sees or types them.</p>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="field span-6"><label for="b-name">Account name</label><input id="b-name" value="Sundaram Electricals Private Limited"></div>
+      <div class="field span-3 m-half"><label for="b-acc">Account number</label><input id="b-acc" class="num" value="50200041294471"></div>
+      <div class="field span-3 m-half"><label for="b-ifsc">IFSC</label><input id="b-ifsc" class="num" value="HDFC0000521"></div>
+      <div class="field span-6 m-half"><label for="b-bank">Bank and branch</label><input id="b-bank" value="HDFC Bank · Peenya"></div>
+      <div class="field span-3 m-half"><label for="b-upi">UPI ID</label><input id="b-upi" placeholder="Optional"></div>
+      <div class="field span-3 m-half"><label for="b-mode">Default mode</label><select id="b-mode"><option selected>Bank transfer — NEFT</option><option>RTGS</option><option>Cheque</option></select></div>
+      <div class="field span-3 m-half"><label for="b-terms">Payment terms</label><input id="b-terms" value="30 days"></div>
+    </div>
+  </fieldset>
+
+  <fieldset data-for="employee,manager">
+    <legend>Payment details</legend>
+    <div class="banner locked" style="margin:0">
+      <span class="b-ico">🔒</span>
+      <div>
+        <b>You do not have permission to see bank details</b>
+        <p>Accounts maintains them. The record is hidden, not just the buttons.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Notes</legend>
+    <div class="field span-12"><label for="v-notes">Internal notes</label><textarea id="v-notes">Panels are made to order — allow 3 weeks. Invoices always quote our PO number.</textarea></div>
+  </fieldset>
+
+  <div class="action-bar" data-for="accounts,admin">
+    <span class="ab-note d-only">Created 04 Mar 2025 by Naren Dhupati · last edited 12 Jun 2026 by Priya Nair</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="vendors-list.html">Cancel</a>
+    <a class="btn primary" href="vendors-list.html">Save vendor</a>
+  </div>
+
+  <div class="action-bar" data-for="employee,manager">
+    <span class="ab-note d-only">You can look this vendor up, but not change the record.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="vendors-list.html">Back to vendors</a>
+  </div>
+</form>
+
+</body>
+</html>

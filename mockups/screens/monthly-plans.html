@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monthly plans · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Monthly plans" data-sub="6 months" data-nav="monthly-plans" data-back="dashboard.html" data-action="＋ Month" data-action-href="monthly-plans.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Month control</div>
+    <h1>Monthly plans</h1>
+    <p class="sub">Create each month, review earlier ones, reopen a locked month when you need to</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="reports.html">Reports</a><a class="btn primary" data-open="new-month" href="#">＋ Create month</a></div>
+</section>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Month</th><th class="c">Status</th><th>Source</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th><th class="c">Open</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Month">July 2026 <span class="t-sub">9 heads</span></td>
+        <td class="c" data-label="Status"><span class="pill good">Open</span></td>
+        <td data-label="Source">Copied from June 2026</td>
+        <td class="num" data-label="Budget">₹16,07,500</td><td class="num" data-label="Actual">₹14,47,400</td>
+        <td class="num good-num" data-label="Remaining">₹1,60,100</td><td class="num" data-label="Used">90%</td>
+        <td class="c" data-label=""><a class="btn small" href="variance-grid.html">Grid</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Month">June 2026 <span class="t-sub">9 heads</span></td>
+        <td class="c" data-label="Status"><span class="pill neutral">Locked</span></td>
+        <td data-label="Source">Copied from May 2026</td>
+        <td class="num" data-label="Budget">₹15,90,000</td><td class="num" data-label="Actual">₹15,42,800</td>
+        <td class="num good-num" data-label="Remaining">₹47,200</td><td class="num" data-label="Used">97%</td>
+        <td class="c" data-label=""><a class="btn small" href="variance-grid.html">Grid</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Month">May 2026 <span class="t-sub">8 heads</span></td>
+        <td class="c" data-label="Status"><span class="pill neutral">Locked</span></td>
+        <td data-label="Source">Copied from April 2026</td>
+        <td class="num" data-label="Budget">₹15,20,000</td><td class="num" data-label="Actual">₹14,88,100</td>
+        <td class="num good-num" data-label="Remaining">₹31,900</td><td class="num" data-label="Used">98%</td>
+        <td class="c" data-label=""><a class="btn small" href="variance-grid.html">Grid</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Month">April 2026 <span class="t-sub">8 heads</span></td>
+        <td class="c" data-label="Status"><span class="pill neutral">Locked</span></td>
+        <td data-label="Source">Started blank</td>
+        <td class="num" data-label="Budget">₹14,80,000</td><td class="num" data-label="Actual">₹15,12,400</td>
+        <td class="num bad-num" data-label="Remaining">−₹32,400</td><td class="num" data-label="Used">102%</td>
+        <td class="c" data-label=""><a class="btn small" href="variance-grid.html">Grid</a></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <div class="card-head"><h2>June 2026 is locked</h2><span class="pill neutral">Locked</span></div>
+  <div class="card-body">
+    <p class="muted" style="margin-top:0">Locked by Naren Dhupati on 3 July 2026 — “Month closed after
+      the audit review.” Budgets and payments are read-only until it is unlocked.</p>
+    <div class="form-grid">
+      <div class="field span-8"><label for="unlock">Unlock reason</label><input id="unlock" placeholder="Why the month is being reopened"></div>
+      <div class="field span-4" style="align-self:end"><button class="btn">Unlock June 2026</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="new-month" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Create a month</h2><p class="sh-sub">Copy an existing plan or start empty</p></div><button class="sh-close" data-close="new-month">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="tm">New month</label><input id="tm" type="month" value="2026-08"></div>
+      <div class="choice">
+        <label class="is-on"><input type="radio" name="src" value="copy" checked><span><b>Copy from a month</b><small>Brings every head and its budget across.</small></span></label>
+        <label><input type="radio" name="src" value="blank"><span><b>Start blank</b><small>Heads appear with no budget set.</small></span></label>
+      </div>
+      <div class="field" data-when="src:copy"><label for="sm">Copy from</label><input id="sm" type="month" value="2026-07"></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="new-month">Cancel</button><span class="row-end"></span><a class="btn primary" href="budgets.html">Create month</a></div>
+  </div>
+</div>
+
+</body>
+</html>

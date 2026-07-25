@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounts queue · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Accounts queue" data-sub="7 approved · 2 reserved by you" data-nav="accounts-queue" data-back="dashboard.html" data-persona-default="accounts">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Accounts</div>
+    <h1>Payment queue</h1>
+    <p class="sub">7 approved and unclaimed · ₹9,12,400 · one request, one payment</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="#">⤓ Export CSV</a>
+    <a class="btn primary" href="payment-request-picker.html">＋ Record a payment</a>
+  </div>
+</section>
+
+<div class="metric-strip">
+  <div class="metric"><span class="metric-label">Approved, unclaimed</span><span class="metric-value">7</span><span class="metric-foot">₹9,12,400</span></div>
+  <div class="metric warn"><span class="metric-label">Reserved by you</span><span class="metric-value">2</span><span class="metric-foot">1 open over a day</span></div>
+  <div class="metric"><span class="metric-label">Reserved by others</span><span class="metric-value">3</span><span class="metric-foot">Visible, not yours</span></div>
+  <div class="metric"><span class="metric-label">On hold</span><span class="metric-value">1</span><span class="metric-foot">Waiting on the requester</span></div>
+</div>
+
+<div class="segmented" style="margin-bottom:12px">
+  <a class="is-active" href="#">Approved <span class="n">7</span></a>
+  <a href="#">Processing <span class="n">5</span></a>
+  <a href="#">On hold <span class="n">1</span></a>
+  <a href="#">Partial review <span class="n">1</span></a>
+  <a href="#">Paid <span class="n">42</span></a>
+</div>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Number, payee, project…" aria-label="Search queue"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="banner brand">
+  <span class="b-ico">◷</span>
+  <div>
+    <b>You have 2 requests reserved</b>
+    <p>PR-2026-000122 has been open for 26 hours. Finish it or release it so someone else can.</p>
+  </div>
+  <span class="b-actions"><a class="btn small outline" href="accounts-stale-processing.html">Review</a></span>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead>
+      <tr><th>Request</th><th>Payee</th><th>Project / head</th><th class="num">Amount</th><th>Needed by</th><th>Status</th><th class="c">Action</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="payment-entry.html">PR-2026-000133</a> <span class="t-sub">Sneha Pillai · approved 25 Jul</span></td>
+        <td data-label="Payee">Meridian Facility Services</td>
+        <td data-label="Project / head">Operations / Facilities</td>
+        <td class="num" data-label="Amount">₹2,35,000</td>
+        <td data-label="Needed by">28 Jul</td>
+        <td data-label="Status"><span class="pill approved">Approved</span></td>
+        <td class="c" data-label=""><a class="btn small primary" href="payment-entry.html">Take for processing</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="payment-entry.html">PR-2026-000132</a> <span class="t-sub">Rakesh Iyer · approved 25 Jul</span></td>
+        <td data-label="Payee">Ridge Metro tender authority</td>
+        <td data-label="Project / head"><span class="pill recoverable">Recoverable · EMD</span></td>
+        <td class="num" data-label="Amount">₹2,00,000</td>
+        <td data-label="Needed by">30 Jul</td>
+        <td data-label="Status"><span class="pill approved">Approved</span></td>
+        <td class="c" data-label=""><a class="btn small primary" href="payment-entry.html">Take for processing</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="payment-entry.html">PR-2026-000128</a> <span class="t-sub">Arun Mehta · approved 21 Jul</span></td>
+        <td data-label="Payee">Sundaram Electricals Pvt Ltd</td>
+        <td data-label="Project / head">Ridge Metro Phase II / Materials</td>
+        <td class="num" data-label="Amount">₹1,00,000</td>
+        <td data-label="Needed by">31 Jul</td>
+        <td data-label="Status"><span class="pill processing">Reserved by you · 14:02</span></td>
+        <td class="c" data-label=""><a class="btn small" href="payment-entry.html">Resume</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="accounts-stale-processing.html">PR-2026-000122</a> <span class="t-sub">Vikram Shah · approved 23 Jul</span></td>
+        <td data-label="Payee">Kaveri Logistics</td>
+        <td data-label="Project / head">Operations / Transport</td>
+        <td class="num" data-label="Amount">₹78,000</td>
+        <td data-label="Needed by">26 Jul</td>
+        <td data-label="Status"><span class="pill processing">Reserved by you · 26 h</span></td>
+        <td class="c" data-label=""><a class="btn small" href="accounts-stale-processing.html">Resume</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="accounts-reservation-conflict.html">PR-2026-000130</a> <span class="t-sub">Vikram Shah · approved 24 Jul</span></td>
+        <td data-label="Payee">Anand Steel Traders</td>
+        <td data-label="Project / head">Ridge Metro Phase II / Materials</td>
+        <td class="num" data-label="Amount">₹33,500</td>
+        <td data-label="Needed by">29 Jul</td>
+        <td data-label="Status"><span class="pill processing">Reserved by Deepak M</span></td>
+        <td class="c" data-label=""><a class="btn small outline" href="accounts-release-reassign.html">Reassign</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="request-on-hold.html">PR-2026-000127</a> <span class="t-sub">Arun Mehta · you put it on hold</span></td>
+        <td data-label="Payee">Arun Mehta</td>
+        <td data-label="Project / head"><span class="pill recoverable">Recoverable · Employee advance</span></td>
+        <td class="num" data-label="Amount">₹25,000</td>
+        <td data-label="Needed by">26 Jul</td>
+        <td data-label="Status"><span class="pill hold">On hold</span></td>
+        <td class="c" data-label=""><a class="btn small" href="request-on-hold.html">Read reply</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="payment-partial-review.html">PR-2026-000119</a> <span class="t-sub">Arun Mehta · you paid ₹60,000</span></td>
+        <td data-label="Payee">Nova Print Works</td>
+        <td data-label="Project / head">Growth / Marketing</td>
+        <td class="num" data-label="Amount">₹95,000</td>
+        <td data-label="Needed by">—</td>
+        <td data-label="Status"><span class="pill partial">Partial — manager review</span></td>
+        <td class="c" data-label=""><a class="btn small outline" href="payment-partial-review.html">View</a></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="proto-note" style="margin-top:14px">
+  <b>Reservation is atomic.</b> Whether you press <em>Take for processing</em> here or pick the
+  request from the payment form, the same lock happens: the request flips to <em>Processing</em> and
+  is assigned to you. There is no automatic timeout — a bank transfer may already be under way.
+</div>
+
+</body>
+</html>

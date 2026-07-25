@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Projects" data-sub="5 active" data-nav="projects" data-back="dashboard.html" data-action="＋ Project" data-action-href="masters-projects.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Masters</div>
+    <h1>Projects</h1>
+    <p class="sub">The buckets requests, budgets and the grid all hang off</p>
+  </div>
+  <div class="pb-actions"><a class="btn primary" data-open="proj-sheet" href="#">＋ Add project</a></div>
+</section>
+
+<div class="banner info">
+  <span class="b-ico">i</span>
+  <div>
+    <b>Retiring a project does not erase history</b>
+    <p>An inactive project disappears from new requests and new budgets, and stays visible on
+      everything already raised against it.</p>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Project</th><th class="c">Heads</th><th class="num">Budget this month</th><th class="num">Spent</th><th class="c">Order</th><th class="c">Status</th><th class="c">Edit</th></tr></thead>
+    <tbody>
+      <tr><td class="t-lead" data-label="Project">Operations</td><td class="c" data-label="Heads">3</td><td class="num" data-label="Budget">₹3,12,500</td><td class="num" data-label="Spent">₹2,04,800</td><td class="c" data-label="Order">1</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="proj-sheet">Edit</button></td></tr>
+      <tr><td class="t-lead" data-label="Project">People</td><td class="c" data-label="Heads">3</td><td class="num" data-label="Budget">₹10,60,000</td><td class="num" data-label="Spent">₹9,81,200</td><td class="c" data-label="Order">2</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="proj-sheet">Edit</button></td></tr>
+      <tr><td class="t-lead" data-label="Project">Growth</td><td class="c" data-label="Heads">3</td><td class="num" data-label="Budget">₹2,35,000</td><td class="num" data-label="Spent">₹2,61,400</td><td class="c" data-label="Order">3</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="proj-sheet">Edit</button></td></tr>
+      <tr><td class="t-lead" data-label="Project">Ridge Metro Phase II</td><td class="c" data-label="Heads">4</td><td class="num" data-label="Budget">₹18,40,000</td><td class="num" data-label="Spent">₹12,84,000</td><td class="c" data-label="Order">4</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="proj-sheet">Edit</button></td></tr>
+      <tr><td class="t-lead" data-label="Project">Coastal Substation</td><td class="c" data-label="Heads">4</td><td class="num" data-label="Budget">₹9,20,000</td><td class="num" data-label="Spent">₹6,11,500</td><td class="c" data-label="Order">5</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="proj-sheet">Edit</button></td></tr>
+      <tr><td class="t-lead" data-label="Project">Sarjapur Warehouse</td><td class="c" data-label="Heads">2</td><td class="num" data-label="Budget">—</td><td class="num" data-label="Spent">₹0</td><td class="c" data-label="Order">6</td><td class="c" data-label="Status"><span class="pill neutral">Retired</span></td><td class="c" data-label=""><button class="btn small outline" data-open="proj-sheet">Edit</button></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="overlay" id="proj-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Ridge Metro Phase II</h2><p class="sh-sub">4 heads · used on 23 requests</p></div><button class="sh-close" data-close="proj-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="p-name">Project name</label><input id="p-name" value="Ridge Metro Phase II"></div>
+      <div class="field"><label for="p-order">Sort order</label><input id="p-order" type="number" value="4"></div>
+      <label class="checkline"><input type="checkbox" checked> Active</label>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="proj-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" data-close="proj-sheet">Save project</button></div>
+  </div>
+</div>
+
+</body>
+</html>

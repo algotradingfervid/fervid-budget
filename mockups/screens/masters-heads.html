@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heads · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Heads" data-sub="19 across 5 projects" data-nav="heads" data-back="dashboard.html" data-action="＋ Head" data-action-href="masters-heads.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Masters</div>
+    <h1>Heads</h1>
+    <p class="sub">Spend heads, due days and sort order</p>
+  </div>
+  <div class="pb-actions"><a class="btn primary" data-open="head-sheet" href="#">＋ Add head</a></div>
+</section>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field"><label for="pj">Project</label><select id="pj"><option>All projects</option><option>Operations</option><option>People</option><option>Growth</option><option selected>Ridge Metro Phase II</option></select></div>
+  <div class="field search"><label for="q">Search</label><input id="q" placeholder="Head name"></div>
+  <span class="row-end"></span><button class="btn">Apply</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search heads…" aria-label="Search heads"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Project</th><th>Head</th><th class="c">Due day</th><th class="num">Budget</th><th class="c">Order</th><th class="c">Status</th><th class="c">Edit</th></tr></thead>
+    <tbody>
+      <tr><td data-label="Project">Ridge Metro Phase II</td><td class="t-lead" data-label="Head">Materials</td><td class="c" data-label="Due day">10</td><td class="num" data-label="Budget">₹8,50,000</td><td class="c" data-label="Order">1</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="head-sheet">Edit</button></td></tr>
+      <tr><td data-label="Project">Ridge Metro Phase II</td><td class="t-lead" data-label="Head">Contractor fees</td><td class="c" data-label="Due day">12</td><td class="num" data-label="Budget">₹6,20,000</td><td class="c" data-label="Order">2</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="head-sheet">Edit</button></td></tr>
+      <tr><td data-label="Project">Ridge Metro Phase II</td><td class="t-lead" data-label="Head">Site utilities</td><td class="c" data-label="Due day">08</td><td class="num" data-label="Budget">₹2,20,000</td><td class="c" data-label="Order">3</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="head-sheet">Edit</button></td></tr>
+      <tr><td data-label="Project">Ridge Metro Phase II</td><td class="t-lead" data-label="Head">Transport</td><td class="c" data-label="Due day">15</td><td class="num" data-label="Budget">₹1,50,000</td><td class="c" data-label="Order">4</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="head-sheet">Edit</button></td></tr>
+      <tr><td data-label="Project">Operations</td><td class="t-lead" data-label="Head">Office rent</td><td class="c" data-label="Due day">05</td><td class="num" data-label="Budget">₹2,50,000</td><td class="c" data-label="Order">1</td><td class="c" data-label="Status"><span class="pill good">Active</span></td><td class="c" data-label=""><button class="btn small outline" data-open="head-sheet">Edit</button></td></tr>
+      <tr><td data-label="Project">Growth</td><td class="t-lead" data-label="Head">Events</td><td class="c" data-label="Due day">25</td><td class="num" data-label="Budget">₹50,000</td><td class="c" data-label="Order">3</td><td class="c" data-label="Status"><span class="pill neutral">Retired</span></td><td class="c" data-label=""><button class="btn small outline" data-open="head-sheet">Edit</button></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="overlay" id="head-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Materials</h2><p class="sh-sub">Ridge Metro Phase II</p></div><button class="sh-close" data-close="head-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="h-proj">Project</label><select id="h-proj"><option selected>Ridge Metro Phase II</option><option>Operations</option><option>People</option><option>Growth</option></select></div>
+      <div class="field"><label for="h-name">Head name</label><input id="h-name" value="Materials"></div>
+      <div class="field"><label for="h-due">Due day of month</label><input id="h-due" type="number" min="1" max="31" value="10"><span class="hint">Drives the overdue flag on the variance grid.</span></div>
+      <div class="field"><label for="h-order">Sort order</label><input id="h-order" type="number" value="1"></div>
+      <label class="checkline"><input type="checkbox" checked> Active</label>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="head-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" data-close="head-sheet">Save head</button></div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cancellation request · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Cancellation request" data-sub="PR-2026-000126" data-nav="approvals" data-back="approvals-list.html" data-persona-default="manager">
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000126</span><span class="rh-amt">₹47,000</span></div>
+  <h1>Anand Steel Traders — binding wire order</h1>
+  <p class="rh-meta">Vendor advance · Ridge Metro Phase II / Materials · approved by you on 18 July</p>
+  <div class="rh-status">
+    <span class="pill cancelreq">Cancellation requested</span>
+    <span class="waiting you" data-for="manager,admin">Waiting on you</span>
+    <span class="waiting" data-not-for="manager,admin">Waiting on Kavita Rao</span>
+  </div>
+</div>
+
+<div class="banner warn">
+  <span class="b-ico">⏸</span>
+  <div>
+    <b>Payment is frozen</b>
+    <p>No accountant can reserve or pay this request until you decide. Priya Nair had reserved it and
+      was told to stop.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Why Sneha Pillai wants it cancelled</h2><time class="small muted">24 Jul, 17:20</time></div>
+  <div class="card-body">
+    <p style="margin:0">“The site cancelled the binding wire order — we found 1.8 tonnes unused in the
+      Yelahanka store. Anand Steel has agreed to drop the order with no cancellation charge, so the
+      advance is not needed.”</p>
+  </div>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <div class="card-head"><h2>What you approved</h2></div>
+  <dl class="dl">
+    <div><dt>Amount</dt><dd class="big">₹47,000</dd></div>
+    <div><dt>Approved on</dt><dd>18 July 2026</dd></div>
+    <div><dt>Vendor</dt><dd>Anand Steel Traders</dd></div>
+    <div><dt>Advance reason</dt><dd>40% booking against PO-2026-0417</dd></div>
+    <div><dt>Reserved by</dt><dd>Priya Nair · released 24 July</dd></div>
+    <div><dt>Paid so far</dt><dd>Nothing</dd></div>
+  </dl>
+</div>
+
+<div class="section-head"><h2>History and conversation</h2></div>
+<ol class="thread">
+  <li><span class="tl-dot brand">＋</span><div class="tl-head"><b>Sneha Pillai submitted the request</b><time>17 Jul, 14:02</time></div><div class="tl-body">₹47,000 vendor advance to Anand Steel Traders.</div></li>
+  <li><span class="tl-dot ok">✓</span><div class="tl-head"><b>Kavita Rao approved the request</b><time>18 Jul, 09:15</time></div><div class="tl-body">Sent to Accounts.</div></li>
+  <li><span class="tl-dot brand">◷</span><div class="tl-head"><b>Priya Nair reserved it for processing</b><time>24 Jul, 16:55</time></div><div class="tl-body">Assigned to Priya Nair.</div></li>
+  <li class="is-comment"><span class="tl-dot">SP</span><div class="tl-head"><b>Sneha Pillai</b><time>24 Jul, 17:20</time></div><div class="tl-body"><p>The site cancelled the binding wire order — we found 1.8 tonnes unused in the Yelahanka store. Anand Steel has agreed to drop the order with no cancellation charge, so the advance is not needed.</p></div></li>
+  <li><span class="tl-dot warn">⏸</span><div class="tl-head"><b>Sneha Pillai asked for cancellation</b><time>24 Jul, 17:20</time></div><div class="tl-body">Payment frozen. Priya Nair released the reservation and confirmed no payment had been initiated.</div></li>
+</ol>
+
+<div class="action-bar" data-for="manager,admin">
+  <span class="ab-note d-only">Declining sends it back to Accounts to pay as approved.</span>
+  <span class="row-end"></span>
+  <button class="btn outline" data-open="decline-sheet">Decline — keep it live</button>
+  <button class="btn danger" data-open="accept-sheet">Cancel the request</button>
+</div>
+
+<div class="action-bar" data-not-for="manager,admin">
+  <span class="ab-note d-only">Frozen until Kavita Rao decides.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="dashboard.html">Back</a>
+</div>
+
+<div class="overlay" id="accept-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Cancel PR-2026-000126?</h2><p class="sh-sub">₹47,000 to Anand Steel Traders</p></div><button class="sh-close" data-close="accept-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="banner bad" style="margin:0"><span class="b-ico">!</span><div><b>The request closes permanently</b><p>Nothing can be paid against it. A new request is needed if the order comes back.</p></div></div>
+      <div class="field"><label for="cx-note">Note <span class="opt">optional</span></label><textarea id="cx-note" placeholder="Recorded in the history."></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="accept-sheet">Back</button><span class="row-end"></span><a class="btn danger" href="approvals-list.html">Cancel request</a></div>
+  </div>
+</div>
+
+<div class="overlay" id="decline-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Decline the cancellation</h2><p class="sh-sub">The request returns to Approved — awaiting payment.</p></div><button class="sh-close" data-close="decline-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="dc-reason">Why it should still be paid <span class="req">*</span></label><textarea id="dc-reason" placeholder="Sneha Pillai and Accounts both see this."></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="decline-sheet">Back</button><span class="row-end"></span><a class="btn primary" href="approvals-list.html">Decline and unfreeze</a></div>
+  </div>
+</div>
+
+</body>
+</html>

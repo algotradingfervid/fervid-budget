@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notification rules · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Notification rules" data-sub="11 events" data-nav="notif-admin" data-back="dashboard.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Administration</div>
+    <h1>Notification rules</h1>
+    <p class="sub">In-app notifications always fire. Email is configured per event.</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="#">Send a test email</a><a class="btn primary" href="#">Save changes</a></div>
+</section>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead>
+      <tr><th>Event</th><th class="c">In-app</th><th class="c">Email</th><th>Goes to</th><th>Fixed To / CC</th><th class="c">Edit</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Event">Request submitted</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Approver</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Request edited before approval</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Approver</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Returned for correction</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Requester</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Rejected</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Requester</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Approved</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Requester + Accounts group</td>
+        <td data-label="Fixed To / CC">accounts@fervid.in</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event"><b>Urgent request raised</b></td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Approver immediately, Accounts on approval</td>
+        <td data-label="Fixed To / CC">finance-head@fervid.in</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Put on hold</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox"></td>
+        <td data-label="Goes to">Requester</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Cancellation requested</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Approver + assigned accountant</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Payment recorded and settled</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Requester + approver</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Partial payment sent for review</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Approver</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Pending reminder · after 3 days, then daily</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox" checked></td>
+        <td data-label="Goes to">Whoever it is waiting on</td>
+        <td data-label="Fixed To / CC">—</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Event">Stale reservation · after 1 day</td>
+        <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+        <td class="c" data-label="Email"><input type="checkbox"></td>
+        <td data-label="Goes to">Assigned accountant</td>
+        <td data-label="Fixed To / CC">accounts@fervid.in</td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="tpl-sheet">Edit</button></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="overlay" id="tpl-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Approved</h2><p class="sh-sub">Email sent when a manager approves a request</p></div><button class="sh-close" data-close="tpl-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <label class="checkline"><input type="checkbox" checked> Send this email</label>
+      <div class="field"><span class="flabel">Include</span>
+        <div class="stack-8" style="margin-top:5px">
+          <label class="checkline"><input type="checkbox" checked> The requester</label>
+          <label class="checkline"><input type="checkbox" checked> The approver</label>
+          <label class="checkline"><input type="checkbox" checked> The Accounts group</label>
+        </div>
+      </div>
+      <div class="field"><label for="to">Fixed To</label><input id="to" value="accounts@fervid.in"></div>
+      <div class="field"><label for="cc">Fixed CC</label><input id="cc" placeholder="finance-head@fervid.in"></div>
+      <div class="field"><label for="subj">Subject</label><input id="subj" value="{{number}} approved — {{amount}} to {{payee}}"></div>
+      <div class="field"><label for="body">Message</label>
+        <textarea id="body">{{approver}} approved {{number}} for {{amount}} to {{payee}} on {{date}}.
+
+Project: {{project}} / {{head}}
+Needed by: {{needed_by}}
+
+Open it: {{link}}</textarea>
+        <span class="hint">Available fields: number, amount, payee, requester, approver, project, head, needed_by, purpose, status, link.</span>
+      </div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="tpl-sheet">Cancel</button><span class="row-end"></span><button class="btn" data-close="tpl-sheet">Send test</button><button class="btn primary" data-close="tpl-sheet">Save rule</button></div>
+  </div>
+</div>
+
+</body>
+</html>

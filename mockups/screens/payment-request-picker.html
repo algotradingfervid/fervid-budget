@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Record a payment · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Record a payment" data-sub="Pick an approved request" data-nav="accounts-queue" data-back="accounts-queue.html" data-persona-default="accounts">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Accounts · new payment</div>
+    <h1>Which approved request is this for?</h1>
+    <p class="sub">Every payment belongs to exactly one approved request.</p>
+  </div>
+</section>
+
+<div class="banner info">
+  <span class="b-ico">i</span>
+  <div>
+    <b>Free payment entry has been removed</b>
+    <p>Payments recorded before this module remain in the ledger as history. New money out starts
+      here. An administrator can re-enable direct entry in Configuration if you ever need it.</p>
+  </div>
+</div>
+
+<div class="field" style="margin-bottom:4px">
+  <label for="picker">Search approved requests</label>
+  <span class="combo">
+    <input class="combo-input" id="picker" value="sundaram" aria-expanded="true">
+    <span class="combo-caret">▾</span>
+  </span>
+  <span class="hint">Search by request number, requester, payee, project, head or amount.</span>
+</div>
+
+<div class="combo-list">
+  <a class="co" href="payment-entry.html">
+    <span class="co-main"><b>PR-2026-000128 · Sundaram Electricals Pvt Ltd</b>
+      <small>Arun Mehta · Ridge Metro Phase II / Materials · invoice SE/26-27/1184 · needed 31 Jul</small></span>
+    <span class="co-amt">₹1,00,000</span>
+  </a>
+  <a class="co" href="payment-entry.html">
+    <span class="co-main"><b>PR-2026-000133 · Meridian Facility Services</b>
+      <small>Sneha Pillai · Operations / Facilities · invoice MFS/26-27/0912 · needed 28 Jul</small></span>
+    <span class="co-amt">₹2,35,000</span>
+  </a>
+  <a class="co" href="payment-entry.html">
+    <span class="co-main"><b>PR-2026-000132 · Ridge Metro tender authority</b>
+      <small>Rakesh Iyer · Recoverable · EMD · needed 30 Jul</small></span>
+    <span class="co-amt">₹2,00,000</span>
+  </a>
+  <a class="co is-taken" href="accounts-reservation-conflict.html">
+    <span class="co-main"><b>PR-2026-000130 · Anand Steel Traders</b>
+      <small>Reserved by Deepak Menon at 15:41 — you cannot take this one</small></span>
+    <span class="co-amt">₹33,500</span>
+  </a>
+</div>
+
+<div class="proto-note" style="margin-top:14px">
+  <b>What this list never shows.</b> Requests that are unapproved, already reserved by you elsewhere,
+  on hold, awaiting a cancellation decision, or already paid. Selecting one reserves it on the spot —
+  if someone beats you to it by a second, you get told whose it is.
+</div>
+
+<div class="section-head"><h2>Recently paid by you</h2></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Request</th><th>Payee</th><th class="num">Paid</th><th>Date</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="payment-detail.html">PR-2026-000124</a></td>
+        <td data-label="Payee">Nova Print Works</td>
+        <td class="num" data-label="Paid">₹41,300</td>
+        <td data-label="Date">24 Jul</td>
+        <td data-label="Status"><span class="pill completed">Completed</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="payment-detail.html">PR-2026-000123</a></td>
+        <td data-label="Payee">Kaveri Logistics</td>
+        <td class="num" data-label="Paid">₹1,18,000</td>
+        <td data-label="Date">24 Jul</td>
+        <td data-label="Status"><span class="pill completed">Completed</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="payment-partial-review.html">PR-2026-000119</a></td>
+        <td data-label="Payee">Nova Print Works</td>
+        <td class="num" data-label="Paid">₹60,000</td>
+        <td data-label="Date">23 Jul</td>
+        <td data-label="Status"><span class="pill partial">Partial — manager review</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

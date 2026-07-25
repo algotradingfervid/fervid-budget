@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My requests · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="My requests" data-sub="4 open · 12 closed" data-nav="requests-list" data-back="dashboard.html" data-action="⤓ Export" data-action-href="requests-list.html" data-persona-default="employee">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Requests</div>
+    <h1><span data-for="employee">My requests</span><span data-for="manager,accounts,admin">All requests</span></h1>
+    <p class="sub">16 requests · ₹3,42,000 in flight · sorted by who is holding them up</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="#">⤓ Export CSV</a>
+    <a class="btn primary" href="request-new-type.html">＋ New request</a>
+  </div>
+</section>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field search"><label for="q">Search</label><input id="q" placeholder="Number, payee, invoice, purpose…"></div>
+  <div class="field"><label for="st">Status</label>
+    <select id="st"><option>All open</option><option>Awaiting approval</option><option>Returned</option><option>Approved</option><option>On hold</option><option>Processing</option><option>Partial review</option><option>Completed</option><option>Rejected</option><option>Cancelled</option></select>
+  </div>
+  <div class="field"><label for="ty">Type</label>
+    <select id="ty"><option>Any type</option><option>Vendor invoice</option><option>Vendor advance</option><option>Reimbursement</option><option>Employee advance</option></select>
+  </div>
+  <div class="field"><label for="tr">Treatment</label>
+    <select id="tr"><option>Any</option><option>Budget expense</option><option>Recoverable</option></select>
+  </div>
+  <div class="field"><label for="pr">Project</label>
+    <select id="pr"><option>All projects</option><option>Ridge Metro Phase II</option><option>Operations</option><option>People</option><option>Growth</option></select>
+  </div>
+  <span class="row-end"></span>
+  <button class="btn">Apply</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search requests…" aria-label="Search requests"></span>
+  <button class="btn filter-btn" data-open="filter-sheet">Filters <span class="n">2</span></button>
+</div>
+
+<div class="segmented" role="tablist" style="margin-bottom:12px">
+  <a class="is-active" href="#" role="tab" aria-selected="true">Open <span class="n">4</span></a>
+  <a href="#" role="tab">Needs me <span class="n">2</span></a>
+  <a href="#" role="tab">Closed <span class="n">12</span></a>
+  <a href="#" role="tab">All <span class="n">16</span></a>
+</div>
+
+<div class="req-list">
+  <a class="req-card is-mine" href="request-returned.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000131</span><span class="rc-amt">₹64,500</span></span>
+    <span class="rc-title">Kaveri Logistics — freight for July dispatches</span>
+    <span class="rc-meta">Vendor invoice · Operations / Transport · raised 21 Jul</span>
+    <span class="rc-foot">
+      <span class="pill returned">Returned for correction</span>
+      <span class="waiting you">Waiting on you</span>
+    </span>
+  </a>
+
+  <a class="req-card is-mine" href="request-on-hold.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000127</span><span class="rc-amt">₹25,000</span></span>
+    <span class="rc-title">Site mobilisation advance</span>
+    <span class="rc-meta"><span class="pill recoverable">Recoverable · Employee advance</span> · raised 19 Jul</span>
+    <span class="rc-foot">
+      <span class="pill hold">On hold</span>
+      <span class="waiting you">Waiting on you</span>
+    </span>
+  </a>
+
+  <a class="req-card" href="request-detail-employee.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000128</span><span class="rc-amt">₹1,00,000</span></span>
+    <span class="rc-title">July switchgear supply — Sundaram Electricals</span>
+    <span class="rc-meta">Vendor invoice · Ridge Metro Phase II / Materials · needed by 31 Jul</span>
+    <span class="rc-foot">
+      <span class="pill approved">Approved — awaiting payment</span>
+      <span class="waiting">Waiting on Accounts</span>
+    </span>
+  </a>
+
+  <a class="req-card is-urgent" href="request-detail-employee.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000134</span><span class="rc-amt">₹18,400</span></span>
+    <span class="rc-title">Travel reimbursement — Hyderabad site visit</span>
+    <span class="rc-meta"><span class="pill urgent">Urgent</span> Reimbursement · Operations / Travel · raised 23 Jul</span>
+    <span class="rc-foot">
+      <span class="pill awaiting">Awaiting approval</span>
+      <span class="waiting">Waiting on Kavita Rao · 2 days</span>
+    </span>
+  </a>
+
+  <a class="req-card" href="request-detail-employee.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000119</span><span class="rc-amt">₹95,000</span></span>
+    <span class="rc-title">Nova Print Works — annual report printing</span>
+    <span class="rc-meta">Vendor invoice · Growth / Marketing · ₹60,000 paid</span>
+    <span class="rc-foot">
+      <span class="pill partial">Partial — manager review</span>
+      <span class="waiting">Waiting on Kavita Rao</span>
+    </span>
+  </a>
+
+  <a class="req-card" href="request-detail-employee.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000112</span><span class="rc-amt">₹1,00,000</span></span>
+    <span class="rc-title">Sundaram Electricals — June switchgear</span>
+    <span class="rc-meta">Vendor invoice · Ridge Metro Phase II / Materials</span>
+    <span class="rc-foot">
+      <span class="pill completed">Completed</span>
+      <span class="waiting done">Paid 2 Jul · UTR 4419087221</span>
+    </span>
+  </a>
+
+  <a class="req-card" href="request-detail-employee.html">
+    <span class="rc-top"><span class="rc-no">PR-2026-000108</span><span class="rc-amt">₹12,000</span></span>
+    <span class="rc-title">Team offsite catering</span>
+    <span class="rc-meta">Reimbursement · Growth / Events</span>
+    <span class="rc-foot">
+      <span class="pill rejected">Rejected — final</span>
+      <span class="waiting closed">Closed. Raise a new request if needed</span>
+    </span>
+  </a>
+</div>
+
+<!-- Mobile filter sheet -->
+<div class="overlay" id="filter-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head">
+      <div><h2>Filters</h2><p class="sh-sub">2 applied</p></div>
+      <button class="sh-close" data-close="filter-sheet" aria-label="Close">✕</button>
+    </div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="fs-st">Status</label><select id="fs-st"><option>All open</option><option>Awaiting approval</option><option>Approved</option><option>On hold</option></select></div>
+      <div class="field"><label for="fs-ty">Type</label><select id="fs-ty"><option>Any type</option><option>Vendor invoice</option><option>Reimbursement</option></select></div>
+      <div class="field"><label for="fs-tr">Treatment</label><select id="fs-tr"><option>Any</option><option>Budget expense</option><option>Recoverable</option></select></div>
+      <div class="field"><label for="fs-pr">Project</label><select id="fs-pr"><option>All projects</option><option>Ridge Metro Phase II</option></select></div>
+      <div class="field"><label for="fs-am">Amount above</label><input id="fs-am" placeholder="₹0"></div>
+    </div>
+    <div class="sh-foot">
+      <button class="btn outline" data-close="filter-sheet">Clear all</button>
+      <span class="row-end"></span>
+      <button class="btn primary" data-close="filter-sheet">Show 4 requests</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

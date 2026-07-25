@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment requests · UI/UX mockups · Fervid Budget</title>
+<link rel="stylesheet" href="mockup.css">
+<script src="mockup.js" defer></script>
+</head>
+<body data-chrome="none" data-persona-default="employee">
+
+<header class="cover">
+  <div class="c-mark"><span class="sq">F</span><span><b>Fervid Budget</b><small>Smart Solutions</small></span></div>
+  <div class="eyebrow">UI/UX mockups · 25 July 2026</div>
+  <h1>Every rupee starts as a request someone approved</h1>
+  <p>A mobile-first redesign of the whole application, built around the payment-request workflow
+    agreed over ten rounds of discussion. 43 screens, four personas, one design system extended from
+    the one already running in production.</p>
+  <div class="c-meta">
+    <span>43 screens</span><span>4 personas</span><span>Mobile + desktop</span>
+    <span>Clickable</span><span>Extends fervid-ds.css</span>
+  </div>
+</header>
+
+<div class="doc">
+
+<section>
+  <h2>How to use these mockups</h2>
+  <p class="lead">The bar pinned at the top of every screen is the prototype control, not part of the
+    product.</p>
+  <div class="idx-grid">
+    <div class="idx-card">
+      <span class="ic-no">01</span>
+      <b>Switch persona</b>
+      <p>Employee, Manager, Accounts, Administrator. The navigation, the work areas and the action
+        buttons all change. Try the same request detail screen as each of the four.</p>
+    </div>
+    <div class="idx-card">
+      <span class="ic-no">02</span>
+      <b>Switch device</b>
+      <p>Mobile renders a 390 px phone; desktop renders the full sidebar layout. Everything is
+        reachable on both — no screen is desktop-only.</p>
+    </div>
+    <div class="idx-card">
+      <span class="ic-no">03</span>
+      <b>Click through</b>
+      <p>Links follow the real flow. Forms react: change a request type, tab out of an amount, open a
+        settlement confirmation, expand a project on the grid.</p>
+    </div>
+  </div>
+  <div class="banner brand" style="margin-top:14px">
+    <span class="b-ico">→</span>
+    <div>
+      <b>Start here</b>
+      <p>Open the dashboard as an Employee, raise a request, then switch to Manager to approve it and
+        Accounts to pay it.</p>
+    </div>
+    <span class="b-actions"><a class="btn small primary" href="screens/dashboard.html">Open the dashboard</a></span>
+  </div>
+</section>
+
+<section>
+  <h2>The flow</h2>
+  <p class="lead">Twelve states. Every one has a screen, and every screen says who the request is
+    waiting on.</p>
+  <div class="flow">
+<pre>  EMPLOYEE                MANAGER                    ACCOUNTS
+  ────────                ───────                    ────────
+  Submit ───────────▶  Awaiting approval
+                          │
+                          ├── Return ──▶ Returned ──▶ (edit, resubmit)
+                          ├── Reject ──▶ Rejected — final, read-only
+                          │
+                          └── Approve ─▶ Approved ──────────▶  Reserve  ─▶ Processing
+                                            │                                  │
+        Ask to cancel ─▶ Cancellation       │                          Record one payment
+                          requested         │                                  │
+                          │                 │                          Payment settled?
+                          ├─ accept ─▶ Cancelled                               │
+                          └─ decline ─▶ back to Approved          ┌────────────┴────────────┐
+                                            │                     │                         │
+                        Clarify ◀── On hold ┘              paid = approved          paid &lt; approved
+                          │           ▲                            │                         │
+                          └───────────┘                            ▼                  ┌──────┴──────┐
+                     (only Accounts lifts a hold)             COMPLETED         settled in full   genuine partial
+                                                                                     │                 │
+                                                                                     ▼                 ▼
+                                                                                COMPLETED     Partial — manager review
+                                                                                                       │
+                                                                              ┌────────────────────────┤
+                                                                              ▼                        ▼
+                                                                   Completed — partial      Partial — under
+                                                                        accepted               discussion</pre>
+  </div>
+</section>
+
+<section>
+  <h2>Screens</h2>
+  <p class="lead">43 files. Each one opens in whichever persona and device you last chose.</p>
+
+  <div class="grp">Raising a request <span>5 screens</span></div>
+  <div class="idx-grid">
+    <a class="idx-card" href="screens/dashboard.html"><span class="ic-no">01</span><b>Dashboard</b><p>One home, four sets of work areas, permission controlled.</p></a>
+    <a class="idx-card" href="screens/request-new-type.html"><span class="ic-no">02</span><b>Choose a type</b><p>Four request types, each with when to use it.</p></a>
+    <a class="idx-card" href="screens/request-new-form.html"><span class="ic-no">03</span><b>New request form</b><p>One form that morphs by type and financial treatment.</p></a>
+    <a class="idx-card" href="screens/request-duplicate-warning.html"><span class="ic-no">04</span><b>Possible duplicate</b><p>Warns, never blocks.</p></a>
+    <a class="idx-card" href="screens/request-submitted.html"><span class="ic-no">05</span><b>Submitted</b><p>Number assigned, what happens next.</p></a>
+  </div>
+
+  <div class="grp">Living with a request <span>6 screens</span></div>
+  <div class="idx-grid">
+    <a class="idx-card" href="screens/requests-list.html"><span class="ic-no">06</span><b>Requests list</b><p>Cards, filters, filter sheet on mobile.</p></a>
+    <a class="idx-card" href="screens/request-detail-employee.html"><span class="ic-no">07</span><b>Request detail</b><p>Timeline and conversation as one stream. Switch persona here.</p></a>
+    <a class="idx-card" href="screens/request-edit.html"><span class="ic-no">08</span><b>Edit request</b><p>Allowed until approval; re-notifies and resets reminders.</p></a>
+    <a class="idx-card" href="screens/request-returned.html"><span class="ic-no">09</span><b>Returned for correction</b><p>Correct and resubmit, keeping number and history.</p></a>
+    <a class="idx-card" href="screens/request-cancel.html"><span class="ic-no">10</span><b>Ask to cancel</b><p>Freezes payment until the manager decides.</p></a>
+    <a class="idx-card" href="screens/request-on-hold.html"><span class="ic-no">11</span><b>On hold</b><p>Employee clarifies, only Accounts releases.</p></a>
+  </div>
+
+  <div class="grp">Approving <span>3 screens</span></div>
+  <div class="idx-grid">
+    <a class="idx-card" href="screens/approvals-list.html"><span class="ic-no">12</span><b>Approvals queue</b><p>No bulk approval anywhere.</p></a>
+    <a class="idx-card" href="screens/request-detail-manager.html"><span class="ic-no">13</span><b>Approve, return or reject</b><p>Budget context, then a confirmation for each decision.</p></a>
+    <a class="idx-card" href="screens/manager-cancellation-decision.html"><span class="ic-no">14</span><b>Cancellation decision</b><p>Accept and close, or decline and unfreeze.</p></a>
+  </div>
+
+  <div class="grp">Paying <span>8 screens</span></div>
+  <div class="idx-grid">
+    <a class="idx-card" href="screens/accounts-queue.html"><span class="ic-no">15</span><b>Accounts queue</b><p>Approved, processing, on hold, partial review.</p></a>
+    <a class="idx-card" href="screens/payment-request-picker.html"><span class="ic-no">16</span><b>Pick a request</b><p>The second door into the same reservation.</p></a>
+    <a class="idx-card" href="screens/accounts-reservation-conflict.html"><span class="ic-no">17</span><b>Already taken</b><p>Someone won the race by four seconds.</p></a>
+    <a class="idx-card" href="screens/payment-entry.html"><span class="ic-no">18</span><b>Record payment</b><p>Reservation banner, approved amount pinned, live difference.</p></a>
+    <a class="idx-card" href="screens/payment-settlement-confirm.html"><span class="ic-no">19</span><b>Settlement confirmation</b><p>Settled in full, or genuinely partial. Nothing saves before this.</p></a>
+    <a class="idx-card" href="screens/payment-partial-review.html"><span class="ic-no">20</span><b>Partial review</b><p>Manager accepts and closes, or raises a concern.</p></a>
+    <a class="idx-card" href="screens/accounts-release-reassign.html"><span class="ic-no">21</span><b>Release or reassign</b><p>With a reason and a no-payment-started confirmation.</p></a>
+    <a class="idx-card" href="screens/accounts-stale-processing.html"><span class="ic-no">22</span><b>Reserved too long</b><p>One-day reminder, never an automatic release.</p></a>
+  </div>
+
+  <div class="grp">Recoverables <span>3 screens</span></div>
+  <div class="idx-grid">
+    <a class="idx-card" href="screens/recoverables-dashboard.html"><span class="ic-no">23</span><b>Recoverables dashboard</b><p>By category and counterparty, outside budget actuals.</p></a>
+    <a class="idx-card" href="screens/recoverables-list.html"><span class="ic-no">24</span><b>Recoverables list</b><p>Aged against expected return dates.</p></a>
+    <a class="idx-card" href="screens/recoverable-detail.html"><span class="ic-no">25</span><b>Recoverable detail</b><p>EMD past its return date.</p></a>
+  </div>
+
+  <div class="grp">Administration and masters <span>9 screens</span></div>
+  <div class="idx-grid">
+    <a class="idx-card" href="screens/admin-roles.html"><span class="ic-no">26</span><b>Roles &amp; permissions</b><p>Page, action and record scope. Matrix on desktop, rows on mobile.</p></a>
+    <a class="idx-card" href="screens/admin-configuration.html"><span class="ic-no">27</span><b>Configuration</b><p>Numbering, attachments, reminders, categories, direct payments.</p></a>
+    <a class="idx-card" href="screens/admin-notifications.html"><span class="ic-no">28</span><b>Notification rules</b><p>Eleven events, each with its own email template.</p></a>
+    <a class="idx-card" href="screens/admin-users.html"><span class="ic-no">29</span><b>Users</b><p>Several roles per person, default approver, self-approval blocked.</p></a>
+    <a class="idx-card" href="screens/notifications.html"><span class="ic-no">30</span><b>Notification centre</b><p>In-app by default.</p></a>
+    <a class="idx-card" href="screens/vendors-list.html"><span class="ic-no">31</span><b>Vendors</b><p>The new master the request form searches.</p></a>
+    <a class="idx-card" href="screens/vendor-detail.html"><span class="ic-no">32</span><b>Vendor record</b><p>Bank details gated behind permission.</p></a>
+    <a class="idx-card" href="screens/masters-projects.html"><span class="ic-no">33</span><b>Projects</b><p>Retiring keeps history intact.</p></a>
+    <a class="idx-card" href="screens/masters-heads.html"><span class="ic-no">34</span><b>Heads</b><p>Due days drive the overdue flag.</p></a>
+  </div>
+
+  <div class="grp">Existing screens, redrawn mobile-first <span>9 screens</span></div>
+  <div class="idx-grid">
+    <a class="idx-card" href="screens/login.html"><span class="ic-no">35</span><b>Log in</b></a>
+    <a class="idx-card" href="screens/variance-grid.html"><span class="ic-no">36</span><b>Variance grid</b><p>Matrix on desktop, project accordion on mobile.</p></a>
+    <a class="idx-card" href="screens/payments-ledger.html"><span class="ic-no">37</span><b>Payments ledger</b><p>Historical rows kept and labelled.</p></a>
+    <a class="idx-card" href="screens/payment-detail.html"><span class="ic-no">38</span><b>Payment detail</b><p>The full trail from request to settlement.</p></a>
+    <a class="idx-card" href="screens/budgets.html"><span class="ic-no">39</span><b>Budgets</b><p>One head per card on a phone.</p></a>
+    <a class="idx-card" href="screens/monthly-plans.html"><span class="ic-no">40</span><b>Monthly plans</b><p>Create, lock, unlock.</p></a>
+    <a class="idx-card" href="screens/reports.html"><span class="ic-no">41</span><b>Reports</b><p>Adds a requests view and where the time goes.</p></a>
+    <a class="idx-card" href="screens/audit.html"><span class="ic-no">42</span><b>Audit log</b><p>Extended with request, reservation and settlement events.</p></a>
+    <a class="idx-card" href="screens/backups.html"><span class="ic-no">43</span><b>Backups</b></a>
+  </div>
+</section>
+
+<section>
+  <h2>Coverage</h2>
+  <p class="lead">Every decision taken in the ten rounds of discussion, and the screen that
+    implements it. Nothing here is unbuilt.</p>
+
+  <div class="table-wrap" style="margin-top:12px">
+    <table class="t-cards">
+      <thead><tr><th>Agreed behaviour</th><th>Where you see it</th></tr></thead>
+      <tbody>
+        <tr><td class="t-lead" data-label="Behaviour">Roles are configurable, page and action level, with own/assigned/all record scope</td><td data-label="Screen"><a href="screens/admin-roles.html">Roles &amp; permissions</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Permissions protect the data, not only the buttons</td><td data-label="Screen"><a href="screens/vendor-detail.html">Vendor record</a> — bank block absent for Employee</td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">A person may hold several roles</td><td data-label="Screen"><a href="screens/admin-users.html">Users</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">No drafts; the number is issued on submission as PR-2026-000123</td><td data-label="Screen"><a href="screens/request-submitted.html">Submitted</a>, <a href="screens/admin-configuration.html">numbering</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Four request types with adaptive fields</td><td data-label="Screen"><a href="screens/request-new-form.html">New request form</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Budget expense needs one project and one head</td><td data-label="Screen"><a href="screens/request-new-form.html">Charge it to</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Recoverable is a separate treatment, excluded from budget actuals</td><td data-label="Screen"><a href="screens/recoverables-dashboard.html">Recoverables</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Recoverable categories are configurable; EMD/PBG need a project, ICD a counterparty, employee advance fills the employee</td><td data-label="Screen"><a href="screens/admin-configuration.html">Configuration</a>, <a href="screens/request-new-form.html">form rules</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">All recoverables capture beneficiary, reason, expected return and terms</td><td data-label="Screen"><a href="screens/request-new-form.html">Recoverable details</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Attachments optional now, with a configuration flag for later</td><td data-label="Screen"><a href="screens/admin-configuration.html">Attachments</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Reimbursement and employee advance always pay the logged-in employee</td><td data-label="Screen"><a href="screens/request-new-form.html">Paid to, read-only</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Bank details never appear on the employee form</td><td data-label="Screen"><a href="screens/vendor-detail.html">Vendor record</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Duplicate check warns without blocking</td><td data-label="Screen"><a href="screens/request-duplicate-warning.html">Possible duplicate</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Employee may edit until approval; each edit re-notifies and resets the reminder</td><td data-label="Screen"><a href="screens/request-edit.html">Edit request</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Returned can be corrected; rejected is final and read-only</td><td data-label="Screen"><a href="screens/request-returned.html">Returned</a>, <a href="screens/request-detail-manager.html">reject sheet</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Self-approval is impossible</td><td data-label="Screen"><a href="screens/request-new-form.html">Approver list</a>, <a href="screens/admin-configuration.html">always-on rule</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">No bulk approval</td><td data-label="Screen"><a href="screens/approvals-list.html">Approvals queue</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Approved requests lock; the employee may only ask for cancellation</td><td data-label="Screen"><a href="screens/request-cancel.html">Ask to cancel</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Cancellation freezes payment until the manager decides</td><td data-label="Screen"><a href="screens/manager-cancellation-decision.html">Cancellation decision</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Only Accounts lifts a hold</td><td data-label="Screen"><a href="screens/request-on-hold.html">On hold</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Both entry doors reserve atomically; the loser is told who won</td><td data-label="Screen"><a href="screens/payment-request-picker.html">Pick a request</a>, <a href="screens/accounts-reservation-conflict.html">Already taken</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Searchable by number, requester, payee, project, head and amount</td><td data-label="Screen"><a href="screens/payment-request-picker.html">Request picker</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">No automatic release; release or reassign needs a reason and a confirmation</td><td data-label="Screen"><a href="screens/accounts-release-reassign.html">Release or reassign</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Stale reservation reminder after one day</td><td data-label="Screen"><a href="screens/accounts-stale-processing.html">Reserved too long</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">One request, one payment; a payment can never exceed the approved amount</td><td data-label="Screen"><a href="screens/payment-entry.html">Record payment</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Nothing saves until the settlement confirmation is accepted</td><td data-label="Screen"><a href="screens/payment-settlement-confirm.html">Settlement confirmation</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Paid less but settled in full → Completed, difference recorded, no tax arithmetic</td><td data-label="Screen"><a href="screens/payment-detail.html">Payment detail</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Genuine partial → manager accepts and closes, or raises a concern; no further payment either way</td><td data-label="Screen"><a href="screens/payment-partial-review.html">Partial review</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Recorded payments cannot be edited or cancelled</td><td data-label="Screen"><a href="screens/payment-detail.html">Payment detail</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">One chronological stream of history and conversation, visible to everyone who can see the request</td><td data-label="Screen"><a href="screens/request-detail-employee.html">Request detail</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">In-app notifications by default; email configurable per event with To/CC and templates</td><td data-label="Screen"><a href="screens/notifications.html">Notification centre</a>, <a href="screens/admin-notifications.html">rules</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Urgent needs a reason and mails immediately; no special approval rules</td><td data-label="Screen"><a href="screens/request-new-form.html">Urgency</a>, <a href="screens/admin-notifications.html">urgent rule</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Reminders after three calendar days, then daily</td><td data-label="Screen"><a href="screens/admin-configuration.html">Reminders</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">One dashboard with permission-controlled work areas</td><td data-label="Screen"><a href="screens/dashboard.html">Dashboard</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Inactive projects and heads leave new forms but stay on history</td><td data-label="Screen"><a href="screens/masters-projects.html">Projects</a>, <a href="screens/masters-heads.html">Heads</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Lists and reports export to CSV based on permission</td><td data-label="Screen"><a href="screens/reports.html">Reports</a> and every list</td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Mobile-first for every persona</td><td data-label="Screen">Switch the device toggle on any screen</td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Free payment entry removed; historical payments kept</td><td data-label="Screen"><a href="screens/payments-ledger.html">Payments ledger</a>, <a href="screens/admin-configuration.html">flag</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Detailed vendor master</td><td data-label="Screen"><a href="screens/vendor-detail.html">Vendor record</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Committed spend deliberately not shown; slot reserved</td><td data-label="Screen"><a href="screens/variance-grid.html">Variance grid</a></td></tr>
+        <tr><td class="t-lead" data-label="Behaviour">Room for invoices, payments received, inventory and purchase orders</td><td data-label="Screen">Sidebar and More sheet on every screen</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Deliberately not built</h2>
+  <p class="lead">Named here so a later reader knows these were decided, not forgotten.</p>
+  <p>Repayment tracking of recoverables · forfeiture or conversion of EMD and PBG · refunds and
+    reversals · editing a recorded payment · tax computation · multi-level approval · bulk approval ·
+    copy a previous request · private internal comments · drafts.</p>
+  <p class="hint">The status model, the roles screen and the navigation all leave room for these to
+    arrive later without a redesign.</p>
+</section>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settlement confirmation · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Confirm the payment" data-sub="PR-2026-000128" data-nav="accounts-queue" data-back="payment-entry.html" data-persona-default="accounts">
+
+<div class="proto-note">
+  <b>The one decision this module exists for.</b> Paying ₹98,000 against ₹1,00,000 can mean two
+  completely different things. The system refuses to guess, and it does no tax arithmetic — Accounts
+  says which it is, and that answer decides whether the request closes or goes to the manager.
+</div>
+
+<div class="reserve-bar">
+  <span class="rb-dot"></span>
+  <b>Reserved by you</b>
+  <span class="rb-meta">since 14:02 today</span>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Payment about to be saved</h2><span class="pill neutral no-dot">Not saved yet</span></div>
+  <dl class="dl">
+    <div><dt>Paid on</dt><dd>25 July 2026</dd></div>
+    <div><dt>Mode</dt><dd>Bank transfer — NEFT</dd></div>
+    <div><dt>Reference</dt><dd class="num">N221260725004417</dd></div>
+    <div><dt>Proof</dt><dd>hdfc-advice-N2212607250044.pdf</dd></div>
+    <div style="grid-column:1/-1"><dt>Processing note</dt><dd>₹2,000 TDS deducted under 194C and handled in the statutory return. Net paid to vendor.</dd></div>
+  </dl>
+</div>
+
+<div class="overlay" id="settle-sheet">
+  <div class="sheet">
+    <div class="sh-head">
+      <div><h2>Confirm the payment</h2><p class="sh-sub">PR-2026-000128 · Sundaram Electricals Pvt Ltd</p></div>
+      <a class="sh-close" href="payment-entry.html" aria-label="Close">✕</a>
+    </div>
+    <div class="sh-body stack-12">
+      <div class="compare">
+        <div class="cmp-row"><span class="l">Approved</span><span class="v">₹1,00,000</span></div>
+        <div class="cmp-row"><span class="l">Actually paid</span><span class="v">₹98,000</span></div>
+        <div class="cmp-row diff"><span class="l">Difference</span><span class="v">₹2,000 lower ⚠</span></div>
+      </div>
+
+      <div>
+        <span class="flabel" style="margin-bottom:6px">You paid less than was approved. Which is it?</span>
+        <div class="choice">
+          <label class="is-on">
+            <input type="radio" name="settlement" value="settled" checked>
+            <span><b>Fully settled</b><small>The obligation is discharged. Deductions such as TDS or retention were handled outside this system.</small></span>
+            <span class="outcome good">Completed</span>
+          </label>
+          <label>
+            <input type="radio" name="settlement" value="partial">
+            <span><b>Partial payment</b><small>A balance is genuinely still owed to the payee.</small></span>
+            <span class="outcome warn">Manager review</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field" data-when="settlement:partial" hidden>
+        <label for="pr-reason">Why only part was paid <span class="req">*</span></label>
+        <textarea id="pr-reason" placeholder="Kavita Rao reads this when she decides whether to close it."></textarea>
+      </div>
+
+      <div class="banner info" style="margin:0">
+        <span class="b-ico">i</span>
+        <div>
+          <b>Confirming saves the payment</b>
+          <p>It cannot be edited or cancelled afterwards. The request accepts no further payment —
+            any balance needs a fresh request.</p>
+        </div>
+      </div>
+    </div>
+    <div class="sh-foot">
+      <a class="btn outline" href="payment-entry.html">Go back</a>
+      <span class="row-end"></span>
+      <a class="btn primary" href="payment-detail.html">Confirm and save payment</a>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

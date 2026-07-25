@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recoverables list · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Recoverables" data-sub="11 outstanding" data-nav="recoverables" data-back="recoverables-dashboard.html" data-action="⤓ Export" data-action-href="recoverables-list.html" data-persona-default="accounts">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Recoverable payments</div>
+    <h1>All recoverables</h1>
+    <p class="sub">Aged against the expected return date · overdue in red</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="#">⤓ Export CSV</a></div>
+</section>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field search"><label for="q">Search</label><input id="q" placeholder="Counterparty, project, request number…"></div>
+  <div class="field"><label for="cat">Category</label><select id="cat"><option>All categories</option><option>EMD</option><option>PBG</option><option>ICD</option><option>Security deposit</option><option>Employee advance</option><option>Other</option></select></div>
+  <div class="field"><label for=" age">Ageing</label><select id="age"><option>All</option><option>Overdue</option><option>Due in 30 days</option><option>Due later</option></select></div>
+  <span class="row-end"></span><button class="btn">Apply</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search recoverables…" aria-label="Search"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead>
+      <tr><th>Request</th><th>Category</th><th>Counterparty</th><th>Project</th><th class="num">Amount</th><th>Paid on</th><th>Expected back</th><th>Ageing</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000132</a></td>
+        <td data-label="Category"><span class="pill recoverable">EMD</span></td>
+        <td data-label="Counterparty">Ridge Metro tender authority</td>
+        <td data-label="Project">Ridge Metro Phase II</td>
+        <td class="num" data-label="Amount">₹2,00,000</td>
+        <td data-label="Paid on">Not yet paid</td>
+        <td data-label="Expected back">30 Nov 2026</td>
+        <td data-label="Ageing"><span class="pill approved">Awaiting payment</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000097</a></td>
+        <td data-label="Category"><span class="pill recoverable">EMD</span></td>
+        <td data-label="Counterparty">Coastal Power Utilities Ltd</td>
+        <td data-label="Project">Coastal Substation</td>
+        <td class="num" data-label="Amount">₹2,00,000</td>
+        <td data-label="Paid on">12 Feb 2026</td>
+        <td data-label="Expected back">30 Jun 2026</td>
+        <td data-label="Ageing"><span class="pill bad">25 days overdue</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000101</a></td>
+        <td data-label="Category"><span class="pill recoverable">PBG</span></td>
+        <td data-label="Counterparty">Coastal Power Utilities Ltd</td>
+        <td data-label="Project">Coastal Substation</td>
+        <td class="num" data-label="Amount">₹2,00,000</td>
+        <td data-label="Paid on">03 Apr 2026</td>
+        <td data-label="Expected back">15 Jan 2027</td>
+        <td data-label="Ageing"><span class="pill neutral">174 days to go</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000104</a></td>
+        <td data-label="Category"><span class="pill recoverable">PBG</span></td>
+        <td data-label="Counterparty">Ridge Metro tender authority</td>
+        <td data-label="Project">Ridge Metro Phase II</td>
+        <td class="num" data-label="Amount">₹2,00,000</td>
+        <td data-label="Paid on">21 Apr 2026</td>
+        <td data-label="Expected back">30 Nov 2026</td>
+        <td data-label="Ageing"><span class="pill neutral">128 days to go</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000109</a></td>
+        <td data-label="Category"><span class="pill recoverable">ICD</span></td>
+        <td data-label="Counterparty">Harith Infra Pvt Ltd</td>
+        <td data-label="Project">Not project linked</td>
+        <td class="num" data-label="Amount">₹3,00,000</td>
+        <td data-label="Paid on">18 May 2026</td>
+        <td data-label="Expected back">18 Nov 2026</td>
+        <td data-label="Ageing"><span class="pill neutral">116 days to go</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000064</a></td>
+        <td data-label="Category"><span class="pill recoverable">Security deposit</span></td>
+        <td data-label="Counterparty">Whitefield Estates</td>
+        <td data-label="Project">Operations</td>
+        <td class="num" data-label="Amount">₹65,000</td>
+        <td data-label="Paid on">30 Jan 2026</td>
+        <td data-label="Expected back">On vacating</td>
+        <td data-label="Ageing"><span class="pill neutral">No fixed date</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000071</a></td>
+        <td data-label="Category"><span class="pill recoverable">Security deposit</span></td>
+        <td data-label="Counterparty">Sundaram Electricals Pvt Ltd</td>
+        <td data-label="Project">Ridge Metro Phase II</td>
+        <td class="num" data-label="Amount">₹20,000</td>
+        <td data-label="Paid on">14 Mar 2026</td>
+        <td data-label="Expected back">30 Jun 2026</td>
+        <td data-label="Ageing"><span class="pill bad">25 days overdue</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="recoverable-detail.html">PR-2026-000127</a></td>
+        <td data-label="Category"><span class="pill recoverable">Employee advance</span></td>
+        <td data-label="Counterparty">Arun Mehta</td>
+        <td data-label="Project">Ridge Metro Phase II</td>
+        <td class="num" data-label="Amount">₹25,000</td>
+        <td data-label="Paid on">Not yet paid</td>
+        <td data-label="Expected back">15 Aug 2026</td>
+        <td data-label="Ageing"><span class="pill hold">On hold</span></td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td data-label="">8 shown of 11</td><td data-label=""></td><td data-label=""></td><td data-label=""></td>
+        <td class="num" data-label="Amount">₹12,10,000</td><td data-label=""></td><td data-label=""></td><td data-label=""></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+</body>
+</html>

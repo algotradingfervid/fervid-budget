@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Configuration" data-sub="Request rules" data-nav="configuration" data-back="dashboard.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Administration</div>
+    <h1>Configuration</h1>
+    <p class="sub">The rules the request module runs on. Everything here is data — no code change needed.</p>
+  </div>
+  <div class="pb-actions"><a class="btn primary" href="#">Save changes</a></div>
+</section>
+
+<form onsubmit="return false">
+  <fieldset>
+    <legend>Request numbering</legend>
+    <div class="form-grid">
+      <div class="field span-3 m-half"><label for="prefix">Prefix</label><input id="prefix" value="PR"></div>
+      <div class="field span-3 m-half"><label for="year">Year segment</label><select id="year"><option selected>Calendar year — 2026</option><option>Financial year — 2026-27</option><option>None</option></select></div>
+      <div class="field span-3 m-half"><label for="pad">Number width</label><input id="pad" type="number" value="6"></div>
+      <div class="field span-3 m-half"><label>Next number</label><input value="PR-2026-000137" readonly></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Attachments</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" name="att"> Require a supporting document on every request</label>
+        <span class="hint">Off today. Turning it on does not block submission — it asks for an
+          exception reason when no document is attached, because legitimate documents are sometimes
+          genuinely unavailable.</span>
+      </div>
+      <div class="field span-6 m-half" data-when="att:on" hidden><label for="att-types">Accepted file types</label><input id="att-types" value="PDF, JPG, PNG"></div>
+      <div class="field span-6 m-half"><label for="att-size">Maximum file size</label><input id="att-size" value="10 MB"></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Reminders and ageing</legend>
+    <div class="form-grid">
+      <div class="field span-4 m-half"><label for="rem-days">Start reminders after</label><input id="rem-days" type="number" value="3"><span class="hint">Calendar days, not working days.</span></div>
+      <div class="field span-4 m-half"><label for="rem-freq">Then remind</label><select id="rem-freq"><option selected>Daily</option><option>Every 2 days</option><option>Weekly</option></select></div>
+      <div class="field span-4 m-half"><label for="stale">Stale reservation reminder after</label><input id="stale" type="number" value="1"><span class="hint">Days a request may sit in Processing.</span></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Recoverable categories</legend>
+    <div class="table-wrap" style="margin-bottom:10px">
+      <table class="t-cards">
+        <thead><tr><th>Category</th><th>Requires</th><th class="c">Active</th><th class="c">In use</th></tr></thead>
+        <tbody>
+          <tr><td class="t-lead" data-label="Category">EMD — earnest money deposit</td><td data-label="Requires">Related project</td><td class="c" data-label="Active"><input type="checkbox" checked></td><td class="c" data-label="In use">4</td></tr>
+          <tr><td class="t-lead" data-label="Category">PBG — performance bank guarantee</td><td data-label="Requires">Related project</td><td class="c" data-label="Active"><input type="checkbox" checked></td><td class="c" data-label="In use">2</td></tr>
+          <tr><td class="t-lead" data-label="Category">ICD — inter-corporate deposit</td><td data-label="Requires">Counterparty company</td><td class="c" data-label="Active"><input type="checkbox" checked></td><td class="c" data-label="In use">1</td></tr>
+          <tr><td class="t-lead" data-label="Category">Employee advance</td><td data-label="Requires">Employee, filled automatically</td><td class="c" data-label="Active"><input type="checkbox" checked></td><td class="c" data-label="In use">2</td></tr>
+          <tr><td class="t-lead" data-label="Category">Security deposit</td><td data-label="Requires">Counterparty</td><td class="c" data-label="Active"><input type="checkbox" checked></td><td class="c" data-label="In use">2</td></tr>
+          <tr><td class="t-lead" data-label="Category">Other</td><td data-label="Requires">Nothing extra</td><td class="c" data-label="Active"><input type="checkbox" checked></td><td class="c" data-label="In use">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="form-grid">
+      <div class="field span-5"><label for="nc-name">New category</label><input id="nc-name" placeholder="e.g. Retention deposit"></div>
+      <div class="field span-4 m-half"><label for="nc-req">Must also capture</label><select id="nc-req"><option>Nothing extra</option><option>Related project</option><option>Counterparty company</option><option>Employee</option></select></div>
+      <div class="field span-3 m-half" style="align-self:end"><button class="btn">Add category</button></div>
+    </div>
+    <p class="hint" style="margin:10px 0 0">All recoverables always capture beneficiary, reason,
+      expected return date and terms. These rules only add what the category needs on top.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Payments</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox"> Allow direct payments without a request</label>
+        <span class="hint">Off. Every new payment starts from an approved request. Turning this on
+          adds a "Direct payment" entry point that demands a written reason and is flagged in the
+          audit log. Payments recorded before this module stay in the ledger either way.</span>
+      </div>
+      <div class="field span-6 m-half"><label for="modes">Payment modes offered</label><input id="modes" value="NEFT, RTGS, UPI, Cheque, Cash, Card, DD"></div>
+      <div class="field span-6 m-half"><label for="urg">Urgency</label><select id="urg"><option selected>Requires a reason</option><option>Free to mark, no reason</option><option>Disabled</option></select></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Approvals</legend>
+    <div class="form-grid">
+      <div class="field span-12"><label class="checkline"><input type="checkbox" checked disabled> Block self-approval</label>
+        <span class="hint">Always on. A person can never approve a request they raised, whatever roles they hold.</span></div>
+      <div class="field span-12"><label class="checkline"><input type="checkbox" checked> Let the employee choose a different approver</label>
+        <span class="hint">Off means everyone must use the default manager set on their user record.</span></div>
+      <div class="field span-12"><label class="checkline"><input type="checkbox" disabled> Second approval above a threshold</label>
+        <span class="hint">Reserved for a future version. The status model already has room for it.</span></div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Every change here is written to the audit log.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="dashboard.html">Discard</a>
+    <a class="btn primary" href="dashboard.html">Save configuration</a>
+  </div>
+</form>
+
+</body>
+</html>

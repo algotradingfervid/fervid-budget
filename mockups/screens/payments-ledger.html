@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payments · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Payments" data-sub="July 2026" data-nav="payments" data-back="dashboard.html" data-action="⤓ Export" data-action-href="payments-ledger.html" data-persona-default="accounts">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Payment ledger</div>
+    <h1>Payments</h1>
+    <p class="sub">July 2026 · 42 payments · ₹32,84,100 recorded</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="#">⤓ Export CSV</a>
+    <a class="btn primary" href="payment-request-picker.html">＋ Record a payment</a>
+  </div>
+</section>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field"><label for="mo">Month</label><input id="mo" type="month" value="2026-07"></div>
+  <div class="field search"><label for="q">Search</label><input id="q" placeholder="Request, payee, UTR, project"></div>
+  <div class="field"><label for="src">Source</label><select id="src"><option>All</option><option>From a request</option><option>Historical — before the request module</option></select></div>
+  <div class="field"><label for="st">Status</label><select id="st"><option>All</option><option>Completed</option><option>Partial accepted</option><option>Under review</option></select></div>
+  <span class="row-end"></span><button class="btn">Apply</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search payments…" aria-label="Search payments"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="metric-strip cols-3">
+  <div class="metric"><span class="metric-label">Paid this month</span><span class="metric-value">₹32.84 L</span><span class="metric-foot">42 payments</span></div>
+  <div class="metric"><span class="metric-label">From requests</span><span class="metric-value">38</span><span class="metric-foot">Every payment since 1 July</span></div>
+  <div class="metric"><span class="metric-label">Historical entries</span><span class="metric-value">4</span><span class="metric-foot">Recorded before this module</span></div>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Date</th><th>Request</th><th>Payee</th><th>Project / head</th><th class="num">Amount</th><th>Mode / reference</th><th>Recorded by</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Date">25 Jul 2026</td>
+        <td data-label="Request"><a href="payment-detail.html">PR-2026-000128</a></td>
+        <td data-label="Payee">Sundaram Electricals Pvt Ltd</td>
+        <td data-label="Project / head">Ridge Metro Phase II / Materials</td>
+        <td class="num" data-label="Amount">₹98,000</td>
+        <td data-label="Mode / reference">NEFT <span class="t-sub num">N221260725004417</span></td>
+        <td data-label="Recorded by">Priya Nair</td>
+        <td data-label="Status"><span class="pill completed">Completed</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Date">24 Jul 2026</td>
+        <td data-label="Request"><a href="payment-detail.html">PR-2026-000124</a></td>
+        <td data-label="Payee">Nova Print Works</td>
+        <td data-label="Project / head">Growth / Marketing</td>
+        <td class="num" data-label="Amount">₹41,300</td>
+        <td data-label="Mode / reference">UPI <span class="t-sub num">4419087734</span></td>
+        <td data-label="Recorded by">Priya Nair</td>
+        <td data-label="Status"><span class="pill completed">Completed</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Date">24 Jul 2026</td>
+        <td data-label="Request"><a href="payment-detail.html">PR-2026-000123</a></td>
+        <td data-label="Payee">Kaveri Logistics</td>
+        <td data-label="Project / head">Operations / Transport</td>
+        <td class="num" data-label="Amount">₹1,18,000</td>
+        <td data-label="Mode / reference">NEFT <span class="t-sub num">N221260724001188</span></td>
+        <td data-label="Recorded by">Deepak Menon</td>
+        <td data-label="Status"><span class="pill completed">Completed</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Date">23 Jul 2026</td>
+        <td data-label="Request"><a href="payment-partial-review.html">PR-2026-000119</a></td>
+        <td data-label="Payee">Nova Print Works</td>
+        <td data-label="Project / head">Growth / Marketing</td>
+        <td class="num" data-label="Amount">₹60,000</td>
+        <td data-label="Mode / reference">NEFT <span class="t-sub num">N221260723009912</span></td>
+        <td data-label="Recorded by">Priya Nair</td>
+        <td data-label="Status"><span class="pill partial">Partial — under review</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Date">18 Jul 2026</td>
+        <td data-label="Request"><a href="payment-detail.html">PR-2026-000116</a></td>
+        <td data-label="Payee">Meridian Facility Services</td>
+        <td data-label="Project / head">Operations / Facilities</td>
+        <td class="num" data-label="Amount">₹2,35,000</td>
+        <td data-label="Mode / reference">RTGS <span class="t-sub num">R118260718002210</span></td>
+        <td data-label="Recorded by">Priya Nair</td>
+        <td data-label="Status"><span class="pill completed">Completed</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Date">15 Jul 2026</td>
+        <td data-label="Request"><a href="payment-detail.html">PR-2026-000110</a></td>
+        <td data-label="Payee">Perfect Tools &amp; Hardware</td>
+        <td data-label="Project / head">Operations / Office supplies</td>
+        <td class="num" data-label="Amount">₹12,600</td>
+        <td data-label="Mode / reference">Cash</td>
+        <td data-label="Recorded by">Deepak Menon</td>
+        <td data-label="Status"><span class="pill completed-partial">Completed — partial accepted</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Date">01 Jul 2026</td>
+        <td data-label="Request"><span class="pill neutral no-dot">No request</span></td>
+        <td data-label="Payee">Whitefield Estates</td>
+        <td data-label="Project / head">Operations / Office rent</td>
+        <td class="num" data-label="Amount">₹1,75,000</td>
+        <td data-label="Mode / reference">NEFT <span class="t-sub num">N221260701000441</span></td>
+        <td data-label="Recorded by">Priya Nair</td>
+        <td data-label="Status"><span class="pill neutral">Historical</span></td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr><td data-label="">7 shown of 42</td><td data-label=""></td><td data-label=""></td><td data-label=""></td><td class="num" data-label="Amount">₹7,39,900</td><td data-label=""></td><td data-label=""></td><td data-label=""></td></tr>
+    </tfoot>
+  </table>
+</div>
+
+<div class="proto-note" style="margin-top:14px">
+  <b>Historical rows stay.</b> Payments recorded before the request module keep working and keep
+  their audit trail. They are labelled so nobody mistakes them for unapproved spending.
+</div>
+
+</body>
+</html>

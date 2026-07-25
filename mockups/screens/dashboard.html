@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Home" data-sub="Everything waiting on you" data-nav="dashboard" data-persona-default="employee">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Home</div>
+    <h1>Good morning, <span data-persona-text>Arun Mehta</span></h1>
+    <p class="sub">Saturday, 25 July 2026 · everything below is waiting on someone. The ones marked <em>you</em> are yours.</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn" href="notifications.html">Notifications <span class="pill bad no-dot">3</span></a>
+    <a class="btn primary" href="request-new-type.html">＋ New request</a>
+  </div>
+</section>
+
+<div class="greet m-only">
+  <h1>Good morning, <span data-persona-text>Arun</span></h1>
+  <p>Saturday, 25 July 2026</p>
+</div>
+
+<!-- ============================= EMPLOYEE ============================= -->
+<div data-for="employee">
+  <div class="metric-strip">
+    <div class="metric"><span class="metric-label">My open requests</span><span class="metric-value">4</span><span class="metric-foot">₹3,42,000 in flight</span></div>
+    <div class="metric warn"><span class="metric-label">Needs my action</span><span class="metric-value">2</span><span class="metric-foot">1 returned · 1 on hold</span></div>
+    <div class="metric"><span class="metric-label">Awaiting approval</span><span class="metric-value">1</span><span class="metric-foot">With Kavita Rao</span></div>
+    <div class="metric good"><span class="metric-label">Paid this month</span><span class="metric-value">₹1.48 L</span><span class="metric-foot">3 requests settled</span></div>
+  </div>
+
+  <div class="work-areas">
+    <section class="area">
+      <div class="a-head"><span class="a-ico">!</span><h2>Needs your action</h2><span class="n">2</span></div>
+      <div class="a-list">
+        <a href="request-returned.html">
+          <span class="al-main"><b>PR-2026-000131 · Kaveri Logistics</b>
+            <small><span class="pill returned">Returned for correction</span></small></span>
+          <span class="al-amt">₹64,500</span>
+        </a>
+        <a href="request-on-hold.html">
+          <span class="al-main"><b>PR-2026-000127 · Site advance</b>
+            <small><span class="pill hold">On hold</span> Accounts asked for the site name</small></span>
+          <span class="al-amt">₹25,000</span>
+        </a>
+      </div>
+      <a class="a-foot" href="requests-list.html">Open my requests →</a>
+    </section>
+
+    <section class="area">
+      <div class="a-head"><span class="a-ico">▤</span><h2>In progress</h2><span class="n">2</span></div>
+      <div class="a-list">
+        <a href="request-detail-employee.html">
+          <span class="al-main"><b>PR-2026-000128 · Sundaram Electricals</b>
+            <small><span class="pill approved">Approved</span> <span class="waiting">Waiting on Accounts</span></small></span>
+          <span class="al-amt">₹1,00,000</span>
+        </a>
+        <a href="request-detail-employee.html">
+          <span class="al-main"><b>PR-2026-000134 · Travel reimbursement</b>
+            <small><span class="pill awaiting">Awaiting approval</span> <span class="waiting">Waiting on Kavita Rao</span></small></span>
+          <span class="al-amt">₹18,400</span>
+        </a>
+      </div>
+      <a class="a-foot" href="requests-list.html">See all 4 →</a>
+    </section>
+  </div>
+</div>
+
+<!-- ============================= MANAGER ============================= -->
+<div data-for="manager">
+  <div class="metric-strip">
+    <div class="metric warn"><span class="metric-label">Awaiting my approval</span><span class="metric-value">4</span><span class="metric-foot">₹4,86,900 total</span></div>
+    <div class="metric warn"><span class="metric-label">Partial to review</span><span class="metric-value">1</span><span class="metric-foot">PR-2026-000119</span></div>
+    <div class="metric"><span class="metric-label">Cancellation requests</span><span class="metric-value">1</span><span class="metric-foot">Needs a decision</span></div>
+    <div class="metric good"><span class="metric-label">Approved this month</span><span class="metric-value">₹8.24 L</span><span class="metric-foot">19 requests</span></div>
+  </div>
+
+  <div class="work-areas">
+    <section class="area">
+      <div class="a-head"><span class="a-ico">✓</span><h2>Awaiting your approval</h2><span class="n">4</span></div>
+      <div class="a-list">
+        <a href="request-detail-manager.html">
+          <span class="al-main"><b>PR-2026-000134 · Arun Mehta</b>
+            <small><span class="pill urgent">Urgent</span> Travel reimbursement · 2 days waiting</small></span>
+          <span class="al-amt">₹18,400</span>
+        </a>
+        <a href="request-detail-manager.html">
+          <span class="al-main"><b>PR-2026-000133 · Sneha Pillai</b>
+            <small>Meridian Facility Services · invoice MFS/26-27/0912</small></span>
+          <span class="al-amt">₹2,35,000</span>
+        </a>
+        <a href="request-detail-manager.html">
+          <span class="al-main"><b>PR-2026-000132 · Rakesh Iyer</b>
+            <small><span class="pill recoverable">Recoverable · EMD</span> Ridge Metro Phase II</small></span>
+          <span class="al-amt">₹2,00,000</span>
+        </a>
+        <a href="request-detail-manager.html">
+          <span class="al-main"><b>PR-2026-000130 · Vikram Shah</b>
+            <small>Anand Steel Traders · advance against order</small></span>
+          <span class="al-amt">₹33,500</span>
+        </a>
+      </div>
+      <a class="a-foot" href="approvals-list.html">Open approvals queue →</a>
+    </section>
+
+    <section class="area">
+      <div class="a-head"><span class="a-ico">◐</span><h2>Decisions only you can make</h2><span class="n">2</span></div>
+      <div class="a-list">
+        <a href="payment-partial-review.html">
+          <span class="al-main"><b>PR-2026-000119 · Nova Print Works</b>
+            <small><span class="pill partial">Partial — manager review</span> ₹60,000 of ₹95,000 paid</small></span>
+          <span class="al-amt">₹35,000</span>
+        </a>
+        <a href="manager-cancellation-decision.html">
+          <span class="al-main"><b>PR-2026-000126 · Sneha Pillai</b>
+            <small><span class="pill cancelreq">Cancellation requested</span> Order withdrawn by the site</small></span>
+          <span class="al-amt">₹47,000</span>
+        </a>
+      </div>
+      <a class="a-foot" href="approvals-list.html">Review all →</a>
+    </section>
+  </div>
+</div>
+
+<!-- ============================= ACCOUNTS ============================= -->
+<div data-for="accounts">
+  <div class="metric-strip">
+    <div class="metric"><span class="metric-label">Approved, unclaimed</span><span class="metric-value">7</span><span class="metric-foot">₹9,12,400 to pay</span></div>
+    <div class="metric warn"><span class="metric-label">Reserved by me</span><span class="metric-value">2</span><span class="metric-foot">1 open over a day</span></div>
+    <div class="metric"><span class="metric-label">On hold</span><span class="metric-value">1</span><span class="metric-foot">Waiting on requester</span></div>
+    <div class="metric good"><span class="metric-label">Paid today</span><span class="metric-value">₹2.41 L</span><span class="metric-foot">4 payments recorded</span></div>
+  </div>
+
+  <div class="work-areas">
+    <section class="area">
+      <div class="a-head"><span class="a-ico">₹</span><h2>Reserved by you</h2><span class="n">2</span></div>
+      <div class="a-list">
+        <a href="accounts-stale-processing.html">
+          <span class="al-main"><b>PR-2026-000122 · Kaveri Logistics</b>
+            <small><span class="pill processing">Processing</span> Reserved 26 hours ago — still open</small></span>
+          <span class="al-amt">₹78,000</span>
+        </a>
+        <a href="payment-entry.html">
+          <span class="al-main"><b>PR-2026-000128 · Sundaram Electricals</b>
+            <small><span class="pill processing">Processing</span> Reserved at 14:02 today</small></span>
+          <span class="al-amt">₹1,00,000</span>
+        </a>
+      </div>
+      <a class="a-foot" href="accounts-queue.html">Open the queue →</a>
+    </section>
+
+    <section class="area">
+      <div class="a-head"><span class="a-ico">▤</span><h2>Approved and unclaimed</h2><span class="n">7</span></div>
+      <div class="a-list">
+        <a href="payment-entry.html">
+          <span class="al-main"><b>PR-2026-000133 · Meridian Facility Services</b>
+            <small>Approved by Kavita Rao · needed by 28 Jul</small></span>
+          <span class="al-amt">₹2,35,000</span>
+        </a>
+        <a href="payment-entry.html">
+          <span class="al-main"><b>PR-2026-000132 · Ridge Metro Phase II</b>
+            <small><span class="pill recoverable">Recoverable · EMD</span> needed by 30 Jul</small></span>
+          <span class="al-amt">₹2,00,000</span>
+        </a>
+        <a href="payment-entry.html">
+          <span class="al-main"><b>PR-2026-000130 · Anand Steel Traders</b>
+            <small>Vendor advance · no invoice yet</small></span>
+          <span class="al-amt">₹33,500</span>
+        </a>
+      </div>
+      <a class="a-foot" href="accounts-queue.html">See all 7 →</a>
+    </section>
+  </div>
+</div>
+
+<!-- ============================= ADMIN ============================= -->
+<div data-for="admin">
+  <div class="metric-strip">
+    <div class="metric"><span class="metric-label">Live requests</span><span class="metric-value">18</span><span class="metric-foot">₹21.4 L in flight</span></div>
+    <div class="metric warn"><span class="metric-label">Stuck over 3 days</span><span class="metric-value">3</span><span class="metric-foot">Reminders sending daily</span></div>
+    <div class="metric"><span class="metric-label">Recoverable outstanding</span><span class="metric-value">₹14.6 L</span><span class="metric-foot">Outside budget actuals</span></div>
+    <div class="metric good"><span class="metric-label">Paid this month</span><span class="metric-value">₹32.8 L</span><span class="metric-foot">Against ₹41.2 L budget</span></div>
+  </div>
+
+  <div class="work-areas">
+    <section class="area">
+      <div class="a-head"><span class="a-ico">⚠</span><h2>Ageing past the reminder threshold</h2><span class="n">3</span></div>
+      <div class="a-list">
+        <a href="request-detail-manager.html">
+          <span class="al-main"><b>PR-2026-000121 · Vikram Shah</b>
+            <small><span class="pill awaiting">Awaiting approval</span> 6 days with Kavita Rao</small></span>
+          <span class="al-amt">₹1,12,000</span>
+        </a>
+        <a href="accounts-stale-processing.html">
+          <span class="al-main"><b>PR-2026-000122 · Kaveri Logistics</b>
+            <small><span class="pill processing">Processing</span> Reserved by Priya Nair 26 hours ago</small></span>
+          <span class="al-amt">₹78,000</span>
+        </a>
+        <a href="request-on-hold.html">
+          <span class="al-main"><b>PR-2026-000127 · Arun Mehta</b>
+            <small><span class="pill hold">On hold</span> 4 days without a clarification</small></span>
+          <span class="al-amt">₹25,000</span>
+        </a>
+      </div>
+      <a class="a-foot" href="requests-list.html">Open all requests →</a>
+    </section>
+
+    <section class="area">
+      <div class="a-head"><span class="a-ico">⚙</span><h2>Configuration</h2></div>
+      <div class="a-list">
+        <a href="admin-roles.html"><span class="al-main"><b>Roles &amp; permissions</b><small>5 roles · 2 custom</small></span><span class="al-amt">→</span></a>
+        <a href="admin-configuration.html"><span class="al-main"><b>Request rules</b><small>Attachments optional · reminders at 3 days</small></span><span class="al-amt">→</span></a>
+        <a href="admin-notifications.html"><span class="al-main"><b>Notification rules</b><small>11 events · 6 sending email</small></span><span class="al-amt">→</span></a>
+        <a href="vendors-list.html"><span class="al-main"><b>Vendors</b><small>64 active · 3 missing GSTIN</small></span><span class="al-amt">→</span></a>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ===================== SHARED: budget snapshot ===================== -->
+<div class="section-head">
+  <h2>Budget snapshot · July 2026</h2>
+  <a class="more-link" href="variance-grid.html">Variance grid →</a>
+</div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead>
+      <tr><th>Project</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="c">Used</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Project">Operations</td>
+        <td class="num" data-label="Budget">₹3,12,500</td>
+        <td class="num" data-label="Actual">₹2,04,800</td>
+        <td class="num good-num" data-label="Remaining">₹1,07,700</td>
+        <td class="c" data-label="Used"><span class="usedcell"><span class="vbar ok" style="--pct:66%"><i></i></span><span class="pctxt">66%</span></span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Project">People</td>
+        <td class="num" data-label="Budget">₹10,60,000</td>
+        <td class="num" data-label="Actual">₹9,81,200</td>
+        <td class="num good-num" data-label="Remaining">₹78,800</td>
+        <td class="c" data-label="Used"><span class="usedcell"><span class="vbar warn" style="--pct:93%"><i></i></span><span class="pctxt">93%</span></span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Project">Growth</td>
+        <td class="num" data-label="Budget">₹2,35,000</td>
+        <td class="num" data-label="Actual">₹2,61,400</td>
+        <td class="num bad-num" data-label="Remaining">−₹26,400</td>
+        <td class="c" data-label="Used"><span class="usedcell"><span class="vbar bad" style="--pct:100%"><i></i></span><span class="pctxt">111%</span></span></td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td data-label="">Company total</td>
+        <td class="num" data-label="Budget">₹16,07,500</td>
+        <td class="num" data-label="Actual">₹14,47,400</td>
+        <td class="num" data-label="Remaining">₹1,60,100</td>
+        <td class="c" data-label="Used">90%</td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+</body>
+</html>

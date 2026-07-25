@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR-2026-000131 returned · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="PR-2026-000131" data-sub="Returned for correction" data-nav="requests-list" data-back="requests-list.html" data-persona-default="employee">
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000131</span><span class="rh-amt">₹64,500</span></div>
+  <h1>Kaveri Logistics — freight for July dispatches</h1>
+  <p class="rh-meta">Vendor invoice payment · Operations / Transport · raised 21 July 2026</p>
+  <div class="rh-status">
+    <span class="pill returned">Returned for correction</span>
+    <span class="waiting you">Waiting on you</span>
+  </div>
+</div>
+
+<div class="banner warn">
+  <span class="b-ico">↩</span>
+  <div>
+    <b>Kavita Rao sent this back on 22 July</b>
+    <p>“The invoice attached is the June one. Attach the July invoice and confirm the lorry receipt
+      numbers, then send it again.”</p>
+  </div>
+</div>
+
+<div class="proto-note d-only">
+  <b>Returned is not rejected.</b> A returned request keeps its number and its history — you correct
+  it and resubmit. A rejected request is final and read-only; the employee raises a new one.
+</div>
+
+<form onsubmit="return false">
+  <fieldset>
+    <legend>Correct and resubmit</legend>
+    <div class="form-grid">
+      <div class="field span-4 m-half"><label for="inv">Invoice number <span class="req">*</span></label><input id="inv" value="KL/2026/0788" aria-invalid="true"><span class="err">This is the June invoice number</span></div>
+      <div class="field span-4 m-half"><label for="idate">Invoice date <span class="req">*</span></label><input id="idate" type="date" value="2026-06-28"></div>
+      <div class="field span-4 money-field"><label for="amt">Amount <span class="req">*</span></label><span class="money-wrap"><span class="cur">₹</span><input id="amt" value="64500"></span><span class="in-words">Sixty four thousand five hundred rupees only</span></div>
+      <div class="field span-12"><label for="lr">Lorry receipt numbers <span class="req">*</span></label><input id="lr" placeholder="LR-4471, LR-4472"></div>
+      <div class="field span-12">
+        <span class="flabel">Documents</span>
+        <div class="stack-8">
+          <div class="file-row"><span class="f-ico">PDF</span><span><b>kaveri-june-invoice.pdf</b><small>Flagged by Kavita as the wrong month</small></span><span class="f-actions"><button type="button" class="btn small outline">Remove</button></span></div>
+          <div class="uploader"><div class="up-ico">⇪</div><b>Attach the July invoice</b><small>PDF, JPG or PNG up to 10 MB</small></div>
+        </div>
+      </div>
+      <div class="field span-12"><label for="reply">Reply to Kavita <span class="opt">optional</span></label><textarea id="reply" placeholder="Tell her what you changed."></textarea></div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Resubmitting sends it back to Kavita Rao.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="request-cancel.html">Cancel this request</a>
+    <a class="btn primary" href="request-detail-employee.html">Resubmit for approval</a>
+  </div>
+</form>
+
+<div class="section-head"><h2>History and conversation</h2></div>
+<ol class="thread">
+  <li><span class="tl-dot brand">＋</span><div class="tl-head"><b>Arun Mehta submitted the request</b><time>21 Jul, 16:22</time></div><div class="tl-body">₹64,500 to Kaveri Logistics against invoice KL/2026/0788.</div></li>
+  <li class="is-comment"><span class="tl-dot">KR</span><div class="tl-head"><b>Kavita Rao</b><time>22 Jul, 08:55</time></div><div class="tl-body"><p>The invoice attached is the June one. Attach the July invoice and confirm the lorry receipt numbers, then send it again.</p></div></li>
+  <li><span class="tl-dot warn">↩</span><div class="tl-head"><b>Kavita Rao returned it for correction</b><time>22 Jul, 08:55</time></div><div class="tl-body">Request unlocked for editing. Reminder clock restarted.</div></li>
+</ol>
+
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reports · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Reports" data-sub="Apr–Jul 2026" data-nav="reports" data-back="dashboard.html" data-action="⤓ Export" data-action-href="reports.html" data-persona-default="manager">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Analysis</div>
+    <h1>Reports</h1>
+    <p class="sub">April 2026 to July 2026 · requests view</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="#">⤓ Export CSV</a></div>
+</section>
+
+<div class="segmented" style="margin-bottom:12px">
+  <a href="#">Monthly</a>
+  <a href="#">Projects</a>
+  <a href="#">Heads</a>
+  <a class="is-active" href="#">Requests</a>
+  <a href="recoverables-dashboard.html">Recoverables</a>
+</div>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field"><label for="fr">From</label><input id="fr" type="month" value="2026-04"></div>
+  <div class="field"><label for="to">To</label><input id="to" type="month" value="2026-07"></div>
+  <div class="field"><label for="pj">Project</label><select id="pj"><option>All projects</option><option>Operations</option><option>Ridge Metro Phase II</option></select></div>
+  <span class="row-end"></span><button class="btn">Run</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input type="month" value="2026-07" aria-label="Month"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="metric-strip">
+  <div class="metric"><span class="metric-label">Requests raised</span><span class="metric-value">136</span><span class="metric-foot">₹1.42 Cr</span></div>
+  <div class="metric good"><span class="metric-label">Approved</span><span class="metric-value">118</span><span class="metric-foot">87% of requests</span></div>
+  <div class="metric warn"><span class="metric-label">Returned or rejected</span><span class="metric-value">14</span><span class="metric-foot">10%</span></div>
+  <div class="metric"><span class="metric-label">Median time to pay</span><span class="metric-value">3.4 d</span><span class="metric-foot">Submission to settlement</span></div>
+</div>
+
+<div class="section-head"><h2>Where the time goes</h2><span class="small muted">Median days per stage</span></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Stage</th><th class="num">Median</th><th class="num">Slowest 10%</th><th class="c">Over 3 days</th><th>Who holds it</th></tr></thead>
+    <tbody>
+      <tr><td class="t-lead" data-label="Stage">Submitted → approved</td><td class="num" data-label="Median">1.2 d</td><td class="num" data-label="Slowest 10%">5.8 d</td><td class="c" data-label="Over 3 days">11</td><td data-label="Who holds it">Managers</td></tr>
+      <tr><td class="t-lead" data-label="Stage">Approved → reserved</td><td class="num" data-label="Median">0.8 d</td><td class="num" data-label="Slowest 10%">3.1 d</td><td class="c" data-label="Over 3 days">4</td><td data-label="Who holds it">Accounts</td></tr>
+      <tr><td class="t-lead" data-label="Stage">Reserved → paid</td><td class="num" data-label="Median">0.6 d</td><td class="num" data-label="Slowest 10%">2.2 d</td><td class="c" data-label="Over 3 days">2</td><td data-label="Who holds it">Accounts</td></tr>
+      <tr><td class="t-lead" data-label="Stage">On hold, when it happens</td><td class="num" data-label="Median">2.4 d</td><td class="num" data-label="Slowest 10%">6.0 d</td><td class="c" data-label="Over 3 days">3</td><td data-label="Who holds it">Requesters</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section-head"><h2>Requests by month</h2></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Period</th><th class="c">Raised</th><th class="c">Approved</th><th class="c">Rejected</th><th class="c">Cancelled</th><th class="num">Paid</th><th class="num">Recoverable</th></tr></thead>
+    <tbody>
+      <tr><td class="t-lead" data-label="Period">April 2026</td><td class="c" data-label="Raised">31</td><td class="c" data-label="Approved">28</td><td class="c" data-label="Rejected">2</td><td class="c" data-label="Cancelled">1</td><td class="num" data-label="Paid">₹34,12,000</td><td class="num" data-label="Recoverable">₹2,00,000</td></tr>
+      <tr><td class="t-lead" data-label="Period">May 2026</td><td class="c" data-label="Raised">34</td><td class="c" data-label="Approved">30</td><td class="c" data-label="Rejected">3</td><td class="c" data-label="Cancelled">1</td><td class="num" data-label="Paid">₹35,80,400</td><td class="num" data-label="Recoverable">₹3,00,000</td></tr>
+      <tr><td class="t-lead" data-label="Period">June 2026</td><td class="c" data-label="Raised">37</td><td class="c" data-label="Approved">33</td><td class="c" data-label="Rejected">2</td><td class="c" data-label="Cancelled">2</td><td class="num" data-label="Paid">₹38,44,900</td><td class="num" data-label="Recoverable">₹0</td></tr>
+      <tr><td class="t-lead" data-label="Period">July 2026</td><td class="c" data-label="Raised">34</td><td class="c" data-label="Approved">27</td><td class="c" data-label="Rejected">1</td><td class="c" data-label="Cancelled">1</td><td class="num" data-label="Paid">₹32,84,100</td><td class="num" data-label="Recoverable">₹2,25,000</td></tr>
+    </tbody>
+    <tfoot><tr><td data-label="">Total</td><td class="c" data-label="Raised">136</td><td class="c" data-label="Approved">118</td><td class="c" data-label="Rejected">8</td><td class="c" data-label="Cancelled">5</td><td class="num" data-label="Paid">₹1,41,21,400</td><td class="num" data-label="Recoverable">₹7,25,000</td></tr></tfoot>
+  </table>
+</div>
+
+<div class="banner info" style="margin-top:14px">
+  <span class="b-ico">i</span>
+  <div>
+    <b>Recoverables are shown separately on purpose</b>
+    <p>The ₹7,25,000 column is money we expect back. It is never added into project spend or the
+      variance grid.</p>
+  </div>
+</div>
+
+</body>
+</html>

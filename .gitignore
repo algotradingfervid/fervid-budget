@@ -5,3 +5,16 @@ data/attachments/*
 data/backups/*
 !data/attachments/.gitkeep
 !data/backups/.gitkeep
+server-linux
+node_modules/
+output/playwright/runtime/
+output/playwright/report/
+output/playwright/test-results/
+output/coverage.out
+output/manual-browser/
+
+# macOS
+.DS_Store
+
+# Derived mockup archive
+mockups.zip

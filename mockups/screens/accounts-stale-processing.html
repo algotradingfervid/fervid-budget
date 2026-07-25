@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reserved too long · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Reserved 26 hours" data-sub="PR-2026-000122" data-nav="accounts-queue" data-back="accounts-queue.html" data-persona-default="accounts">
+
+<div class="banner warn">
+  <span class="b-ico">◷</span>
+  <div>
+    <b>This has been reserved by you for 26 hours</b>
+    <p>A reminder went out at the one-day mark. Nothing is released automatically — a transfer may
+      already be under way, so only you or an authorised colleague can act.</p>
+  </div>
+</div>
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000122</span><span class="rh-amt">₹78,000</span></div>
+  <h1>Kaveri Logistics — June freight balance</h1>
+  <p class="rh-meta">Raised by Vikram Shah · Operations / Transport · needed by 26 July</p>
+  <div class="rh-status">
+    <span class="pill processing">Processing — Priya Nair</span>
+    <span class="waiting" data-for="accounts">Reserved by you since 24 Jul, 12:40</span>
+    <span class="waiting" data-not-for="accounts">Reserved by Priya Nair since 24 Jul, 12:40</span>
+  </div>
+</div>
+
+<div class="proto-note">
+  <b>Why nothing times out.</b> An automatic release would let a second accountant pay an invoice
+  that is already moving through a bank portal. The reminder nudges; a person decides.
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Pick one</h2></div>
+  <div class="a-list">
+    <a href="payment-entry.html"><span class="al-main"><b>Carry on and record the payment</b><small>Opens the payment form with your reservation intact</small></span><span class="al-amt">→</span></a>
+    <a href="accounts-release-reassign.html"><span class="al-main"><b>Release it</b><small>Requires confirming no payment was initiated</small></span><span class="al-amt">→</span></a>
+    <a href="accounts-release-reassign.html"><span class="al-main"><b>Hand it to a colleague</b><small>Stays reserved, assigned to them, with your reason recorded</small></span><span class="al-amt">→</span></a>
+    <a href="request-on-hold.html"><span class="al-main"><b>Put it on hold</b><small>If you are waiting on the requester for something</small></span><span class="al-amt">→</span></a>
+  </div>
+</div>
+
+<div class="section-head"><h2>Who has been told</h2></div>
+<ol class="thread">
+  <li><span class="tl-dot warn">✉</span><div class="tl-head"><b>Stale reservation reminder sent</b><time>25 Jul, 12:40</time></div><div class="tl-body">To Priya Nair, copied to the Accounts group as configured.</div></li>
+  <li><span class="tl-dot brand">◷</span><div class="tl-head"><b>Priya Nair reserved it</b><time>24 Jul, 12:40</time></div><div class="tl-body">Taken from the Accounts queue.</div></li>
+  <li><span class="tl-dot ok">✓</span><div class="tl-head"><b>Kavita Rao approved the request</b><time>23 Jul, 15:10</time></div><div class="tl-body">Sent to Accounts.</div></li>
+</ol>
+
+<div class="action-bar" data-for="admin">
+  <span class="ab-note d-only">Administrators can force a reassignment.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="accounts-release-reassign.html">Reassign with reason</a>
+</div>
+
+</body>
+</html>

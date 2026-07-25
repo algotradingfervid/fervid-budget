@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vendors · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Vendors" data-sub="64 active" data-nav="vendors" data-back="dashboard.html" data-action="＋ Vendor" data-action-href="vendor-detail.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Masters</div>
+    <h1>Vendors</h1>
+    <p class="sub">64 active · 3 missing a GSTIN · bank details visible only with permission</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="#">⤓ Export CSV</a>
+    <a class="btn primary" href="vendor-detail.html">＋ Add vendor</a>
+  </div>
+</section>
+
+<div class="banner warn">
+  <span class="b-ico">⚠</span>
+  <div>
+    <b>3 vendors have no GSTIN</b>
+    <p>They can still be paid. The gap shows up in vendor reporting until someone fills it in.</p>
+  </div>
+  <span class="b-actions"><a class="btn small outline" href="#">Show them</a></span>
+</div>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field search"><label for="q">Search</label><input id="q" placeholder="Name, GSTIN, PAN, city"></div>
+  <div class="field"><label for="ty">Type</label><select id="ty"><option>All types</option><option>Company</option><option>Proprietor</option><option>Individual</option></select></div>
+  <div class="field"><label for="ct">Category</label><select id="ct"><option>All categories</option><option>Materials</option><option>Services</option><option>Logistics</option><option>Printing</option></select></div>
+  <div class="field"><label for="st">Status</label><select id="st"><option>Active</option><option>Inactive</option><option>All</option></select></div>
+  <span class="row-end"></span><button class="btn">Apply</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search vendors…" aria-label="Search vendors"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Vendor</th><th>Type</th><th>GSTIN</th><th>City</th><th class="num">Paid this year</th><th class="c">Open requests</th><th class="c">Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="vendor-detail.html">Sundaram Electricals Pvt Ltd</a><span class="t-sub">Materials · switchgear</span></td>
+        <td data-label="Type">Company</td>
+        <td class="num" data-label="GSTIN">29AABCS1429B1ZQ</td>
+        <td data-label="City">Bengaluru</td>
+        <td class="num" data-label="Paid this year">₹8,40,000</td>
+        <td class="c" data-label="Open requests">1</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="vendor-detail.html">Meridian Facility Services</a><span class="t-sub">Services · housekeeping</span></td>
+        <td data-label="Type">Company</td>
+        <td class="num" data-label="GSTIN">29AACCM7781L1ZR</td>
+        <td data-label="City">Bengaluru</td>
+        <td class="num" data-label="Paid this year">₹9,40,000</td>
+        <td class="c" data-label="Open requests">1</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="vendor-detail.html">Kaveri Logistics</a><span class="t-sub">Logistics · freight</span></td>
+        <td data-label="Type">Proprietor</td>
+        <td class="num" data-label="GSTIN">29ABCPK4419M1Z8</td>
+        <td data-label="City">Hosur</td>
+        <td class="num" data-label="Paid this year">₹4,12,000</td>
+        <td class="c" data-label="Open requests">2</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="vendor-detail.html">Anand Steel Traders</a><span class="t-sub">Materials · TMT and binding wire</span></td>
+        <td data-label="Type">Proprietor</td>
+        <td class="num" data-label="GSTIN">29AAFPA9021J1ZK</td>
+        <td data-label="City">Bengaluru</td>
+        <td class="num" data-label="Paid this year">₹2,88,000</td>
+        <td class="c" data-label="Open requests">1</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="vendor-detail.html">Nova Print Works</a><span class="t-sub">Printing</span></td>
+        <td data-label="Type">Company</td>
+        <td class="num" data-label="GSTIN"><span class="pill warn no-dot">Missing</span></td>
+        <td data-label="City">Chennai</td>
+        <td class="num" data-label="Paid this year">₹1,01,300</td>
+        <td class="c" data-label="Open requests">1</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="vendor-detail.html">Whitefield Estates</a><span class="t-sub">Rent · office landlord</span></td>
+        <td data-label="Type">Company</td>
+        <td class="num" data-label="GSTIN">29AAECW3311P1ZM</td>
+        <td data-label="City">Bengaluru</td>
+        <td class="num" data-label="Paid this year">₹17,50,000</td>
+        <td class="c" data-label="Open requests">0</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Vendor"><a href="vendor-detail.html">Perfect Tools &amp; Hardware</a><span class="t-sub">Materials · consumables</span></td>
+        <td data-label="Type">Proprietor</td>
+        <td class="num" data-label="GSTIN">—</td>
+        <td data-label="City">Bengaluru</td>
+        <td class="num" data-label="Paid this year">₹18,400</td>
+        <td class="c" data-label="Open requests">0</td>
+        <td class="c" data-label="Status"><span class="pill neutral">Inactive</span></td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr><td data-label="">7 shown of 64</td><td data-label=""></td><td data-label=""></td><td data-label=""></td><td class="num" data-label="Paid this year">₹43,49,700</td><td class="c" data-label="Open">6</td><td data-label=""></td></tr>
+    </tfoot>
+  </table>
+</div>
+
+</body>
+</html>

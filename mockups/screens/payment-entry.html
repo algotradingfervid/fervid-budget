@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Record payment · PR-2026-000128 · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Record payment" data-sub="PR-2026-000128" data-nav="accounts-queue" data-back="accounts-queue.html" data-persona-default="accounts">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Accounts · payment entry</div>
+    <h1>Record the payment</h1>
+    <p class="sub">PR-2026-000128 · Sundaram Electricals Pvt Ltd · one request, one payment</p>
+  </div>
+</section>
+
+<div class="reserve-bar">
+  <span class="rb-dot"></span>
+  <b>Reserved by you</b>
+  <span class="rb-meta">since 14:02 today · nobody else can process this request</span>
+  <span class="rb-actions">
+    <a class="btn small outline" href="accounts-release-reassign.html">Release</a>
+  </span>
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-head"><h2>What was approved</h2><a class="small" href="request-detail-employee.html">Open the request →</a></div>
+  <dl class="dl">
+    <div><dt>Approved amount</dt><dd class="big">₹1,00,000</dd></div>
+    <div><dt>Approved by</dt><dd>Kavita Rao · 21 July 2026</dd></div>
+    <div><dt>Payee</dt><dd>Sundaram Electricals Pvt Ltd</dd></div>
+    <div><dt>Bank</dt><dd class="num">HDFC ····4471 · IFSC HDFC0000521</dd></div>
+    <div><dt>Invoice</dt><dd class="num">SE/26-27/1184 · 18 Jul 2026</dd></div>
+    <div><dt>Charge to</dt><dd>Ridge Metro Phase II / Materials</dd></div>
+  </dl>
+</div>
+
+<form onsubmit="return false">
+  <fieldset>
+    <legend>Payment</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label>Approved amount</label>
+        <input value="₹1,00,000" readonly>
+        <span class="hint">A payment can never exceed this. Overpayment means cancelling and raising a new request.</span>
+      </div>
+      <div class="field span-6 money-field">
+        <label for="paid">Amount actually paid <span class="req">*</span></label>
+        <span class="money-wrap"><span class="cur">₹</span><input id="paid" inputmode="decimal" value="98000"></span>
+        <span class="in-words">Ninety eight thousand rupees only</span>
+      </div>
+      <div class="field span-12">
+        <div class="banner warn" id="diff-banner" style="margin:0">
+          <span class="b-ico">⚠</span>
+          <div>
+            <b id="diff-text">₹2,000 less than approved</b>
+            <p>You will be asked whether this settles the obligation in full or leaves a balance due.</p>
+          </div>
+        </div>
+      </div>
+      <div class="field span-4 m-half"><label for="pdate">Paid on <span class="req">*</span></label><input id="pdate" type="date" value="2026-07-25"></div>
+      <div class="field span-4 m-half"><label for="mode">Payment mode <span class="req">*</span></label>
+        <select id="mode"><option>Bank transfer — NEFT</option><option>Bank transfer — RTGS</option><option>UPI</option><option>Cheque</option><option>Cash</option><option>Card</option><option>Other</option></select>
+      </div>
+      <div class="field span-4"><label for="ref">Transaction / UTR reference <span class="req">*</span></label><input id="ref" value="N221260725004417" class="num"></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Proof and notes</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <span class="flabel">Payment advice or proof</span>
+        <div class="stack-8">
+          <div class="file-row"><span class="f-ico">PDF</span><span><b>hdfc-advice-N2212607250044.pdf</b><small>Bank advice · 78 KB</small></span><span class="f-actions"><button type="button" class="btn small outline">Remove</button></span></div>
+          <div class="uploader"><div class="up-ico">⇪</div><b>Add the bank advice</b><small>PDF, JPG or PNG up to 10 MB</small></div>
+        </div>
+      </div>
+      <div class="field span-12">
+        <label for="note">Processing note <span class="opt">optional</span></label>
+        <textarea id="note">₹2,000 TDS deducted under 194C and handled in the statutory return. Net paid to vendor.</textarea>
+        <span class="hint">This system does no tax arithmetic. Record what you did so the trail explains the difference.</span>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Nothing is saved until you confirm on the next step.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="accounts-release-reassign.html">Cancel and release</a>
+    <button class="btn primary" data-open="settle-sheet">Payment settled →</button>
+  </div>
+</form>
+
+<!-- Settlement confirmation -->
+<div class="overlay" id="settle-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head">
+      <div><h2>Confirm the payment</h2><p class="sh-sub">PR-2026-000128 · Sundaram Electricals Pvt Ltd</p></div>
+      <button class="sh-close" data-close="settle-sheet" aria-label="Close">✕</button>
+    </div>
+    <div class="sh-body stack-12">
+      <div class="compare">
+        <div class="cmp-row"><span class="l">Approved</span><span class="v">₹1,00,000</span></div>
+        <div class="cmp-row"><span class="l">Actually paid</span><span class="v">₹98,000</span></div>
+        <div class="cmp-row diff"><span class="l">Difference</span><span class="v">₹2,000 lower ⚠</span></div>
+      </div>
+
+      <div>
+        <span class="flabel" style="margin-bottom:6px">You paid less than was approved. Which is it?</span>
+        <div class="choice">
+          <label class="is-on">
+            <input type="radio" name="settlement" value="settled" checked>
+            <span><b>Fully settled</b><small>The obligation is discharged. Deductions such as TDS or retention were handled outside this system.</small></span>
+            <span class="outcome good">Completed</span>
+          </label>
+          <label>
+            <input type="radio" name="settlement" value="partial">
+            <span><b>Partial payment</b><small>A balance is genuinely still owed to the payee.</small></span>
+            <span class="outcome warn">Manager review</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field" data-when="settlement:partial" hidden>
+        <label for="pr-reason">Why only part was paid <span class="req">*</span></label>
+        <textarea id="pr-reason" placeholder="Kavita Rao reads this when she decides whether to close it."></textarea>
+      </div>
+
+      <div class="banner info" style="margin:0">
+        <span class="b-ico">i</span>
+        <div>
+          <b>Confirming saves the payment</b>
+          <p>It cannot be edited or cancelled afterwards. The request accepts no further payment —
+            any balance needs a fresh request.</p>
+        </div>
+      </div>
+    </div>
+    <div class="sh-foot">
+      <button class="btn outline" data-close="settle-sheet">Go back</button>
+      <span class="row-end"></span>
+      <a class="btn primary" href="payment-detail.html">Confirm and save payment</a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var paid = document.getElementById("paid");
+  var text = document.getElementById("diff-text");
+  var banner = document.getElementById("diff-banner");
+  var approved = 100000;
+  function group(n) {
+    var s = String(n), last3 = s.slice(-3), rest = s.slice(0, -3);
+    return (rest ? rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," : "") + last3;
+  }
+  function sync() {
+    var v = parseFloat(String(paid.value).replace(/[^\d.]/g, "")) || 0;
+    var d = approved - v;
+    banner.className = "banner " + (d === 0 ? "good" : d > 0 ? "warn" : "bad");
+    if (d === 0) text.textContent = "Matches the approved amount exactly";
+    else if (d > 0) text.textContent = "₹" + group(d) + " less than approved";
+    else text.textContent = "₹" + group(-d) + " more than approved — not allowed";
+  }
+  paid.addEventListener("input", sync);
+  paid.addEventListener("blur", sync);
+})();
+</script>
+
+</body>
+</html>

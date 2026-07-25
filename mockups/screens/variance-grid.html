@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Variance grid · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Variance grid" data-sub="July 2026" data-nav="variance-grid" data-back="dashboard.html" data-persona-default="employee">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Budget vs actuals</div>
+    <h1>Variance grid</h1>
+    <p class="sub">July 2026 · 9 heads · remaining = budget − actual</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="#">⤓ Export</a>
+    <a class="btn primary" href="request-new-type.html">＋ New request</a>
+  </div>
+</section>
+
+<div class="metric-strip">
+  <div class="metric"><span class="metric-label">Budget</span><span class="metric-value">₹16.07 L</span></div>
+  <div class="metric"><span class="metric-label">Actual</span><span class="metric-value">₹14.47 L</span></div>
+  <div class="metric good"><span class="metric-label">Remaining</span><span class="metric-value">₹1.60 L</span></div>
+  <div class="metric"><span class="metric-label">Used</span><span class="metric-value">90%</span></div>
+</div>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field"><label for="mo">Month</label><input id="mo" type="month" value="2026-07"></div>
+  <div class="field"><label for="st">Status</label><select id="st"><option>All</option><option>Unbudgeted spend</option><option>Over budget</option><option>Under budget</option><option>On track</option><option>Not paid</option></select></div>
+  <div class="field search"><label for="q">Search</label><input id="q" placeholder="Head or project"></div>
+  <span class="row-end"></span><button class="btn">Apply</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input type="month" value="2026-07" aria-label="Month"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="proto-note">
+  <b>Committed spend is not shown.</b> Approved-but-unpaid requests stay out of this grid for now, as
+  agreed. The column slot is reserved in the layout so it can be switched on later without a redesign.
+</div>
+
+<!-- Desktop matrix -->
+<div class="table-wrap d-only">
+  <table class="grid-matrix">
+    <thead>
+      <tr><th class="pcol">Project</th><th>Head</th><th class="c">Due</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining ₹</th><th class="num">Remaining %</th><th class="c">Used</th><th class="c">Status</th><th class="c">Action</th></tr>
+    </thead>
+    <tbody>
+      <tr class="project-row"><td class="pcol" colspan="2">Operations</td><td></td><td class="num">₹3,12,500</td><td class="num">₹2,04,800</td><td class="num good-num">₹1,07,700</td><td class="num">34%</td><td><span class="usedcell"><span class="vbar ok" style="--pct:66%"><i></i></span><span class="pctxt">66%</span></span></td><td></td><td></td></tr>
+      <tr><td class="pcol"></td><td>Office rent</td><td class="c">05</td><td class="num">₹2,50,000</td><td class="num">₹1,75,000</td><td class="num good-num">₹75,000</td><td class="num">30%</td><td><span class="usedcell"><span class="vbar ok" style="--pct:70%"><i></i></span><span class="pctxt">70%</span></span></td><td class="c"><span class="pill good">Under</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+      <tr><td class="pcol"></td><td>Utilities</td><td class="c">10</td><td class="num">₹45,000</td><td class="num">₹18,400</td><td class="num good-num">₹26,600</td><td class="num">59%</td><td><span class="usedcell"><span class="vbar ok" style="--pct:41%"><i></i></span><span class="pctxt">41%</span></span></td><td class="c"><span class="pill good">Under</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+      <tr><td class="pcol"></td><td>Transport</td><td class="c">15</td><td class="num">₹17,500</td><td class="num">₹11,400</td><td class="num good-num">₹6,100</td><td class="num">35%</td><td><span class="usedcell"><span class="vbar ok" style="--pct:65%"><i></i></span><span class="pctxt">65%</span></span></td><td class="c"><span class="pill good">Under</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+
+      <tr class="project-row"><td class="pcol" colspan="2">People</td><td></td><td class="num">₹10,60,000</td><td class="num">₹9,81,200</td><td class="num good-num">₹78,800</td><td class="num">7%</td><td><span class="usedcell"><span class="vbar warn" style="--pct:93%"><i></i></span><span class="pctxt">93%</span></span></td><td></td><td></td></tr>
+      <tr><td class="pcol"></td><td>Payroll</td><td class="c">01</td><td class="num">₹8,50,000</td><td class="num">₹8,50,000</td><td class="num">₹0</td><td class="num">0%</td><td><span class="usedcell"><span class="vbar warn" style="--pct:100%"><i></i></span><span class="pctxt">100%</span></span></td><td class="c"><span class="pill info">On track</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+      <tr><td class="pcol"></td><td>Contractor fees</td><td class="c">12</td><td class="num">₹1,80,000</td><td class="num">₹1,18,000</td><td class="num good-num">₹62,000</td><td class="num">34%</td><td><span class="usedcell"><span class="vbar ok" style="--pct:66%"><i></i></span><span class="pctxt">66%</span></span></td><td class="c"><span class="pill good">Under</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+      <tr><td class="pcol"></td><td>Staff welfare</td><td class="c">20</td><td class="num">₹30,000</td><td class="num">₹13,200</td><td class="num good-num">₹16,800</td><td class="num">56%</td><td><span class="usedcell"><span class="vbar ok" style="--pct:44%"><i></i></span><span class="pctxt">44%</span></span></td><td class="c"><span class="pill good">Under</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+
+      <tr class="project-row"><td class="pcol" colspan="2">Growth</td><td></td><td class="num">₹2,35,000</td><td class="num">₹2,61,400</td><td class="num bad-num">−₹26,400</td><td class="num">−11%</td><td><span class="usedcell"><span class="vbar bad" style="--pct:100%"><i></i></span><span class="pctxt">111%</span></span></td><td></td><td></td></tr>
+      <tr><td class="pcol"></td><td>Marketing</td><td class="c">08</td><td class="num">₹1,20,000</td><td class="num">₹1,61,400</td><td class="num bad-num">−₹41,400</td><td class="num">−35%</td><td><span class="usedcell"><span class="vbar bad" style="--pct:100%"><i></i></span><span class="pctxt">135%</span></span></td><td class="c"><span class="pill bad">Over</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+      <tr><td class="pcol"></td><td>Travel</td><td class="c">18</td><td class="num">₹65,000</td><td class="num">₹58,000</td><td class="num good-num">₹7,000</td><td class="num">11%</td><td><span class="usedcell"><span class="vbar warn" style="--pct:89%"><i></i></span><span class="pctxt">89%</span></span></td><td class="c"><span class="pill info">On track</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+      <tr><td class="pcol"></td><td>Events</td><td class="c">25</td><td class="num">₹50,000</td><td class="num">₹42,000</td><td class="num good-num">₹8,000</td><td class="num">16%</td><td><span class="usedcell"><span class="vbar ok" style="--pct:84%"><i></i></span><span class="pctxt">84%</span></span></td><td class="c"><span class="pill info">On track</span></td><td class="c"><a class="btn small" href="request-new-form.html">Request</a></td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td colspan="3">Company total</td><td class="num">₹16,07,500</td><td class="num">₹14,47,400</td><td class="num">₹1,60,100</td><td class="num">10%</td><td class="c">90%</td><td></td><td></td></tr>
+    </tfoot>
+  </table>
+</div>
+
+<!-- Mobile accordion -->
+<div class="acc m-only">
+  <div class="acc-item is-open">
+    <button class="acc-head" type="button"><span class="chev">›</span>
+      <span class="ah-main"><b>Operations</b><small>3 heads · 66% used</small></span>
+      <span class="ah-amt"><b>₹1,07,700</b><small class="muted" style="font-size:11px">remaining</small></span>
+    </button>
+    <div class="acc-body">
+      <div class="head-row">
+        <div class="hr-top"><span class="hr-name">Office rent</span><span class="pill good">Under</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹2,50,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹1,75,000</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹75,000</span></span></div>
+        <div class="hr-bar"><span class="vbar ok" style="--pct:70%"><i></i></span></div>
+      </div>
+      <div class="head-row">
+        <div class="hr-top"><span class="hr-name">Utilities</span><span class="pill good">Under</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹45,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹18,400</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹26,600</span></span></div>
+        <div class="hr-bar"><span class="vbar ok" style="--pct:41%"><i></i></span></div>
+      </div>
+      <div class="head-row">
+        <div class="hr-top"><span class="hr-name">Transport</span><span class="pill good">Under</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹17,500</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹11,400</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹6,100</span></span></div>
+        <div class="hr-bar"><span class="vbar ok" style="--pct:65%"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="acc-item">
+    <button class="acc-head" type="button"><span class="chev">›</span>
+      <span class="ah-main"><b>People</b><small>3 heads · 93% used</small></span>
+      <span class="ah-amt"><b>₹78,800</b><small class="muted" style="font-size:11px">remaining</small></span>
+    </button>
+    <div class="acc-body">
+      <div class="head-row"><div class="hr-top"><span class="hr-name">Payroll</span><span class="pill info">On track</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹8,50,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹8,50,000</span></span><span class="hr-fig"><span class="l">Left</span><span class="v">₹0</span></span></div>
+        <div class="hr-bar"><span class="vbar warn" style="--pct:100%"><i></i></span></div></div>
+      <div class="head-row"><div class="hr-top"><span class="hr-name">Contractor fees</span><span class="pill good">Under</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹1,80,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹1,18,000</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹62,000</span></span></div>
+        <div class="hr-bar"><span class="vbar ok" style="--pct:66%"><i></i></span></div></div>
+      <div class="head-row"><div class="hr-top"><span class="hr-name">Staff welfare</span><span class="pill good">Under</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹30,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹13,200</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹16,800</span></span></div>
+        <div class="hr-bar"><span class="vbar ok" style="--pct:44%"><i></i></span></div></div>
+    </div>
+  </div>
+
+  <div class="acc-item">
+    <button class="acc-head" type="button"><span class="chev">›</span>
+      <span class="ah-main"><b>Growth</b><small>3 heads · 111% used</small></span>
+      <span class="ah-amt"><b class="bad-num">−₹26,400</b><small class="muted" style="font-size:11px">over</small></span>
+    </button>
+    <div class="acc-body">
+      <div class="head-row"><div class="hr-top"><span class="hr-name">Marketing</span><span class="pill bad">Over</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹1,20,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹1,61,400</span></span><span class="hr-fig"><span class="l">Left</span><span class="v bad-num">−₹41,400</span></span></div>
+        <div class="hr-bar"><span class="vbar bad" style="--pct:100%"><i></i></span></div></div>
+      <div class="head-row"><div class="hr-top"><span class="hr-name">Travel</span><span class="pill info">On track</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹65,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹58,000</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹7,000</span></span></div>
+        <div class="hr-bar"><span class="vbar warn" style="--pct:89%"><i></i></span></div></div>
+      <div class="head-row"><div class="hr-top"><span class="hr-name">Events</span><span class="pill info">On track</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹50,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹42,000</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹8,000</span></span></div>
+        <div class="hr-bar"><span class="vbar ok" style="--pct:84%"><i></i></span></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card m-only" style="margin-top:10px">
+  <div class="card-head"><h2>Company total</h2></div>
+  <dl class="dl">
+    <div><dt>Budget</dt><dd class="big">₹16,07,500</dd></div>
+    <div><dt>Actual</dt><dd class="big">₹14,47,400</dd></div>
+    <div><dt>Remaining</dt><dd class="big">₹1,60,100</dd></div>
+    <div><dt>Used</dt><dd class="big">90%</dd></div>
+  </dl>
+</div>
+
+<div class="card" data-for="admin" style="margin-top:14px">
+  <div class="card-head"><h2>Month close</h2><span class="pill neutral">Open</span></div>
+  <div class="card-body">
+    <p class="muted" style="margin-top:0">1 head is over budget and 0 are unpaid. Review before closing.</p>
+    <div class="form-grid">
+      <div class="field span-8"><label for="lock-reason">Lock reason</label><input id="lock-reason" placeholder="Month closed after review"></div>
+      <div class="field span-4" style="align-self:end"><button class="btn danger">Lock July 2026</button></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

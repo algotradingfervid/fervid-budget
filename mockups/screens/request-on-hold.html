@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR-2026-000127 on hold · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="PR-2026-000127" data-sub="On hold" data-nav="requests-list" data-back="requests-list.html" data-persona-default="employee">
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000127</span><span class="rh-amt">₹25,000</span></div>
+  <h1>Site mobilisation advance</h1>
+  <p class="rh-meta">Employee advance · <span class="pill recoverable">Recoverable · Employee advance</span> · raised 19 July 2026</p>
+  <div class="rh-status">
+    <span class="pill hold">On hold</span>
+    <span class="waiting you" data-for="employee">Waiting on you</span>
+    <span class="waiting" data-for="manager,admin">Waiting on Arun Mehta</span>
+    <span class="waiting" data-for="accounts">Waiting on Arun Mehta to clarify</span>
+  </div>
+</div>
+
+<div class="banner warn">
+  <span class="b-ico">⏸</span>
+  <div>
+    <b>Priya Nair put this on hold on 21 July</b>
+    <p>“Which site is this for? The advance says Ridge Metro but the expected settlement date is
+      after the survey ends. Confirm the site and the return date.”</p>
+  </div>
+</div>
+
+<div class="proto-note d-only">
+  <b>Only Accounts can lift a hold.</b> The employee answers, and the accountant who raised it
+  decides whether the answer is enough. Nobody else can release it.
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Details</h2><span class="pill recoverable">Excluded from budget actuals</span></div>
+  <dl class="dl">
+    <div><dt>Amount</dt><dd class="big">₹25,000</dd></div>
+    <div><dt>Category</dt><dd>Employee advance</dd></div>
+    <div><dt>Paid to</dt><dd>Arun Mehta</dd></div>
+    <div><dt>Expected settlement</dt><dd>15 August 2026</dd></div>
+    <div><dt>Related project</dt><dd>Ridge Metro Phase II</dd></div>
+    <div><dt>Approver</dt><dd>Kavita Rao · approved 20 July</dd></div>
+    <div style="grid-column:1/-1"><dt>Repayment terms</dt><dd>Settled against actual site expenses on return, unspent balance repaid in cash.</dd></div>
+  </dl>
+</div>
+
+<div class="section-head"><h2>History and conversation</h2></div>
+<ol class="thread">
+  <li><span class="tl-dot brand">＋</span><div class="tl-head"><b>Arun Mehta submitted the request</b><time>19 Jul, 09:12</time></div><div class="tl-body">₹25,000 employee advance, marked recoverable.</div></li>
+  <li><span class="tl-dot ok">✓</span><div class="tl-head"><b>Kavita Rao approved the request</b><time>20 Jul, 10:30</time></div><div class="tl-body">Sent to Accounts.</div></li>
+  <li class="is-comment"><span class="tl-dot">PN</span><div class="tl-head"><b>Priya Nair</b><time>21 Jul, 15:48</time></div><div class="tl-body"><p>Which site is this for? The advance says Ridge Metro but the expected settlement date is after the survey ends. Confirm the site and the return date.</p></div></li>
+  <li><span class="tl-dot warn">⏸</span><div class="tl-head"><b>Priya Nair placed the request on hold</b><time>21 Jul, 15:48</time></div><div class="tl-body">Payment blocked until the hold is lifted by Accounts.</div></li>
+</ol>
+
+<!-- Employee: answer the hold -->
+<div class="comment-box" data-for="employee">
+  <label for="clarify" class="flabel">Answer Priya</label>
+  <textarea id="clarify">Ridge Metro Phase II, Yelahanka stretch. The survey now runs to 8 August, so 15 August for settlement is right. Approval mail from the client attached.</textarea>
+  <div class="cb-actions">
+    <button class="btn small outline" type="button">📎 Attach file</button>
+    <span class="row-end"></span>
+    <button class="btn primary small" type="button">Send clarification</button>
+  </div>
+</div>
+
+<div class="action-bar" data-for="employee">
+  <span class="ab-note d-only">Only Accounts can take this off hold.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="request-cancel.html">Request cancellation</a>
+</div>
+
+<!-- Accounts: decide on the clarification -->
+<div data-for="accounts,admin">
+  <div class="banner info" style="margin-top:14px">
+    <span class="b-ico">i</span>
+    <div>
+      <b>Arun Mehta answered 6 minutes ago</b>
+      <p>Read the clarification above, then release the hold or ask for more.</p>
+    </div>
+  </div>
+  <div class="comment-box">
+    <label for="acc-note" class="flabel">Note for the record <span class="opt">optional</span></label>
+    <textarea id="acc-note" placeholder="Why you are releasing or keeping the hold."></textarea>
+  </div>
+  <div class="action-bar">
+    <span class="ab-note d-only">Releasing returns it to Approved — awaiting payment.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="request-on-hold.html">Keep on hold</a>
+    <a class="btn danger outline" href="request-cancel.html">Cancellation needed</a>
+    <a class="btn primary" href="accounts-queue.html">Release hold</a>
+  </div>
+</div>
+
+<div class="action-bar" data-for="manager">
+  <span class="ab-note d-only">Accounts owns this hold. You can watch but not release it.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="approvals-list.html">Back to approvals</a>
+</div>
+
+</body>
+</html>

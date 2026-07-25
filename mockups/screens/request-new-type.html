@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New request · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="New request" data-sub="Step 1 of 2 · pick a type" data-nav="requests-list" data-back="dashboard.html" data-persona-default="employee">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">New request · step 1 of 2</div>
+    <h1>What are you asking to be paid?</h1>
+    <p class="sub">Pick a type. The form only asks for what that type needs.</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="dashboard.html">Cancel</a></div>
+</section>
+
+<div class="proto-note d-only">
+  <b>Mockup note.</b> There are no drafts. A request exists only once it is submitted, and it gets its
+  number at that moment.
+</div>
+
+<div class="type-grid">
+  <a class="type-card" href="request-new-form.html">
+    <span class="tc-ico">▤</span>
+    <b>Vendor invoice payment</b>
+    <p>You have an invoice from a vendor and it needs paying.</p>
+    <span class="tc-tag pill neutral no-dot">Needs invoice number and date</span>
+  </a>
+
+  <a class="type-card" href="request-new-form.html">
+    <span class="tc-ico">◷</span>
+    <b>Vendor advance</b>
+    <p>Money to a vendor before any invoice exists — a deposit against an order.</p>
+    <span class="tc-tag pill neutral no-dot">Needs a reason for the advance</span>
+  </a>
+
+  <a class="type-card" href="request-new-form.html">
+    <span class="tc-ico">↺</span>
+    <b>Reimbursement</b>
+    <p>You already spent your own money for the company and want it back.</p>
+    <span class="tc-tag pill neutral no-dot">Paid to you · needs the expense date</span>
+  </a>
+
+  <a class="type-card" href="request-new-form.html">
+    <span class="tc-ico">₹</span>
+    <b>Employee advance</b>
+    <p>Money to you up front for organisation spending you are about to make.</p>
+    <span class="tc-tag pill recoverable">Usually recoverable</span>
+  </a>
+</div>
+
+<div class="banner info" style="margin-top:16px">
+  <span class="b-ico">?</span>
+  <div>
+    <b>Not sure which one?</b>
+    <p>If the money leaves the company and never comes back, it is an expense. If it is a deposit,
+      a guarantee, or something you will repay, pick the type that fits and mark it recoverable on
+      the next screen.</p>
+  </div>
+</div>
+
+</body>
+</html>

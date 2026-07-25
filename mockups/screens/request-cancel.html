@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Request cancellation · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Request cancellation" data-sub="PR-2026-000128" data-nav="requests-list" data-back="request-detail-employee.html" data-persona-default="employee">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">PR-2026-000128 · approved, awaiting payment</div>
+    <h1>Ask for this to be cancelled</h1>
+    <p class="sub">Approved requests cannot be withdrawn on your own. Your manager decides.</p>
+  </div>
+</section>
+
+<div class="banner warn">
+  <span class="b-ico">⏸</span>
+  <div>
+    <b>Payment freezes the moment you ask</b>
+    <p>Accounts cannot reserve or pay this request while a cancellation is pending. If an accountant
+      has already reserved it, they are told immediately.</p>
+  </div>
+</div>
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000128</span><span class="rh-amt">₹1,00,000</span></div>
+  <h1>July switchgear supply — Sundaram Electricals</h1>
+  <p class="rh-meta">Approved by Kavita Rao on 21 July · not yet reserved by Accounts</p>
+  <div class="rh-status"><span class="pill approved">Approved — awaiting payment</span></div>
+</div>
+
+<form onsubmit="return false">
+  <fieldset>
+    <legend>Why should it be cancelled</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label for="reason">Reason <span class="req">*</span></label>
+        <textarea id="reason" placeholder="Say what changed. Kavita Rao sees exactly this.">Vendor has withdrawn the invoice — two of the four panels were short-supplied and they will reissue for the correct quantity.</textarea>
+      </div>
+      <div class="field span-12">
+        <span class="flabel">What happens next</span>
+        <ul class="hint" style="margin:4px 0 0; padding-left:18px">
+          <li>Kavita Rao is notified and the request shows <b>Cancellation requested</b>.</li>
+          <li>If she accepts, the request is cancelled and closed. Nothing can be paid against it.</li>
+          <li>If she declines, it returns to <b>Approved — awaiting payment</b> and Accounts can proceed.</li>
+        </ul>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="row-end"></span>
+    <a class="btn outline" href="request-detail-employee.html">Never mind</a>
+    <a class="btn danger" href="request-detail-employee.html">Send cancellation request</a>
+  </div>
+</form>
+
+</body>
+</html>

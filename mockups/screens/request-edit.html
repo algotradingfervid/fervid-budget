@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit PR-2026-000134 · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Edit request" data-sub="PR-2026-000134" data-nav="requests-list" data-back="request-detail-employee.html" data-persona-default="employee">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">PR-2026-000134 · awaiting approval</div>
+    <h1>Edit request</h1>
+    <p class="sub">Travel reimbursement — Hyderabad site visit</p>
+  </div>
+</section>
+
+<div class="banner info">
+  <span class="b-ico">i</span>
+  <div>
+    <b>Editing tells Kavita Rao again</b>
+    <p>Every change is recorded in the history, notifies your approver, and restarts the three-day
+      reminder clock. Change the approver and it moves to that person instead.</p>
+  </div>
+</div>
+
+<form onsubmit="return false">
+  <fieldset>
+    <legend>Amount and timing</legend>
+    <div class="form-grid">
+      <div class="field span-6 money-field">
+        <label for="amount">Amount <span class="req">*</span></label>
+        <span class="money-wrap"><span class="cur">₹</span><input id="amount" inputmode="decimal" value="18400"></span>
+        <span class="in-words">Eighteen thousand four hundred rupees only</span>
+        <span class="hint">Was ₹16,900 when submitted.</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="needed">Needed by <span class="req">*</span></label>
+        <input id="needed" type="date" value="2026-07-29">
+      </div>
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" name="urgent" checked> Marked urgent</label>
+      </div>
+      <div class="field span-12" data-when="urgent:on">
+        <label for="ureason">Why is it urgent <span class="req">*</span></label>
+        <input id="ureason" value="Personal card bill is due on 29 July">
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Expense</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half"><label>Paid to</label><input value="Arun Mehta" readonly></div>
+      <div class="field span-6 m-half"><label for="edate">Expense date <span class="req">*</span></label><input id="edate" type="date" value="2026-07-17"></div>
+      <div class="field span-6 m-half"><label for="proj">Project <span class="req">*</span></label><select id="proj"><option selected>Operations</option><option>Ridge Metro Phase II</option></select></div>
+      <div class="field span-6 m-half"><label for="hd">Head <span class="req">*</span></label><select id="hd"><option selected>Travel</option><option>Staff welfare</option></select></div>
+      <div class="field span-12"><label for="purp">Purpose <span class="req">*</span></label>
+        <textarea id="purp">Flight and two nights' hotel for the Hyderabad substation inspection on 17–18 July. Adding the airport cab receipts that came in late.</textarea>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Documents</legend>
+    <div class="stack-8">
+      <div class="file-row"><span class="f-ico">PDF</span><span><b>indigo-boarding-pass.pdf</b><small>92 KB</small></span><span class="f-actions"><button type="button" class="btn small outline">Remove</button></span></div>
+      <div class="file-row"><span class="f-ico">JPG</span><span><b>hotel-invoice.jpg</b><small>1.2 MB</small></span><span class="f-actions"><button type="button" class="btn small outline">Remove</button></span></div>
+      <div class="uploader"><div class="up-ico">⇪</div><b>Add the cab receipts</b><small>PDF, JPG or PNG up to 10 MB</small></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Approver</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="apr">Approver <span class="req">*</span></label>
+        <select id="apr"><option selected>Kavita Rao — Manager, Operations</option><option>Rakesh Iyer — Manager, Projects</option></select>
+        <span class="hint">Changing this moves the request to the new approver and notifies them.</span>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">3 changes will be recorded.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="request-detail-employee.html">Discard changes</a>
+    <a class="btn primary" href="request-detail-employee.html">Save and notify Kavita</a>
+  </div>
+</form>
+
+</body>
+</html>

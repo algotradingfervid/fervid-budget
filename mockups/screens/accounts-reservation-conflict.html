@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Already taken · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Already taken" data-sub="PR-2026-000130" data-nav="accounts-queue" data-back="accounts-queue.html" data-persona-default="accounts">
+
+<div class="banner bad">
+  <span class="b-ico">✕</span>
+  <div>
+    <b>Deepak Menon took this request 4 seconds before you</b>
+    <p>PR-2026-000130 is now reserved by him. Nothing you typed has been saved, and no payment was
+      created.</p>
+  </div>
+</div>
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000130</span><span class="rh-amt">₹33,500</span></div>
+  <h1>Anand Steel Traders — TMT bar advance</h1>
+  <p class="rh-meta">Vendor advance · Ridge Metro Phase II / Materials · approved 24 July</p>
+  <div class="rh-status">
+    <span class="pill processing">Processing — Deepak Menon</span>
+    <span class="waiting">Reserved at 15:41 today</span>
+  </div>
+</div>
+
+<div class="proto-note">
+  <b>Why this screen exists.</b> Two accountants opening the same request is the one failure that
+  loses real money — the same invoice paid twice. The reservation is taken atomically, so exactly one
+  person wins and the other sees this before typing anything into a bank portal.
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>What you can do</h2></div>
+  <div class="a-list">
+    <a href="accounts-queue.html"><span class="al-main"><b>Go back to the queue</b><small>6 other approved requests are unclaimed</small></span><span class="al-amt">→</span></a>
+    <a href="accounts-release-reassign.html"><span class="al-main"><b>Ask for it to be reassigned</b><small>Needs reassign permission · Deepak is told and must confirm no payment was started</small></span><span class="al-amt">→</span></a>
+    <a href="request-detail-employee.html"><span class="al-main"><b>Open the request read-only</b><small>You can see it and comment, but not pay it</small></span><span class="al-amt">→</span></a>
+  </div>
+</div>
+
+<div class="action-bar">
+  <span class="row-end"></span>
+  <a class="btn outline" href="payment-request-picker.html">Pick another request</a>
+  <a class="btn primary" href="accounts-queue.html">Back to queue</a>
+</div>
+
+</body>
+</html>

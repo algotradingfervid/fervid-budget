@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New request · form · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="New request" data-sub="Step 2 of 2" data-nav="requests-list" data-back="request-new-type.html" data-persona-default="employee">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">New request · step 2 of 2</div>
+    <h1>Vendor invoice payment</h1>
+    <p class="sub">One form that changes with what you pick. Nothing is saved until you submit.</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="request-new-type.html">← Change type</a></div>
+</section>
+
+<div class="proto-note">
+  <b>Try it.</b> Change <em>Request type</em> and <em>How should this be treated</em> — the form adds
+  and removes sections live. Type an amount and tab out to see the amount spelled back to you.
+</div>
+
+<form onsubmit="return false">
+
+  <fieldset>
+    <legend>What is this for</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="rtype">Request type <span class="req">*</span></label>
+        <select id="rtype" name="rtype">
+          <option value="vendor_invoice" selected>Vendor invoice payment</option>
+          <option value="vendor_advance">Vendor advance</option>
+          <option value="reimbursement">Reimbursement</option>
+          <option value="employee_advance">Employee advance</option>
+        </select>
+      </div>
+      <div class="field span-6">
+        <label for="purpose-short">Short title <span class="req">*</span></label>
+        <input id="purpose-short" value="July switchgear supply — Sundaram Electricals">
+        <span class="hint">What your manager will see in their approval list.</span>
+      </div>
+
+      <div class="field span-12">
+        <span class="flabel">How should this be treated <span class="req">*</span></span>
+        <div class="choice">
+          <label class="is-on">
+            <input type="radio" name="treatment" value="budget" checked>
+            <span><b>Budget expense</b><small>Money spent and gone. Counts against a project and head.</small></span>
+          </label>
+          <label>
+            <input type="radio" name="treatment" value="recoverable">
+            <span><b>Refundable or recoverable</b><small>A deposit, guarantee, loan or advance you expect back. Kept out of budget actuals.</small></span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <!-- Budget expense: project and head are mandatory -->
+  <fieldset data-when="treatment:budget">
+    <legend>Charge it to</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half">
+        <label for="project">Project <span class="req">*</span></label>
+        <select id="project">
+          <option>Operations</option>
+          <option selected>Ridge Metro Phase II</option>
+          <option>People</option>
+          <option>Growth</option>
+          <option>Coastal Substation</option>
+        </select>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="head">Head <span class="req">*</span></label>
+        <select id="head">
+          <option selected>Materials</option>
+          <option>Contractor fees</option>
+          <option>Site utilities</option>
+          <option>Transport</option>
+        </select>
+      </div>
+      <div class="field span-12">
+        <div class="banner info" style="margin:0">
+          <span class="b-ico">▥</span>
+          <div>
+            <b>Ridge Metro Phase II · Materials</b>
+            <p>Budget ₹8,50,000 · spent ₹6,12,000 · ₹2,38,000 remaining this month.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <!-- Recoverable: category drives the rest -->
+  <fieldset data-when="treatment:recoverable" hidden>
+    <legend>Recoverable details</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half">
+        <label for="rcategory">Category <span class="req">*</span></label>
+        <select id="rcategory" name="rcategory">
+          <option value="emd" selected>EMD — earnest money deposit</option>
+          <option value="pbg">PBG — performance bank guarantee</option>
+          <option value="icd">ICD — inter-corporate deposit</option>
+          <option value="employee_advance">Employee advance</option>
+          <option value="security_deposit">Security deposit</option>
+          <option value="other">Other</option>
+        </select>
+        <span class="hint">Categories are maintained by your administrator.</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="expected-return">Expected return date <span class="req">*</span></label>
+        <input id="expected-return" type="date" value="2026-11-30">
+      </div>
+
+      <div class="field span-6 m-half" data-when="rcategory:emd|pbg">
+        <label for="rproject">Related project <span class="req">*</span></label>
+        <select id="rproject">
+          <option selected>Ridge Metro Phase II</option>
+          <option>Coastal Substation</option>
+        </select>
+        <span class="hint">EMD and PBG always belong to a project.</span>
+      </div>
+
+      <div class="field span-6 m-half" data-when="rcategory:icd" hidden>
+        <label for="counterparty">Counterparty company <span class="req">*</span></label>
+        <input id="counterparty" placeholder="Company receiving the deposit">
+      </div>
+
+      <div class="field span-6 m-half" data-when="rcategory:employee_advance" hidden>
+        <label>Employee</label>
+        <input value="Arun Mehta" readonly>
+        <span class="hint">Always the person raising the request.</span>
+      </div>
+
+      <div class="field span-12">
+        <label for="terms">Repayment or refund terms <span class="req">*</span></label>
+        <textarea id="terms">Refundable on completion of the tender process. Bank guarantee reference to follow from the client.</textarea>
+      </div>
+
+      <div class="field span-12">
+        <div class="banner brand" style="margin:0">
+          <span class="b-ico">↩</span>
+          <div>
+            <b>This will not touch budget actuals</b>
+            <p>It appears in Recoverable payments instead. Tracking the money coming back is not part
+              of this version.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Amount and timing</legend>
+    <div class="form-grid">
+      <div class="field span-6 money-field">
+        <label for="amount">Amount <span class="req">*</span></label>
+        <span class="money-wrap"><span class="cur">₹</span><input id="amount" inputmode="decimal" value="100000"></span>
+        <span class="in-words">One lakh rupees only</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="needed-by">Needed by <span class="req">*</span></label>
+        <input id="needed-by" type="date" value="2026-07-31">
+      </div>
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" name="urgent"> Mark this urgent</label>
+        <span class="hint">Urgent requests follow the same approval rules. They send an immediate
+          email to your manager, and to Accounts once approved.</span>
+      </div>
+      <div class="field span-12" data-when="urgent:on" hidden>
+        <label for="urgency-reason">Why is it urgent <span class="req">*</span></label>
+        <input id="urgency-reason" placeholder="Supply stops if this is not cleared by Monday">
+      </div>
+    </div>
+  </fieldset>
+
+  <!-- Vendor invoice -->
+  <fieldset data-when="rtype:vendor_invoice">
+    <legend>Vendor and invoice</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="vendor">Vendor <span class="req">*</span></label>
+        <span class="combo">
+          <input class="combo-input" id="vendor" value="Sundaram Electricals Pvt Ltd">
+          <span class="combo-caret">▾</span>
+        </span>
+        <span class="hint">Type to search the vendor master, or add a new vendor without leaving
+          this form. Bank details stay in the vendor record — never on this form.</span>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="invoice-no">Invoice number <span class="req">*</span></label>
+        <input id="invoice-no" value="SE/26-27/1184">
+      </div>
+      <div class="field span-3 m-half">
+        <label for="invoice-date">Invoice date <span class="req">*</span></label>
+        <input id="invoice-date" type="date" value="2026-07-18">
+      </div>
+    </div>
+  </fieldset>
+
+  <!-- Vendor advance -->
+  <fieldset data-when="rtype:vendor_advance" hidden>
+    <legend>Vendor and advance</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="vendor2">Vendor <span class="req">*</span></label>
+        <input id="vendor2" value="Anand Steel Traders">
+      </div>
+      <div class="field span-6">
+        <label for="advance-reason">Reason for the advance <span class="req">*</span></label>
+        <input id="advance-reason" value="40% booking amount against purchase order PO-2026-0417">
+      </div>
+    </div>
+  </fieldset>
+
+  <!-- Reimbursement -->
+  <fieldset data-when="rtype:reimbursement" hidden>
+    <legend>Your expense</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half">
+        <label>Paid to</label>
+        <input value="Arun Mehta" readonly>
+        <span class="hint">Reimbursements always pay the person raising them.</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="expense-date">Expense date <span class="req">*</span></label>
+        <input id="expense-date" type="date" value="2026-07-21">
+      </div>
+    </div>
+  </fieldset>
+
+  <!-- Employee advance -->
+  <fieldset data-when="rtype:employee_advance" hidden>
+    <legend>Advance details</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half">
+        <label>Paid to</label>
+        <input value="Arun Mehta" readonly>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="adv-return">Expected settlement date <span class="req">*</span></label>
+        <input id="adv-return" type="date" value="2026-08-15">
+      </div>
+      <div class="field span-12">
+        <label for="adv-reason">What the money is for <span class="req">*</span></label>
+        <input id="adv-reason" value="Site mobilisation cash for Ridge Metro survey crew">
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Purpose and documents</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label for="purpose">Purpose <span class="req">*</span></label>
+        <textarea id="purpose">Supply of 11kV switchgear panels for the Ridge Metro Phase II substation, delivered on 16 July against PO-2026-0392.</textarea>
+      </div>
+      <div class="field span-12">
+        <span class="flabel">Supporting document <span class="opt">optional</span></span>
+        <div class="stack-8">
+          <div class="file-row">
+            <span class="f-ico">PDF</span>
+            <span><b>SE-26-27-1184.pdf</b><small>Invoice · 214 KB</small></span>
+            <span class="f-actions"><button type="button" class="btn small outline">Remove</button></span>
+          </div>
+          <div class="uploader">
+            <div class="up-ico">⇪</div>
+            <b>Add invoice, receipt or proof</b>
+            <small>PDF, JPG or PNG up to 10 MB</small>
+          </div>
+          <p class="hint" style="margin:0">Your administrator can make attachments compulsory. When
+            that is on, submitting without one asks you for a reason instead of blocking you.</p>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Who approves it</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="approver">Approver <span class="req">*</span></label>
+        <select id="approver">
+          <option selected>Kavita Rao — Manager, Operations (your default)</option>
+          <option>Rakesh Iyer — Manager, Projects</option>
+          <option>Naren Dhupati — Administrator</option>
+        </select>
+        <span class="hint">You cannot approve your own request. Your own name is never in this list.</span>
+      </div>
+      <div class="field span-6">
+        <span class="flabel">Reminders</span>
+        <p class="hint" style="margin:4px 0 0">If nothing happens for 3 calendar days, this request
+          starts sending a daily reminder to whoever it is waiting on.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="banner warn">
+    <span class="b-ico">⚠</span>
+    <div>
+      <b>Two similar requests already exist</b>
+      <p>Same vendor and a close amount in the last 30 days. Check before you submit — you can still
+        go ahead.</p>
+      <p class="small" style="margin-top:6px">
+        <a href="request-detail-employee.html">PR-2026-000112</a> · ₹1,00,000 · Sundaram Electricals · paid 2 July<br>
+        <a href="request-detail-employee.html">PR-2026-000128</a> · ₹1,00,000 · Sundaram Electricals · approved, awaiting payment
+      </p>
+    </div>
+    <span class="b-actions"><a class="btn small outline" href="request-duplicate-warning.html">Review both</a></span>
+  </div>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Submitting sends it to Kavita Rao and creates the request number.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="dashboard.html">Cancel</a>
+    <a class="btn primary" href="request-submitted.html">Submit request</a>
+  </div>
+
+</form>
+
+</body>
+</html>

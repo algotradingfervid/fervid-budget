@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recoverable payments · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Recoverables" data-sub="₹14.6 L outstanding" data-nav="recoverables" data-back="dashboard.html" data-action="⤓ Export" data-action-href="recoverables-dashboard.html" data-persona-default="accounts">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Money we expect back</div>
+    <h1>Recoverable payments</h1>
+    <p class="sub">₹14,60,000 outstanding across 11 payments · none of it counts as budget spend</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="#">⤓ Export CSV</a></div>
+</section>
+
+<div class="banner brand">
+  <span class="b-ico">↩</span>
+  <div>
+    <b>Kept out of budget actuals on purpose</b>
+    <p>A deposit is not an expense. These payments never appear in the variance grid or in project
+      spend — they live here until the money comes back.</p>
+  </div>
+</div>
+
+<div class="metric-strip">
+  <div class="metric"><span class="metric-label">Outstanding</span><span class="metric-value">₹14.60 L</span><span class="metric-foot">11 payments</span></div>
+  <div class="metric warn"><span class="metric-label">Past expected return</span><span class="metric-value">₹2.45 L</span><span class="metric-foot">3 payments overdue</span></div>
+  <div class="metric"><span class="metric-label">Due in 30 days</span><span class="metric-value">₹1.25 L</span><span class="metric-foot">2 payments</span></div>
+  <div class="metric"><span class="metric-label">Paid out this month</span><span class="metric-value">₹4.25 L</span><span class="metric-foot">4 payments</span></div>
+</div>
+
+<div class="section-head"><h2>By category</h2><a class="more-link" href="recoverables-list.html">Full list →</a></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Category</th><th class="c">Count</th><th class="num">Outstanding</th><th class="num">Overdue</th><th>Oldest</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Category"><a href="recoverables-list.html">EMD — earnest money deposit</a></td>
+        <td class="c" data-label="Count">4</td><td class="num" data-label="Outstanding">₹6,50,000</td>
+        <td class="num bad-num" data-label="Overdue">₹2,00,000</td><td data-label="Oldest">12 Feb 2026</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Category"><a href="recoverables-list.html">PBG — performance bank guarantee</a></td>
+        <td class="c" data-label="Count">2</td><td class="num" data-label="Outstanding">₹4,00,000</td>
+        <td class="num" data-label="Overdue">—</td><td data-label="Oldest">03 Apr 2026</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Category"><a href="recoverables-list.html">ICD — inter-corporate deposit</a></td>
+        <td class="c" data-label="Count">1</td><td class="num" data-label="Outstanding">₹3,00,000</td>
+        <td class="num" data-label="Overdue">—</td><td data-label="Oldest">18 May 2026</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Category"><a href="recoverables-list.html">Security deposit</a></td>
+        <td class="c" data-label="Count">2</td><td class="num" data-label="Outstanding">₹85,000</td>
+        <td class="num bad-num" data-label="Overdue">₹20,000</td><td data-label="Oldest">30 Jan 2026</td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Category"><a href="recoverables-list.html">Employee advance</a></td>
+        <td class="c" data-label="Count">2</td><td class="num" data-label="Outstanding">₹25,000</td>
+        <td class="num bad-num" data-label="Overdue">₹25,000</td><td data-label="Oldest">19 Jul 2026</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr><td data-label="">Total</td><td class="c" data-label="Count">11</td><td class="num" data-label="Outstanding">₹14,60,000</td><td class="num" data-label="Overdue">₹2,45,000</td><td data-label="Oldest">—</td></tr>
+    </tfoot>
+  </table>
+</div>
+
+<div class="section-head"><h2>By counterparty</h2></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Counterparty</th><th>Type</th><th class="c">Items</th><th class="num">Outstanding</th><th>Expected back</th></tr></thead>
+    <tbody>
+      <tr><td class="t-lead" data-label="Counterparty"><a href="recoverable-detail.html">Ridge Metro tender authority</a></td><td data-label="Type">Government body</td><td class="c" data-label="Items">2</td><td class="num" data-label="Outstanding">₹4,00,000</td><td data-label="Expected back">30 Nov 2026</td></tr>
+      <tr><td class="t-lead" data-label="Counterparty"><a href="recoverable-detail.html">Coastal Power Utilities Ltd</a></td><td data-label="Type">Client</td><td class="c" data-label="Items">2</td><td class="num" data-label="Outstanding">₹4,00,000</td><td data-label="Expected back">15 Jan 2027</td></tr>
+      <tr><td class="t-lead" data-label="Counterparty"><a href="recoverable-detail.html">Harith Infra Pvt Ltd</a></td><td data-label="Type">Group company</td><td class="c" data-label="Items">1</td><td class="num" data-label="Outstanding">₹3,00,000</td><td data-label="Expected back">18 Nov 2026</td></tr>
+      <tr><td class="t-lead" data-label="Counterparty"><a href="recoverable-detail.html">Whitefield Estates</a></td><td data-label="Type">Landlord</td><td class="c" data-label="Items">1</td><td class="num" data-label="Outstanding">₹65,000</td><td data-label="Expected back">On vacating</td></tr>
+      <tr><td class="t-lead" data-label="Counterparty"><a href="recoverable-detail.html">Arun Mehta</a></td><td data-label="Type">Employee</td><td class="c" data-label="Items">1</td><td class="num" data-label="Outstanding">₹25,000</td><td data-label="Expected back">15 Aug 2026</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="banner locked" style="margin-top:14px">
+  <span class="b-ico">i</span>
+  <div>
+    <b>Tracking the money coming back is not in this version</b>
+    <p>A recoverable closes when its payment is made. Repayments, forfeitures, and converting a lost
+      deposit into an expense are deliberately out of scope — they need an accounting adjustment
+      process, not an edit to a completed payment.</p>
+  </div>
+</div>
+
+</body>
+</html>

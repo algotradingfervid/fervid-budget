@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Users · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Users" data-sub="14 active" data-nav="users" data-back="dashboard.html" data-action="＋ User" data-action-href="admin-users.html" data-persona-default="admin">
+
+<section class="page-banner d-only">
+  <div>
+    <div class="eyebrow">Access</div>
+    <h1>Users</h1>
+    <p class="sub">14 active · a person can hold several roles at once</p>
+  </div>
+  <div class="pb-actions"><a class="btn primary" data-open="user-sheet" href="#">＋ Add user</a></div>
+</section>
+
+<form class="toolbar" onsubmit="return false">
+  <div class="field search"><label for="q">Search</label><input id="q" placeholder="Name or email"></div>
+  <div class="field"><label for="ro">Role</label><select id="ro"><option>All roles</option><option>Employee</option><option>Manager</option><option>Accounts</option><option>Administrator</option></select></div>
+  <div class="field"><label for="stt">Status</label><select id="stt"><option>Active</option><option>Inactive</option><option>All</option></select></div>
+  <span class="row-end"></span><button class="btn">Apply</button>
+</form>
+
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search users…" aria-label="Search users"></span>
+  <button class="btn filter-btn">Filters</button>
+</div>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Name</th><th>Email</th><th>Roles</th><th>Default approver</th><th class="c">Status</th><th class="c">Edit</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Name">Arun Mehta</td>
+        <td data-label="Email">arun.mehta@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Employee</span></td>
+        <td data-label="Default approver">Kavita Rao</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Name">Kavita Rao</td>
+        <td data-label="Email">kavita.rao@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Employee</span> <span class="pill neutral no-dot">Manager</span></td>
+        <td data-label="Default approver">Naren Dhupati</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Name">Priya Nair</td>
+        <td data-label="Email">priya.nair@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Employee</span> <span class="pill neutral no-dot">Accounts</span></td>
+        <td data-label="Default approver">Naren Dhupati</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Name">Deepak Menon</td>
+        <td data-label="Email">deepak.menon@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Accounts</span></td>
+        <td data-label="Default approver">Kavita Rao</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Name">Rakesh Iyer</td>
+        <td data-label="Email">rakesh.iyer@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Employee</span> <span class="pill neutral no-dot">Manager</span></td>
+        <td data-label="Default approver">Naren Dhupati</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Name">Sneha Pillai</td>
+        <td data-label="Email">sneha.pillai@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Employee</span></td>
+        <td data-label="Default approver">Kavita Rao</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Name">Naren Dhupati</td>
+        <td data-label="Email">naren@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Administrator</span></td>
+        <td data-label="Default approver">—</td>
+        <td class="c" data-label="Status"><span class="pill good">Active</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Name">Mohan Das</td>
+        <td data-label="Email">mohan.das@fervid.in</td>
+        <td data-label="Roles"><span class="pill neutral no-dot">Employee</span></td>
+        <td data-label="Default approver">Rakesh Iyer</td>
+        <td class="c" data-label="Status"><span class="pill neutral">Inactive</span></td>
+        <td class="c" data-label=""><button class="btn small outline" data-open="user-sheet">Edit</button></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="overlay" id="user-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Kavita Rao</h2><p class="sh-sub">kavita.rao@fervid.in</p></div><button class="sh-close" data-close="user-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="u-name">Name</label><input id="u-name" value="Kavita Rao"></div>
+      <div class="field"><label for="u-mail">Email</label><input id="u-mail" value="kavita.rao@fervid.in"></div>
+      <div class="field"><span class="flabel">Roles</span>
+        <div class="stack-8" style="margin-top:5px">
+          <label class="checkline"><input type="checkbox" checked> Employee — can raise requests</label>
+          <label class="checkline"><input type="checkbox" checked> Manager — can approve</label>
+          <label class="checkline"><input type="checkbox"> Accounts — can record payments</label>
+          <label class="checkline"><input type="checkbox"> Administrator</label>
+        </div>
+      </div>
+      <div class="field"><label for="u-apr">Default approver for her own requests</label>
+        <select id="u-apr"><option selected>Naren Dhupati</option><option>Rakesh Iyer</option></select>
+        <span class="hint">She holds the Manager role, so she cannot be her own approver.</span>
+      </div>
+      <div class="field"><label for="u-pw">Reset password</label><input id="u-pw" type="password" placeholder="Leave blank to keep the current one"></div>
+      <label class="checkline"><input type="checkbox" checked> Active</label>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="user-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" data-close="user-sheet">Save user</button></div>
+  </div>
+</div>
+
+</body>
+</html>

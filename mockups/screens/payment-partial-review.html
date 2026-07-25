@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partial payment review · Fervid Budget</title>
+<link rel="stylesheet" href="../mockup.css">
+<script src="../mockup.js" defer></script>
+</head>
+<body data-title="Partial payment" data-sub="PR-2026-000119" data-nav="approvals" data-back="approvals-list.html" data-persona-default="manager">
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000119</span><span class="rh-amt">₹95,000</span></div>
+  <h1>Nova Print Works — annual report printing</h1>
+  <p class="rh-meta">Raised by Arun Mehta · Growth / Marketing · approved by you on 15 July</p>
+  <div class="rh-status">
+    <span class="pill partial">Partial — manager review</span>
+    <span class="waiting you" data-for="manager,admin">Waiting on you</span>
+    <span class="waiting" data-not-for="manager,admin">Waiting on Kavita Rao</span>
+  </div>
+</div>
+
+<div class="compare" style="margin-bottom:14px">
+  <div class="cmp-row"><span class="l">Approved</span><span class="v">₹95,000</span></div>
+  <div class="cmp-row"><span class="l">Paid on 23 July</span><span class="v">₹60,000</span></div>
+  <div class="cmp-row diff"><span class="l">Still owed to the vendor</span><span class="v">₹35,000</span></div>
+</div>
+
+<div class="banner warn">
+  <span class="b-ico">i</span>
+  <div>
+    <b>Priya Nair marked this a genuine partial payment</b>
+    <p>“Vendor delivered 700 of the 1,000 copies. We paid for what arrived. The rest ships after the
+      cover reprint and they will invoice separately.”</p>
+  </div>
+</div>
+
+<div class="proto-note d-only">
+  <b>Not the same as a deduction.</b> When Accounts pays less but confirms the obligation is settled —
+  TDS, retention — the request closes as Completed and never reaches you. This screen only appears
+  when money is genuinely still owed.
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>The payment that was recorded</h2><span class="pill neutral no-dot">Cannot be edited</span></div>
+  <dl class="dl">
+    <div><dt>Amount paid</dt><dd class="big">₹60,000</dd></div>
+    <div><dt>Paid on</dt><dd>23 July 2026</dd></div>
+    <div><dt>Mode</dt><dd>Bank transfer — NEFT</dd></div>
+    <div><dt>Reference</dt><dd class="num">N221260723009912</dd></div>
+    <div><dt>Recorded by</dt><dd>Priya Nair</dd></div>
+    <div><dt>Proof</dt><dd><a href="#">icici-advice-9912.pdf</a></dd></div>
+  </dl>
+</div>
+
+<div class="section-head"><h2>History and conversation</h2></div>
+<ol class="thread">
+  <li><span class="tl-dot brand">＋</span><div class="tl-head"><b>Arun Mehta submitted the request</b><time>14 Jul, 11:20</time></div><div class="tl-body">₹95,000 to Nova Print Works against invoice NPW/26/0331.</div></li>
+  <li><span class="tl-dot ok">✓</span><div class="tl-head"><b>Kavita Rao approved the request</b><time>15 Jul, 09:02</time></div><div class="tl-body">Sent to Accounts.</div></li>
+  <li><span class="tl-dot brand">◷</span><div class="tl-head"><b>Priya Nair reserved it for processing</b><time>23 Jul, 11:41</time></div><div class="tl-body">Assigned to Priya Nair.</div></li>
+  <li><span class="tl-dot warn">₹</span><div class="tl-head"><b>Priya Nair recorded a payment of ₹60,000</b><time>23 Jul, 12:08</time></div><div class="tl-body">Marked as a partial settlement against ₹95,000 approved. Sent for manager review.</div></li>
+  <li class="is-comment"><span class="tl-dot">PN</span><div class="tl-head"><b>Priya Nair</b><time>23 Jul, 12:09</time></div><div class="tl-body"><p>Vendor delivered 700 of the 1,000 copies. We paid for what arrived. The rest ships after the cover reprint and they will invoice separately.</p></div></li>
+</ol>
+
+<div class="comment-box">
+  <label for="cmt" class="flabel">Reply to Accounts</label>
+  <textarea id="cmt" placeholder="Ask Priya something before you decide."></textarea>
+  <div class="cb-actions"><span class="row-end"></span><button class="btn primary small" type="button">Post comment</button></div>
+</div>
+
+<div class="action-bar" data-for="manager,admin">
+  <span class="ab-note d-only">No further payment can be attached either way.</span>
+  <span class="row-end"></span>
+  <button class="btn outline" data-open="concern-sheet">Raise a concern</button>
+  <button class="btn approve" data-open="close-sheet">Accept and close</button>
+</div>
+
+<div class="action-bar" data-not-for="manager,admin">
+  <span class="ab-note d-only">Kavita Rao decides. You can still comment.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="dashboard.html">Back</a>
+</div>
+
+<div class="overlay" id="close-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Accept ₹60,000 and close?</h2><p class="sh-sub">PR-2026-000119 · ₹35,000 will never be paid against this request</p></div><button class="sh-close" data-close="close-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="compare">
+        <div class="cmp-row"><span class="l">Approved</span><span class="v">₹95,000</span></div>
+        <div class="cmp-row"><span class="l">Paid and accepted</span><span class="v">₹60,000</span></div>
+        <div class="cmp-row diff"><span class="l">Written off from this request</span><span class="v">₹35,000</span></div>
+      </div>
+      <p class="hint" style="margin:0">The request closes as <b>Completed — partial accepted</b>. If
+        the balance is still due later, Arun Mehta raises a new request for ₹35,000.</p>
+      <div class="field"><label for="cl-note">Note <span class="opt">optional</span></label><textarea id="cl-note"></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="close-sheet">Back</button><span class="row-end"></span><a class="btn approve" href="approvals-list.html">Accept and close</a></div>
+  </div>
+</div>
+
+<div class="overlay" id="concern-sheet" hidden>
+  <div class="sheet">
+    <div class="sh-head"><div><h2>Raise a concern</h2><p class="sh-sub">The request stays open as Partial — under discussion</p></div><button class="sh-close" data-close="concern-sheet">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="cn-reason">What is wrong <span class="req">*</span></label><textarea id="cn-reason" placeholder="Accounts can reply in the conversation, but the recorded payment cannot be changed."></textarea></div>
+      <div class="banner warn" style="margin:0"><span class="b-ico">i</span><div><b>This does not reverse anything</b><p>The ₹60,000 has left the bank. Raising a concern keeps the request open so the two of you can agree what happens next.</p></div></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" data-close="concern-sheet">Back</button><span class="row-end"></span><a class="btn primary" href="approvals-list.html">Raise concern</a></div>
+  </div>
+</div>
+
+</body>
+</html>
