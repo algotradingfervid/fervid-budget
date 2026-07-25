@@ -1,4 +1,23 @@
+/* ==========================================================================
+   Fervid Budget — design system behaviours
+   Accordions, overlays/sheets, `[data-when]` conditional reveal, the money
+   field, the mobile More sheet, and the variance-grid project toggle.
+
+   Everything here is progressive enhancement over server-rendered markup.
+   Nothing decides what a user is allowed to see: visibility of permitted
+   actions is settled server-side in the template. `hidden` here is chrome,
+   never a security boundary — every conditional field is re-validated in Go.
+   ========================================================================== */
+
 (function () {
+  "use strict";
+
+  var EMPTY_WORDS = "Enter the amount you are requesting";
+
+  /* ---------------------------------------------------------------- */
+  /* Variance grid — project row collapse                              */
+  /* ---------------------------------------------------------------- */
+
   function toggleProject(button) {
     var projectID = button.getAttribute("data-project-toggle");
     var table = button.closest("table");
@@ -17,9 +36,403 @@
     }
   }
 
-  document.addEventListener("click", function (event) {
-    var button = event.target.closest("[data-project-toggle]");
-    if (!button) return;
-    toggleProject(button);
+  /* ---------------------------------------------------------------- */
+  /* Accordions — .acc-head/.acc-item and .pa-head/.pa-item            */
+  /* ---------------------------------------------------------------- */
+
+  var HEAD_SELECTOR = ".acc-head, .pa-head";
+  var uid = 0;
+
+  function accParts(head) {
+    var item = head.closest(".acc-item, .pa-item");
+    if (!item) return null;
+    var body = item.querySelector(".acc-body, .pa-body");
+    if (!body) return null;
+    return { item: item, body: body };
+  }
+
+  function setAccordion(head, open) {
+    var parts = accParts(head);
+    if (!parts) return;
+    parts.item.classList.toggle("is-open", open);
+    parts.body.hidden = !open;
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!parts.body.id) {
+      uid += 1;
+      parts.body.id = "acc-body-" + uid;
+    }
+    head.setAttribute("aria-controls", parts.body.id);
+  }
+
+  /* The open/closed truth ships in the markup as `is-open` on the item;
+     this republishes it through the button and the body so assistive tech
+     and CSS agree. `.acc-head` should be a real <button type="button">;
+     anything else is upgraded below so it is at least operable. */
+  function initAccordions(root) {
+    Array.prototype.forEach.call(root.querySelectorAll(HEAD_SELECTOR), function (head) {
+      var parts = accParts(head);
+      if (!parts) return;
+      if (head.tagName !== "BUTTON") {
+        head.setAttribute("role", "button");
+        if (!head.hasAttribute("tabindex")) head.setAttribute("tabindex", "0");
+      }
+      setAccordion(head, parts.item.classList.contains("is-open"));
+    });
+  }
+
+  function toggleAccordion(head) {
+    setAccordion(head, head.getAttribute("aria-expanded") === "false");
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Overlays, sheets and the More sheet                               */
+  /* ---------------------------------------------------------------- */
+
+  var FOCUSABLE = [
+    "a[href]",
+    "button:not([disabled])",
+    "input:not([disabled]):not([type='hidden'])",
+    "select:not([disabled])",
+    "textarea:not([disabled])",
+    "[tabindex]:not([tabindex='-1'])"
+  ].join(",");
+
+  /* Stack so a sheet opened from a sheet closes in the right order. */
+  var openDialogs = [];
+
+  function focusables(root) {
+    return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE), function (node) {
+      return node.getClientRects().length > 0;
+    });
+  }
+
+  function dialogIndex(el) {
+    for (var i = openDialogs.length - 1; i >= 0; i -= 1) {
+      if (openDialogs[i].el === el) return i;
+    }
+    return -1;
+  }
+
+  function openDialog(el, opener) {
+    if (!el || dialogIndex(el) !== -1) return;
+    el.hidden = false;
+    openDialogs.push({ el: el, opener: opener || null });
+
+    var list = focusables(el);
+    if (list.length) {
+      list[0].focus();
+    } else {
+      el.setAttribute("tabindex", "-1");
+      el.focus();
+    }
+  }
+
+  function closeDialog(el) {
+    if (!el) return;
+    el.hidden = true;
+    var idx = dialogIndex(el);
+    if (idx === -1) return;
+    var record = openDialogs.splice(idx, 1)[0];
+    /* Focus goes back where the user left it, never to the top of the page. */
+    if (record.opener && document.contains(record.opener)) record.opener.focus();
+  }
+
+  function topDialog() {
+    return openDialogs.length ? openDialogs[openDialogs.length - 1].el : null;
+  }
+
+  /* Escape closes; Tab cycles within the sheet instead of escaping behind it.
+     The mockup had neither — a modal you can tab out of is not a modal. */
+  document.addEventListener("keydown", function (event) {
+    var el = topDialog();
+    if (!el) return;
+
+    if (event.key === "Escape" || event.key === "Esc") {
+      event.preventDefault();
+      closeDialog(el);
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    var list = focusables(el);
+    if (!list.length) {
+      event.preventDefault();
+      return;
+    }
+    var first = list[0];
+    var last = list[list.length - 1];
+    var active = document.activeElement;
+
+    if (!el.contains(active)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
+
+  /* ---------------------------------------------------------------- */
+  /* [data-when="field:value|value"] conditional reveal                */
+  /* ---------------------------------------------------------------- */
+
+  function sourceValue(scope, name) {
+    var all = scope.querySelectorAll('[name="' + name + '"]');
+    if (!all.length) return null;
+
+    var first = all[0];
+    if (first.type === "checkbox") return first.checked ? "on" : "off";
+    if (first.type === "radio") {
+      var checked = scope.querySelector('[name="' + name + '"]:checked');
+      return checked ? checked.value : "";
+    }
+    return first.value;
+  }
+
+  function syncConditionals(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("[data-when]"), function (node) {
+      var rule = node.getAttribute("data-when");
+      var split = rule.indexOf(":");
+      if (split === -1) return;
+
+      var name = rule.slice(0, split);
+      var wanted = rule.slice(split + 1).split("|");
+      /* Prefer the enclosing form so two forms on a page cannot cross-wire. */
+      var scope = node.closest("form") || document;
+      var value = sourceValue(scope, name);
+      if (value === null && scope !== document) value = sourceValue(document, name);
+      if (value === null) return;
+
+      node.hidden = wanted.indexOf(value) === -1;
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Money field — Indian grouping and the amount in words             */
+  /* ---------------------------------------------------------------- */
+
+  function moneyInputs(root) {
+    return Array.prototype.filter.call(root.querySelectorAll(".money-field input"), function (input) {
+      var type = (input.getAttribute("type") || "text").toLowerCase();
+      return type === "text" || type === "tel" || type === "search" || type === "number";
+    });
+  }
+
+  /* Only digits and a single decimal point survive. */
+  function rawAmount(value) {
+    var cleaned = String(value == null ? "" : value).replace(/[^\d.]/g, "");
+    var dot = cleaned.indexOf(".");
+    if (dot === -1) return cleaned;
+    return cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, "");
+  }
+
+  function indianGroup(raw) {
+    var parts = raw.split(".");
+    var whole = parts[0].replace(/^0+(?=\d)/, "");
+    var frac = parts.length > 1 ? parts[1].slice(0, 2) : null;
+    var grouped = whole;
+    if (whole.length > 3) {
+      var last3 = whole.slice(-3);
+      grouped = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
+    }
+    return grouped + (frac === null ? "" : "." + frac);
+  }
+
+  function inWords(n) {
+    n = Math.floor(n);
+    if (n === 0) return "Zero";
+    var a = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+      "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+    var b = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+    function two(x) { return x < 20 ? a[x] : b[Math.floor(x / 10)] + (x % 10 ? " " + a[x % 10] : ""); }
+    function three(x) {
+      return (x > 99 ? a[Math.floor(x / 100)] + " hundred" + (x % 100 ? " " : "") : "") + (x % 100 ? two(x % 100) : "");
+    }
+    var out = [];
+    var crore = Math.floor(n / 10000000); n %= 10000000;
+    var lakh = Math.floor(n / 100000); n %= 100000;
+    var thousand = Math.floor(n / 1000); n %= 1000;
+    if (crore) out.push(three(crore) + " crore");
+    if (lakh) out.push(three(lakh) + " lakh");
+    if (thousand) out.push(three(thousand) + " thousand");
+    if (n) out.push(three(n));
+    var s = out.join(" ");
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  /* Grouping is inserted while typing, so the caret has to be re-anchored to
+     the character it was on rather than to a raw offset. */
+  function significantBefore(value, caret) {
+    var count = 0;
+    for (var i = 0; i < caret && i < value.length; i += 1) {
+      if (/[\d.]/.test(value.charAt(i))) count += 1;
+    }
+    return count;
+  }
+
+  function offsetAfterSignificant(value, count) {
+    if (count <= 0) return 0;
+    var seen = 0;
+    for (var i = 0; i < value.length; i += 1) {
+      if (/[\d.]/.test(value.charAt(i))) {
+        seen += 1;
+        if (seen === count) return i + 1;
+      }
+    }
+    return value.length;
+  }
+
+  function setCaret(input, offset) {
+    try {
+      input.setSelectionRange(offset, offset);
+    } catch (err) {
+      /* Some input types refuse selection APIs; formatting still applied. */
+    }
+  }
+
+  function formatMoney(input, keepCaret) {
+    var field = input.closest(".money-field");
+    var out = field ? field.querySelector(".in-words") : null;
+    var before = input.value;
+    var raw = rawAmount(before);
+    var amount = parseFloat(raw);
+
+    if (!raw || isNaN(amount)) {
+      if (input.value !== raw) input.value = raw;
+      if (out) {
+        out.textContent = EMPTY_WORDS;
+        out.classList.add("empty");
+      }
+      return;
+    }
+
+    var grouped = indianGroup(raw);
+    if (grouped !== before) {
+      var caret = keepCaret && input.selectionStart != null
+        ? significantBefore(before, input.selectionStart)
+        : -1;
+      input.value = grouped;
+      if (caret !== -1) setCaret(input, offsetAfterSignificant(grouped, caret));
+    }
+    if (out) {
+      out.textContent = inWords(amount) + " rupees only";
+      out.classList.remove("empty");
+    }
+  }
+
+  function initMoneyFields(root) {
+    moneyInputs(root).forEach(function (input) {
+      if (input.getAttribute("data-money-bound") === "1") return;
+      input.setAttribute("data-money-bound", "1");
+      input.addEventListener("input", function () { formatMoney(input, true); });
+      input.addEventListener("blur", function () { formatMoney(input, false); });
+      formatMoney(input, false);
+    });
+  }
+
+  /* The field writes grouped digits back into the input, so the grouping is
+     stripped again on the way out. Go accepts commas, but plain digits are
+     one less thing for a handler to get wrong. Capture phase, so this runs
+     before htmx serialises the form. */
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form || typeof form.querySelectorAll !== "function") return;
+    moneyInputs(form).forEach(function (input) {
+      input.value = rawAmount(input.value);
+    });
+  }, true);
+
+  /* ---------------------------------------------------------------- */
+  /* Delegated clicks                                                  */
+  /* ---------------------------------------------------------------- */
+
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (!target || typeof target.closest !== "function") return;
+
+    /* Mobile "More" tab */
+    var moreTab = target.closest(".js-more");
+    if (moreTab) {
+      event.preventDefault();
+      openDialog(document.querySelector(".more-sheet"), moreTab);
+      return;
+    }
+    var moreClose = target.closest(".ms-close");
+    if (moreClose) {
+      event.preventDefault();
+      closeDialog(moreClose.closest(".more-sheet") || document.querySelector(".more-sheet"));
+      return;
+    }
+
+    /* Accordions */
+    var head = target.closest(HEAD_SELECTOR);
+    if (head) {
+      event.preventDefault();
+      toggleAccordion(head);
+      return;
+    }
+
+    /* Declarative overlays */
+    var opener = target.closest("[data-open]");
+    if (opener) {
+      event.preventDefault();
+      openDialog(document.getElementById(opener.getAttribute("data-open")), opener);
+      return;
+    }
+    var closer = target.closest("[data-close]");
+    if (closer) {
+      event.preventDefault();
+      closeDialog(document.getElementById(closer.getAttribute("data-close")));
+      return;
+    }
+
+    /* Backdrop: only the overlay itself, never anything inside the sheet. */
+    if (target.classList && target.classList.contains("overlay")) {
+      closeDialog(target);
+      return;
+    }
+
+    /* Variance grid */
+    var projectToggle = target.closest("[data-project-toggle]");
+    if (projectToggle) {
+      toggleProject(projectToggle);
+    }
+  });
+
+  /* Keyboard parity for any accordion head that is not a real <button>. */
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+    var target = event.target;
+    if (!target || typeof target.closest !== "function") return;
+    var head = target.closest(HEAD_SELECTOR);
+    if (!head || head.tagName === "BUTTON") return;
+    event.preventDefault();
+    toggleAccordion(head);
+  });
+
+  document.addEventListener("change", function () {
+    syncConditionals(document);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Boot, and re-boot after every htmx swap                           */
+  /* ---------------------------------------------------------------- */
+
+  function init() {
+    initAccordions(document);
+    syncConditionals(document);
+    initMoneyFields(document);
+  }
+
+  document.addEventListener("htmx:afterSwap", function () { init(); });
+  document.addEventListener("htmx:load", function () { init(); });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
