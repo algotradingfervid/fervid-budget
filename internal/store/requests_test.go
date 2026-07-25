@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -217,4 +218,41 @@ func TestCanTransition(t *testing.T) {
 			t.Fatalf("status %q missing from the enum", s)
 		}
 	}
+}
+
+func seedRequestActors(t *testing.T, s *Store, ctx context.Context) (requester User, manager User, headID int64) {
+	t.Helper()
+	rid, err := s.CreateUser(ctx, "req@example.com", "Rhea Requester", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mid, err := s.CreateUser(ctx, "mgr@example.com", "Manav Manager", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester, _ = s.UserByID(ctx, rid)
+	manager, _ = s.UserByID(ctx, mid)
+	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headID, err = s.UpsertHead(ctx, 0, projectID, "Rent", "5", true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return requester, manager, headID
+}
+
+// seedTestVendor inserts a Phase-1V vendor row directly; Phase 2 only needs its id.
+func seedTestVendor(t *testing.T, s *Store, ctx context.Context, name string) int64 {
+	t.Helper()
+	res, err := s.DB().ExecContext(ctx, `INSERT INTO vendors(name,vendor_type,status,gstin) VALUES(?,'company','active','29AABCS1429B1ZQ')`, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
