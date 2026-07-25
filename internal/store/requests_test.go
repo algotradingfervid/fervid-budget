@@ -742,3 +742,54 @@ func TestApproveRequestAdjustsAmountAndIsAssignedOnly(t *testing.T) {
 		t.Fatalf("self-approval at approve time = %v, want ErrForbidden", err)
 	}
 }
+
+func TestReturnAndRejectRequireTextAndAreAssignedOnly(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	mk := func() int64 {
+		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
+			ShortTitle: "Advance", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance",
+			ManagerID: mgr.ID, VendorID: vendorID, AdvanceReason: "booking"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	rid := mk()
+	if err := s.ReturnRequest(ctx, mgr, rid, "  "); !errors.Is(err, ErrValidation) {
+		t.Fatalf("return without comment = %v, want ErrValidation", err)
+	}
+	if err := s.ReturnRequest(ctx, mgr, rid, "please attach the quote"); err != nil {
+		t.Fatalf("ReturnRequest: %v", err)
+	}
+	got, _ := s.Request(ctx, rid)
+	if got.Status != "returned" || got.DecisionReason != "please attach the quote" {
+		t.Fatalf("returned = %+v", got)
+	}
+	// Returned can be resubmitted (returned -> pending), keeping its number.
+	if err := s.SubmitRequest(ctx, req, rid); err != nil {
+		t.Fatalf("resubmit returned: %v", err)
+	}
+	after, _ := s.Request(ctx, rid)
+	if after.Number != got.Number {
+		t.Fatalf("resubmission changed the number: %q -> %q", got.Number, after.Number)
+	}
+
+	jid := mk()
+	if err := s.RejectRequest(ctx, mgr, jid, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("reject without reason = %v, want ErrValidation", err)
+	}
+	if err := s.RejectRequest(ctx, mgr, jid, "duplicate of PR-1"); err != nil {
+		t.Fatalf("RejectRequest: %v", err)
+	}
+	got, _ = s.Request(ctx, jid)
+	if got.Status != "rejected" {
+		t.Fatalf("status = %q, want rejected", got.Status)
+	}
+	// Rejected is terminal — cannot resubmit.
+	if err := s.SubmitRequest(ctx, req, jid); !errors.Is(err, ErrValidation) {
+		t.Fatalf("resubmit rejected = %v, want ErrValidation", err)
+	}
+}

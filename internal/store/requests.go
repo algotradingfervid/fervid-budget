@@ -681,3 +681,48 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 	}
 	return tx.Commit()
 }
+
+func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, action, reason, missingMsg string) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("%w: %s", ErrValidation, missingMsg)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.ManagerID != actor.ID {
+		return ErrForbidden
+	}
+	if !canTransition(before.Status, to) {
+		return fmt.Errorf("%w: a %s request cannot be %s", ErrValidation, before.Status, to)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, to, reason, id); err != nil {
+		return err
+	}
+	after := before
+	after.Status, after.DecisionReason = to, reason
+	summary := map[string]string{
+		"returned": " returned request ",
+		"rejected": " rejected request ",
+	}[to]
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: action, EntityType: "payment_request", EntityID: &id,
+		Summary: actor.Name + summary + before.Number + ": " + reason, Before: before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ReturnRequest(ctx context.Context, actor User, id int64, comment string) error {
+	return s.decideRequest(ctx, actor, id, "returned", "return", comment, "a comment is required to return a request")
+}
+
+func (s *Store) RejectRequest(ctx context.Context, actor User, id int64, reason string) error {
+	return s.decideRequest(ctx, actor, id, "rejected", "reject", reason, "a reason is required to reject a request")
+}
