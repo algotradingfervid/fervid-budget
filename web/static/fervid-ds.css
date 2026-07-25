@@ -2367,6 +2367,196 @@ pre {
 .m-only { display: none; }
 
 /* ==========================================================================
+   New components — status pills and the waiting-on line
+   ========================================================================== */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.pill::before {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  content: "";
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.pill.awaiting   { color: var(--info);    background: var(--info-soft);  border-color: var(--info-line); }
+.pill.returned   { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
+.pill.rejected   { color: #8d5a54;        background: var(--surface-2);  border-color: var(--line-2); }
+.pill.approved   { color: var(--brand-2); background: var(--brand-tint); border-color: var(--brand-tint-2); }
+.pill.hold       { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
+.pill.cancelreq  { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
+.pill.cancelled  { color: var(--muted);   background: var(--surface-2);  border-color: var(--line-2); }
+.pill.processing { color: var(--brand-2); background: var(--brand-tint); border-color: var(--brand-tint-2); }
+.pill.partial    { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
+.pill.discussion { color: var(--warn);    background: var(--warn-soft);  border-color: #e0c48b; }
+.pill.completed  { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
+.pill.completed-partial { color: var(--ok); background: var(--surface); border-color: var(--ok); }
+.pill.recoverable { color: #59409a;       background: #ece7f7;           border-color: #d5c9ee; }
+.pill.neutral    { color: var(--muted);   background: var(--surface-2);  border-color: var(--line-2); }
+.pill.good       { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
+.pill.bad        { color: var(--bad);     background: var(--bad-soft);   border-color: var(--bad-line); }
+.pill.info       { color: var(--info);    background: var(--info-soft);  border-color: var(--info-line); }
+
+/* Urgent is a solid fill plus a glyph. As a tint it is indistinguishable
+   from the terracotta .pill.approved. */
+.pill.urgent {
+  color: #fff;
+  background: var(--bad);
+  border-color: var(--bad);
+  letter-spacing: .02em;
+}
+
+.pill.urgent::before {
+  width: auto;
+  height: auto;
+  content: "!";
+  background: none;
+  border-radius: 0;
+  font-weight: 800;
+}
+
+/* Striped and dashed treatments carry "someone is mid-action". */
+.pill.hold,
+.pill.processing {
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .55) 0 5px, transparent 5px 10px);
+}
+
+.pill.discussion { border-style: dashed; }
+.pill.rejected,
+.pill.cancelled { opacity: .78; }
+.pill.no-dot::before { display: none; }
+
+/* The signature element: a plain sentence naming who owes the next action. */
+.waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.waiting::before {
+  content: "→";
+  color: var(--line-2);
+  font-weight: 800;
+}
+
+.waiting.you {
+  color: var(--brand-2);
+  font-weight: 750;
+}
+
+.waiting.you::before { color: var(--brand); }
+
+.waiting.done { color: var(--ok); }
+.waiting.done::before { content: "✓"; color: var(--ok); }
+
+/* Rejected and cancelled are closed, not achieved — never the green tick. */
+.waiting.closed { color: var(--muted-2); }
+.waiting.closed::before { content: "—"; color: var(--line-2); }
+
+/* ==========================================================================
+   New components — banners
+   Adds tone modifiers to .banner without disturbing the legacy
+   `.banner, .alert, .locked-banner, .lock-banner` rule above, which still
+   owns .alert and .locked-banner.
+   ========================================================================== */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  margin-bottom: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+}
+
+.banner .b-ico {
+  flex: none;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.banner b { font-weight: 750; }
+
+.banner p {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+}
+
+.banner .b-actions {
+  display: flex;
+  flex: none;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.banner.info  { background: var(--info-soft);  border-color: var(--info-line);      border-left-color: var(--info); }
+.banner.warn  { background: var(--warn-soft);  border-color: var(--warn-line);      border-left-color: var(--warn); }
+.banner.bad   { background: var(--bad-soft);   border-color: var(--bad-line);       border-left-color: var(--bad); }
+.banner.good  { background: var(--ok-soft);    border-color: var(--ok-line);        border-left-color: var(--ok); }
+.banner.brand { background: var(--brand-tint); border-color: var(--brand-tint-2);   border-left-color: var(--brand); }
+.banner.locked { background: var(--surface-2); border-left-color: var(--muted-2); }
+
+/* A banner with a live feel. */
+.reserve-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  margin-bottom: 14px;
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-tint-2);
+  border-left: 3px solid var(--brand);
+  border-radius: var(--r-sm);
+}
+
+.reserve-bar .rb-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--brand);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(168, 58, 29, .16);
+}
+
+.reserve-bar b {
+  color: var(--brand-2);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.reserve-bar .rb-meta {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.reserve-bar .rb-actions {
+  display: flex;
+  gap: 7px;
+  margin-left: auto;
+}
+
+/* ==========================================================================
    Responsive — two breakpoints, 860 and 560. Nothing else.
    860 is the desktop/mobile line: the shell collapses here exactly once.
    ========================================================================== */
@@ -2378,6 +2568,13 @@ pre {
 
   .m-only { display: revert; }
   .d-only { display: none; }
+
+  .banner { flex-wrap: wrap; }
+
+  .banner .b-actions {
+    width: 100%;
+    margin-left: 0;
+  }
 
   .appshell,
   .app-shell,
