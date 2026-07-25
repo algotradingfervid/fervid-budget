@@ -235,6 +235,45 @@ func (a *App) loadViewableRequest(w http.ResponseWriter, r *http.Request) (store
 	return req, true
 }
 
+// requestDuplicateCheck renders the advisory duplicate warning. It is a read:
+// it answers 200 whether or not anything matched, and POST /requests neither
+// calls it nor consults its result. Legitimate repeat payments exist — the same
+// rent, the same monthly retainer — so the system points and the person
+// decides (G6). Even a failed check must not stand between somebody and their
+// submit, which is why an error here is logged and swallowed.
+func (a *App) requestDuplicateCheck(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	amount, _ := money.ParsePaise(r.FormValue("amount"))
+	payee := r.FormValue("vendor_payee")
+	// A reimbursement or an employee advance carries no vendor row: the store
+	// forces its payee to the requester, so the check has to look for it there
+	// or those two types would never be checked at all.
+	if payeeIsRequester(r.FormValue("type")) {
+		payee = u.Name
+	}
+	similar, err := a.st.SimilarRequests(r.Context(), store.SimilarRequestOptions{
+		ExcludeID: parseID(r.FormValue("request_id")),
+		VendorID:  parseID(r.FormValue("vendor_id")),
+		Payee:     payee,
+		Amount:    amount,
+		InvoiceNo: r.FormValue("invoice_no"),
+	})
+	if err != nil {
+		a.log.ErrorContext(r.Context(), "duplicate check failed", "request_id", requestID(r), "error", err)
+		return
+	}
+	if len(similar) == 0 {
+		return
+	}
+	a.renderPartial(w, r, "request_duplicates", PageData{Similar: similar})
+}
+
+// payeeIsRequester mirrors the store's forcesRequesterPayee. These types never
+// carry a vendor row, so the payee snapshot is the only payee they have.
+func payeeIsRequester(t string) bool {
+	return t == "reimbursement" || t == "employee_advance"
+}
+
 // vendorChoices backs the plain <select> the form falls back to when the
 // combobox cannot run — no JavaScript, or a requester who does not hold
 // vendor:view and so cannot reach GET /vendors/search. Types that never carry a

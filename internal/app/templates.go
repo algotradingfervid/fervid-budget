@@ -913,7 +913,8 @@ const templates = `
     <div class="form-grid">
       <div class="field span-6 money-field">
         <label for="amount">Amount <span class="req">*</span></label>
-        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required
+          hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur"></span>
         <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
       </div>
       <div class="field span-6 m-half">
@@ -978,7 +979,8 @@ const templates = `
       {{if eq .FormType "vendor_invoice"}}
       <div class="field span-3 m-half">
         <label for="invoice-no">Invoice number <span class="req">*</span></label>
-        <input id="invoice-no" name="invoice_no" value="{{.Request2.InvoiceNo}}" required>
+        <input id="invoice-no" name="invoice_no" value="{{.Request2.InvoiceNo}}" required
+               hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur">
       </div>
       <div class="field span-3 m-half">
         <label for="invoice-date">Invoice date <span class="req">*</span></label>
@@ -1076,6 +1078,11 @@ const templates = `
     </div>
   </fieldset>
 
+  {{/* Where the advisory duplicate warning lands. It is never on the path
+       between the requester and the submit button: an empty answer leaves it
+       empty, and a full one only points. */}}
+  <div id="dup-check" aria-live="polite">{{if .Similar}}{{template "request_duplicates" .}}{{end}}</div>
+
   <div class="action-bar">
     <span class="ab-note d-only">Submitting sends it to your approver and creates the request number.</span>
     <span class="row-end"></span>
@@ -1084,6 +1091,35 @@ const templates = `
   </div>
 </form>
 {{template "bottom" .}}
+{{end}}
+
+{{/* The advisory duplicate warning — mockups/screens/request-duplicate-warning.html.
+
+     "A duplicate warning never blocks submission. Legitimate repeat payments
+     exist — the same rent, the same monthly retainer. The system points, the
+     person decides." The endpoint that renders this is a read; the submit does
+     not consult it and cannot be failed by it. */}}
+{{define "request_duplicates"}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">⚠</span>
+  <div>
+    <b>{{if eq (len .Similar) 1}}A similar request already exists{{else}}{{len .Similar}} similar requests already exist{{end}}</b>
+    <p>Same payee and a close amount in the last 30 days. Check before you submit — you can still go ahead.</p>
+    <div class="req-list" style="margin-top:8px">
+      {{range .Similar}}
+      <a class="req-card" href="/requests/{{.ID}}">
+        <span class="rc-top"><span class="rc-no">{{.Number}}</span><span class="rc-amt">{{money .Amount}}</span></span>
+        <span class="rc-title">{{.ShortTitle}}</span>
+        <span class="rc-meta">{{.Vendor}}{{if .InvoiceNo}} · invoice {{.InvoiceNo}}{{end}} · raised {{date .CreatedAt}}</span>
+        <span class="rc-foot">
+          <span class="pill {{pillClass .Status}}">{{reqStatus .Status}}</span>
+          <span class="waiting">{{if eq .Status "approved"}}Waiting on Accounts{{else}}Waiting on {{.ManagerName}}{{end}}</span>
+        </span>
+      </a>
+      {{end}}
+    </div>
+  </div>
+</div>
 {{end}}
 
 {{/* The confirmation — mockups/screens/request-submitted.html.

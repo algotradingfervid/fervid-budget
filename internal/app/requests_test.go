@@ -59,6 +59,27 @@ func (s *appTestServer) seedRequester(email, name, password string) store.User {
 	return u
 }
 
+// postFormHX is postForm with the header htmx sets on every request it makes,
+// so a fragment endpoint is exercised the way the browser will reach it.
+func (s *appTestServer) postFormHX(path string, form url.Values) *http.Response {
+	s.t.Helper()
+	if form == nil {
+		form = url.Values{}
+	}
+	form.Set("csrf", s.csrf())
+	req, err := http.NewRequest(http.MethodPost, s.server.URL+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return resp
+}
+
 // seedSecondApprover returns a user id that holds approval:approve and is never
 // the logged-in requester, so G8 cannot get in a fixture's way.
 func seedSecondApprover(t *testing.T, s *appTestServer) int64 {
@@ -560,6 +581,100 @@ func TestAHandRolledPostCannotEscapeTheTypeRules(t *testing.T) {
 	all, _ := s.st.ListRequests(s.ctx, store.RequestListOptions{Scope: "all"})
 	if len(all) != 0 {
 		t.Fatalf("%d requests exist; every one of those posts should have been refused", len(all))
+	}
+}
+
+// G6: the duplicate check is a read. It renders 200 whether or not anything
+// matched, POST /requests neither calls it nor consults it, and no result it
+// can produce is capable of refusing a submit.
+func TestDuplicateCheckWarnsAndNeverBlocks(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Dup")
+	mgrID := seedSecondApprover(t, s)
+	vendorID := s.seedVendor(store.VendorInput{Name: "Sundaram Electricals Pvt Ltd", VendorType: "company", Status: "active"})
+	requester := s.seedRequester("dup@example.test", "Dup Requester", "RequesterPass123")
+
+	existing, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+		Type: "vendor_invoice", ShortTitle: "June switchgear", ProjectID: 1, HeadID: headID,
+		Amount: 10000000, Purpose: "panels", ManagerID: mgrID, VendorID: vendorID,
+		InvoiceNo: "SE/26-27/1102", InvoiceDate: "2026-06-28"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, err := s.st.Request(s.ctx, existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("dup@example.test", "RequesterPass123")
+	body := responseBody(t, s.postFormHX("/requests/duplicate-check", url.Values{
+		"type": {"vendor_invoice"}, "vendor_id": {strconvFormat(vendorID)},
+		"amount": {"1,00,000.00"}, "invoice_no": {"SE/26-27/1184"}}))
+	if !strings.Contains(body, `class="banner warn"`) {
+		t.Fatalf("the duplicate warning is not a .banner.warn: %s", body)
+	}
+	if !strings.Contains(body, orig.Number) {
+		t.Fatalf("the existing request is not listed: %s", body)
+	}
+	if strings.Contains(body, "<aside") || strings.Contains(strings.ToLower(body), "<!doctype") {
+		t.Fatalf("the duplicate fragment carried the shell: %s", body)
+	}
+	// The wording must not promise a block.
+	lower := strings.ToLower(body)
+	if !strings.Contains(lower, "you can still") && !strings.Contains(lower, "check before you submit") {
+		t.Fatalf("the warning does not say the submit may still proceed: %s", body)
+	}
+
+	// Nothing similar: 200 and an empty fragment, never a 4xx.
+	empty := s.postFormHX("/requests/duplicate-check", url.Values{"type": {"vendor_invoice"},
+		"vendor_id": {strconvFormat(vendorID)}, "amount": {"3.00"}})
+	requireStatus(t, empty, http.StatusOK)
+	if got := strings.TrimSpace(responseBody(t, empty)); got != "" {
+		t.Fatalf("no-match fragment = %q, want empty", got)
+	}
+
+	// G6: the submit goes through anyway, and creates a second request.
+	resp := s.postForm("/requests", url.Values{
+		"type": {"vendor_invoice"}, "treatment": {"budget"}, "short_title": {"July switchgear"},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"1,00,000.00"},
+		"purpose": {"panels"}, "vendor_id": {strconvFormat(vendorID)},
+		"invoice_no": {"SE/26-27/1184"}, "invoice_date": {"2026-07-18"},
+		"manager_id": {strconvFormat(mgrID)},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	all, _ := s.st.ListRequests(s.ctx, store.RequestListOptions{Scope: "all"})
+	if len(all) != 2 {
+		t.Fatalf("the duplicate warning blocked the submit: %d requests exist, want 2", len(all))
+	}
+
+	// The form carries the wiring that asks for the check, and somewhere to put it.
+	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	for _, want := range []string{`hx-post="/requests/duplicate-check"`, `id="dup-check"`} {
+		if !strings.Contains(form, want) {
+			t.Fatalf("the form is missing the duplicate-check wiring %q", want)
+		}
+	}
+}
+
+// A reimbursement carries no vendor row, so its payee is the person raising it.
+// The check has to know that, or half the request types never get checked.
+func TestDuplicateCheckKnowsAReimbursementPaysItsRequester(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Self")
+	mgrID := seedSecondApprover(t, s)
+	requester := s.seedRequester("claimer@example.test", "Claire Claimer", "RequesterPass123")
+	if _, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+		Type: "reimbursement", ShortTitle: "Hyderabad flights", ProjectID: 1, HeadID: headID,
+		Amount: 1840000, Purpose: "travel", ExpenseDate: "2026-07-17", ManagerID: mgrID}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("claimer@example.test", "RequesterPass123")
+	body := responseBody(t, s.postFormHX("/requests/duplicate-check", url.Values{
+		"type": {"reimbursement"}, "amount": {"18,400.00"}}))
+	if !strings.Contains(body, "Hyderabad flights") {
+		t.Fatalf("a repeat reimbursement went unnoticed: %q", body)
 	}
 }
 
