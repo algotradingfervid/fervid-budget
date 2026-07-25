@@ -1337,3 +1337,86 @@ func TestVendorUpdateIgnoresBankFieldsFromACallerWithoutBankEdit(t *testing.T) {
 		t.Fatalf("a caller without vendor_bank:edit rewrote the bank block: %+v", after.Bank)
 	}
 }
+
+func (s *appTestServer) htmxGet(path string) *http.Response {
+	s.t.Helper()
+	req, err := http.NewRequest(http.MethodGet, s.server.URL+path, nil)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	req.Header.Set("HX-Request", "true")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return resp
+}
+
+func TestVendorSearchFragmentFeedsTheCombobox(t *testing.T) {
+	s := newAppTestServer(t)
+	s.seedVendor(store.VendorInput{Name: "Sundaram Electricals Pvt Ltd", VendorType: "company",
+		Status: "active", GSTIN: "29AABCS1429B1ZQ", City: "Bengaluru"})
+	s.seedVendor(store.VendorInput{Name: "Sundaram Switchgear LLP", VendorType: "company",
+		Status: "active", City: "Hosur"})
+	s.seedVendor(store.VendorInput{Name: "Meridian Facility Services", VendorType: "company",
+		Status: "active", City: "Bengaluru"})
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	resp := s.htmxGet("/vendors/search?q=sund")
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+	for _, want := range []string{
+		`class="combo-list"`, `class="co"`, `class="co-main"`,
+		"Sundaram Electricals Pvt Ltd", "Sundaram Switchgear LLP",
+		"29AABCS1429B1ZQ", "Bengaluru",
+		// vendor:create is held by the admin, so the add row is offered.
+		`class="co co-add"`, "Add a new vendor",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the combobox fragment is missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "Meridian Facility Services") {
+		t.Fatal("the combobox fragment ignored the query")
+	}
+	// A fragment is a fragment: no shell, no document.
+	for _, forbidden := range []string{"<aside", "<!doctype", "<html", `class="appshell"`, `class="tabbar"`, `class="m-topbar"`} {
+		if strings.Contains(strings.ToLower(body), forbidden) {
+			t.Fatalf("the combobox fragment rendered %q", forbidden)
+		}
+	}
+	// It is a picker, not a record: bank details are never in it.
+	if strings.Contains(body, testVendorIFSC) {
+		t.Fatal("the combobox fragment carried a bank detail")
+	}
+
+	// Without vendor:create there is nothing to add with, so no add row.
+	s.seedUserWithGrants("combo-viewer@example.test", "ComboPass1234", "Combo Viewer",
+		[]store.Grant{{Resource: "vendor", Action: "view"}})
+	viewer := newAppTestClient(t, s)
+	viewer.login("combo-viewer@example.test", "ComboPass1234")
+	viewerBody := responseBody(t, viewer.htmxGet("/vendors/search?q=sund"))
+	if !strings.Contains(viewerBody, "Sundaram Electricals Pvt Ltd") {
+		t.Fatal("a caller with vendor:view could not search vendors")
+	}
+	if strings.Contains(viewerBody, "co-add") {
+		t.Fatal("a caller without vendor:create was offered the add-a-vendor row")
+	}
+
+	// And no vendor permission at all is a 403, not an empty list.
+	s.seedUserWithGrants("combo-blocked@example.test", "BlockedPass1234", "Combo Blocked",
+		[]store.Grant{{Resource: "request", Action: "view"}})
+	blocked := newAppTestClient(t, s)
+	blocked.login("combo-blocked@example.test", "BlockedPass1234")
+	denied := blocked.htmxGet("/vendors/search?q=sund")
+	requireStatus(t, denied, http.StatusForbidden)
+	if strings.Contains(responseBody(t, denied), "Sundaram") {
+		t.Fatal("a forbidden search still returned vendor names")
+	}
+
+	// An empty query renders the empty state rather than the whole master.
+	empty := responseBody(t, s.htmxGet("/vendors/search?q="))
+	if strings.Contains(empty, "Sundaram") {
+		t.Fatalf("a blank query listed vendors: %s", empty)
+	}
+}

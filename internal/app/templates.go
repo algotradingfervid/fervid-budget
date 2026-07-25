@@ -408,6 +408,18 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* Vendor combobox options — an htmx fragment, not a page. It starts at
+     .combo-list and never at "top", so it can be swapped straight into the
+     request form's picker. SearchVendors returns no bank details to anyone, so
+     the picker cannot become a side door onto the restricted block. The
+     add-a-vendor row is offered only to a caller who could actually complete
+     it, because an affordance that 403s is worse than no affordance. */}}
+{{define "vendor_combo_options"}}<div class="combo-list" role="listbox" aria-label="Vendor results">
+{{range .Vendors}}<a class="co" role="option" href="/vendors/{{.ID}}"><span class="co-main"><b>{{.Name}}</b><small>{{if .GSTIN}}{{.GSTIN}}{{else}}No GSTIN{{end}}{{if .City}} · {{.City}}{{end}}</small></span></a>
+{{else}}<span class="co"><span class="co-main"><b>{{if .Query}}No vendor matches “{{.Query}}”{{else}}Type a name, GSTIN or city{{end}}</b><small>Only active vendors can be picked.</small></span></span>
+{{end}}{{if .Perms.Can "vendor" "create"}}<a class="co co-add" href="/vendors/new">＋ Add a new vendor</a>{{end}}
+</div>{{end}}
+
 {{/* Vendor detail — mockups/screens/vendor-detail.html.
 
      The Payment details fieldset is gated twice over, and the two gates are

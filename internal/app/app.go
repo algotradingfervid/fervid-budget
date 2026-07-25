@@ -250,6 +250,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	// so /vendors/new is the form and never a vendor whose id parses to zero.
 	mux.Handle("GET /vendors", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorsList)))
 	mux.Handle("GET /vendors/new", a.auth.RequirePermission("vendor", "create", http.HandlerFunc(a.vendorNew)))
+	mux.Handle("GET /vendors/search", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorSearch)))
 	mux.Handle("GET /vendors/{id}", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorDetail)))
 	mux.Handle("POST /vendors", a.auth.RequirePermission("vendor", "create", http.HandlerFunc(a.withCSRF(a.vendorCreate))))
 	mux.Handle("POST /vendors/{id}", a.auth.RequirePermission("vendor", "edit", http.HandlerFunc(a.withCSRF(a.vendorUpdate))))

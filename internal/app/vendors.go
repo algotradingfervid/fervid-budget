@@ -76,6 +76,21 @@ func (a *App) vendorNew(w http.ResponseWriter, r *http.Request) {
 	a.renderVendorForm(w, r, http.StatusOK, v, true, "")
 }
 
+// vendorSearch is the request form's combobox, served as HTML rather than
+// JSON: htmx swaps the markup straight into .combo-list, so there is no client
+// renderer to keep in step with the server's idea of a vendor. It renders no
+// shell — Phase 0's HX-Request handling skips shell construction, and this
+// template starts at .combo-list rather than at "top".
+func (a *App) vendorSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	vendors, err := a.st.SearchVendors(r.Context(), q, 0)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "vendor_combo_options", PageData{Title: "Vendors", Vendors: vendors, Query: q})
+}
+
 func (a *App) vendorDetail(w http.ResponseWriter, r *http.Request) {
 	perms := a.auth.Permissions(auth.CurrentUser(r))
 	v, err := a.st.Vendor(r.Context(), pathID(r), perms)
