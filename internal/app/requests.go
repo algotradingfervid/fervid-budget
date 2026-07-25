@@ -561,10 +561,14 @@ func (a *App) loadEditableRequest(w http.ResponseWriter, r *http.Request) (store
 
 func reqStatusExplain(status string) string {
 	switch status {
-	case "approved", "cancellation_requested":
+	case "approved":
 		return "It is approved and locked; ask for it to be cancelled instead."
+	case "cancellation_requested":
+		return "A cancellation is already pending on it."
 	case "rejected":
 		return "A rejected request is final — raise a new one."
+	case "pending":
+		return "It is still awaiting approval; withdraw it instead."
 	default:
 		return "It is " + strings.ToLower(requestStatusText(status)) + "."
 	}
@@ -744,6 +748,14 @@ func (a *App) requestCancelForm(w http.ResponseWriter, r *http.Request) {
 	if req.RequesterID != auth.CurrentUser(r).ID {
 		a.respondError(w, r, http.StatusForbidden,
 			"Only the person who raised a request may ask for it to be cancelled.", nil)
+		return
+	}
+	// Only an approved request is frozen by asking. A pending one is withdrawn
+	// and a closed one is already closed, so rendering the form for either would
+	// be offering a control whose submit the store is going to refuse.
+	if req.Status != "approved" {
+		a.respondError(w, r, http.StatusBadRequest,
+			"Only an approved request is cancelled this way. "+reqStatusExplain(req.Status), nil)
 		return
 	}
 	a.render(w, r, "request_cancel", PageData{Title: "Request cancellation", Request2: req})
