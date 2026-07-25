@@ -1154,3 +1154,186 @@ func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
 		t.Fatal("a 403 response still leaked vendor data")
 	}
 }
+
+// allVendorPerms is the fixture's all-seeing reader: assertions about what was
+// STORED must not be filtered by the same gate they are checking.
+func allVendorPerms() store.PermissionSet {
+	return store.NewPermissionSet(store.AllGrants(), nil)
+}
+
+const testVendorIFSC = "HDFC0000521"
+const testVendorAccount = "50200041294471"
+
+func (s *appTestServer) seedVendorWithBank(name string) int64 {
+	s.t.Helper()
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	id, err := s.st.CreateVendor(s.ctx, admin, store.VendorInput{
+		Name: name, DisplayName: "Sundaram Elec", VendorType: "company", Status: "active",
+		Categories: "Materials, Switchgear", GSTIN: "29AABCS1429B1ZQ", PAN: "AABCS1429B",
+		ContactPerson: "R. Subramanian", City: "Bengaluru",
+		Bank: &store.VendorBank{
+			AccountName: "Sundaram Electricals Private Limited", AccountNumber: testVendorAccount,
+			IFSC: testVendorIFSC, BankName: "HDFC Bank", Branch: "Peenya",
+			DefaultPaymentMode: "bank_transfer", PaymentTermsDays: 30,
+		},
+	})
+	if err != nil {
+		s.t.Fatalf("CreateVendor: %v", err)
+	}
+	return id
+}
+
+// The requirement Phase 1V exists for: a caller without vendor_bank:view must
+// not receive the bank block, and the proof is that the stored IFSC appears
+// nowhere in the response — not that a template hid it.
+func TestVendorDetailGatesBankDetailsOnTheDataNotTheMarkup(t *testing.T) {
+	s := newAppTestServer(t)
+	id := s.seedVendorWithBank("Sundaram Electricals Pvt Ltd")
+	path := "/vendors/" + strconvFormat(id)
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp := s.request(http.MethodGet, path, nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+	for _, want := range []string{
+		`class="segmented"`, `<fieldset`, `<legend>Identity</legend>`,
+		`<legend>Statutory</legend>`, `<legend>Contact</legend>`, `<legend>Notes</legend>`,
+		`class="form-grid"`, `class="field span-6"`, `class="field span-3 m-half"`,
+		`class="action-bar"`, `class="ab-note d-only"`, `class="row-end"`,
+		"bank_ifsc", testVendorIFSC, testVendorAccount,
+		"Save vendor",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("vendor detail is missing %q for an admin", want)
+		}
+	}
+
+	// vendor:view only — no bank permission at all.
+	s.seedUserWithGrants("vendor-viewer@example.test", "ViewerPass1234", "Vendor Viewer",
+		[]store.Grant{{Resource: "vendor", Action: "view"}})
+	viewer := newAppTestClient(t, s)
+	viewer.login("vendor-viewer@example.test", "ViewerPass1234")
+	viewerBody := responseBody(t, viewer.request(http.MethodGet, path, nil, ""))
+	for _, forbidden := range []string{"bank_ifsc", testVendorIFSC, testVendorAccount,
+		"bank_account_number", "HDFC Bank"} {
+		if strings.Contains(viewerBody, forbidden) {
+			t.Fatalf("a caller without vendor_bank:view received %q", forbidden)
+		}
+	}
+	for _, want := range []string{`class="banner locked"`, "You do not have permission to see bank details"} {
+		if !strings.Contains(viewerBody, want) {
+			t.Fatalf("vendor detail is missing %q for a caller without vendor_bank:view", want)
+		}
+	}
+	// Without vendor:edit the action bar offers a way back, not a way to save.
+	if strings.Contains(viewerBody, "Save vendor") {
+		t.Fatal("a caller without vendor:edit was offered Save vendor")
+	}
+	if !strings.Contains(viewerBody, "Back to vendors") {
+		t.Fatal("a read-only caller was not offered a way back to the list")
+	}
+	// The rest of the record is still theirs to read.
+	if !strings.Contains(viewerBody, "29AABCS1429B1ZQ") {
+		t.Fatal("the non-bank part of the record was withheld too")
+	}
+
+	// vendor_bank:view without :edit — the values are readable, not writable.
+	s.seedUserWithGrants("bank-reader@example.test", "ReaderPass1234", "Bank Reader",
+		[]store.Grant{{Resource: "vendor", Action: "view"}, {Resource: "vendor_bank", Action: "view"}})
+	reader := newAppTestClient(t, s)
+	reader.login("bank-reader@example.test", "ReaderPass1234")
+	readerBody := responseBody(t, reader.request(http.MethodGet, path, nil, ""))
+	if !strings.Contains(readerBody, testVendorIFSC) {
+		t.Fatal("a caller holding vendor_bank:view could not see the IFSC")
+	}
+	if !strings.Contains(readerBody, `name="bank_ifsc" value="`+testVendorIFSC+`" disabled`) {
+		t.Fatalf("bank fields are not read-only for a caller without vendor_bank:edit: %s", readerBody)
+	}
+}
+
+func TestVendorCreateAndUpdateThroughTheScreens(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	blank := responseBody(t, s.request(http.MethodGet, "/vendors/new", nil, ""))
+	for _, want := range []string{`class="form-grid"`, `name="name"`, `name="vendor_type"`, "Save vendor"} {
+		if !strings.Contains(blank, want) {
+			t.Fatalf("/vendors/new is missing %q", want)
+		}
+	}
+
+	form := url.Values{
+		"name": {"Meridian Facility Services"}, "display_name": {"Meridian"},
+		"vendor_type": {"company"}, "status": {"active"}, "categories": {"Services, Housekeeping"},
+		"gstin": {"29AACCM7781L1ZR"}, "city": {"Bengaluru"}, "contact_person": {"A. Rao"},
+		"bank_account_name": {"Meridian Facility Services"}, "bank_ifsc": {"ICIC0000042"},
+		"payment_terms_days": {"30"},
+	}
+	resp := s.postForm("/vendors", form)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	all, err := s.st.ListVendors(s.ctx, store.VendorListOptions{Status: "all"}, allVendorPerms())
+	if err != nil || len(all) != 1 {
+		t.Fatalf("ListVendors after create = %d rows, %v; want 1", len(all), err)
+	}
+	created := all[0]
+	if created.Name != "Meridian Facility Services" || created.Bank == nil || created.Bank.IFSC != "ICIC0000042" {
+		t.Fatalf("create did not store the submitted record: %+v", created)
+	}
+
+	// A blank name is rejected and the submitted values survive the round trip.
+	bad := url.Values{"name": {"  "}, "city": {"Mysuru"}}
+	resp = s.postForm("/vendors", bad)
+	requireStatus(t, resp, http.StatusBadRequest)
+	if body := responseBody(t, resp); !strings.Contains(body, "vendor name is required") || !strings.Contains(body, "Mysuru") {
+		t.Fatalf("a rejected create lost its error or its input: %s", body)
+	}
+
+	// Update the contact person.
+	form.Set("contact_person", "B. Rao")
+	resp = s.postForm("/vendors/"+strconvFormat(created.ID), form)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	updated, _ := s.st.Vendor(s.ctx, created.ID, allVendorPerms())
+	if updated.ContactPerson != "B. Rao" {
+		t.Fatalf("update did not apply: %+v", updated)
+	}
+}
+
+// A hand-crafted POST is the real test of a write gate: the screen never sends
+// these fields, so only a deliberate request carries them.
+func TestVendorUpdateIgnoresBankFieldsFromACallerWithoutBankEdit(t *testing.T) {
+	s := newAppTestServer(t)
+	id := s.seedVendorWithBank("Sundaram Electricals Pvt Ltd")
+	s.seedUserWithGrants("vendor-editor@example.test", "EditorPass1234", "Vendor Editor",
+		[]store.Grant{{Resource: "vendor", Action: "view"}, {Resource: "vendor", Action: "edit"}})
+
+	editor := newAppTestClient(t, s)
+	editor.login("vendor-editor@example.test", "EditorPass1234")
+	// Prime the CSRF cookie by loading the screen first.
+	_ = responseBody(t, editor.request(http.MethodGet, "/vendors/"+strconvFormat(id), nil, ""))
+
+	resp := editor.postForm("/vendors/"+strconvFormat(id), url.Values{
+		"name": {"Sundaram Electricals Pvt Ltd"}, "vendor_type": {"company"}, "status": {"active"},
+		"contact_person": {"Legitimate Edit"},
+		"bank_ifsc":      {"EVIL0000001"}, "bank_account_number": {"0000000000"},
+		"bank_account_name": {"Attacker"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	after, err := s.st.Vendor(s.ctx, id, allVendorPerms())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ContactPerson != "Legitimate Edit" {
+		t.Fatalf("the permitted part of the edit was dropped: %+v", after)
+	}
+	if after.Bank == nil || after.Bank.IFSC != testVendorIFSC || after.Bank.AccountNumber != testVendorAccount {
+		t.Fatalf("a caller without vendor_bank:edit rewrote the bank block: %+v", after.Bank)
+	}
+}

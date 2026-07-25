@@ -408,6 +408,148 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* Vendor detail — mockups/screens/vendor-detail.html.
+
+     The Payment details fieldset is gated twice over, and the two gates are
+     not redundant. .Perms.Can is the presentation gate; .Vendor.Bank being
+     non-nil is the DATA gate, and it is the one that matters — the store never
+     read the bank columns for a caller without vendor_bank:view, so there is
+     nothing here to print even if this condition were wrong. The locked banner
+     takes the fieldset's place rather than the fieldset quietly vanishing:
+     hiding the section entirely would leave a reader wondering whether the
+     vendor has no bank details or whether they simply cannot see them.
+
+     Bank inputs carry their own disabled attribute rather than relying on the
+     surrounding fieldset, because vendor_bank:edit is a separate permission
+     from vendor:edit: someone may edit the contact block and not the bank
+     block. A disabled input is not submitted, so the browser cannot send what
+     the caller may not change — and UpdateVendor ignores it regardless. */}}
+{{define "vendor_detail"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Masters · vendor</div>
+    <h1>{{if .Vendor.ID}}{{.Vendor.Name}}{{else}}Add vendor{{end}}</h1>
+    <p class="sub">{{if .Vendor.ID}}{{vendorType .Vendor.VendorType}}{{if .Vendor.City}} · {{.Vendor.City}}{{end}} · {{vendorStatus .Vendor.Status}}{{else}}A vendor the request form can find, and Accounts can pay.{{end}}</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="/vendors">{{if .VendorEditable}}Cancel{{else}}Back to vendors{{end}}</a></div>
+</section>
+
+{{if .Vendor.ID}}
+<div class="segmented">
+  <a class="is-active" href="/vendors/{{.Vendor.ID}}">Record</a>
+  <a aria-disabled="true">Requests <span class="n">Soon</span></a>
+  <a aria-disabled="true">Payments <span class="n">Soon</span></a>
+  <a aria-disabled="true">History <span class="n">Soon</span></a>
+</div>
+{{end}}
+
+<form method="post" action="{{if .Vendor.ID}}/vendors/{{.Vendor.ID}}{{else}}/vendors{{end}}">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+
+  <fieldset {{if not .VendorEditable}}disabled{{end}}>
+    <legend>Identity</legend>
+    <div class="form-grid">
+      <div class="field span-6"><label for="v-name">Vendor name <span class="req">*</span></label><input id="v-name" name="name" value="{{.Vendor.Name}}" required></div>
+      <div class="field span-3 m-half"><label for="v-short">Short name</label><input id="v-short" name="display_name" value="{{.Vendor.DisplayName}}"><span class="hint">Used in lists and dropdowns.</span></div>
+      <div class="field span-3 m-half"><label for="v-type">Type <span class="req">*</span></label><select id="v-type" name="vendor_type">
+        <option value="company" {{select .Vendor.VendorType "company"}}>Company</option>
+        <option value="proprietor" {{select .Vendor.VendorType "proprietor"}}>Proprietor</option>
+        <option value="individual" {{select .Vendor.VendorType "individual"}}>Individual</option>
+      </select></div>
+      <div class="field span-6"><label for="v-cat">Categories</label><input id="v-cat" name="categories" value="{{.Vendor.Categories}}"><span class="hint">Comma separated. Used for vendor reporting.</span></div>
+      <div class="field span-6 m-half"><label for="v-status">Status</label><select id="v-status" name="status">
+        <option value="active" {{select .Vendor.Status "active"}}>Active</option>
+        <option value="inactive" {{select .Vendor.Status "inactive"}}>Inactive</option>
+      </select><span class="hint">Inactive vendors disappear from new requests but stay on old ones.</span></div>
+    </div>
+  </fieldset>
+
+  <fieldset {{if not .VendorEditable}}disabled{{end}}>
+    <legend>Statutory</legend>
+    <div class="form-grid">
+      <div class="field span-4 m-half"><label for="v-gst">GSTIN</label><input id="v-gst" class="num" name="gstin" value="{{.Vendor.GSTIN}}" maxlength="15"><span class="hint">15 characters, or blank if the vendor has none.</span></div>
+      <div class="field span-4 m-half"><label for="v-pan">PAN</label><input id="v-pan" class="num" name="pan" value="{{.Vendor.PAN}}"></div>
+      <div class="field span-4 m-half"><label for="v-msme">MSME / Udyam number</label><input id="v-msme" class="num" name="msme_udyam" value="{{.Vendor.MSMEUdyam}}"></div>
+      <div class="field span-4 m-half"><label for="v-tds">TDS section</label><select id="v-tds" name="tds_section">
+        <option value="" {{select .Vendor.TDSSection ""}}>Not applicable</option>
+        <option value="194C" {{select .Vendor.TDSSection "194C"}}>194C — contractors</option>
+        <option value="194J" {{select .Vendor.TDSSection "194J"}}>194J — professional</option>
+        <option value="194Q" {{select .Vendor.TDSSection "194Q"}}>194Q — purchase of goods</option>
+      </select></div>
+      <div class="field span-4 m-half"><label for="v-rate">Default TDS rate</label><input id="v-rate" name="tds_rate" value="{{.Vendor.TDSRate}}" placeholder="2%"></div>
+      <div class="field span-4 m-half"><p class="hint">Recorded for reference only. This system never computes tax — Accounts confirms deductions outside it.</p></div>
+    </div>
+  </fieldset>
+
+  <fieldset {{if not .VendorEditable}}disabled{{end}}>
+    <legend>Contact</legend>
+    <div class="form-grid">
+      <div class="field span-4 m-half"><label for="v-person">Contact person</label><input id="v-person" name="contact_person" value="{{.Vendor.ContactPerson}}"></div>
+      <div class="field span-4 m-half"><label for="v-phone">Phone</label><input id="v-phone" class="num" name="phone" value="{{.Vendor.Phone}}"></div>
+      <div class="field span-4"><label for="v-email">Email</label><input id="v-email" type="email" name="email" value="{{.Vendor.Email}}"></div>
+      <div class="field span-12"><label for="v-addr">Billing address</label><textarea id="v-addr" name="address">{{.Vendor.Address}}</textarea></div>
+      <div class="field span-4 m-half"><label for="v-city">City</label><input id="v-city" name="city" value="{{.Vendor.City}}"></div>
+      <div class="field span-4 m-half"><label for="v-state">State</label><input id="v-state" name="state" value="{{.Vendor.State}}"></div>
+      <div class="field span-4 m-half"><label for="v-code">State code</label><input id="v-code" class="num" name="state_code" value="{{.Vendor.StateCode}}"><span class="hint">The first two digits of the GSTIN.</span></div>
+    </div>
+  </fieldset>
+
+  {{if and (.Perms.Can "vendor_bank" "view") .Vendor.Bank}}
+  <fieldset {{if not .VendorEditable}}disabled{{end}}>
+    <legend>Payment details — restricted</legend>
+    <div class="banner locked">
+      <span class="b-ico">🔒</span>
+      <div>
+        <b>Visible only with vendor bank permission</b>
+        <p>They are deliberately kept off the employee request form — an employee raising a request never sees or types them.</p>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="field span-6"><label for="b-name">Account name</label><input id="b-name" name="bank_account_name" value="{{.Vendor.Bank.AccountName}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-3 m-half"><label for="b-acc">Account number</label><input id="b-acc" class="num" name="bank_account_number" value="{{.Vendor.Bank.AccountNumber}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-3 m-half"><label for="b-ifsc">IFSC</label><input id="b-ifsc" class="num" name="bank_ifsc" value="{{.Vendor.Bank.IFSC}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-3 m-half"><label for="b-bank">Bank</label><input id="b-bank" name="bank_name" value="{{.Vendor.Bank.BankName}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-3 m-half"><label for="b-branch">Branch</label><input id="b-branch" name="bank_branch" value="{{.Vendor.Bank.Branch}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-3 m-half"><label for="b-upi">UPI ID</label><input id="b-upi" name="upi_id" value="{{.Vendor.Bank.UPIID}}" placeholder="Optional" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-3 m-half"><label for="b-mode">Default mode</label><select id="b-mode" name="default_payment_mode" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+        <option value="" {{select .Vendor.Bank.DefaultPaymentMode ""}}>Not set</option>
+        <option value="bank_transfer" {{select .Vendor.Bank.DefaultPaymentMode "bank_transfer"}}>Bank transfer — NEFT</option>
+        <option value="rtgs" {{select .Vendor.Bank.DefaultPaymentMode "rtgs"}}>RTGS</option>
+        <option value="cheque" {{select .Vendor.Bank.DefaultPaymentMode "cheque"}}>Cheque</option>
+      </select></div>
+      <div class="field span-3 m-half"><label for="b-terms">Payment terms (days)</label><input id="b-terms" class="num" type="number" min="0" name="payment_terms_days" value="{{.Vendor.Bank.PaymentTermsDays}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+    </div>
+  </fieldset>
+  {{else}}
+  <fieldset>
+    <legend>Payment details</legend>
+    <div class="banner locked">
+      <span class="b-ico">🔒</span>
+      <div>
+        <b>You do not have permission to see bank details</b>
+        <p>Accounts maintains them. The record is hidden, not just the buttons.</p>
+      </div>
+    </div>
+  </fieldset>
+  {{end}}
+
+  <fieldset {{if not .VendorEditable}}disabled{{end}}>
+    <legend>Notes</legend>
+    <div class="form-grid">
+      <div class="field span-12"><label for="v-notes">Internal notes</label><textarea id="v-notes" name="notes">{{.Vendor.Notes}}</textarea></div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">{{if .Vendor.ID}}Created {{date .Vendor.CreatedAt}} · last edited {{date .Vendor.UpdatedAt}}{{else}}The name must be unique. Everything else can be filled in later.{{end}}</span>
+    <span class="row-end"></span>
+    {{if .VendorEditable}}<a class="btn outline" href="/vendors">Cancel</a><button class="btn primary" type="submit">Save vendor</button>{{else}}<a class="btn outline" href="/vendors">Back to vendors</a>{{end}}
+  </div>
+</form>
+{{template "bottom" .}}
+{{end}}
+
 {{/* The two scope pill groups render the same state under two names. Same-name
      radios are one group across the whole form, so the mobile set must not
      borrow the desktop names: enabling it would silently clear the desktop

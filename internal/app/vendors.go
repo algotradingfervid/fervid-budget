@@ -2,6 +2,8 @@ package app
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
@@ -59,4 +61,126 @@ func (a *App) vendorsList(w http.ResponseWriter, r *http.Request) {
 		VendorCategory:   opt.Category,
 		VendorGap:        query.Get("gap"),
 	})
+}
+
+// vendorNew is the blank form. The empty bank block is handed to a caller who
+// holds vendor_bank:view because "this vendor has no bank details yet" is
+// something they are entitled to be told; a caller without the permission gets
+// nil and the locked banner, exactly as on an existing vendor.
+func (a *App) vendorNew(w http.ResponseWriter, r *http.Request) {
+	perms := a.auth.Permissions(auth.CurrentUser(r))
+	v := store.Vendor{VendorType: "company", Status: "active"}
+	if perms.Can("vendor_bank", "view") {
+		v.Bank = &store.VendorBank{}
+	}
+	a.renderVendorForm(w, r, http.StatusOK, v, true, "")
+}
+
+func (a *App) vendorDetail(w http.ResponseWriter, r *http.Request) {
+	perms := a.auth.Permissions(auth.CurrentUser(r))
+	v, err := a.st.Vendor(r.Context(), pathID(r), perms)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.renderVendorForm(w, r, http.StatusOK, v, perms.Can("vendor", "edit"), "")
+}
+
+func (a *App) vendorCreate(w http.ResponseWriter, r *http.Request) {
+	perms := a.auth.Permissions(auth.CurrentUser(r))
+	in := vendorInputFromForm(r, perms)
+	id, err := a.st.CreateVendor(r.Context(), auth.CurrentUser(r), in)
+	if err != nil {
+		if status := storeErrorStatus(err); status < http.StatusInternalServerError {
+			a.renderVendorForm(w, r, status, vendorFromInput(0, in), true, friendly(err))
+			return
+		}
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/vendors/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+func (a *App) vendorUpdate(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	perms := a.auth.Permissions(auth.CurrentUser(r))
+	in := vendorInputFromForm(r, perms)
+	if err := a.st.UpdateVendor(r.Context(), auth.CurrentUser(r), id, in, perms); err != nil {
+		if status := storeErrorStatus(err); status < http.StatusInternalServerError && status != http.StatusNotFound {
+			a.renderVendorForm(w, r, status, vendorFromInput(id, in), true, friendly(err))
+			return
+		}
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/vendors/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+func (a *App) renderVendorForm(w http.ResponseWriter, r *http.Request, status int, v store.Vendor, editable bool, errMsg string) {
+	title := "Add vendor"
+	if v.ID != 0 {
+		title = v.Name
+	}
+	a.renderStatus(w, r, status, "vendor_detail", PageData{
+		Title:          title,
+		Vendor:         v,
+		VendorEditable: editable,
+		Error:          errMsg,
+	})
+}
+
+// vendorInputFromForm reads the submitted record. The bank block is read at
+// all only for a caller holding vendor_bank:edit — CreateVendor takes no
+// permission set, so this is where a create is gated. UpdateVendor applies the
+// same rule again on its own; neither relies on the other.
+func vendorInputFromForm(r *http.Request, perms store.PermissionSet) store.VendorInput {
+	in := store.VendorInput{
+		Name:          r.FormValue("name"),
+		DisplayName:   r.FormValue("display_name"),
+		VendorType:    r.FormValue("vendor_type"),
+		Status:        r.FormValue("status"),
+		Categories:    r.FormValue("categories"),
+		GSTIN:         r.FormValue("gstin"),
+		PAN:           r.FormValue("pan"),
+		MSMEUdyam:     r.FormValue("msme_udyam"),
+		TDSSection:    r.FormValue("tds_section"),
+		TDSRate:       r.FormValue("tds_rate"),
+		ContactPerson: r.FormValue("contact_person"),
+		Phone:         r.FormValue("phone"),
+		Email:         r.FormValue("email"),
+		Address:       r.FormValue("address"),
+		City:          r.FormValue("city"),
+		State:         r.FormValue("state"),
+		StateCode:     r.FormValue("state_code"),
+		Notes:         r.FormValue("notes"),
+	}
+	if perms != nil && perms.Can("vendor_bank", "edit") {
+		terms, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("payment_terms_days")))
+		in.Bank = &store.VendorBank{
+			AccountName:        r.FormValue("bank_account_name"),
+			AccountNumber:      r.FormValue("bank_account_number"),
+			IFSC:               r.FormValue("bank_ifsc"),
+			BankName:           r.FormValue("bank_name"),
+			Branch:             r.FormValue("bank_branch"),
+			UPIID:              r.FormValue("upi_id"),
+			DefaultPaymentMode: r.FormValue("default_payment_mode"),
+			PaymentTermsDays:   terms,
+		}
+	}
+	return in
+}
+
+// vendorFromInput re-renders a rejected submission without losing what was
+// typed. Bank rides along only when the submitter was allowed to send it, so a
+// failed save cannot echo a block back to someone who may not see it.
+func vendorFromInput(id int64, in store.VendorInput) store.Vendor {
+	return store.Vendor{
+		ID: id, Name: in.Name, DisplayName: in.DisplayName,
+		VendorType: in.VendorType, Status: in.Status, Categories: in.Categories,
+		GSTIN: in.GSTIN, PAN: in.PAN, MSMEUdyam: in.MSMEUdyam,
+		TDSSection: in.TDSSection, TDSRate: in.TDSRate,
+		ContactPerson: in.ContactPerson, Phone: in.Phone, Email: in.Email,
+		Address: in.Address, City: in.City, State: in.State, StateCode: in.StateCode,
+		Notes: in.Notes, Bank: in.Bank,
+	}
 }
