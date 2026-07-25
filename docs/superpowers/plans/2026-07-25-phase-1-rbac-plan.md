@@ -429,6 +429,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 3 — Role types, canonical vocabulary, and role CRUD (R2, R8, R9)
 
+> **Status: DONE** — shipped as commit `09971cf`; the vocabulary was extended to 66 pairs by `1bb7d05` (amendment A10). Body kept as the record of what was built.
+
 **Files**
 - Modify: `internal/store/permissions.go` — **the file already exists.** Phase 0 Task 12 created it with the `PermissionSet` interface (`Can(resource, action) bool`, `Scope(resource) string`), the `Grant` struct, `const ScopeAll = "all"` and the temporary Casbin-backed `staticPermissionSet`/`NewPermissionSet`. This task **appends** to it and must not redeclare `PermissionSet` or `Grant` (amendment A8). `staticPermissionSet`/`NewPermissionSet` stay until Task 13 deletes them.
 - Test: `internal/store/permissions_test.go`
@@ -865,6 +867,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 4 — `RolePermissions` read + `UpdateRolePermissions` write with validation (R2, R3, R8)
 
+> **Status: DONE** — shipped as commit `d21f280`. Body kept as the record of what was built.
+
 **Files**
 - Modify: `internal/store/permissions.go`
 - Test: `internal/store/permissions_test.go`
@@ -1045,6 +1049,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ---
 
 ## Task 5 — `CopyRole` (R5)
+
+> **Status: DONE** — shipped as commit `b223e49`. Body kept as the record of what was built.
 
 **Files**
 - Modify: `internal/store/permissions.go`
