@@ -612,3 +612,32 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 	}
 	return tx.Commit()
 }
+
+func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.RequesterID != actor.ID {
+		return ErrForbidden
+	}
+	if !canTransition(before.Status, "withdrawn") {
+		return fmt.Errorf("%w: a %s request cannot be withdrawn", ErrValidation, before.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='withdrawn', updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+		return err
+	}
+	after := before
+	after.Status = "withdrawn"
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "withdraw", EntityType: "payment_request", EntityID: &id,
+		Summary: actor.Name + " withdrew request " + before.Number, Before: before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

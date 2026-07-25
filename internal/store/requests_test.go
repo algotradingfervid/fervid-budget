@@ -652,3 +652,45 @@ func TestUpdateRequestRejectedAfterApproval(t *testing.T) {
 		t.Fatalf("editing approved request = %v, want ErrValidation", err)
 	}
 }
+
+func TestWithdrawRequestFromPending(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	mk := func() int64 {
+		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
+			ShortTitle: "Advance", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance",
+			ManagerID: mgr.ID, VendorID: vendorID, AdvanceReason: "booking"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := mk()
+	if err := s.WithdrawRequest(ctx, req, id); err != nil {
+		t.Fatalf("WithdrawRequest: %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Status != "withdrawn" {
+		t.Fatalf("status = %q, want withdrawn", got.Status)
+	}
+	// Withdrawn is terminal.
+	if err := s.WithdrawRequest(ctx, req, id); !errors.Is(err, ErrValidation) {
+		t.Fatalf("double withdraw = %v, want ErrValidation", err)
+	}
+	// G1: an approved request cannot be withdrawn — cancellation is a decision
+	// the approver makes, not something the requester does alone.
+	other := mk()
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='approved' WHERE id=?`, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WithdrawRequest(ctx, req, other); !errors.Is(err, ErrValidation) {
+		t.Fatalf("withdraw approved = %v, want ErrValidation", err)
+	}
+	// Only the requester may withdraw.
+	third := mk()
+	if err := s.WithdrawRequest(ctx, mgr, third); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("withdraw by a non-requester = %v, want ErrForbidden", err)
+	}
+}
