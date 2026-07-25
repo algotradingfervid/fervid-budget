@@ -53,11 +53,15 @@ var navSpec = []NavGroup{
 	{Title: "", Items: []NavItem{
 		{Key: "dashboard", Label: "Home", Href: "/", Icon: "⌂"},
 	}},
+	// Soon marks a screen whose route does not exist yet: it renders as an
+	// announcement, not a link, so nobody can click through to a 404. The
+	// phase that builds the screen drops the flag, and
+	// TestEveryLinkedNavItemResolves fails until it does.
 	{Title: "Requests", Items: []NavItem{
-		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤"},
-		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "approval", Action: "approve", Badge: "approvals"},
-		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "payment", Action: "process", Badge: "accounts_queue"},
-		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable_report", Action: "view"},
+		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤", Soon: true},
+		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "approval", Action: "approve", Badge: "approvals", Soon: true},
+		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "payment", Action: "process", Badge: "accounts_queue", Soon: true},
+		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable_report", Action: "view", Soon: true},
 	}},
 	{Title: "Payments", Items: []NavItem{
 		{Key: "payments", Label: "Payments ledger", Href: "/payments", Icon: "▦", Resource: "payment", Action: "view", Badge: "receipts_missing"},
@@ -78,11 +82,11 @@ var navSpec = []NavGroup{
 	{Title: "Admin", Items: []NavItem{
 		{Key: "users", Label: "Users", Href: "/users", Icon: "◍", Resource: "user", Action: "view"},
 		{Key: "roles", Label: "Roles & permissions", Href: "/roles", Icon: "⚿", Resource: "role", Action: "view"},
-		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "view"},
+		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "view", Soon: true},
 		// Two different screens, per adoption spec D7: /admin/notifications is
 		// the rule editor, /notifications (the topbar bell) is the user's own
 		// in-app centre. Phase 5 builds both.
-		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification", Action: "view"},
+		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification", Action: "view", Soon: true},
 		{Key: "audit", Label: "Audit log", Href: "/audit", Icon: "◎", Resource: "audit", Action: "view"},
 		{Key: "backups", Label: "Backups", Href: "/backups", Icon: "⇪", Resource: "backup", Action: "view"},
 	}},

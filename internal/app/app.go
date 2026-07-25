@@ -220,7 +220,12 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /login", a.loginForm)
 	mux.HandleFunc("POST /login", a.loginPost)
 	mux.HandleFunc("POST /logout", a.withCSRF(a.logoutPost))
-	mux.Handle("GET /", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
+	// "GET /{$}" matches the root and nothing else. Registered as "GET /" it is
+	// a catch-all, so every URL the app does not serve — including nav items
+	// whose screens are not built yet — silently rendered the dashboard under
+	// the wrong address instead of saying the page does not exist.
+	mux.Handle("GET /{$}", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
+	mux.Handle("GET /", a.auth.RequireLogin(http.HandlerFunc(a.notFound)))
 	mux.Handle("GET /grid", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
 	mux.Handle("GET /months", a.auth.RequirePermission("month", "view", http.HandlerFunc(a.months)))
 	mux.Handle("POST /months", a.auth.RequirePermission("month", "create", http.HandlerFunc(a.withCSRF(a.monthCreate))))

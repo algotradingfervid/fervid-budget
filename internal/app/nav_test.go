@@ -1,6 +1,7 @@
 package app
 
 import (
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -258,4 +259,34 @@ func TestNavItemsHaveKeysIconsAndReachableHrefs(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Every nav item that renders as a link must lead somewhere. Items whose
+// screen is not built yet carry Soon and render as announcements instead, so
+// this is what stops a phase shipping a nav entry that 404s -- and what forces
+// the phase that does build the screen to drop the flag.
+func TestEveryLinkedNavItemResolves(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	for _, group := range navSpec {
+		for _, item := range group.Items {
+			if item.Soon || item.Href == "" {
+				continue
+			}
+			resp := s.request(http.MethodGet, item.Href, nil, "")
+			body := responseBody(t, resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("nav item %q links to %s, which returns %d (mark it Soon until the screen exists)\n%s",
+					item.Label, item.Href, resp.StatusCode, truncateForLog(body))
+			}
+		}
+	}
+}
+
+func truncateForLog(s string) string {
+	if len(s) > 200 {
+		return s[:200] + "…"
+	}
+	return s
 }

@@ -4293,6 +4293,42 @@ td .t-sub {
     display: none;
   }
 
+  /* Touch targets ------------------------------------------------------
+     Desktop is a pointer: 34px controls are precise and keep screens dense.
+     A phone is a thumb, and 34px is where mis-taps start. Everything the
+     user can operate grows to 44px here, and nowhere else -- desktop
+     density is a deliberate choice, not an oversight to correct. */
+  .btn,
+  button,
+  input[type="submit"],
+  .acc-head,
+  .pa-head,
+  .segmented a,
+  .segmented button,
+  .tab {
+    min-height: 44px;
+  }
+
+  /* Row-level actions sit inside dense lists, where 44px would push the row
+     past a thumb's reach anyway. 40px is the floor. */
+  .btn-sm,
+  .btn.small,
+  .compact button,
+  button.small,
+  .actions-cell .btn {
+    min-height: 40px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  input,
+  select,
+  textarea {
+    /* 16px also stops iOS Safari zooming the viewport on focus. */
+    min-height: 44px;
+    font-size: 16px;
+  }
+
   /* Mobile chrome ------------------------------------------------------ */
 
   /* Nothing may sit under the fixed tab bar. The bar is 96px plus whatever the

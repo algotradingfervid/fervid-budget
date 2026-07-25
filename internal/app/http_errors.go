@@ -146,6 +146,14 @@ func isFragmentRequest(r *http.Request) bool {
 	return r.Header.Get("HX-Request") != ""
 }
 
+// notFound answers every URL the app does not serve. It exists because the
+// dashboard used to be registered at "GET /", which in ServeMux matches
+// everything unclaimed — so an unbuilt screen rendered the dashboard rather
+// than admitting it was missing.
+func (a *App) notFound(w http.ResponseWriter, r *http.Request) {
+	a.respondError(w, r, http.StatusNotFound, "That page does not exist. It may have moved, or it may not be built yet.", nil)
+}
+
 func (a *App) respondError(w http.ResponseWriter, r *http.Request, status int, message string, cause error) {
 	if cause != nil {
 		level := slog.LevelWarn
