@@ -3609,6 +3609,173 @@ legend {
 .vbar.bad i { background: var(--bad); }
 
 /* ==========================================================================
+   New components — overlay, sheet and tables
+   ========================================================================== */
+
+/* Fixed, unconditionally. The mockup only makes this absolute because its
+   .appshell is a fake phone bezel. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(24, 22, 20, .48);
+}
+
+.sheet {
+  width: min(520px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-2);
+}
+
+.sheet .sh-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 15px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet .sh-head h2 { font-size: 17px; }
+
+.sheet .sh-head .sh-sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.sheet .sh-close {
+  display: grid;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  margin-left: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: 15px;
+}
+
+.sheet .sh-body { padding: 15px 16px; }
+
+.sheet .sh-foot {
+  display: flex;
+  gap: 9px;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--r) var(--r);
+}
+
+.sheet .sh-foot .row-end { margin-left: auto; }
+
+/* Settlement comparison block */
+.compare {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.compare .cmp-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 13px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.compare .cmp-row:last-child { border-bottom: 0; }
+
+.compare .cmp-row .l {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.compare .cmp-row .v {
+  font-size: 16px;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+}
+
+.compare .cmp-row.diff { background: var(--warn-soft); }
+.compare .cmp-row.diff .l,
+.compare .cmp-row.diff .v { color: var(--warn); }
+.compare .cmp-row.match { background: var(--ok-soft); }
+.compare .cmp-row.match .l,
+.compare .cmp-row.match .v { color: var(--ok); }
+
+/* Table chrome */
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 9px 11px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+tfoot td {
+  padding: 10px 11px;
+  color: #f0eae2;
+  background: var(--sidebar);
+  font-weight: 750;
+}
+
+tfoot td.num { font-variant-numeric: tabular-nums; }
+
+td .t-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.empty {
+  padding: 26px 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Mobile filter row. .filter-btn is a desktop-visible control too. */
+.m-filters { display: none; }
+
+.filter-btn {
+  position: relative;
+  flex: none;
+}
+
+.filter-btn .n {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  color: #fff;
+  background: var(--brand);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ==========================================================================
    Responsive — two breakpoints, 860 and 560. Nothing else.
    860 is the desktop/mobile line: the shell collapses here exactly once.
    ========================================================================== */
@@ -3686,6 +3853,135 @@ legend {
 
   .dl > div {
     border-right: 0;
+  }
+
+  .overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .sheet {
+    width: 100%;
+    max-height: 88%;
+    border-bottom: 0;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .sheet .sh-foot { flex-wrap: wrap; }
+  .sheet .sh-foot .btn { flex: 1 1 auto; }
+
+  /* Restack tables into labelled cards. */
+  table.t-cards { display: block; }
+  table.t-cards thead { display: none; }
+
+  table.t-cards tbody {
+    display: grid;
+    gap: 9px;
+  }
+
+  table.t-cards tbody tr {
+    display: block;
+    padding: 11px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+  }
+
+  table.t-cards tbody tr:hover { background: var(--surface); }
+
+  table.t-cards tbody td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 3px 0;
+    text-align: right;
+    border: 0;
+  }
+
+  table.t-cards tbody td::before {
+    flex: none;
+    color: var(--muted);
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: .05em;
+    text-align: left;
+    text-transform: uppercase;
+  }
+
+  table.t-cards tbody td[data-label=""]::before { content: none; }
+
+  table.t-cards tbody td.t-lead {
+    display: block;
+    padding-bottom: 7px;
+    margin-bottom: 5px;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+    font-weight: 720;
+    text-align: left;
+  }
+
+  table.t-cards tbody td.t-lead::before { content: none; }
+
+  table.t-cards tfoot {
+    display: block;
+    margin-top: 9px;
+    overflow: hidden;
+    border-radius: var(--r);
+  }
+
+  table.t-cards tfoot tr { display: block; }
+
+  table.t-cards tfoot td {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 12px;
+  }
+
+  table.t-cards tfoot td::before {
+    color: #a9a29a;
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 750;
+    text-transform: uppercase;
+  }
+
+  table.t-cards tfoot td[data-label=""] {
+    display: block;
+    padding-top: 10px;
+    font-size: 13.5px;
+    text-align: left;
+  }
+
+  /* Only the wrapper around a restacking table loses its frame; wrappers
+     around tables that still scroll horizontally keep theirs. */
+  .table-wrap:has(table.t-cards) {
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+
+  /* The desktop toolbar only steps aside once a mobile filter row exists to
+     replace it. Hiding it unconditionally would remove working controls from
+     every screen that has not been rebuilt yet. */
+  .m-filters {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* room for the .filter-btn count badge, which overhangs by 5px */
+    padding-right: 6px;
+    margin-bottom: 11px;
+  }
+
+  .m-filters .m-search { flex: 1 1 auto; }
+  .m-filters .m-search input { min-height: 36px; }
+
+  .page:has(.m-filters) .toolbar,
+  .page-inner:has(.m-filters) .toolbar {
+    display: none;
   }
 
   .appshell,
