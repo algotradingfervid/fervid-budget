@@ -1138,6 +1138,74 @@ func seedThirdApprover(t *testing.T, s *appTestServer) int64 {
 	return id
 }
 
+// Returned is not rejected. A returned request keeps its number and its
+// history — the requester corrects it and sends it again — so the correction
+// form lives on the same URL as the detail, above the same thread.
+func TestReturnedRequestScreenCorrectsAndResubmits(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Ret")
+	mgrID := seedSecondApprover(t, s)
+	mgr, err := s.st.UserByID(s.ctx, mgrID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vendorID := s.seedVendor(store.VendorInput{Name: "Kaveri Logistics", VendorType: "company", Status: "active"})
+	requester := s.seedRequester("ret@example.test", "Ret Requester", "RequesterPass123")
+	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+		Type: "vendor_invoice", ShortTitle: "July freight", ProjectID: 1, HeadID: headID,
+		Amount: 6450000, Purpose: "freight", ManagerID: mgrID, VendorID: vendorID,
+		InvoiceNo: "KL/2026/0788", InvoiceDate: "2026-06-28"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.ReturnRequest(s.ctx, mgr, id, "The invoice attached is the June one."); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.st.Request(s.ctx, id)
+
+	s.login("ret@example.test", "RequesterPass123")
+	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	for _, want := range []string{
+		`class="pill returned"`, `class="banner warn"`, "The invoice attached is the June one.",
+		`class="thread"`, `action="/requests/` + strconvFormat(id) + `/edit"`,
+		"Resubmit for approval", before.Number, "<h1>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("returned screen is missing %q", want)
+		}
+	}
+	// One sticky action bar, not one per form: two would be two competing
+	// primary actions at the bottom of a phone screen.
+	if n := strings.Count(body, `class="action-bar"`); n != 1 {
+		t.Fatalf("the returned screen renders %d action bars, want 1", n)
+	}
+
+	// The approver looking at the same URL gets the read-only detail, not a
+	// correction form they could never submit.
+	s.login("kavita@example.test", "ApproverPass123")
+	managerView := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	if strings.Contains(managerView, "Resubmit for approval") {
+		t.Fatal("the approver is offered the requester's correction form")
+	}
+
+	// Correct and resubmit in one press: the number survives and the status
+	// goes back to pending.
+	s.login("ret@example.test", "RequesterPass123")
+	resp := s.postForm("/requests/"+strconvFormat(id)+"/edit", url.Values{
+		"type": {"vendor_invoice"}, "treatment": {"budget"}, "short_title": {"July freight"},
+		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"64,500.00"},
+		"purpose": {"freight"}, "vendor_id": {strconvFormat(vendorID)},
+		"invoice_no": {"KL/2026/0812"}, "invoice_date": {"2026-07-21"},
+		"manager_id": {strconvFormat(mgrID)}, "submit_action": {"resubmit"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	after, _ := s.st.Request(s.ctx, id)
+	if after.Status != "pending" || after.Number != before.Number || after.InvoiceNo != "KL/2026/0812" {
+		t.Fatalf("after correction and resubmit = %+v", after)
+	}
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

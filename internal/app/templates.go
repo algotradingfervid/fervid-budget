@@ -1624,6 +1624,104 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The correction screen — mockups/screens/request-returned.html.
+
+     "Returned is not rejected. A returned request keeps its number and its
+     history — you correct it and resubmit. A rejected request is final and
+     read-only; the employee raises a new one." So this lives on the same URL as
+     the detail, above the same thread, and its primary action sends the request
+     back rather than saving it.
+
+     Correcting and resubmitting are one press. Two buttons over two forms would
+     be two sticky action bars on a phone, and saving-then-forgetting is how a
+     returned request sits for a week with nobody waiting on it.
+
+     Every field the store validates is here, visible where the approver is
+     likely to have asked for a change and hidden where it is not: a field that
+     is missing from the body is a field the store reads as cleared. */}}
+{{define "request_returned"}}
+{{template "top" .}}
+{{template "request_head" .}}
+
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">↩</span>
+  <div>
+    <b>{{.Request2.ManagerName}} sent this back</b>
+    <p>“{{.Request2.DecisionReason}}”</p>
+  </div>
+</div>
+
+<p class="hint">Returned is not rejected. This request keeps its number and its history — correct it
+  and send it again.</p>
+
+<form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="type" value="{{.FormType}}">
+  <input type="hidden" name="treatment" value="{{.Request2.Treatment}}">
+  <input type="hidden" name="manager_id" value="{{.Request2.ManagerID}}">
+  <input type="hidden" name="project_id" value="{{deref .Request2.ProjectID}}">
+  <input type="hidden" name="head_id" value="{{deref .Request2.HeadID}}">
+  <input type="hidden" name="needed_by" value="{{.Request2.NeededBy}}">
+  {{if .Request2.Urgent}}<input type="hidden" name="urgent" value="on">
+  <input type="hidden" name="urgency_reason" value="{{.Request2.UrgencyReason}}">{{end}}
+  <input type="hidden" name="attachment_exception_reason" value="{{.Request2.AttachmentExceptionReason}}">
+  {{if eq .Request2.Treatment "recoverable"}}
+  <input type="hidden" name="recoverable_category" value="{{.Request2.RecoverableCategory}}">
+  <input type="hidden" name="expected_return_date" value="{{.Request2.ExpectedReturnDate}}">
+  <input type="hidden" name="repayment_notes" value="{{.Request2.RepaymentNotes}}">
+  <input type="hidden" name="counterparty" value="{{.Request2.Counterparty}}">
+  {{end}}
+  {{if or (eq .FormType "vendor_invoice") (eq .FormType "vendor_advance")}}
+  <input type="hidden" name="vendor_id" value="{{deref .Request2.VendorID}}">
+  {{end}}
+
+  <fieldset>
+    <legend>Correct and resubmit</legend>
+    <div class="form-grid">
+      <div class="field span-12"><label for="rt-title">Short title <span class="req" aria-hidden="true">*</span></label><input id="rt-title" name="short_title" value="{{.Request2.ShortTitle}}" required></div>
+      {{if eq .FormType "vendor_invoice"}}
+      <div class="field span-4 m-half"><label for="rt-inv">Invoice number <span class="req" aria-hidden="true">*</span></label><input id="rt-inv" name="invoice_no" value="{{.Request2.InvoiceNo}}" required></div>
+      <div class="field span-4 m-half"><label for="rt-idate">Invoice date <span class="req" aria-hidden="true">*</span></label><input id="rt-idate" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required></div>
+      {{end}}
+      {{if eq .FormType "reimbursement"}}
+      <div class="field span-4 m-half"><label for="rt-edate">Expense date <span class="req" aria-hidden="true">*</span></label><input id="rt-edate" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required></div>
+      {{end}}
+      {{if or (eq .FormType "vendor_advance") (eq .FormType "employee_advance")}}
+      <div class="field span-8"><label for="rt-areason">Reason for the advance <span class="req" aria-hidden="true">*</span></label><input id="rt-areason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required></div>
+      {{end}}
+      <div class="field span-4 money-field">
+        <label for="rt-amt">Amount <span class="req" aria-hidden="true">*</span></label>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="rt-amt" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
+      </div>
+      <div class="field span-12"><label for="rt-purpose">Purpose <span class="req" aria-hidden="true">*</span></label><textarea id="rt-purpose" name="purpose" required>{{.Request2.Purpose}}</textarea></div>
+      <div class="field span-12">
+        <span class="flabel">Documents</span>
+        <div class="stack-8">
+          {{range .RequestAtts}}<div class="file-row"><span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span><span><b>{{.OriginalName}}</b><small>{{fileSize .SizeBytes}}</small></span></div>{{end}}
+          <div class="uploader">
+            <div class="up-ico" aria-hidden="true">⇪</div>
+            <label for="rt-attachment"><b>Attach the corrected document</b></label>
+            <small>PDF, JPG or PNG up to {{index .Settings "attachment_max_mb"}} MB</small>
+            <input type="file" id="rt-attachment" name="attachment">
+          </div>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Saving keeps it with you; resubmitting sends it back to {{.Request2.ManagerName}}.</span>
+    <span class="row-end"></span>
+    <button class="btn outline" type="submit" name="submit_action" value="save">Save corrections</button>
+    <button class="btn primary" type="submit" name="submit_action" value="resubmit">Resubmit for approval</button>
+  </div>
+</form>
+
+{{template "request_thread" .}}
+{{template "bottom" .}}
+{{end}}
+
 {{/* The manager queue — mockups/screens/approvals-list.html.
 
      Its own route, because it answers a different question from the requests

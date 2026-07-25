@@ -479,12 +479,30 @@ func (a *App) requestDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// request-returned.html is this request in a different state, seen by the
+	// one person who can act on it. It is a different template rather than a
+	// pile of conditionals: what a returned request needs is a correction form,
+	// and everybody else still needs the detail.
+	if a.showsReturnedCorrection(r, req) {
+		data, err := a.requestEditData(r, req)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		a.render(w, r, "request_returned", data)
+		return
+	}
 	data, err := a.requestDetailData(r, req, req.Number)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
 	a.render(w, r, "request_detail", data)
+}
+
+func (a *App) showsReturnedCorrection(r *http.Request, req store.Request) bool {
+	u := auth.CurrentUser(r)
+	return req.Status == "returned" && req.RequesterID == u.ID && a.auth.Can(u, "request", "edit")
 }
 
 // requestDetailData loads the merged thread and the documents every screen that
