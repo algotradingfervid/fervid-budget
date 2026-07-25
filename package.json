@@ -1,0 +1,19 @@
+{
+  "name": "fervid-budget-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "test:e2e:list": "playwright test --list",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:update-snapshots": "playwright test --update-snapshots"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
