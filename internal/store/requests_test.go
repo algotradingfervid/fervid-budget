@@ -959,3 +959,116 @@ func TestCancellationRequestAcceptAndDecline(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestCommentsAndAttachments(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+		ShortTitle: "Inv", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "inv",
+		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "A/1", InvoiceDate: "2026-07-18"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.AddRequestComment(ctx, req, id, "  "); !errors.Is(err, ErrValidation) {
+		t.Fatalf("empty comment = %v, want ErrValidation", err)
+	}
+	if _, err := s.AddRequestComment(ctx, req, id, "here is the context"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRequestComment(ctx, mgr, id, "thanks, approved shortly"); err != nil {
+		t.Fatal(err)
+	}
+	comments, err := s.RequestComments(ctx, id)
+	if err != nil || len(comments) != 2 {
+		t.Fatalf("comments = %#v, %v", comments, err)
+	}
+	if comments[0].AuthorName != req.Name || comments[1].AuthorName != mgr.Name {
+		t.Fatalf("comment authors = %q,%q", comments[0].AuthorName, comments[1].AuthorName)
+	}
+
+	if _, err := s.AddRequestAttachment(ctx, req, id, AttachmentInput{OriginalName: "quote.pdf", StoredPath: "/tmp/quote.pdf", MimeType: "application/pdf", SizeBytes: 12}); err != nil {
+		t.Fatal(err)
+	}
+	atts, err := s.RequestAttachments(ctx, id)
+	if err != nil || len(atts) != 1 || atts[0].OriginalName != "quote.pdf" {
+		t.Fatalf("attachments = %#v, %v", atts, err)
+	}
+}
+
+// A19: history and conversation are ONE chronological stream.
+func TestRequestThreadMergesEventsCommentsAndFiles(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+		ShortTitle: "Inv", ProjectID: 1, HeadID: headID, Amount: 96000, Purpose: "inv",
+		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "SE/26-27/1180", InvoiceDate: "2026-07-18"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRequestComment(ctx, req, id, "Vendor reissued the invoice."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRequestAttachment(ctx, req, id, AttachmentInput{OriginalName: "SE-26-27-1184.pdf", StoredPath: "/tmp/a.pdf", MimeType: "application/pdf", SizeBytes: 214000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateRequest(ctx, req, id, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+		ShortTitle: "Inv", ProjectID: 1, HeadID: headID, Amount: 100000, Purpose: "inv",
+		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "SE/26-27/1184", InvoiceDate: "2026-07-18"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApproveRequest(ctx, mgr, id, 100000, "Panel count matches."); err != nil {
+		t.Fatal(err)
+	}
+
+	thread, err := s.RequestThread(ctx, id)
+	if err != nil {
+		t.Fatalf("RequestThread: %v", err)
+	}
+	if len(thread) < 5 {
+		t.Fatalf("thread has %d entries, want the submit, comment, attachment, edit and approval", len(thread))
+	}
+	kinds := map[string]int{}
+	for _, e := range thread {
+		kinds[e.Kind]++
+	}
+	for _, k := range []string{"event", "comment", "attachment"} {
+		if kinds[k] == 0 {
+			t.Fatalf("thread has no %q entries: %#v", k, thread)
+		}
+	}
+	// Chronological, oldest first — the same order `.thread` renders.
+	for i := 1; i < len(thread); i++ {
+		if thread[i].CreatedAt.Before(thread[i-1].CreatedAt) {
+			t.Fatalf("thread is not chronological at %d", i)
+		}
+	}
+	if thread[0].Kind != "event" || thread[0].Action != "submit" {
+		t.Fatalf("thread starts with %#v, want the submit event", thread[0])
+	}
+	// The edit entry carries a field-level diff for `.tl-change`.
+	var sawChange bool
+	for _, e := range thread {
+		if e.Action == "update" && len(e.Changes) > 0 {
+			sawChange = true
+			for _, c := range e.Changes {
+				if c.Field == "amount" && (c.Was == "" || c.Now == "") {
+					t.Fatalf("amount change has no before/after: %#v", c)
+				}
+			}
+		}
+	}
+	if !sawChange {
+		t.Fatal("the edit entry carries no field-level changes")
+	}
+	// Comments carry initials for the `.tl-dot` avatar.
+	for _, e := range thread {
+		if e.Kind == "comment" && e.Initials == "" {
+			t.Fatalf("comment entry without initials: %#v", e)
+		}
+	}
+}

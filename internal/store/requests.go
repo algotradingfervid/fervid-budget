@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -948,4 +950,199 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int64, body string) (int64, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return 0, fmt.Errorf("%w: comment cannot be empty", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err := requestInTx(ctx, tx, requestID); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO request_comments(request_id,author_id,body) VALUES(?,?,?)`, requestID, actor.ID, body)
+	if err != nil {
+		return 0, classify(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "comment", EntityType: "payment_request", EntityID: &requestID,
+		Summary: "Commented on request", After: map[string]any{"comment_id": id}}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (s *Store) RequestComments(ctx context.Context, requestID int64) ([]RequestComment, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.request_id,c.author_id,COALESCE(u.name,''),c.body,c.created_at
+ FROM request_comments c JOIN users u ON u.id=c.author_id WHERE c.request_id=? ORDER BY c.created_at, c.id`, requestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RequestComment
+	for rows.Next() {
+		var c RequestComment
+		if err := rows.Scan(&c.ID, &c.RequestID, &c.AuthorID, &c.AuthorName, &c.Body, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID int64, in AttachmentInput) (int64, error) {
+	if err := validateAttachment(in); err != nil {
+		return 0, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err := requestInTx(ctx, tx, requestID); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO request_attachments(request_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`, requestID, in.OriginalName, in.StoredPath, in.MimeType, in.SizeBytes, actor.ID)
+	if err != nil {
+		return 0, classify(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "attach", EntityType: "payment_request", EntityID: &requestID,
+		Summary: "Uploaded attachment " + in.OriginalName, After: map[string]any{"id": id, "name": in.OriginalName}}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// initials renders "Arun Mehta" as "AM" for the `.tl-dot` avatar.
+func initials(name string) string {
+	parts := strings.Fields(name)
+	if len(parts) == 0 {
+		return "?"
+	}
+	out := strings.ToUpper(parts[0][:1])
+	if len(parts) > 1 {
+		out += strings.ToUpper(parts[len(parts)-1][:1])
+	}
+	return out
+}
+
+// threadDiffFields are the fields an edit reports in `.tl-change`. Everything
+// else changes too rarely, or too noisily, to be worth a line in the story.
+var threadDiffFields = []string{"amount", "approved_amount", "needed_by", "invoice_no",
+	"invoice_date", "expense_date", "manager_id", "short_title", "purpose", "urgent"}
+
+func diffRequestAudit(beforeJSON, afterJSON string) []ThreadChange {
+	var before, after map[string]any
+	if json.Unmarshal([]byte(beforeJSON), &before) != nil || json.Unmarshal([]byte(afterJSON), &after) != nil {
+		return nil
+	}
+	var out []ThreadChange
+	for _, f := range threadDiffFields {
+		key := auditFieldKey(f)
+		was, now := fmt.Sprint(before[key]), fmt.Sprint(after[key])
+		if before[key] == nil && after[key] == nil {
+			continue
+		}
+		if was != now {
+			out = append(out, ThreadChange{Field: f, Was: was, Now: now})
+		}
+	}
+	return out
+}
+
+// auditFieldKey maps a column name to the key recordAuditTx serialised, which
+// is the Go field name on Request (Amount, NeededBy, …).
+func auditFieldKey(column string) string {
+	parts := strings.Split(column, "_")
+	for i, p := range parts {
+		if p == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(p[:1]) + p[1:]
+	}
+	key := strings.Join(parts, "")
+	if key == "InvoiceNo" {
+		return "InvoiceNo"
+	}
+	if key == "ManagerId" {
+		return "ManagerID"
+	}
+	if key == "ApprovedAmount" {
+		return "ApprovedAmount"
+	}
+	return key
+}
+
+// RequestThread merges the audit trail, the conversation and the file uploads
+// into one chronological stream — the single "History and conversation" list
+// the design renders as `.thread` (UI/UX §9).
+func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEntry, error) {
+	audit, err := s.Audit(ctx, "payment_request", requestID, 200)
+	if err != nil {
+		return nil, err
+	}
+	comments, err := s.RequestComments(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	atts, err := s.RequestAttachments(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	// s.Audit returns newest first, and SQLite's CURRENT_TIMESTAMP resolves only
+	// to the second, so a whole burst of events shares one timestamp. Re-sort the
+	// trail by (created_at, id) ascending before merging: the audit id is the only
+	// strictly monotonic record of what happened first, and leaving the order to
+	// SQLite's tie-breaking would make the first line of the story arbitrary.
+	sort.SliceStable(audit, func(i, j int) bool {
+		if !audit[i].CreatedAt.Equal(audit[j].CreatedAt) {
+			return audit[i].CreatedAt.Before(audit[j].CreatedAt)
+		}
+		return audit[i].ID < audit[j].ID
+	})
+	out := make([]ThreadEntry, 0, len(audit)+len(comments)+len(atts))
+	for _, a := range audit {
+		// The comment and attach events are rendered by their own richer
+		// entries below; keeping both would double every line.
+		if a.Action == "comment" || a.Action == "attach" {
+			continue
+		}
+		var actorID int64
+		if a.ActorID != nil {
+			actorID = *a.ActorID
+		}
+		out = append(out, ThreadEntry{Kind: "event", Action: a.Action, ActorID: actorID,
+			ActorName: a.ActorName, Initials: initials(a.ActorName), Title: a.Summary,
+			Changes: diffRequestAudit(a.BeforeJSON, a.AfterJSON), CreatedAt: a.CreatedAt})
+	}
+	for _, c := range comments {
+		out = append(out, ThreadEntry{Kind: "comment", ActorID: c.AuthorID, ActorName: c.AuthorName,
+			Initials: initials(c.AuthorName), Body: c.Body, CreatedAt: c.CreatedAt})
+	}
+	for _, a := range atts {
+		out = append(out, ThreadEntry{Kind: "attachment", ActorID: a.UploadedBy, Title: "Attachment added",
+			FileName: a.OriginalName, FileSize: a.SizeBytes, CreatedAt: a.CreatedAt})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
 }
