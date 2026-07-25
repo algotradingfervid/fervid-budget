@@ -30,6 +30,7 @@ type Manager struct {
 	cfg      config.Config
 	store    *store.Store
 	enforcer *casbin.Enforcer
+	onError  func(http.ResponseWriter, *http.Request, int, string)
 }
 
 func New(cfg config.Config, st *store.Store) (*Manager, error) {
@@ -57,6 +58,7 @@ m = g(r.sub, p.sub) && (p.obj == "*" || p.obj == r.obj) && (p.act == "*" || p.ac
 		{"data_entry", "payment", "create"},
 		{"data_entry", "payment", "read"},
 		{"data_entry", "payment_attachment", "create"},
+		{"data_entry", "payment_attachment", "read"},
 		{"data_entry", "report", "read"},
 		{"data_entry", "report", "export"},
 		{"data_entry", "grid", "read"},
@@ -69,8 +71,28 @@ m = g(r.sub, p.sub) && (p.obj == "*" || p.obj == r.obj) && (p.act == "*" || p.ac
 }
 
 func HashPassword(password string) (string, error) {
+	if err := ValidatePassword(password); err != nil {
+		return "", err
+	}
 	b, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(b), err
+}
+
+// ValidatePassword keeps the local bootstrap password compatible while
+// preventing trivially short credentials in user-management workflows.
+func ValidatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
+	}
+	var hasLetter, hasDigit bool
+	for _, r := range password {
+		hasLetter = hasLetter || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z')
+		hasDigit = hasDigit || ('0' <= r && r <= '9')
+	}
+	if !hasLetter || !hasDigit {
+		return fmt.Errorf("password must include a letter and a number")
+	}
+	return nil
 }
 
 func CheckPassword(hash, password string) bool {
@@ -108,16 +130,59 @@ func (m *Manager) RequireLogin(next http.Handler) http.Handler {
 	})
 }
 
+// Can is the single authorisation question the whole application asks. Every
+// gate — middleware, handler check or rendered control — goes through it so
+// permissions are decided in exactly one place.
+func (m *Manager) Can(u store.User, resource, action string) bool {
+	if u.Role == "" || resource == "" || action == "" {
+		return false
+	}
+	ok, err := m.enforcer.Enforce(u.Role, resource, action)
+	return err == nil && ok
+}
+
+// Permissions snapshots everything a user may do so a page render can ask
+// hundreds of questions without re-entering the policy engine each time.
+// Phase 1 swaps the source of these grants for the roles table; the returned
+// interface does not change.
+func (m *Manager) Permissions(u store.User) store.PermissionSet {
+	if u.Role == "" {
+		return store.NewPermissionSet(nil)
+	}
+	policies, err := m.enforcer.GetImplicitPermissionsForUser(u.Role)
+	if err != nil {
+		return store.NewPermissionSet(nil)
+	}
+	grants := make([]store.Grant, 0, len(policies))
+	for _, policy := range policies {
+		if len(policy) < 3 {
+			continue
+		}
+		grants = append(grants, store.Grant{Resource: policy[1], Action: policy[2]})
+	}
+	return store.NewPermissionSet(grants)
+}
+
 func (m *Manager) RequirePermission(obj, act string, next http.Handler) http.Handler {
 	return m.RequireLogin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u := CurrentUser(r)
-		ok, err := m.enforcer.Enforce(u.Role, obj, act)
-		if err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
+		if !m.Can(CurrentUser(r), obj, act) {
+			m.writeError(w, r, http.StatusForbidden, "You do not have permission to perform this action.")
 			return
 		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+func (m *Manager) SetErrorHandler(fn func(http.ResponseWriter, *http.Request, int, string)) {
+	m.onError = fn
+}
+
+func (m *Manager) writeError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if m.onError != nil {
+		m.onError(w, r, status, message)
+		return
+	}
+	http.Error(w, message, status)
 }
 
 func CurrentUser(r *http.Request) store.User {
@@ -152,7 +217,7 @@ func (m *Manager) EnsureCSRF(w http.ResponseWriter, r *http.Request) string {
 func (m *Manager) CSRFMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.CheckCSRF(r) {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+			m.writeError(w, r, http.StatusForbidden, "Your form session expired. Refresh the page and try again.")
 			return
 		}
 		m.EnsureCSRF(w, r)
