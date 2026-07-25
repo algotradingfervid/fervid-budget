@@ -216,6 +216,144 @@ type PaymentListOptions struct {
 	Limit  int
 }
 
+type Request struct {
+	ID                        int64
+	Number                    string
+	Status                    string
+	Treatment                 string
+	Type                      string
+	RecoverableCategory       string // code: emd|pbg|icd|employee_advance|security_deposit|other
+	RecoverableCategoryID     *int64 // linked by Phase 4
+	ProjectID                 *int64
+	Project                   string // joined name; retained even when project inactive
+	HeadID                    *int64
+	Head                      string // joined name; retained even when head inactive
+	VendorID                  *int64
+	Vendor                    string // COALESCE(vendors.name, vendor_payee) — the display payee
+	VendorGSTIN               string
+	VendorPayee               string // snapshot; the only payee for reimbursement / employee advance
+	ShortTitle                string
+	Amount                    int64
+	Purpose                   string
+	NeededBy                  string // YYYY-MM-DD, "" if unset
+	InvoiceNo                 string
+	InvoiceDate               string // YYYY-MM-DD, "" if unset
+	ExpenseDate               string // YYYY-MM-DD, "" if unset
+	AdvanceReason             string
+	Counterparty              string
+	ExpectedReturnDate        string // YYYY-MM-DD, "" if unset
+	RepaymentNotes            string
+	Urgent                    bool
+	UrgencyReason             string
+	AttachmentExceptionReason string
+	RequesterID               int64
+	RequesterName             string
+	ManagerID                 int64
+	ManagerName               string
+	ApprovedAmount            *int64
+	ApprovedBy                *int64
+	ApprovedByName            string
+	ApprovedAt                *time.Time
+	DecisionReason            string
+	CancelReason              string
+	OnHold                    bool
+	HoldReason                string
+	ProcessingBy              *int64
+	ProcessingAt              *time.Time
+	ReminderLastSent          *time.Time
+	SubmittedAt               *time.Time
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}
+
+type RequestInput struct {
+	Treatment                 string
+	Type                      string
+	RecoverableCategory       string
+	ProjectID                 int64
+	HeadID                    int64
+	VendorID                  int64
+	VendorPayee               string
+	ShortTitle                string
+	Amount                    int64
+	Purpose                   string
+	NeededBy                  string
+	InvoiceNo                 string
+	InvoiceDate               string
+	ExpenseDate               string
+	AdvanceReason             string
+	Counterparty              string
+	ExpectedReturnDate        string
+	RepaymentNotes            string
+	Urgent                    bool
+	UrgencyReason             string
+	AttachmentExceptionReason string
+	ManagerID                 int64
+	// RequesterID is filled by the store from the actor, never from the form.
+	// It exists so validateRequestInput can reject self-approval (G8).
+	RequesterID int64
+	// Attachments are staged by the handler and written in the same transaction
+	// as the request itself. D1 removed drafts, so there is no earlier moment at
+	// which a file could be attached.
+	Attachments []AttachmentInput
+}
+
+type RequestListOptions struct {
+	Scope     string // "own" | "assigned" | "all"
+	ViewerID  int64
+	Status    string   // "" or "all" = any status; otherwise exact status
+	Statuses  []string // optional explicit set; wins over Status when non-empty
+	Bucket    string   // "" | "open" | "closed" | "needs-me" | "all"
+	Type      string
+	Treatment string
+	ProjectID int64
+	Query     string
+	Limit     int
+}
+
+type RequestComment struct {
+	ID         int64
+	RequestID  int64
+	AuthorID   int64
+	AuthorName string
+	Body       string
+	CreatedAt  time.Time
+}
+
+type RequestAttachment struct {
+	ID           int64
+	RequestID    int64
+	OriginalName string
+	StoredPath   string
+	MimeType     string
+	SizeBytes    int64
+	UploadedBy   int64
+	CreatedAt    time.Time
+}
+
+// ThreadEntry is one line of the merged history-and-conversation stream that
+// `.thread` renders. Events, comments and attachments are one chronological
+// list, not three (UI/UX §9; request-detail-employee.html).
+type ThreadEntry struct {
+	Kind      string // "event" | "comment" | "attachment"
+	Action    string // audit action for events; "" for comments
+	ActorID   int64
+	ActorName string
+	Initials  string
+	Title     string
+	Body      string
+	FileName  string
+	FileSize  int64
+	Changes   []ThreadChange
+	CreatedAt time.Time
+}
+
+type ThreadChange struct {
+	Field string
+	Was   string
+	Now   string
+}
+
 type AuditInput struct {
 	ActorID    *int64
 	ActorName  string
