@@ -125,6 +125,8 @@ type PageData struct {
 	// render as one `.thread`; RequestAtts is that request's own documents.
 	Thread      []store.ThreadEntry
 	RequestAtts []store.RequestAttachment
+	// Areas are the dashboard's work areas, in the order they are shown.
+	Areas []WorkArea
 	// Config is the Configuration screen's values. It is deliberately not
 	// Settings: Settings is what a *form* consults about the rules it must
 	// follow, Config is what the screen that edits those rules renders from.
@@ -278,6 +280,10 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /{$}", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
 	mux.Handle("GET /", a.auth.RequireLogin(http.HandlerFunc(a.notFound)))
 	mux.Handle("GET /grid", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
+	// The work dashboard. It is ungated beyond being signed in, because every
+	// area inside it is gated on the queue it opens: a person with no areas is
+	// told nothing is waiting on them rather than refused the page.
+	mux.Handle("GET /dashboard", a.auth.RequireLogin(http.HandlerFunc(a.dashboard)))
 	mux.Handle("GET /months", a.auth.RequirePermission("month", "view", http.HandlerFunc(a.months)))
 	mux.Handle("POST /months", a.auth.RequirePermission("month", "create", http.HandlerFunc(a.withCSRF(a.monthCreate))))
 	mux.Handle("GET /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentForm)))

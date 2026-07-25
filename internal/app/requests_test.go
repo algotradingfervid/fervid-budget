@@ -1424,6 +1424,82 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 	}
 }
 
+// A17: the dashboard is a metric strip plus .work-areas. The strip tells you a
+// number; the work area hands you the thing to do. Both are gated on the same
+// permissions the nav is, so a person is never shown a queue they cannot open.
+func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Dash")
+	mgrID := seedSecondApprover(t, s)
+	mgr, err := s.st.UserByID(s.ctx, mgrID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester := s.seedRequester("dashreq@example.test", "Dash Req", "RequesterPass123")
+	mk := func(title string, amount int64) int64 {
+		id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+			Type: "reimbursement", ShortTitle: title, ProjectID: 1, HeadID: headID, Amount: amount,
+			Purpose: "p", ExpenseDate: "2026-07-17", ManagerID: mgrID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mk("Team lunch", 100000)
+	sentBack := mk("Cab receipts", 200000)
+	if err := s.st.ReturnRequest(s.ctx, mgr, sentBack, "attach the receipt"); err != nil {
+		t.Fatal(err)
+	}
+
+	// --- Requester. ---
+	s.login("dashreq@example.test", "RequesterPass123")
+	body := responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	for _, want := range []string{
+		`class="work-areas"`, `class="area"`, `class="a-head"`, `class="a-list"`, `class="a-foot"`,
+		`class="metric-strip"`, "Needs your action", "Cab receipts", `class="pill returned"`, "<h1>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("requester dashboard is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Administration") {
+		t.Fatal("requester dashboard must not show Administration")
+	}
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("the dashboard still renders .badge")
+	}
+	// The area rows link straight to the thing to do.
+	if !strings.Contains(body, `href="/requests/`+strconvFormat(sentBack)+`"`) {
+		t.Fatal("the needs-action area does not link to the request")
+	}
+
+	// --- Approver sees their own areas. ---
+	s.login("kavita@example.test", "ApproverPass123")
+	body = responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	for _, want := range []string{"Awaiting your approval", "Team lunch", `href="/approvals"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("approver dashboard is missing %q", want)
+		}
+	}
+
+	// --- Admin sees the administration area. ---
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body = responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	for _, want := range []string{"Configuration", `href="/configuration"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin dashboard is missing %q", want)
+		}
+	}
+
+	// --- Somebody with nothing waiting is told so, not shown an empty page. ---
+	s.seedRequester("idle@example.test", "Idle Hands", "OtherPass1234")
+	s.login("idle@example.test", "OtherPass1234")
+	body = responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	if !strings.Contains(body, "Nothing is waiting on you") {
+		t.Fatalf("an empty dashboard says nothing at all: %s", body)
+	}
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

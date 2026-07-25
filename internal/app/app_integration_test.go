@@ -1099,7 +1099,8 @@ func TestRequesterOnlySessionForbiddenFromAdminRoutesByURL(t *testing.T) {
 	s.login("requester@example.test", "RequesterPass123")
 
 	// GET admin/screen routes are blocked by URL (server-side, not menu-hiding).
-	for _, path := range []string{"/roles", "/users", "/audit", "/projects", "/heads", "/budgets", "/months", "/payments", "/reports/monthly"} {
+	for _, path := range []string{"/roles", "/users", "/audit", "/projects", "/heads", "/budgets",
+		"/months", "/payments", "/reports/monthly", "/configuration", "/approvals"} {
 		resp := s.request(http.MethodGet, path, nil, "")
 		requireStatus(t, resp, http.StatusForbidden)
 		_ = responseBody(t, resp)

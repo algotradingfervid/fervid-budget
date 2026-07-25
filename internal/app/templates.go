@@ -2080,6 +2080,95 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The work dashboard — mockups/screens/dashboard.html.
+
+     A metric strip plus work areas, not one or the other. The strip is the
+     shape of the day at a glance; each area under it hands over the actual rows
+     to act on and links to the queue behind them.
+
+     Every area is gated on the permission its queue is gated on, so nobody is
+     shown work behind a door they cannot open, and an area with nothing in it
+     is not rendered at all — the strip already carries the zero. */}}
+{{define "dashboard"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Home</div>
+    <h1>Good day, {{.User.Name}}</h1>
+    <p class="sub">Everything below is waiting on someone. The ones marked <em>you</em> are yours.</p>
+  </div>
+  <div class="pb-actions">
+    {{if .Perms.Can "request" "create"}}<a class="btn primary" href="/requests/new">＋ New request</a>{{end}}
+  </div>
+</section>
+
+<div class="metric-strip">
+  {{if .Perms.Can "request" "create"}}
+  <a class="metric{{if index .Counts "needs-action"}} warn{{end}}" href="/requests?bucket=needs-me">
+    <span class="metric-label">Needs my action</span>
+    <span class="metric-value">{{index .Counts "needs-action"}}</span>
+  </a>
+  <a class="metric" href="/requests?bucket=open">
+    <span class="metric-label">My open requests</span>
+    <span class="metric-value">{{index .Counts "in-progress"}}</span>
+  </a>
+  {{end}}
+  {{if .Perms.Can "approval" "approve"}}
+  <a class="metric{{if index .Counts "approvals"}} warn{{end}}" href="/approvals">
+    <span class="metric-label">Awaiting my approval</span>
+    <span class="metric-value">{{index .Counts "approvals"}}</span>
+  </a>
+  <a class="metric" href="/approvals?bucket=cancellations">
+    <span class="metric-label">Cancellation requests</span>
+    <span class="metric-value">{{index .Counts "decisions"}}</span>
+  </a>
+  {{end}}
+  {{if .Perms.Can "payment" "process"}}
+  <a class="metric" href="/requests?bucket=open">
+    <span class="metric-label">Approved, unclaimed</span>
+    <span class="metric-value">{{index .Counts "accounts"}}</span>
+  </a>
+  {{end}}
+  {{if .Perms.Can "grid" "view"}}
+  <a class="metric" href="/grid">
+    <span class="metric-label">Budget</span>
+    <span class="metric-value">Variance grid</span>
+  </a>
+  {{end}}
+</div>
+
+<div class="work-areas">
+  {{range .Areas}}
+  <section class="area">
+    <div class="a-head"><span class="a-ico" aria-hidden="true">{{.Icon}}</span><h2>{{.Title}}</h2>{{if .Count}}<span class="n">{{.Count}}</span>{{end}}</div>
+    <div class="a-list">
+      {{range .Requests}}
+      <a href="/requests/{{.ID}}">
+        <span class="al-main"><b>{{.Number}} · {{.ShortTitle}}</b>
+          <small>
+            {{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}
+            <span class="pill {{pillClass .Status}}">{{reqStatus .Status}}</span>
+            {{$w := waitingOn . $.User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
+          </small></span>
+        <span class="al-amt">{{money .Amount}}</span>
+      </a>
+      {{end}}
+      {{range .Links}}
+      <a href="{{.Href}}"><span class="al-main"><b>{{.Label}}</b><small>{{.Sub}}</small></span><span class="al-amt" aria-hidden="true">→</span></a>
+      {{end}}
+    </div>
+    {{if .FootHref}}<a class="a-foot" href="{{.FootHref}}">{{.FootText}}</a>{{end}}
+  </section>
+  {{else}}
+  <section class="area">
+    <div class="a-head"><span class="a-ico" aria-hidden="true">✓</span><h2>Nothing is waiting on you</h2></div>
+    <div class="a-list"><p class="empty">When something needs you, it appears here.</p></div>
+  </section>
+  {{end}}
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{define "audit"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Evidence</div><h1>Audit Log</h1><p class="sub muted">Review who changed financial records, when, and why.</p></div></section>
