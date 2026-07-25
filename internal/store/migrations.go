@@ -23,10 +23,9 @@ type migration struct {
 //	v5 — recoverable categories
 //	v6 — notification settings
 //
-// Phase 1 owns exactly one migration, v1: this task opens it with the roles
-// table so the runner has a real first migration to exercise; a later task adds
-// the remaining permission tables and folds seeding + back-fill into the same
-// v1 Up.
+// Phase 1 owns exactly one migration, v1: it creates all four permission tables
+// (overview §3 P1); a later task folds seeding of the system roles and the
+// user_roles back-fill into the same v1 Up.
 var migrations = []migration{
 	{
 		Version: 1,
@@ -42,6 +41,26 @@ CREATE TABLE IF NOT EXISTS roles (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_name_nocase ON roles(lower(name));
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  resource TEXT NOT NULL,
+  action TEXT NOT NULL,
+  PRIMARY KEY(role_id, resource, action)
+);
+
+CREATE TABLE IF NOT EXISTS role_data_scope (
+  role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  resource TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  PRIMARY KEY(role_id, resource)
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  PRIMARY KEY(user_id, role_id)
+);
 `)
 			return err
 		},

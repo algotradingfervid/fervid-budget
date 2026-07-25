@@ -40,4 +40,23 @@ func TestColumnExistsReportsSchemaShape(t *testing.T) {
 	}
 }
 
+func TestMigrationV1CreatesPermissionTables(t *testing.T) {
+	s := newTestStore(t)
+	for _, table := range []string{"roles", "role_permissions", "role_data_scope", "user_roles"} {
+		var name string
+		if err := s.DB().QueryRow(
+			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table,
+		).Scan(&name); err != nil {
+			t.Fatalf("table %q missing after migrate: %v", table, err)
+		}
+	}
+	// Case-insensitive unique role name index exists.
+	var idx string
+	if err := s.DB().QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_roles_name_nocase'`,
+	).Scan(&idx); err != nil {
+		t.Fatalf("idx_roles_name_nocase missing: %v", err)
+	}
+}
+
 var _ = sql.ErrNoRows // keep database/sql imported for later tests in this file
