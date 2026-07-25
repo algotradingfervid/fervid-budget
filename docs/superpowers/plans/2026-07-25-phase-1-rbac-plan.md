@@ -2716,6 +2716,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 11 — Roles admin screen on the design system: matrix editor, create / copy / delete (R1, R2, R3, R5, R9 UI; D2)
 
+> **Status: DONE** — shipped as commit `946cda0`. Body kept as the record of what was planned; three points of it were stale and the shipped code differs:
+>
+> - **`store.ResourceOrder()` and `store.IsScopedResource()` do not exist** and never did — Step 3's `rolesSave` calls both. `internal/app/permmap.go` already owns working equivalents, so nothing was added to `internal/store`: a new `scopedMatrixResources()` in `permmap.go` derives the scoped resources from `permGroups` via the existing `isScopedResource` helper, and that is what `rolesSave` iterates.
+> - **`strconvFormatID` was not added.** `strconv.FormatInt` is called directly; `strconvFormat` already exists in `app_integration_test.go` and a near-duplicate helper in `app.go` would only be confusing.
+> - **The page banner is not `d-only`.** `TestEveryScreenRendersTheAppShell` and the Playwright navigation smoke both require a visible `h1` on a phone, and the `data-open` sheet openers are the only way to create or copy a role — hiding the banner below 860px makes both unreachable there, because nothing populates `Shell.ActionLabel`/`ActionHref`. `.table-wrap d-only` and `.ab-note d-only` are unchanged. The same applies to Task 12.
+> - `.pb-actions` is referenced by both mockups but is **missing from `web/static/fervid-ds.css`** (it exists only in `mockups/mockup.css`). Left as-is and reported as a Phase 0 porting gap; `.page-banner`'s own flex layout carries the two buttons acceptably. `.btn.danger` is likewise absent, but `button.danger` (line 411) covers the delete button because it is a `<button>`.
+
 Rebuilt against `mockups/screens/admin-roles.html`. The screen is: a `.segmented` role switcher whose custom roles carry an `.n` "custom" badge; the role's name and description in a `.card` whose `.card-head` carries a `.pill.good` "N users"; **two renderings of one dataset** — a desktop `table.perm-table` inside `.table-wrap.d-only` and a mobile `.perm-acc.m-only` of `.pa-item`/`.pa-head`/`.pa-body` — data scope as a 3-state `.perm-scope` pill group with an explicit `None`; and a sticky `.action-bar` with an `.ab-note.d-only`. Every button is `.btn` plus a modifier. The old `.split` + `<aside class="card">` role list, the `<select>` scope control and the `.badge` element are gone.
 
 **Two matrices, one form, no double submission.** Both renderings live inside the same `<form>`, so both would post. The desktop table is authoritative without JavaScript (it is inside `.table-wrap`, which scrolls horizontally on a phone), and the mobile accordion's inputs are therefore rendered with `disabled` in the HTML. `fervid-app.js` swaps `disabled` between the two on `matchMedia('(max-width: 860px)')`, so exactly one rendering ever contributes to a POST.
@@ -3413,6 +3420,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 12 — Users screen on the design system: multi-role assignment + default approver (R4 UI; G9, G8 foundation)
 
+> **Status: DONE** — shipped as commit `22ede3e`. Body kept as the record of what was planned, with three notes:
+>
+> - **The migration gotcha bit exactly as the amendment log warned.** `default_approver_id` is appended to the already-stamped v1, so it lands on every database built fresh (all Go tests, and the Playwright runtime DB, which is per-run) but **not** on a database an earlier task already stamped `user_version = 1`. Re-stamp (`PRAGMA user_version = 0`) or recreate before deploying; the whole of v1 is idempotent. Not renumbered to v2 — that number is Phase 1V's (amendment A2).
+> - **"update that one line in the fixture, nothing else" is wrong.** Three e2e call sites had to change, and scoping — not just an extra click — is what fixes them: every user's edit sheet now carries its own labelled *Name* and *Reset password* field, so an unscoped `getByLabel('Name')` matches N+1 inputs and violates strict mode. `createDataEntryUser` (plus a new exported `openNewUserSheet`) now opens `#user-new` and scopes every field to it, and `regression-issues.spec.ts` ISS-008 and ISS-010 do the same. ISS-008's `activeCheckboxFor` helper no longer applies to users at all — the per-row `input[form=…]` grid it walked is gone — so it asserts the row's `td[data-label="Status"]` instead.
+> - The page banner is not `d-only`, for the reason recorded under Task 11.
+
 Rebuilt against `mockups/screens/admin-users.html`. The screen is a `table.t-cards` — `data-label` on **every** cell so it restacks into labelled cards below 860 px, `.t-lead` on the name — with each user's roles shown as `.pill.neutral.no-dot` chips. Editing moves out of the table and into an `.overlay > .sheet` (`.sh-head` / `.sh-body` / `.sh-foot`) whose body carries the role `.checkline` list, the password reset and the active toggle. The inline per-row `<input>` grid is gone.
 
 The screen also lands the **default approver** (G9): a `default_approver_id` on `users` that Phase 2 reads to pre-select the approver on a new request. Self-approval is impossible, so a user can never be their own default — enforced in the store, not just omitted from the `<select>` (G8's foundation; Phase 2 enforces the same rule on the request itself).
@@ -3894,6 +3907,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ---
 
 ## Task 13 — Retire the stub `PermissionSet` and prove server-side URL enforcement (R6; D2/Q5 mechanism)
+
+> **Status: DONE** — shipped as commit `dba8999`. Body kept as the record of what was planned; Step 2's expected failure did not happen and step (a) was already done:
+>
+> - **Step 3a was a no-op.** The vocabulary hand-over table had already been applied to `navSpec`, `centreActions`, `resolveTabs` and `badgeSpecs` by Task 9's engine rewrite (`a73e92a`). All four of Step 1's tests — the two guards, the `TestDataEntryHasRestrictedNavigationAndRoutes` rewrite and `TestRequesterOnlySessionForbiddenFromAdminRoutesByURL` — therefore **passed on arrival**, once Task 11 had registered the `/roles` routes they assert against. They are kept as the regression guards they were written to be, but they gave this task no red phase.
+> - **The red phase came from step (b) instead**, via one test the plan does not list: `TestNewPermissionSetMatchesExactlyAndAllGrantsIsTheWholeVocabulary` in `internal/store/permissions_test.go`. It pins what deleting the stub actually changes — a `{"*","*"}` grant now opens nothing, and `AllGrants()` is the whole 66-pair vocabulary — and failed to compile before the change (`too many arguments in call to NewPermissionSet`, `undefined: AllGrants`).
+> - Two subtest labels went stale with the wildcard and were renamed, not weakened: `"wildcard takes the first match"` → `"every grant takes the first match"` (`nav_test.go`) and `"wildcard runs every sub-select"` → `"every canonical grant runs every sub-select"` (`badges_test.go`).
+> - The optional `tests/e2e/permissions.spec.ts` was **not** created: `TestRequesterOnlySessionForbiddenFromAdminRoutesByURL` covers the same ground server-side, and `regression-issues.spec.ts` ISS-007 already drives the browser half.
 
 **Reduced in scope by amendment A7.** Phase 0 builds the shell: `Shell`/`NavGroup`/`NavItem`/`TabBar`, `navSpec`, `buildShell`, `resolveTabs`, `PageData.Shell`, `PageData.Perms` populated in `renderStatus`, and the `top`/`bottom` templates that render them. **None of that is rebuilt here.** What is left is the hand-over: Phase 0 gates every nav item, tab and badge on the interim Casbin verbs (`request:approve`, `payment:read`, `budget:read`, `payment_attachment:create`, `recoverable:read`, `notification_rule:read`, …), and those pairs do not exist in the canonical vocabulary. Point the real engine at them unchanged and the whole sidebar silently empties. So this task:
 
