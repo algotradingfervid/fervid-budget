@@ -1146,3 +1146,110 @@ func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEnt
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
 }
+
+// requestBuckets back the `.segmented` tabs. "needs-me" is scope-dependent and
+// handled separately in requestWhere.
+var requestBuckets = map[string][]string{
+	"open":   {"pending", "returned", "approved", "cancellation_requested"},
+	"closed": {"rejected", "withdrawn", "cancelled"},
+}
+
+func requestWhere(opts RequestListOptions) (string, []any) {
+	var where []string
+	var args []any
+	switch opts.Scope {
+	case "own":
+		where = append(where, `r.requester_id=?`)
+		args = append(args, opts.ViewerID)
+	case "assigned":
+		where = append(where, `r.manager_id=?`)
+		args = append(args, opts.ViewerID)
+	}
+	placeholders := func(n int) string {
+		return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+	}
+	switch {
+	case len(opts.Statuses) > 0:
+		where = append(where, `r.status IN (`+placeholders(len(opts.Statuses))+`)`)
+		for _, st := range opts.Statuses {
+			args = append(args, st)
+		}
+	case opts.Bucket == "needs-me":
+		// The one line the whole design turns on: who owes the next action.
+		where = append(where, `((r.requester_id=? AND r.status='returned')
+ OR (r.manager_id=? AND r.status IN ('pending','cancellation_requested')))`)
+		args = append(args, opts.ViewerID, opts.ViewerID)
+	case opts.Bucket != "" && opts.Bucket != "all":
+		statuses := requestBuckets[opts.Bucket]
+		if len(statuses) == 0 {
+			statuses = []string{opts.Bucket}
+		}
+		where = append(where, `r.status IN (`+placeholders(len(statuses))+`)`)
+		for _, st := range statuses {
+			args = append(args, st)
+		}
+	case opts.Status != "" && opts.Status != "all":
+		where = append(where, `r.status=?`)
+		args = append(args, opts.Status)
+	}
+	if opts.Type != "" {
+		where = append(where, `r.type=?`)
+		args = append(args, opts.Type)
+	}
+	if opts.Treatment != "" {
+		where = append(where, `r.treatment=?`)
+		args = append(args, opts.Treatment)
+	}
+	if opts.ProjectID > 0 {
+		where = append(where, `r.project_id=?`)
+		args = append(args, opts.ProjectID)
+	}
+	if q := strings.ToLower(strings.TrimSpace(opts.Query)); q != "" {
+		where = append(where, `(lower(r.number) LIKE ? ESCAPE '\' OR lower(r.purpose) LIKE ? ESCAPE '\'
+ OR lower(r.short_title) LIKE ? ESCAPE '\' OR lower(r.invoice_no) LIKE ? ESCAPE '\'
+ OR lower(COALESCE(v.name,r.vendor_payee)) LIKE ? ESCAPE '\' OR lower(ru.name) LIKE ? ESCAPE '\')`)
+		q = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+		needle := "%" + q + "%"
+		args = append(args, needle, needle, needle, needle, needle, needle)
+	}
+	clause := ""
+	if len(where) > 0 {
+		clause = ` WHERE ` + strings.Join(where, ` AND `)
+	}
+	return clause, args
+}
+
+func (s *Store) ListRequests(ctx context.Context, opts RequestListOptions) ([]Request, error) {
+	if opts.Limit <= 0 {
+		opts.Limit = 200
+	}
+	clause, args := requestWhere(opts)
+	// Urgent first, then oldest first: the list is sorted by who has been kept
+	// waiting longest, which is what requests-list.html promises.
+	q := requestSelect + clause + ` ORDER BY r.urgent DESC, r.created_at DESC, r.id DESC LIMIT ?`
+	args = append(args, opts.Limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Request
+	for rows.Next() {
+		r, err := scanRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountRequests(ctx context.Context, opts RequestListOptions) (int, error) {
+	clause, args := requestWhere(opts)
+	q := `SELECT COUNT(*) FROM payment_requests r
+ JOIN users ru ON ru.id=r.requester_id
+ LEFT JOIN vendors v ON v.id=r.vendor_id` + clause
+	var n int
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
+	return n, err
+}

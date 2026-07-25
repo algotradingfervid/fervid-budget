@@ -1072,3 +1072,136 @@ func TestRequestThreadMergesEventsCommentsAndFiles(t *testing.T) {
 		}
 	}
 }
+
+// The freeze is the status itself: a frozen request is not `approved`, so no
+// Phase-3 query that filters on `approved` can pick it up.
+//
+// This is Task 15's second test. It is verbatim, but it lands with Task 17
+// because it is written against ListRequests, which Task 17 introduces.
+func TestCancellationFreezesTheApprovedState(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Anand Steel Traders")
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
+		ShortTitle: "Wire", ProjectID: 1, HeadID: headID, Amount: 47000, Purpose: "advance",
+		ManagerID: mgr.ID, VendorID: vendorID, AdvanceReason: "booking"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApproveRequest(ctx, mgr, id, 47000, ""); err != nil {
+		t.Fatal(err)
+	}
+	payable, _ := s.ListRequests(ctx, RequestListOptions{Scope: "all", Status: "approved"})
+	if len(payable) != 1 {
+		t.Fatalf("approved queue = %d, want 1", len(payable))
+	}
+	if err := s.RequestCancellation(ctx, req, id, "order withdrawn"); err != nil {
+		t.Fatal(err)
+	}
+	payable, _ = s.ListRequests(ctx, RequestListOptions{Scope: "all", Status: "approved"})
+	if len(payable) != 0 {
+		t.Fatalf("a frozen request is still in the payable queue: %#v", payable)
+	}
+}
+
+func TestListRequestsByScopeAndCount(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	otherID, _ := s.CreateUser(ctx, "someoneelse@example.com", "Someone Else", "hash", "data_entry", true)
+	other, _ := s.UserByID(ctx, otherID)
+	mk := func(actor User, amount int64, purpose string) int64 {
+		id, err := s.CreateRequest(ctx, actor, RequestInput{Treatment: "budget", Type: "vendor_advance",
+			ShortTitle: purpose, ProjectID: 1, HeadID: headID, Amount: amount, Purpose: purpose,
+			ManagerID: mgr.ID, VendorID: vendorID, AdvanceReason: "booking"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	own := mk(req, 1000, "mine")
+	foreign := mk(other, 2000, "theirs")
+
+	ownList, err := s.ListRequests(ctx, RequestListOptions{Scope: "own", ViewerID: req.ID})
+	if err != nil || len(ownList) != 1 || ownList[0].ID != own {
+		t.Fatalf("own scope = %#v, %v", ownList, err)
+	}
+	assigned, _ := s.ListRequests(ctx, RequestListOptions{Scope: "assigned", ViewerID: mgr.ID, Status: "pending"})
+	if len(assigned) != 2 {
+		t.Fatalf("assigned pending count = %d, want 2", len(assigned))
+	}
+	all, _ := s.ListRequests(ctx, RequestListOptions{Scope: "all"})
+	if len(all) != 2 {
+		t.Fatalf("all scope = %d, want 2", len(all))
+	}
+	found, _ := s.ListRequests(ctx, RequestListOptions{Scope: "all", Query: "theirs"})
+	if len(found) != 1 || found[0].ID != foreign {
+		t.Fatalf("query filter = %#v", found)
+	}
+	n, err := s.CountRequests(ctx, RequestListOptions{Scope: "assigned", ViewerID: mgr.ID, Status: "pending"})
+	if err != nil || n != 2 {
+		t.Fatalf("CountRequests = %d, %v, want 2", n, err)
+	}
+	// Search matches the vendor name through the join, not just the snapshot.
+	byVendor, _ := s.ListRequests(ctx, RequestListOptions{Scope: "all", Query: "acme"})
+	if len(byVendor) != 2 {
+		t.Fatalf("vendor-name search = %d, want 2", len(byVendor))
+	}
+}
+
+// A19: the `.segmented` tabs are SQL buckets, so tab counts and tab contents
+// can never disagree.
+func TestListRequestsBuckets(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	mk := func(purpose string) int64 {
+		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
+			ShortTitle: purpose, ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: purpose,
+			ManagerID: mgr.ID, VendorID: vendorID, AdvanceReason: "booking"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	pending := mk("pending one")
+	returned := mk("returned one")
+	rejected := mk("rejected one")
+	if err := s.ReturnRequest(ctx, mgr, returned, "fix the invoice"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RejectRequest(ctx, mgr, rejected, "no budget"); err != nil {
+		t.Fatal(err)
+	}
+
+	open, _ := s.CountRequests(ctx, RequestListOptions{Scope: "own", ViewerID: req.ID, Bucket: "open"})
+	if open != 2 {
+		t.Fatalf("open bucket = %d, want 2 (pending + returned)", open)
+	}
+	closed, _ := s.CountRequests(ctx, RequestListOptions{Scope: "own", ViewerID: req.ID, Bucket: "closed"})
+	if closed != 1 {
+		t.Fatalf("closed bucket = %d, want 1", closed)
+	}
+	// "Needs me" as the requester: the returned one is waiting on them.
+	mine, _ := s.ListRequests(ctx, RequestListOptions{Scope: "own", ViewerID: req.ID, Bucket: "needs-me"})
+	if len(mine) != 1 || mine[0].ID != returned {
+		t.Fatalf("requester needs-me = %#v, want the returned request", mine)
+	}
+	// "Needs me" as the approver: the pending one is waiting on them.
+	theirs, _ := s.ListRequests(ctx, RequestListOptions{Scope: "assigned", ViewerID: mgr.ID, Bucket: "needs-me"})
+	if len(theirs) != 1 || theirs[0].ID != pending {
+		t.Fatalf("approver needs-me = %#v, want the pending request", theirs)
+	}
+	// Toolbar filters.
+	byType, _ := s.CountRequests(ctx, RequestListOptions{Scope: "all", Type: "vendor_advance"})
+	if byType != 3 {
+		t.Fatalf("type filter = %d, want 3", byType)
+	}
+	byTreatment, _ := s.CountRequests(ctx, RequestListOptions{Scope: "all", Treatment: "recoverable"})
+	if byTreatment != 0 {
+		t.Fatalf("treatment filter = %d, want 0", byTreatment)
+	}
+}
