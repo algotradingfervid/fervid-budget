@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fervid Budget — component kitchen sink</title>
+<!-- Relative hrefs so this opens both from disk and at /static/_kitchensink.html -->
+<link rel="stylesheet" href="fervid-ds.css">
+</head>
+<body>
+
+<div class="appshell">
+
+<aside class="sidebar">
+  <div class="side-brand">
+    <span class="sq">F</span>
+    <span><b>Fervid Budget</b><small>Kitchen sink</small></span>
+  </div>
+  <nav class="side-nav" aria-label="Primary">
+    <div class="sgroup">Home</div>
+    <a href="#" class="active"><span class="ico">⌂</span>Dashboard</a>
+    <a href="#"><span class="ico">✉</span>Notifications<span class="n">3</span></a>
+    <div class="sgroup">Requests</div>
+    <a href="#"><span class="ico">▤</span>My requests<span class="n">12</span></a>
+    <a href="#"><span class="ico">✓</span>Approvals<span class="n">2</span></a>
+    <div class="sgroup">Coming soon</div>
+    <a href="#" class="soon"><span class="ico">◷</span>Recoverables<span class="n">Soon</span></a>
+  </nav>
+  <div class="side-user">
+    <span class="avatar">ND</span>
+    <span><strong>Naren Dhupati</strong><small>Administrator</small></span>
+  </div>
+</aside>
+
+<header class="m-topbar">
+  <a class="m-back" href="#" aria-label="Back">‹</a>
+  <div class="m-title"><b>Kitchen sink</b><small>every component</small></div>
+  <div class="m-actions">
+    <a class="m-cta" href="#">New</a>
+    <a class="m-icon" href="#" aria-label="Notifications">✉<span class="dot">3</span></a>
+  </div>
+</header>
+
+<main class="page">
+<div class="page-inner">
+
+<div class="greet">
+  <h1>Component kitchen sink</h1>
+  <p>Every component the design system defines, each under an <code>h2</code> naming its class.</p>
+</div>
+
+<!-- ==================================================================== -->
+<h2>.section-head</h2>
+<div class="section-head">
+  <h2>Section heading</h2>
+  <a class="more-link" href="#">See all →</a>
+</div>
+
+<h2>.card / .card-head / .card-body</h2>
+<div class="card">
+  <div class="card-head"><h3>Card head</h3><span class="small muted">right slot</span></div>
+  <div class="card-body">Card body copy.</div>
+</div>
+
+<h2>.panel / .panel-pad-sm</h2>
+<div class="stack-8">
+  <div class="panel">Panel, 16px pad.</div>
+  <div class="panel panel-pad-sm">Panel with <code>.panel-pad-sm</code>, 12px pad.</div>
+</div>
+
+<h2>.stack-8 / .stack-12 / .stack-16</h2>
+<div class="stack-16">
+  <div class="panel panel-pad-sm">stack-16 child one</div>
+  <div class="panel panel-pad-sm">stack-16 child two</div>
+</div>
+
+<h2>.row / .row-end / .num / .small / .nowrap / .muted</h2>
+<div class="row">
+  <span>Left</span>
+  <span class="small muted">small muted</span>
+  <span class="num">1,23,456.78</span>
+  <span class="row-end nowrap">pushed right, never wraps</span>
+</div>
+
+<h2>.m-only / .d-only</h2>
+<div class="row">
+  <span class="d-only">Desktop only (visible above 860px).</span>
+  <span class="m-only">Mobile only (visible at or below 860px).</span>
+</div>
+<div class="type-grid m-only" style="margin-top:8px">
+  <a class="type-card" href="#"><span class="tc-ico">▤</span><b>.m-only keeps grid</b><p>This block is <code>display: grid</code>; <code>revert</code> must not flatten it to block.</p></a>
+  <a class="type-card" href="#"><span class="tc-ico">✓</span><b>Second cell</b><p>Two cells prove the grid survived.</p></a>
+</div>
+
+<!-- ==================================================================== -->
+<h2>.pill</h2>
+<div class="row">
+  <span class="pill awaiting">Awaiting approval</span>
+  <span class="pill returned">Returned</span>
+  <span class="pill rejected">Rejected</span>
+  <span class="pill approved">Approved</span>
+  <span class="pill hold">On hold</span>
+  <span class="pill cancelreq">Cancellation requested</span>
+  <span class="pill cancelled">Cancelled</span>
+  <span class="pill processing">Processing</span>
+  <span class="pill partial">Partially paid</span>
+  <span class="pill discussion">In discussion</span>
+  <span class="pill completed">Completed</span>
+  <span class="pill completed-partial">Completed — partial</span>
+</div>
+<div class="row" style="margin-top:8px">
+  <span class="pill urgent">Urgent</span>
+  <span class="pill recoverable">Recoverable</span>
+  <span class="pill neutral">Neutral</span>
+  <span class="pill good">Good</span>
+  <span class="pill bad">Bad</span>
+  <span class="pill info">Info</span>
+  <span class="pill neutral no-dot">.no-dot</span>
+</div>
+
+<h2>.waiting</h2>
+<div class="stack-8">
+  <div><span class="waiting">Waiting on Accounts</span></div>
+  <div><span class="waiting you">Waiting on you · 2 days</span></div>
+  <div><span class="waiting done">Completed 24 July</span></div>
+  <div><span class="waiting closed">Rejected — closed, no tick</span></div>
+</div>
+
+<h2>.banner</h2>
+<div class="banner info"><span class="b-ico">i</span><div><b>Info banner</b><p>Tone modifier <code>.info</code>.</p></div><span class="b-actions"><a class="btn small outline" href="#">Review</a></span></div>
+<div class="banner warn"><span class="b-ico">!</span><div><b>Warn banner</b><p>Tone modifier <code>.warn</code>.</p></div></div>
+<div class="banner bad"><span class="b-ico">!</span><div><b>Bad banner</b><p>Tone modifier <code>.bad</code>.</p></div></div>
+<div class="banner good"><span class="b-ico">✓</span><div><b>Good banner</b><p>Tone modifier <code>.good</code>.</p></div></div>
+<div class="banner brand"><span class="b-ico">◷</span><div><b>Brand banner</b><p>Tone modifier <code>.brand</code>.</p></div></div>
+<div class="banner locked"><span class="b-ico">🔒</span><div><b>Locked banner</b><p>Tone modifier <code>.locked</code>.</p></div></div>
+
+<h2>.alert (legacy, must be unchanged)</h2>
+<div class="alert">Legacy <code>.alert</code> base.</div>
+<div class="alert error">Legacy <code>.alert.error</code>.</div>
+<div class="alert success">Legacy <code>.alert.success</code>.</div>
+<div class="alert warn">Legacy <code>.alert.warn</code>.</div>
+<div class="locked-banner">Legacy <code>.locked-banner</code>.</div>
+
+<h2>.reserve-bar</h2>
+<div class="reserve-bar">
+  <span class="rb-dot"></span>
+  <b>Reserved by you</b>
+  <span class="rb-meta">since 14:02 today · 41 minutes</span>
+  <span class="rb-actions"><a class="btn small outline" href="#">Release</a></span>
+</div>
+
+<!-- ==================================================================== -->
+<h2>.field / label .req / label .opt / .hint / .err / .flabel</h2>
+<div class="form-grid">
+  <div class="field span-6">
+    <label for="ks-a">Required field <span class="req">*</span></label>
+    <input id="ks-a" value="Some value">
+    <span class="hint">A hint sits under the control.</span>
+  </div>
+  <div class="field span-6">
+    <label for="ks-b">Optional field <span class="opt">optional</span></label>
+    <input id="ks-b" placeholder="Nothing yet">
+    <span class="err">And this is an error message.</span>
+  </div>
+  <div class="field span-12">
+    <span class="flabel">.flabel — a label that is not a &lt;label&gt;</span>
+    <label class="checkline"><input type="checkbox" checked> .checkline</label>
+  </div>
+</div>
+
+<h2>fieldset / legend</h2>
+<fieldset>
+  <legend>Grouped fields</legend>
+  <div class="form-grid">
+    <div class="field span-6"><label for="ks-c">Select</label><select id="ks-c"><option>One</option><option>Two</option></select></div>
+    <div class="field span-6"><label for="ks-d">Disabled</label><input id="ks-d" value="Read only" readonly></div>
+    <div class="field span-12"><label for="ks-e">Textarea</label><textarea id="ks-e">Multi-line.</textarea></div>
+  </div>
+</fieldset>
+
+<h2>.money-field</h2>
+<div class="field money-field">
+  <label for="ks-money">Amount <span class="req">*</span></label>
+  <span class="money-wrap"><span class="cur">₹</span><input id="ks-money" inputmode="numeric" value="1,00,000"></span>
+  <span class="in-words">One lakh rupees only</span>
+</div>
+
+<h2>.type-grid / .type-card</h2>
+<div class="type-grid">
+  <a class="type-card" href="#"><span class="tc-ico">▤</span><b>Vendor invoice payment</b><p>You have an invoice and it needs paying.</p><span class="tc-tag pill neutral no-dot">Needs invoice number</span></a>
+  <a class="type-card" href="#"><span class="tc-ico">◷</span><b>Vendor advance</b><p>Money before any invoice exists.</p><span class="tc-tag pill neutral no-dot">Needs a reason</span></a>
+</div>
+
+<h2>.choice</h2>
+<div class="choice">
+  <label>
+    <input type="radio" name="ks-choice" value="release" checked>
+    <span><b>Release it</b><small>Back to the open queue. Highlighted by <code>:has(input:checked)</code>, no JS.</small></span>
+    <span class="outcome good">No money moves</span>
+  </label>
+  <label>
+    <input type="radio" name="ks-choice" value="reassign">
+    <span><b>Reassign to someone else</b><small>Stays in Processing.</small></span>
+    <span class="outcome warn">Needs permission</span>
+  </label>
+</div>
+
+<h2>.combo / .combo-list</h2>
+<div class="field combo">
+  <label for="ks-combo">Pick a request</label>
+  <span class="combo"><input id="ks-combo" class="combo-input" value="sundaram"><span class="combo-caret">▾</span></span>
+</div>
+<div class="combo-list">
+  <a class="co" href="#"><span class="co-main"><b>PR-2026-000128 · Sundaram Electricals</b><small>Arun Mehta · Materials · invoice SE/26-27/1184</small></span><span class="co-amt">₹1,00,000</span></a>
+  <a class="co is-taken" href="#"><span class="co-main"><b>PR-2026-000130 · Anand Steel Traders</b><small>Reserved by Deepak Menon — you cannot take this one</small></span><span class="co-amt">₹33,500</span></a>
+  <a class="co co-add" href="#"><span class="co-main"><b>+ Add a new payee</b></span></a>
+</div>
+
+<h2>.uploader / .file-row</h2>
+<div class="stack-8">
+  <div class="file-row"><span class="f-ico">PDF</span><span><b>hdfc-advice.pdf</b><small>Bank advice · 78 KB</small></span><span class="f-actions"><button type="button" class="btn small outline">Remove</button></span></div>
+  <div class="uploader"><div class="up-ico">⇪</div><b>Add the bank advice</b><small>PDF, JPG or PNG up to 10 MB</small></div>
+</div>
+
+<h2>.action-bar</h2>
+<div class="action-bar">
+  <span class="ab-note">Nothing is saved until you confirm.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="#">Cancel</a>
+  <button class="btn primary" type="button" data-open="ks-overlay">Open the sheet →</button>
+</div>
+
+<!-- ==================================================================== -->
+<h2>.req-list / .req-card</h2>
+<div class="req-list">
+  <a class="req-card is-urgent" href="#">
+    <span class="rc-top"><span class="rc-no">PR-2026-000134</span><span class="rc-amt">₹18,400</span></span>
+    <span class="rc-title">Travel reimbursement — Hyderabad site visit</span>
+    <span class="rc-meta">Arun Mehta · Operations / Travel · <span class="pill urgent">Urgent</span></span>
+    <span class="rc-foot"><span class="pill awaiting">Awaiting approval</span><span class="waiting you">2 days</span></span>
+  </a>
+  <a class="req-card is-mine" href="#">
+    <span class="rc-top"><span class="rc-no">PR-2026-000133</span><span class="rc-amt">₹2,35,000</span></span>
+    <span class="rc-title">Meridian Facility Services — July housekeeping</span>
+    <span class="rc-meta">Sneha Pillai · Operations / Facilities</span>
+    <span class="rc-foot"><span class="pill approved">Approved</span><span class="waiting">Waiting on Accounts</span></span>
+  </a>
+</div>
+
+<h2>.req-head</h2>
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PR-2026-000130</span><span class="rh-amt">₹33,500</span></div>
+  <h1>Anand Steel Traders — TMT bar advance</h1>
+  <p class="rh-meta">Vendor advance · Ridge Metro Phase II / Materials</p>
+  <div class="rh-status"><span class="pill processing">Processing</span><span class="waiting">Reserved at 15:41 today</span></div>
+</div>
+
+<h2>.dl</h2>
+<dl class="dl">
+  <div><dt>Amount</dt><dd class="big">₹47,000</dd></div>
+  <div><dt>Approved on</dt><dd>18 July 2026</dd></div>
+  <div><dt>Vendor</dt><dd>Anand Steel Traders</dd></div>
+  <div><dt>Paid so far</dt><dd>Nothing</dd></div>
+</dl>
+
+<h2>.thread (new — coexists with legacy .timeline)</h2>
+<ol class="thread">
+  <li><span class="tl-dot brand">＋</span><div class="tl-head"><b>Sneha Pillai submitted the request</b><time>17 Jul, 14:02</time></div><div class="tl-body">₹47,000 vendor advance.</div></li>
+  <li><span class="tl-dot ok">✓</span><div class="tl-head"><b>Kavita Rao approved it</b><time>18 Jul, 09:15</time></div><div class="tl-body">Sent to Accounts.<div class="tl-change">Amount <span class="was">₹50,000</span> <span class="now">₹47,000</span></div></div></li>
+  <li><span class="tl-dot warn">!</span><div class="tl-head"><b>Priya Nair put it on hold</b><time>19 Jul, 11:00</time></div><div class="tl-body">Needs the site name.<span class="tl-file">📎 invoice-1184.pdf</span></div></li>
+  <li class="is-comment"><span class="tl-dot">❝</span><div class="tl-head"><b>Arun Mehta</b><time>19 Jul, 11:40</time></div><div class="tl-body"><p>Site is Ridge Metro Phase II.</p></div></li>
+  <li class="is-comment is-me"><span class="tl-dot">❝</span><div class="tl-head"><b>You</b><time>19 Jul, 12:02</time></div><div class="tl-body"><p>Thanks, releasing the hold.</p></div></li>
+  <li><span class="tl-dot bad">✕</span><div class="tl-head"><b>Cancelled</b><time>20 Jul</time></div><div class="tl-body">Closed without payment.</div></li>
+</ol>
+
+<h2>.timeline (legacy — must still work)</h2>
+<ul class="timeline">
+  <li class="timeline-item good"><b>Legacy good</b><p>Old timeline component.</p></li>
+  <li class="timeline-item info"><b>Legacy info</b><p>Old timeline component.</p></li>
+  <li class="timeline-item warn"><b>Legacy warn</b><p>Old timeline component.</p></li>
+  <li class="timeline-item danger"><b>Legacy danger</b><p>Old timeline component.</p></li>
+</ul>
+
+<h2>.comment-box</h2>
+<div class="comment-box">
+  <textarea placeholder="Add a comment…"></textarea>
+  <div class="cb-actions"><span class="small muted">Visible to everyone on this request.</span><span class="row-end"></span><button class="btn primary small" type="button">Comment</button></div>
+</div>
+
+<h2>.work-areas / .area</h2>
+<div class="work-areas">
+  <section class="area">
+    <div class="a-head"><span class="a-ico">!</span><h2>Needs your action</h2><span class="n">2</span></div>
+    <div class="a-list">
+      <a href="#"><span class="al-main"><b>PR-2026-000131 · Kaveri Logistics</b><small><span class="pill returned">Returned</span></small></span><span class="al-amt">₹64,500</span></a>
+      <a href="#"><span class="al-main"><b>PR-2026-000127 · Site advance</b><small><span class="pill hold">On hold</span> Accounts asked for the site name</small></span><span class="al-amt">₹25,000</span></a>
+    </div>
+    <a class="a-foot" href="#">Open my requests →</a>
+  </section>
+  <section class="area is-empty">
+    <div class="a-head"><span class="a-ico">▤</span><h2>In progress</h2><span class="n zero">0</span></div>
+    <div class="a-list">Nothing in progress.</div>
+  </section>
+</div>
+
+<h2>.notif-list / .notif</h2>
+<div class="card">
+  <div class="notif-list">
+    <a class="notif unread" href="#"><span class="n-ico">↩</span><span class="n-main"><b>Kavita Rao returned PR-2026-000131</b><p>“The invoice attached is the June one.”</p></span><time>2 h ago</time></a>
+    <a class="notif" href="#"><span class="n-ico">✓</span><span class="n-main"><b>Kavita Rao approved PR-2026-000128</b><p>₹1,00,000 to Sundaram Electricals.</p></span><time>21 Jul</time></a>
+  </div>
+</div>
+
+<h2>.acc / .acc-item / .head-row / .vbar</h2>
+<div class="acc">
+  <div class="acc-item is-open">
+    <button class="acc-head" type="button"><span class="chev">›</span>
+      <span class="ah-main"><b>Operations</b><small>3 heads · 66% used</small></span>
+      <span class="ah-amt"><b>₹1,07,700</b><small class="muted small">remaining</small></span>
+    </button>
+    <div class="acc-body">
+      <div class="head-row">
+        <div class="hr-top"><span class="hr-name">Office rent</span><span class="pill good">Under</span></div>
+        <div class="hr-figs"><span class="hr-fig"><span class="l">Budget</span><span class="v">₹2,50,000</span></span><span class="hr-fig"><span class="l">Actual</span><span class="v">₹1,75,000</span></span><span class="hr-fig"><span class="l">Left</span><span class="v good-num">₹75,000</span></span></div>
+        <div class="hr-bar"><span class="vbar ok" style="--pct:70%"><i></i></span></div>
+      </div>
+      <div class="head-row">
+        <div class="hr-top"><span class="hr-name">Site materials</span><span class="pill bad">Over</span></div>
+        <div class="hr-bar"><span class="vbar bad" style="--pct:118%"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+  <div class="acc-item">
+    <button class="acc-head" type="button"><span class="chev">›</span><span class="ah-main"><b>Closed group</b><small>collapsed</small></span><span class="ah-amt"><b>₹0</b></span></button>
+    <div class="acc-body">Hidden until opened.</div>
+  </div>
+</div>
+
+<h2>.vbar (aliases and legacy modifiers)</h2>
+<div class="stack-8">
+  <div class="usedcell"><span class="vbar ok" style="--pct:40%"><i></i></span><span class="pctxt">40%</span> <span class="small muted">.ok</span></div>
+  <div class="usedcell"><span class="vbar warn" style="--pct:85%"><i></i></span><span class="pctxt">85%</span> <span class="small muted">.warn</span></div>
+  <div class="usedcell"><span class="vbar bad" style="--pct:100%"><i></i></span><span class="pctxt">112%</span> <span class="small muted">.bad</span></div>
+  <div class="usedcell"><span class="vbar is-under" style="--pct:30%"><i></i></span><span class="pctxt">30%</span> <span class="small muted">.is-under</span></div>
+  <div class="usedcell"><span class="vbar is-ontrack" style="--pct:60%"><i></i></span><span class="pctxt">60%</span> <span class="small muted">.is-ontrack</span></div>
+  <div class="usedcell"><span class="vbar is-over" style="--pct:100%"><i></i></span><span class="pctxt">140%</span> <span class="small muted">.is-over</span></div>
+  <div class="usedcell"><span class="vbar is-unbudgeted" style="--pct:100%"><i></i></span><span class="pctxt">n/a</span> <span class="small muted">.is-unbudgeted</span></div>
+</div>
+
+<h2>.perm-acc / .perm-scope</h2>
+<div class="perm-acc">
+  <div class="pa-item is-open">
+    <button class="pa-head" type="button"><span class="chev">›</span><b>Payment requests</b><span class="n">4 of 7</span></button>
+    <div class="pa-body">
+      <label class="checkline"><input type="checkbox" checked> View</label>
+      <label class="checkline"><input type="checkbox" checked> Create</label>
+      <label class="checkline"><input type="checkbox"> Approve</label>
+      <div class="field"><span class="flabel">Records it can see</span>
+        <span class="perm-scope"><label>Own</label><label>Assigned</label><label class="is-on">All</label></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>.perm-table</h2>
+<div class="table-wrap">
+  <table class="perm-table">
+    <thead><tr><th>Resource</th><th class="c">View</th><th class="c">Create</th><th class="c">Approve</th></tr></thead>
+    <tbody>
+      <tr><td class="perm-row-head">Payment requests</td><td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td></tr>
+      <tr><td class="perm-row-head">Budgets</td><td class="c"><input type="checkbox" checked></td><td class="c"><input type="checkbox"></td><td class="c"><input type="checkbox"></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ==================================================================== -->
+<h2>.toolbar / .m-filters / .filter-btn</h2>
+<div class="toolbar">
+  <div class="field search"><label for="ks-search">Search</label><input id="ks-search" placeholder="Request number, payee…"></div>
+  <div class="field"><label for="ks-status">Status</label><select id="ks-status"><option>All</option><option>Approved</option></select></div>
+  <span class="row-end"></span>
+  <button class="btn" type="button">Export</button>
+</div>
+<div class="m-filters">
+  <span class="m-search"><input placeholder="Search" aria-label="Search"></span>
+  <button class="btn filter-btn" type="button">Filters<span class="n">2</span></button>
+</div>
+
+<h2>table.t-cards (10 columns, restacks below 860px)</h2>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead>
+      <tr>
+        <th>Request</th><th>Payee</th><th>Project</th><th>Head</th><th class="num">Amount</th>
+        <th class="num">Paid</th><th>Needed by</th><th>Mode</th><th>Status</th><th class="c">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="#">PR-2026-000133</a> <span class="t-sub">Sneha Pillai · approved 25 Jul</span></td>
+        <td data-label="Payee">Meridian Facility Services</td>
+        <td data-label="Project">Operations</td>
+        <td data-label="Head">Facilities</td>
+        <td class="num" data-label="Amount">₹2,35,000</td>
+        <td class="num" data-label="Paid">₹0</td>
+        <td data-label="Needed by">28 Jul</td>
+        <td data-label="Mode">NEFT</td>
+        <td data-label="Status"><span class="pill approved">Approved</span></td>
+        <td class="c" data-label=""><a class="btn small" href="#">Open</a></td>
+      </tr>
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="#">PR-2026-000128</a> <span class="t-sub">Arun Mehta · approved 21 Jul</span></td>
+        <td data-label="Payee">Sundaram Electricals</td>
+        <td data-label="Project">Ridge Metro</td>
+        <td data-label="Head">Materials</td>
+        <td class="num" data-label="Amount">₹1,00,000</td>
+        <td class="num" data-label="Paid">₹1,00,000</td>
+        <td data-label="Needed by">31 Jul</td>
+        <td data-label="Mode">UPI</td>
+        <td data-label="Status"><span class="pill completed">Completed</span></td>
+        <td class="c" data-label=""><a class="btn small" href="#">Open</a></td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td data-label="">Total</td><td data-label=""></td><td data-label=""></td><td data-label=""></td>
+        <td class="num" data-label="Amount">₹3,35,000</td>
+        <td class="num" data-label="Paid">₹1,00,000</td>
+        <td data-label=""></td><td data-label=""></td><td data-label=""></td><td data-label=""></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+<h2>.empty</h2>
+<div class="table-wrap"><div class="empty">Nothing here yet.</div></div>
+
+<h2>.compare</h2>
+<div class="compare">
+  <div class="cmp-row"><span class="l">Approved</span><span class="v">₹1,00,000</span></div>
+  <div class="cmp-row match"><span class="l">Paid</span><span class="v">₹1,00,000</span></div>
+  <div class="cmp-row diff"><span class="l">Difference</span><span class="v">₹2,000</span></div>
+</div>
+
+<h2>.overlay / .sheet</h2>
+<p class="small muted">Press the button in <code>.action-bar</code> above, or here:</p>
+<button class="btn primary" type="button" data-open="ks-overlay">Open overlay</button>
+
+<div style="height:80px"></div>
+
+</div><!-- /.page-inner -->
+</main>
+
+<nav class="tabbar" aria-label="Primary mobile">
+  <a href="#" class="active"><span class="ti">⌂</span>Home</a>
+  <a href="#"><span class="ti">▤</span>Requests</a>
+  <a class="fab-wrap" href="#"><span class="fab">＋</span>New</a>
+  <a href="#"><span class="ti">✉</span>Alerts</a>
+  <a href="#more" class="js-more" data-open="ks-more"><span class="ti">☰</span>More</a>
+</nav>
+
+<div class="more-sheet" id="ks-more" hidden>
+  <div class="ms-head"><b>Naren Dhupati</b><button type="button" class="ms-close" data-close="ks-more" aria-label="Close">✕</button></div>
+  <div class="ms-group">Requests</div>
+  <div class="ms-list">
+    <a href="#"><span class="ico">▤</span>My requests<span class="n">12</span></a>
+    <a href="#"><span class="ico">✓</span>Approvals<span class="n">2</span></a>
+  </div>
+  <div class="ms-group">Coming soon</div>
+  <div class="ms-list">
+    <a class="soon" href="#"><span class="ico">◷</span>Recoverables<span class="n">Soon</span></a>
+  </div>
+</div>
+
+<div class="overlay" id="ks-overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ks-sheet-title">
+    <div class="sh-head">
+      <div><h2 id="ks-sheet-title">Confirm the payment</h2><p class="sh-sub">PR-2026-000128 · Sundaram Electricals</p></div>
+      <button class="sh-close" type="button" data-close="ks-overlay" aria-label="Close">✕</button>
+    </div>
+    <div class="sh-body stack-12">
+      <div class="compare">
+        <div class="cmp-row"><span class="l">Approved</span><span class="v">₹1,00,000</span></div>
+        <div class="cmp-row match"><span class="l">Paying now</span><span class="v">₹1,00,000</span></div>
+      </div>
+      <div class="field"><label for="ks-utr">UTR</label><input id="ks-utr" placeholder="N221260724001188"></div>
+    </div>
+    <div class="sh-foot">
+      <button class="btn outline" type="button" data-close="ks-overlay">Cancel</button>
+      <span class="row-end"></span>
+      <button class="btn primary" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /.appshell -->
+
+<script src="fervid-app.js" defer></script>
+</body>
+</html>
