@@ -375,6 +375,29 @@
       return;
     }
 
+    /* Combobox pick.
+
+       Choosing a result writes its id into the hidden [data-combo-value] the
+       form actually posts, and its name into the visible box. The hidden id is
+       what the server validates; the visible text is never trusted. Where the
+       field has no hidden value to fill — a picker used purely for navigation
+       — the row stays the ordinary link it already is, which is also what a
+       browser with no scripting gets. */
+    var option = target.closest(".combo-list [data-id]");
+    if (option) {
+      var field = option.closest(".field");
+      var hidden = field && field.querySelector("[data-combo-value]");
+      if (hidden) {
+        event.preventDefault();
+        hidden.value = option.getAttribute("data-id");
+        var visible = field.querySelector(".combo-input");
+        if (visible) visible.value = option.getAttribute("data-name") || "";
+        var list = option.closest(".combo-list");
+        if (list && list.parentNode) list.parentNode.innerHTML = "";
+        return;
+      }
+    }
+
     /* Declarative overlays */
     var opener = target.closest("[data-open]");
     if (opener) {

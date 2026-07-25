@@ -65,7 +65,86 @@ var requestTypeLabels = func() map[string]string {
 // ?type= — or an unrecognised one — it is the chooser; with a known type it is
 // the form for that type and nothing else (A16).
 func (a *App) requestNew(w http.ResponseWriter, r *http.Request) {
-	a.render(w, r, "request_new_type", PageData{Title: "New request"})
+	kind := r.URL.Query().Get("type")
+	label, known := requestTypeLabels[kind]
+	if !known {
+		a.render(w, r, "request_new_type", PageData{Title: "New request"})
+		return
+	}
+	data, err := a.requestFormData(r, label)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	data.FormType = kind
+	data.Request2.Type = kind
+	data.Request2.Treatment = "budget"
+	// An employee advance is money the organisation expects to see accounted
+	// for, so it opens on the recoverable treatment already categorised. The
+	// requester can still switch it to a budget expense.
+	if kind == "employee_advance" {
+		data.Request2.Treatment = "recoverable"
+		data.Request2.RecoverableCategory = "employee_advance"
+	}
+	if data.Vendors, err = a.vendorChoices(r, kind); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "request_form", data)
+}
+
+// requestFormFields serves the treatment-dependent middle of the form. The
+// browser asks for it on every treatment, category or project change, so there
+// is exactly one copy of the conditional-field rules and it lives in Go — a
+// fieldset the server did not render is one the requester cannot fill in, and
+// validateRequestInput refuses it a second time if they forge it anyway.
+func (a *App) requestFormFields(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	data, err := a.requestFormData(r, "")
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	data.FormType = q.Get("type")
+	data.Request2.Type = data.FormType
+	data.Request2.Treatment = "budget"
+	if q.Get("treatment") == "recoverable" {
+		data.Request2.Treatment = "recoverable"
+		data.Request2.RecoverableCategory = normalizeRecoverableCategory(q.Get("recoverable_category"), data.FormType)
+	}
+	// Whatever the requester had already typed survives the swap; losing it
+	// would make changing a radio button a punishment.
+	data.Request2.ProjectID = optionalID(parseID(q.Get("project_id")))
+	data.Request2.HeadID = optionalID(parseID(q.Get("head_id")))
+	data.Request2.Counterparty = q.Get("counterparty")
+	data.Request2.ExpectedReturnDate = q.Get("expected_return_date")
+	data.Request2.RepaymentNotes = q.Get("repayment_notes")
+	a.renderPartial(w, r, "request_form_fields", data)
+}
+
+// normalizeRecoverableCategory keeps the server's idea of the category and the
+// rendered <select> in step: a browser posting nothing still shows the first
+// option, so an unrecognised value must resolve to whatever that would be.
+func normalizeRecoverableCategory(code, formType string) string {
+	if _, ok := recoverableCategoryLabels[code]; ok {
+		return code
+	}
+	if formType == "employee_advance" {
+		return "employee_advance"
+	}
+	return "emd"
+}
+
+// vendorChoices backs the plain <select> the form falls back to when the
+// combobox cannot run — no JavaScript, or a requester who does not hold
+// vendor:view and so cannot reach GET /vendors/search. Types that never carry a
+// vendor row load nothing.
+func (a *App) vendorChoices(r *http.Request, formType string) ([]store.Vendor, error) {
+	if formType != "vendor_invoice" && formType != "vendor_advance" {
+		return nil, nil
+	}
+	return a.st.ListVendors(r.Context(), store.VendorListOptions{Status: "active", Limit: 500},
+		a.auth.Permissions(auth.CurrentUser(r)))
 }
 
 // requestInput reads the whole form. Every field the adaptive form is capable

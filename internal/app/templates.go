@@ -415,7 +415,7 @@ const templates = `
      add-a-vendor row is offered only to a caller who could actually complete
      it, because an affordance that 403s is worse than no affordance. */}}
 {{define "vendor_combo_options"}}<div class="combo-list" role="listbox" aria-label="Vendor results">
-{{range .Vendors}}<a class="co" role="option" href="/vendors/{{.ID}}"><span class="co-main"><b>{{.Name}}</b><small>{{if .GSTIN}}{{.GSTIN}}{{else}}No GSTIN{{end}}{{if .City}} · {{.City}}{{end}}</small></span></a>
+{{range .Vendors}}<a class="co" role="option" href="/vendors/{{.ID}}" data-id="{{.ID}}" data-name="{{.Name}}"><span class="co-main"><b>{{.Name}}</b><small>{{if .GSTIN}}{{.GSTIN}}{{else}}No GSTIN{{end}}{{if .City}} · {{.City}}{{end}}</small></span></a>
 {{else}}<span class="co"><span class="co-main"><b>{{if .Query}}No vendor matches “{{.Query}}”{{else}}Type a name, GSTIN or city{{end}}</b><small>Only active vendors can be picked.</small></span></span>
 {{end}}{{if .Perms.Can "vendor" "create"}}<a class="co co-add" href="/vendors/new">＋ Add a new vendor</a>{{end}}
 </div>{{end}}
@@ -760,6 +760,329 @@ const templates = `
       next screen.</p>
   </div>
 </div>
+{{template "bottom" .}}
+{{end}}
+
+{{/* The treatment-dependent middle of the request form — the htmx fragment
+     GET /requests/new/fields returns, and the same markup the full page
+     renders inline on first paint.
+
+     Budget and recoverable are rendered as ALTERNATIVES, not as two fieldsets
+     with one hidden: a hidden control is still submitted, so leaving the
+     budget project/head in the document during a recoverable request would
+     post two project_id values and let the stale one win. data-when is the
+     instant local feedback while the swap is in flight; the server is what
+     decides which fieldset exists.
+
+     Nothing in here carries the required attribute. A required control that data-when has
+     hidden makes the whole form unsubmittable in Chrome ("not focusable"), and
+     validateRequestInput enforces every one of these rules anyway — the
+     asterisk is the promise to the reader, the store is the enforcement. */}}
+{{define "request_form_fields"}}
+{{if eq .Request2.Treatment "recoverable"}}
+<fieldset data-when="treatment:recoverable">
+  <legend>Recoverable details</legend>
+  <div class="form-grid">
+    <div class="field span-6 m-half">
+      <label for="rcategory">Category <span class="req">*</span></label>
+      <select id="rcategory" name="recoverable_category"
+              hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
+        <option value="emd" {{select .Request2.RecoverableCategory "emd"}}>EMD — earnest money deposit</option>
+        <option value="pbg" {{select .Request2.RecoverableCategory "pbg"}}>PBG — performance bank guarantee</option>
+        <option value="icd" {{select .Request2.RecoverableCategory "icd"}}>ICD — inter-corporate deposit</option>
+        <option value="employee_advance" {{select .Request2.RecoverableCategory "employee_advance"}}>Employee advance</option>
+        <option value="security_deposit" {{select .Request2.RecoverableCategory "security_deposit"}}>Security deposit</option>
+        <option value="other" {{select .Request2.RecoverableCategory "other"}}>Other</option>
+      </select>
+      <span class="hint">Categories are maintained by your administrator.</span>
+    </div>
+    <div class="field span-6 m-half">
+      <label for="expected-return">Expected return date <span class="req">*</span></label>
+      <input id="expected-return" type="date" name="expected_return_date" value="{{.Request2.ExpectedReturnDate}}">
+    </div>
+    {{if or (eq .Request2.RecoverableCategory "emd") (eq .Request2.RecoverableCategory "pbg")}}
+    <div class="field span-6 m-half" data-when="recoverable_category:emd|pbg">
+      <label for="rproject">Related project <span class="req">*</span></label>
+      <select id="rproject" name="project_id">
+        <option value="">Choose a project</option>
+        {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <span class="hint">EMD and PBG always belong to a project.</span>
+    </div>
+    {{end}}
+    {{if or (eq .Request2.RecoverableCategory "icd") (eq .Request2.RecoverableCategory "security_deposit")}}
+    <div class="field span-6 m-half" data-when="recoverable_category:icd|security_deposit">
+      <label for="counterparty">Counterparty company <span class="req">*</span></label>
+      <input id="counterparty" name="counterparty" value="{{.Request2.Counterparty}}" placeholder="Company receiving the deposit">
+    </div>
+    {{end}}
+    <div class="field span-12">
+      <label for="terms">Repayment or refund terms <span class="req">*</span></label>
+      <textarea id="terms" name="repayment_notes">{{.Request2.RepaymentNotes}}</textarea>
+    </div>
+    <div class="field span-12">
+      <div class="banner brand" style="margin:0">
+        <span class="b-ico" aria-hidden="true">↩</span>
+        <div>
+          <b>This will not touch budget actuals</b>
+          <p>It appears in Recoverable payments instead.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</fieldset>
+{{else}}
+<fieldset data-when="treatment:budget">
+  <legend>Charge it to</legend>
+  <div class="form-grid">
+    <div class="field span-6 m-half">
+      <label for="project">Project <span class="req">*</span></label>
+      <select id="project" name="project_id"
+              hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
+        <option value="">Choose a project</option>
+        {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <span class="hint">Picking a project narrows the heads below to that project's own.</span>
+    </div>
+    <div class="field span-6 m-half">
+      <label for="head">Head <span class="req">*</span></label>
+      <select id="head" name="head_id">
+        <option value="">Choose a head</option>
+        {{range .Heads}}{{if or (not (deref $.Request2.ProjectID)) (eq .ProjectID (deref $.Request2.ProjectID))}}<option value="{{.ID}}" {{if eq (deref $.Request2.HeadID) .ID}}selected{{end}}>{{.Project}} / {{.Name}}</option>{{end}}{{end}}
+      </select>
+    </div>
+  </div>
+</fieldset>
+{{end}}
+{{end}}
+
+{{/* The adaptive request form — mockups/screens/request-new-form.html.
+
+     Step 2 of 2. The type is fixed by the route and travels as one hidden
+     input; treatment and recoverable category swap #form-fields through htmx.
+     There is exactly one submit button and exactly one POST: D1 removed drafts,
+     so creating and submitting are the same act and the request takes its
+     number at that moment.
+
+     No bank or account field appears here or on any other request screen —
+     bank details live on the vendor record behind vendor_bank (Phase 1V). */}}
+{{define "request_form"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">New request · step 2 of 2</div>
+    <h1>{{.Title}}</h1>
+    <p class="sub">One form that changes with what you pick. Nothing is saved until you submit.</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="/requests/new">← Change type</a></div>
+</section>
+
+<form method="post" enctype="multipart/form-data" action="/requests">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="type" value="{{.FormType}}">
+
+  <fieldset>
+    <legend>What is this for</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label for="short-title">Short title <span class="req">*</span></label>
+        <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required>
+        <span class="hint">What your approver will see in their approval list.</span>
+      </div>
+      <div class="field span-12">
+        <span class="flabel">How should this be treated <span class="req">*</span></span>
+        <div class="choice"
+             hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
+          <label>
+            <input type="radio" name="treatment" value="budget" {{if ne .Request2.Treatment "recoverable"}}checked{{end}}>
+            <span><b>Budget expense</b><small>Money spent and gone. Counts against a project and head.</small></span>
+          </label>
+          <label>
+            <input type="radio" name="treatment" value="recoverable" {{if eq .Request2.Treatment "recoverable"}}checked{{end}}>
+            <span><b>Refundable or recoverable</b><small>A deposit, guarantee, loan or advance you expect back. Kept out of budget actuals.</small></span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <div id="form-fields">{{template "request_form_fields" .}}</div>
+
+  <fieldset>
+    <legend>Amount and timing</legend>
+    <div class="form-grid">
+      <div class="field span-6 money-field">
+        <label for="amount">Amount <span class="req">*</span></label>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="needed-by">Needed by</label>
+        <input id="needed-by" type="date" name="needed_by" value="{{.Request2.NeededBy}}">
+        <span class="hint">Optional. It tells your approver how long they have.</span>
+      </div>
+      {{if ne (index .Settings "urgency_mode") "disabled"}}
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" name="urgent" {{check .Request2.Urgent}}> Mark this urgent</label>
+        <span class="hint">Urgent requests follow the same approval rules. They send an immediate email to your approver, and to Accounts once approved.</span>
+      </div>
+      {{if eq (index .Settings "urgency_mode") "reason"}}
+      <div class="field span-12" data-when="urgent:on" {{if not .Request2.Urgent}}hidden{{end}}>
+        <label for="urgency-reason">Why is it urgent <span class="req">*</span></label>
+        <input id="urgency-reason" name="urgency_reason" value="{{.Request2.UrgencyReason}}"
+               placeholder="Supply stops if this is not cleared by Monday">
+      </div>
+      {{end}}
+      {{end}}
+    </div>
+  </fieldset>
+
+  {{if or (eq .FormType "vendor_invoice") (eq .FormType "vendor_advance")}}
+  <fieldset>
+    <legend>Vendor and {{if eq .FormType "vendor_invoice"}}invoice{{else}}advance{{end}}</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="vendor">Vendor <span class="req">*</span></label>
+        {{/* The combobox is offered only to somebody who may actually reach
+             GET /vendors/search. Everyone else — and every browser with no
+             JavaScript — gets the plain select below, which posts the same
+             vendor_id. The visible text is never trusted: the hidden id is
+             what the server reads, and it comes from the vendor master. */}}
+        {{if .Perms.Can "vendor" "view"}}
+        <span class="combo">
+          <input class="combo-input" id="vendor" name="q" autocomplete="off" value="{{.Request2.Vendor}}"
+                 placeholder="Type a name, GSTIN or city"
+                 hx-get="/vendors/search" hx-trigger="keyup changed delay:250ms" hx-target="#vendor-options">
+          <span class="combo-caret" aria-hidden="true">▾</span>
+        </span>
+        <div id="vendor-options"></div>
+        <noscript>
+          <label for="vendor-plain">Or pick from the list</label>
+          <select id="vendor-plain" name="vendor_id">
+            <option value="">Choose a vendor</option>
+            {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+          </select>
+        </noscript>
+        {{/* Last, so that with scripting off the <noscript> select above is the
+             first vendor_id in the body and therefore the one that wins. */}}
+        <input type="hidden" name="vendor_id" id="vendor-id" data-combo-value value="{{deref .Request2.VendorID}}">
+        <span class="hint">Type to search the vendor master. Bank details stay in the vendor record — never on this form.</span>
+        {{else}}
+        <select id="vendor" name="vendor_id">
+          <option value="">Choose a vendor</option>
+          {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <span class="hint">Bank details stay in the vendor record — never on this form.</span>
+        {{end}}
+      </div>
+      {{if eq .FormType "vendor_invoice"}}
+      <div class="field span-3 m-half">
+        <label for="invoice-no">Invoice number <span class="req">*</span></label>
+        <input id="invoice-no" name="invoice_no" value="{{.Request2.InvoiceNo}}" required>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="invoice-date">Invoice date <span class="req">*</span></label>
+        <input id="invoice-date" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required>
+      </div>
+      {{else}}
+      <div class="field span-6">
+        <label for="advance-reason">Reason for the advance <span class="req">*</span></label>
+        <input id="advance-reason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required>
+      </div>
+      {{end}}
+    </div>
+  </fieldset>
+  {{end}}
+
+  {{if eq .FormType "reimbursement"}}
+  <fieldset>
+    <legend>Your expense</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half">
+        <label for="paid-to">Paid to</label>
+        <input id="paid-to" value="{{.User.Name}}" readonly>
+        <span class="hint">Reimbursements always pay the person raising them.</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="expense-date">Expense date <span class="req">*</span></label>
+        <input id="expense-date" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required>
+      </div>
+    </div>
+  </fieldset>
+  {{end}}
+
+  {{if eq .FormType "employee_advance"}}
+  <fieldset>
+    <legend>Advance details</legend>
+    <div class="form-grid">
+      <div class="field span-6 m-half">
+        <label for="adv-to">Paid to</label>
+        <input id="adv-to" value="{{.User.Name}}" readonly>
+        <span class="hint">An employee advance always pays the person raising it.</span>
+      </div>
+      <div class="field span-12">
+        <label for="adv-reason">What the money is for <span class="req">*</span></label>
+        <input id="adv-reason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required>
+      </div>
+    </div>
+  </fieldset>
+  {{end}}
+
+  <fieldset>
+    <legend>Purpose and documents</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <label for="purpose">Purpose <span class="req">*</span></label>
+        <textarea id="purpose" name="purpose" required>{{.Request2.Purpose}}</textarea>
+      </div>
+      <div class="field span-12">
+        <span class="flabel">Supporting document {{if eq (index .Settings "require_attachments") "1"}}<span class="req">*</span>{{else}}<span class="opt">optional</span>{{end}}</span>
+        <div class="stack-8">
+          <div class="uploader">
+            <div class="up-ico" aria-hidden="true">⇪</div>
+            <label for="attachment"><b>Add invoice, receipt or proof</b></label>
+            <small>PDF, JPG or PNG up to {{index .Settings "attachment_max_mb"}} MB</small>
+            <input type="file" id="attachment" name="attachment">
+          </div>
+        </div>
+      </div>
+      {{if eq (index .Settings "require_attachments") "1"}}
+      <div class="field span-12">
+        <label for="att-exception">If you cannot attach a document, say why <span class="req">*</span></label>
+        <input id="att-exception" name="attachment_exception_reason" value="{{.Request2.AttachmentExceptionReason}}"
+               placeholder="Vendor posts the invoice; it arrives Monday">
+        <span class="hint">A missing document never blocks you — it asks for this instead, and your approver sees it.</span>
+      </div>
+      {{end}}
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Who approves it</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="approver">Approver <span class="req">*</span></label>
+        <select id="approver" name="manager_id" required {{if eq (index .Settings "allow_approver_choice") "0"}}disabled{{end}}>
+          <option value="">Choose an approver</option>
+          {{range .Approvers}}<option value="{{.ID}}" {{if eq $.Request2.ManagerID .ID}}selected{{end}}>{{.Name}}{{if eq $.Request2.ManagerID .ID}} (your default){{end}}</option>{{end}}
+        </select>
+        {{if eq (index .Settings "allow_approver_choice") "0"}}<input type="hidden" name="manager_id" value="{{.Request2.ManagerID}}">{{end}}
+        <span class="hint">You cannot approve your own request. Your own name is never in this list.</span>
+      </div>
+      <div class="field span-6">
+        <span class="flabel">Reminders</span>
+        <p class="hint" style="margin:4px 0 0">If nothing happens for three calendar days, this request starts sending a daily reminder to whoever it is waiting on.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Submitting sends it to your approver and creates the request number.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="/">Cancel</a>
+    <button class="btn primary" type="submit">Submit request</button>
+  </div>
+</form>
 {{template "bottom" .}}
 {{end}}
 

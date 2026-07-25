@@ -75,6 +75,22 @@ func seedSecondApprover(t *testing.T, s *appTestServer) int64 {
 	return id
 }
 
+// between returns the markup of one element, so an assertion about a select can
+// be made about that select rather than about the whole page.
+func between(t *testing.T, body, open, close string) string {
+	t.Helper()
+	start := strings.Index(body, open)
+	if start < 0 {
+		t.Fatalf("markup %q not found", open)
+	}
+	rest := body[start:]
+	end := strings.Index(rest, close)
+	if end < 0 {
+		t.Fatalf("markup %q has no %q", open, close)
+	}
+	return rest[:end]
+}
+
 // probeApp builds an App over the test server's store without going through
 // New, so the pure plumbing helpers can be exercised directly.
 func (s *appTestServer) probeApp() *App {
@@ -291,6 +307,146 @@ func TestRequestNewTypeChooser(t *testing.T) {
 	body = responseBody(t, s.request(http.MethodGet, "/requests/new?type=mystery", nil, ""))
 	if !strings.Contains(body, `class="type-grid"`) {
 		t.Fatal("an unknown type must fall back to the chooser")
+	}
+}
+
+// The step-2 form is built for one type, and the treatment half of it is
+// rendered by the server on every change (A16). Nothing here is decided by the
+// browser: the same rules run again in validateRequestInput.
+func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
+	s := newAppTestServer(t)
+	s.seedHead("Form")
+	mgrID := seedSecondApprover(t, s)
+	s.seedVendor(store.VendorInput{Name: "Sundaram Electricals Pvt Ltd", VendorType: "company", Status: "active"})
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+
+	// T3: bank details live on the vendor record, never on a request screen.
+	for _, banned := range []string{"bank account", "ifsc", "copy previous", "save draft", "save as draft"} {
+		if strings.Contains(strings.ToLower(form), banned) {
+			t.Fatalf("the request form exposes %q", banned)
+		}
+	}
+	// A16: the type arrives as a route parameter and leaves as a hidden input.
+	if strings.Contains(form, `<select id="rtype"`) || strings.Contains(form, `<select name="type"`) {
+		t.Fatal("the form rendered a type selector; the type is a route parameter")
+	}
+	for _, want := range []string{
+		`<input type="hidden" name="type" value="vendor_invoice">`,
+		`class="choice"`, `money-field"`, `class="money-wrap"`, `class="in-words"`, `class="combo"`,
+		`class="uploader"`, `class="action-bar"`, `name="short_title"`, `name="urgency_reason"`,
+		`name="invoice_no"`, `name="invoice_date"`, `hx-get="/requests/new/fields"`,
+		`data-when="treatment:budget"`, `data-when="urgent:on"`, "<h1>",
+		`action="/requests"`, "Submit request",
+	} {
+		if !strings.Contains(form, want) {
+			t.Fatalf("the form is missing %q", want)
+		}
+	}
+	// G8: the requester is never in their own approver list, and somebody else is.
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approverSelect := between(t, form, `<select id="approver"`, `</select>`)
+	if strings.Contains(approverSelect, `value="`+strconvFormat(admin.ID)+`"`) {
+		t.Fatalf("the requester appears in their own approver select: %s", approverSelect)
+	}
+	if !strings.Contains(approverSelect, `value="`+strconvFormat(mgrID)+`"`) {
+		t.Fatalf("no approver is offered at all: %s", approverSelect)
+	}
+	// A field the browser must never be trusted to require is not marked
+	// required either: a hidden required control makes the whole form
+	// unsubmittable in Chrome, and the store is the authority regardless.
+	if strings.Contains(form, `name="urgency_reason" required`) {
+		t.Fatal("a conditionally hidden field carries the required attribute")
+	}
+
+	// Each type gets its own fieldsets and nobody else's.
+	reimb := responseBody(t, s.request(http.MethodGet, "/requests/new?type=reimbursement", nil, ""))
+	if !strings.Contains(reimb, `name="expense_date"`) {
+		t.Fatal("reimbursement does not ask for the expense date")
+	}
+	for _, absent := range []string{`name="invoice_no"`, `class="combo"`} {
+		if strings.Contains(reimb, absent) {
+			t.Fatalf("reimbursement rendered %q, which belongs to a vendor invoice", absent)
+		}
+	}
+	advance := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	if !strings.Contains(advance, `name="advance_reason"`) {
+		t.Fatal("employee advance does not ask what the money is for")
+	}
+	// An employee advance opens on the recoverable treatment, so its fields are
+	// the recoverable ones from the first render.
+	if !strings.Contains(advance, `name="repayment_notes"`) {
+		t.Fatal("employee advance did not open on the recoverable treatment")
+	}
+
+	// The fields fragment swaps on treatment, and the server decides which
+	// fieldset exists — that is why the rules cannot drift from the store's.
+	frag := responseBody(t, s.htmxGet("/requests/new/fields?type=vendor_invoice&treatment=recoverable&recoverable_category=icd"))
+	if !strings.Contains(frag, "fieldset") {
+		t.Fatalf("the fragment rendered nothing useful: %s", frag)
+	}
+	if !strings.Contains(frag, `name="counterparty"`) {
+		t.Fatalf("ICD did not reveal the counterparty field: %s", frag)
+	}
+	if strings.Contains(frag, `name="head_id"`) {
+		t.Fatalf("a recoverable request must not ask for a budget head: %s", frag)
+	}
+	frag = responseBody(t, s.htmxGet("/requests/new/fields?type=vendor_invoice&treatment=recoverable&recoverable_category=emd"))
+	if !strings.Contains(frag, `name="project_id"`) {
+		t.Fatal("EMD did not reveal the related-project field")
+	}
+	if strings.Contains(frag, `name="counterparty"`) {
+		t.Fatal("EMD revealed the counterparty field, which belongs to ICD")
+	}
+	frag = responseBody(t, s.htmxGet("/requests/new/fields?type=vendor_invoice&treatment=budget"))
+	if !strings.Contains(frag, `name="head_id"`) || !strings.Contains(frag, `name="project_id"`) {
+		t.Fatalf("a budget expense must ask for a project and head: %s", frag)
+	}
+}
+
+// G10: when attachments are compulsory the form asks for a written reason
+// instead of blocking, because documents are sometimes genuinely unavailable.
+func TestCompulsoryAttachmentsAskForAReasonRatherThanBlocking(t *testing.T) {
+	s := newAppTestServer(t)
+	s.seedHead("Att")
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.SetAppSetting(s.ctx, admin, "require_attachments", "1"); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=reimbursement", nil, ""))
+	if !strings.Contains(form, `name="attachment_exception_reason"`) {
+		t.Fatal("attachments are compulsory but the form never asks why one is missing")
+	}
+	if !strings.Contains(strings.ToLower(form), "never blocks you") {
+		t.Fatal("the form does not say that a missing document is not a block")
+	}
+}
+
+// A15/A16: an htmx fragment is a fragment — no shell, no document.
+func TestRenderPartialOmitsTheShell(t *testing.T) {
+	s := newAppTestServer(t)
+	s.seedHead("Frag")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	full := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	if !strings.Contains(full, "<aside") {
+		t.Fatal("the full page is missing the shell")
+	}
+	frag := responseBody(t, s.htmxGet("/requests/new/fields?type=vendor_invoice&treatment=budget"))
+	for _, forbidden := range []string{"<aside", "<!doctype", "<html", `class="appshell"`, `class="tabbar"`, `class="m-topbar"`} {
+		if strings.Contains(strings.ToLower(frag), forbidden) {
+			t.Fatalf("the fragment carried %q: %s", forbidden, frag)
+		}
+	}
+	if !strings.Contains(frag, "fieldset") {
+		t.Fatalf("the fragment rendered nothing useful: %s", frag)
 	}
 }
 
