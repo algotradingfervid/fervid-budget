@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"fervidbudget/internal/money"
 )
 
 func TestNextRequestNumberIsMonotonicPerYear(t *testing.T) {
@@ -255,4 +258,191 @@ func seedTestVendor(t *testing.T, s *Store, ctx context.Context, name string) in
 		t.Fatal(err)
 	}
 	return id
+}
+
+func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+
+	id, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "budget", Type: "reimbursement", ShortTitle: "Team lunch",
+		ProjectID: 1, HeadID: headID, Amount: 50000, Purpose: "team lunch",
+		ExpenseDate: "2026-07-21", ManagerID: mgr.ID, VendorPayee: "ignored",
+		Urgent: true, UrgencyReason: "card bill due Monday",
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	got, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	// D1: created already pending, numbered, and stamped in one operation.
+	if got.Status != "pending" {
+		t.Fatalf("status = %q, want pending (D1: there are no drafts)", got.Status)
+	}
+	if got.SubmittedAt == nil {
+		t.Fatal("submitted_at not stamped; create and submit are one operation")
+	}
+	wantPrefix := "PR-" + time.Now().UTC().Format("2006") + "-"
+	if !strings.HasPrefix(got.Number, wantPrefix) {
+		t.Fatalf("number = %q, want prefix %q", got.Number, wantPrefix)
+	}
+	if got.VendorPayee != req.Name || got.Vendor != req.Name {
+		t.Fatalf("payee = %q/%q, want requester %q (forced)", got.VendorPayee, got.Vendor, req.Name)
+	}
+	if got.RequesterID != req.ID || got.ManagerID != mgr.ID {
+		t.Fatalf("requester/manager = %d/%d, want %d/%d", got.RequesterID, got.ManagerID, req.ID, mgr.ID)
+	}
+	// T5: the urgent flag and its reason round-trip.
+	if !got.Urgent || got.UrgencyReason == "" {
+		t.Fatalf("urgent=%v reason=%q; both must round-trip", got.Urgent, got.UrgencyReason)
+	}
+	// C3: amount is stored/round-tripped as int64 paise and formats via money.FormatPaise.
+	if got.Amount != 50000 || money.FormatPaise(got.Amount) != "₹500.00" {
+		t.Fatalf("amount = %d / %q, want 50000 / ₹500.00", got.Amount, money.FormatPaise(got.Amount))
+	}
+	audit, err := s.Audit(ctx, "payment_request", id, 5)
+	if err != nil || len(audit) == 0 || audit[0].Action != "submit" {
+		t.Fatalf("audit = %#v, %v; want a submit entry on payment_request", audit, err)
+	}
+}
+
+// D1 proof of absence: coverage row L1 inverted. No draft state exists anywhere.
+func TestNoDraftStateExists(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+
+	if requestStatuses["draft"] {
+		t.Fatal("draft is in the status enum")
+	}
+	for _, to := range []string{"pending", "approved", "returned", "rejected", "withdrawn"} {
+		if canTransition("draft", to) || canTransition(to, "draft") {
+			t.Fatalf("a transition to or from draft exists (%q)", to)
+		}
+	}
+	if _, err := s.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,amount,purpose,requester_id,manager_id) VALUES('PR-X','draft','budget','vendor_invoice',1,'p',?,?)`, req.ID, mgr.ID); err == nil {
+		t.Fatal("the schema accepted status='draft'")
+	}
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
+		ShortTitle: "t", ProjectID: 1, HeadID: headID, Amount: 100, Purpose: "p",
+		ExpenseDate: "2026-07-21", ManagerID: mgr.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Status == "draft" || got.SubmittedAt == nil || got.Number == "" {
+		t.Fatalf("a newly created request must be numbered and pending: %+v", got)
+	}
+}
+
+func TestCreateRequestRejectsInvalidType(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	_, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+		ShortTitle: "t", HeadID: headID, Amount: 1, Purpose: "x", ManagerID: mgr.ID,
+		VendorID: 1, InvoiceNo: "A/1", InvoiceDate: "2026-07-01"})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("missing project err = %v, want ErrValidation", err)
+	}
+	// Nothing partial is left behind when validation fails.
+	var rows int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_requests`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("a failed create left %d rows behind", rows)
+	}
+}
+
+// A staged attachment is written in the same transaction as the request; D1
+// left no earlier moment at which a file could be attached.
+func TestCreateRequestWritesStagedAttachments(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Sundaram Electricals Pvt Ltd")
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+		ShortTitle: "July switchgear", ProjectID: 1, HeadID: headID, Amount: 100000, Purpose: "panels",
+		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "SE/26-27/1184", InvoiceDate: "2026-07-18",
+		Attachments: []AttachmentInput{{OriginalName: "inv.pdf", StoredPath: "/tmp/inv.pdf", MimeType: "application/pdf", SizeBytes: 12}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	atts, err := s.RequestAttachments(ctx, id)
+	if err != nil || len(atts) != 1 || atts[0].OriginalName != "inv.pdf" {
+		t.Fatalf("attachments = %#v, %v", atts, err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Vendor != "Sundaram Electricals Pvt Ltd" {
+		t.Fatalf("vendor name not joined: %q", got.Vendor)
+	}
+}
+
+// The only surviving use of SubmitRequest: correct and resubmit (returned -> pending).
+func TestSubmitRequestResubmitsAReturnedRequest(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
+		ShortTitle: "t", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "p",
+		ExpenseDate: "2026-07-21", ManagerID: mgr.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A pending request cannot be "submitted" again — it already is.
+	if err := s.SubmitRequest(ctx, req, id); !errors.Is(err, ErrValidation) {
+		t.Fatalf("double submit = %v, want ErrValidation", err)
+	}
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='returned' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SubmitRequest(ctx, req, id); err != nil {
+		t.Fatalf("resubmit returned: %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Status != "pending" || got.SubmittedAt == nil || got.ReminderLastSent != nil {
+		t.Fatalf("after resubmit = %+v", got)
+	}
+}
+
+// T12: retired project/head disappears from new selection but the historical
+// request keeps showing its name.
+func TestRequestRetainsHistoricalProjectHead(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+		ShortTitle: "Inv", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "inv",
+		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "A/1", InvoiceDate: "2026-07-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Retire the head.
+	if _, err := s.UpsertHead(ctx, headID, 1, "Rent", "5", false, 1); err != nil {
+		t.Fatal(err)
+	}
+	// New selection lists no active heads now...
+	active, err := s.ListHeads(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range active {
+		if h.ID == headID {
+			t.Fatal("retired head still offered for new requests")
+		}
+	}
+	// ...but the historical request still shows the head + project name.
+	got, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Head != "Rent" || got.Project != "Operations" {
+		t.Fatalf("historical names lost: project=%q head=%q", got.Project, got.Head)
+	}
 }
