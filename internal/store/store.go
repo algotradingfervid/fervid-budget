@@ -92,17 +92,17 @@ func (s *Store) EnsureUser(ctx context.Context, email, name, hash, role string) 
 }
 
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email)))
+	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email)))
 	return scanUser(row)
 }
 
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at FROM users WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id FROM users WHERE id=?`, id)
 	return scanUser(row)
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at FROM users ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id FROM users ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,11 +1087,13 @@ func (s *Store) validatePayment(ctx context.Context, in PaymentInput) error {
 func scanUser(scanner interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var active int
-	err := scanner.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &active, &u.CreatedAt, &u.UpdatedAt)
+	var approver sql.NullInt64
+	err := scanner.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &active, &u.CreatedAt, &u.UpdatedAt, &approver)
 	if err == sql.ErrNoRows {
 		return u, ErrNotFound
 	}
 	u.Active = active == 1
+	u.DefaultApproverID = approver.Int64
 	return u, err
 }
 

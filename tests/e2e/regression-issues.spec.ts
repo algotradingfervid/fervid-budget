@@ -1,4 +1,4 @@
-import { test, expect, createDataEntryUser, createPayment, login } from './fixtures';
+import { test, expect, createDataEntryUser, createPayment, login, openNewUserSheet } from './fixtures';
 
 test.beforeEach(async ({}, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'Issue regressions run once; mobile coverage has dedicated smoke tests.');
@@ -132,12 +132,18 @@ test.describe('documented issue regression guards', () => {
 
     await adminPage.goto('/users');
     const email = `inactive-${runId}@example.test`;
-    await adminPage.getByLabel('Email').fill(email);
-    await adminPage.getByLabel('Name').fill(`Inactive User ${runId}`);
-    await adminPage.getByLabel('Password').fill('InactivePassword42');
-    await adminPage.locator('form.setup-form input[name="active"]').uncheck();
-    await adminPage.getByRole('button', { name: 'Add User' }).click();
-    await expect(await activeCheckboxFor(adminPage, 'email', email)).not.toBeChecked();
+    await openNewUserSheet(adminPage);
+    const sheet = adminPage.locator('#user-new');
+    await sheet.getByLabel('Email').fill(email);
+    await sheet.getByLabel('Name').fill(`Inactive User ${runId}`);
+    await sheet.getByLabel('Password').fill('InactivePassword42');
+    await sheet.locator('form.setup-form input[name="active"]').uncheck();
+    await sheet.getByRole('button', { name: 'Add User' }).click();
+    // The users table restacked into t-cards, so the state reads off the row's
+    // Status cell rather than an inline per-row checkbox.
+    await expect(
+      adminPage.locator('tr', { hasText: email }).locator('td[data-label="Status"]')
+    ).toHaveText('Inactive');
   });
 
   test('ISS-009 rejects trivially weak account passwords', async ({ adminPage, runId }) => {
@@ -160,11 +166,13 @@ test.describe('documented issue regression guards', () => {
     await login(page, 'admin@fervid.local', 'admin123');
     const email = `lock-${runId}@example.test`;
     await page.goto('/users');
-    await page.getByLabel('Email').fill(email);
-    await page.getByLabel('Name').fill('Lock Test');
-    await page.getByLabel('Role').selectOption('admin');
-    await page.getByLabel('Password').fill('LockPassword42');
-    await page.getByRole('button', { name: 'Add User' }).click();
+    await openNewUserSheet(page);
+    const sheet = page.locator('#user-new');
+    await sheet.getByLabel('Email').fill(email);
+    await sheet.getByLabel('Name').fill('Lock Test');
+    await sheet.getByLabel('Role').selectOption('admin');
+    await sheet.getByLabel('Password').fill('LockPassword42');
+    await sheet.getByRole('button', { name: 'Add User' }).click();
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await page.goto('/login');
       await page.getByLabel('Email').fill(email);

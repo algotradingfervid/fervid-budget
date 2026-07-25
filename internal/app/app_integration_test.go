@@ -878,3 +878,96 @@ func TestRolesAdminCreateEditCopyDelete(t *testing.T) {
 }
 
 func errorsIsNotFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
+
+func TestUsersScreenAssignsMultipleRoles(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminID := admin.ID
+
+	hash, err := auth.HashPassword("MemberPassword123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, err := s.st.CreateUser(s.ctx, "member@example.test", "Member", hash, "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles, err := s.st.AllRoles(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requesterID, managerID int64
+	for _, r := range roles {
+		switch r.Name {
+		case "Requester":
+			requesterID = r.ID
+		case "Manager":
+			managerID = r.ID
+		}
+	}
+
+	// The users page is the approved t-cards table with a role chip per role and
+	// an editing sheet holding the role checklines.
+	body := responseBody(t, s.request(http.MethodGet, "/users", nil, ""))
+	for _, want := range []string{
+		`class="t-cards"`, `class="t-lead" data-label="Name"`, `data-label="Email"`,
+		`data-label="Roles"`, `data-label="Default approver"`, `data-label="Status"`,
+		`class="pill neutral no-dot"`, `class="overlay"`, `class="sheet"`,
+		`class="sh-head"`, `class="sh-body`, `class="sh-foot"`, `class="checkline"`,
+		"role_ids", "default_approver_id", "Requester", "Manager",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("users page missing the approved markup %q", want)
+		}
+	}
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("/users still renders the retired .badge class")
+	}
+
+	// Assign Requester + Manager to the member and give them a default approver.
+	form := url.Values{
+		"id":                  {strconvFormat(uid)},
+		"name":                {"Member"},
+		"email":               {"member@example.test"},
+		"role":                {"data_entry"},
+		"active":              {"on"},
+		"role_ids":            {strconvFormat(requesterID), strconvFormat(managerID)},
+		"default_approver_id": {strconvFormat(adminID)},
+	}
+	resp := s.postForm("/users", form)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	got, err := s.st.UserRoles(s.ctx, uid)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("UserRoles after save = %+v, %v; want 2 roles", got, err)
+	}
+	// Union access: the member can now both create requests and approve.
+	ps, _ := s.st.EffectivePermissions(s.ctx, uid)
+	if !ps.Can("request", "create") || !ps.Can("approval", "approve") {
+		t.Fatalf("union of Requester+Manager not effective: %+v", ps)
+	}
+	saved, err := s.st.UserByID(s.ctx, uid)
+	if err != nil || saved.DefaultApproverID != adminID {
+		t.Fatalf("default approver = %d, want %d (%v)", saved.DefaultApproverID, adminID, err)
+	}
+
+	// The member's own sheet must not offer the member as their own approver,
+	// and a hand-crafted POST that tries it is rejected.
+	if strings.Contains(body, `value="`+strconvFormat(uid)+`" data-approver-for="`+strconvFormat(uid)+`"`) {
+		t.Fatal("the approver list offers a user as their own approver")
+	}
+	form.Set("default_approver_id", strconvFormat(uid))
+	resp = s.postForm("/users", form)
+	requireStatus(t, resp, http.StatusBadRequest)
+	_ = responseBody(t, resp)
+	saved, _ = s.st.UserByID(s.ctx, uid)
+	if saved.DefaultApproverID != adminID {
+		t.Fatalf("rejected self-approval still changed the stored value to %d", saved.DefaultApproverID)
+	}
+}

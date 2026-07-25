@@ -229,11 +229,90 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* Every <td> carries data-label, including the trailing action cell, because
+     table.t-cards uses that attribute to caption each field once the table
+     restacks into cards below 860px. Editing lives in one sheet per user; the
+     legacy users.role rides along as a hidden input because UpdateUser still
+     validates it and RequireAnotherActiveAdmin still guards it. The approver
+     <select> omits the user themselves and SetUserDefaultApprover rejects them
+     again server-side — a hidden option is not validation. */}}
 {{define "users"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Access</div><h1>Users</h1><p class="sub muted">Create users, assign roles, reset passwords, and deactivate accounts.</p></div></section>
-<form class="toolbar setup-form" method="post" action="/users"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Email<input name="email" type="email" required></label><label>Name<input name="name" required></label><label>Role<select name="role"><option value="data_entry">Data entry</option><option value="admin">Admin</option></select></label><label>Password<input name="password" type="password" minlength="12" required></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add User</button></form>
-<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>New password</th><th>Update</th></tr></thead><tbody>{{range .Users}}<tr><td><input form="user-{{.ID}}" name="name" value="{{.Name}}" required></td><td>{{.Email}}<input form="user-{{.ID}}" type="hidden" name="email" value="{{.Email}}"></td><td><select form="user-{{.ID}}" name="role"><option value="data_entry" {{select .Role "data_entry"}}>Data entry</option><option value="admin" {{select .Role "admin"}}>Admin</option></select></td><td><label class="checkline"><input form="user-{{.ID}}" type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td><input form="user-{{.ID}}" name="password" type="password" minlength="12" placeholder="Leave unchanged"></td><td><form id="user-{{.ID}}" method="post" action="/users"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="user-{{.ID}}">Save</button></td></tr>{{else}}<tr><td colspan="6" class="empty">No users yet.</td></tr>{{end}}</tbody></table></div>
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Access</div>
+    <h1>Users</h1>
+    <p class="sub">A person can hold several roles at once.</p>
+  </div>
+  <div class="pb-actions">{{if .Perms.Can "user" "create"}}<button class="btn primary" type="button" data-open="user-new">＋ Add user</button>{{end}}</div>
+</section>
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Name</th><th>Email</th><th>Roles</th><th>Default approver</th><th class="c">Status</th><th class="c">Edit</th></tr></thead>
+    <tbody>
+      {{range .Users}}
+      <tr>
+        <td class="t-lead" data-label="Name">{{.Name}}</td>
+        <td data-label="Email">{{.Email}}</td>
+        <td data-label="Roles">{{$uid := .ID}}{{range $.AllRoles}}{{if index (index $.UserRoleIDs $uid) .ID}}<span class="pill neutral no-dot">{{.Name}}</span> {{end}}{{end}}</td>
+        <td data-label="Default approver">{{if .DefaultApproverID}}{{index $.ApproverNames .DefaultApproverID}}{{else}}—{{end}}</td>
+        <td class="c" data-label="Status"><span class="pill {{if .Active}}good{{else}}neutral{{end}}">{{boolText .Active}}</span></td>
+        <td class="c" data-label=""><button class="btn small outline" type="button" data-open="user-{{.ID}}">Edit</button></td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" class="empty">No users yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+{{range .Users}}
+<div class="overlay" id="user-{{.ID}}" hidden>
+  <div class="sheet">
+    <form method="post" action="/users">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <input type="hidden" name="email" value="{{.Email}}">
+      <div class="sh-head"><div><h2>{{.Name}}</h2><p class="sh-sub">{{.Email}}</p></div><button class="sh-close" type="button" data-close="user-{{.ID}}">✕</button></div>
+      <div class="sh-body stack-12">
+        <div class="field"><label for="u-name-{{.ID}}">Name</label><input id="u-name-{{.ID}}" name="name" value="{{.Name}}" required></div>
+        <div class="field"><span class="flabel">Roles</span>
+          <div class="stack-8">{{$uid := .ID}}{{range $.AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}" {{if index (index $.UserRoleIDs $uid) .ID}}checked{{end}}> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}</div>
+        </div>
+        <div class="field"><label for="u-apr-{{.ID}}">Default approver for their own requests</label>
+          <select id="u-apr-{{.ID}}" name="default_approver_id">
+            <option value="0">None</option>
+            {{$self := .ID}}{{$chosen := .DefaultApproverID}}{{range $.Approvers}}{{if ne .ID $self}}<option value="{{.ID}}" data-approver-for="{{$self}}" {{if eq .ID $chosen}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}
+          </select>
+          <span class="hint">Self-approval is not allowed, so they never appear in their own list.</span>
+        </div>
+        <div class="field"><label for="u-pw-{{.ID}}">Reset password</label><input id="u-pw-{{.ID}}" name="password" type="password" minlength="12" placeholder="Leave blank to keep the current one"></div>
+        <input type="hidden" name="role" value="{{.Role}}">
+        <label class="checkline"><input type="checkbox" name="active" {{check .Active}}> Active</label>
+      </div>
+      <div class="sh-foot"><button class="btn outline" type="button" data-close="user-{{.ID}}">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Save user</button></div>
+    </form>
+  </div>
+</div>
+{{end}}
+
+<div class="overlay" id="user-new" hidden>
+  <div class="sheet">
+    <form class="setup-form" method="post" action="/users">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <div class="sh-head"><div><h2>Add user</h2><p class="sh-sub">They can be given more roles once they exist.</p></div><button class="sh-close" type="button" data-close="user-new">✕</button></div>
+      <div class="sh-body stack-12">
+        <div class="field"><label for="nu-email">Email</label><input id="nu-email" name="email" type="email" required></div>
+        <div class="field"><label for="nu-name">Name</label><input id="nu-name" name="name" required></div>
+        <div class="field"><label for="nu-role">Role</label><select id="nu-role" name="role"><option value="data_entry">Data entry</option><option value="admin">Admin</option></select></div>
+        <div class="field"><label for="nu-pw">Password</label><input id="nu-pw" name="password" type="password" minlength="12" required></div>
+        <label class="checkline"><input type="checkbox" name="active" checked> Active</label>
+      </div>
+      <div class="sh-foot"><button class="btn outline" type="button" data-close="user-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Add User</button></div>
+    </form>
+  </div>
+</div>
 {{template "bottom" .}}
 {{end}}
 

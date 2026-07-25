@@ -757,7 +757,38 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.render(w, r, "users", PageData{Title: "Users", Users: users})
+	roles, err := a.st.AllRoles(r.Context())
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	assigned := map[int64]map[int64]bool{}
+	names := map[int64]string{}
+	var approvers []store.User
+	for _, u := range users {
+		names[u.ID] = u.Name
+		if u.Active {
+			approvers = append(approvers, u)
+		}
+		urs, err := a.st.UserRoles(r.Context(), u.ID)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		set := map[int64]bool{}
+		for _, ur := range urs {
+			set[ur.ID] = true
+		}
+		assigned[u.ID] = set
+	}
+	a.render(w, r, "users", PageData{
+		Title:         "Users",
+		Users:         users,
+		AllRoles:      roles,
+		UserRoleIDs:   assigned,
+		Approvers:     approvers,
+		ApproverNames: names,
+	})
 }
 
 func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
@@ -796,6 +827,24 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
+	}
+	// Role assignment and the default approver only apply to an existing user;
+	// the create path relies on CreateUser's default-role assignment instead.
+	if id != 0 {
+		var roleIDs []int64
+		for _, raw := range r.Form["role_ids"] {
+			if v := parseID(raw); v != 0 {
+				roleIDs = append(roleIDs, v)
+			}
+		}
+		if err := a.st.SetUserRoles(r.Context(), auth.CurrentUser(r), id, roleIDs); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		if err := a.st.SetUserDefaultApprover(r.Context(), auth.CurrentUser(r), id, parseID(r.FormValue("default_approver_id"))); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
 	}
 	u := auth.CurrentUser(r)
 	action := "update"

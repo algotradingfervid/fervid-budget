@@ -412,6 +412,57 @@ func TestUpdateRoleRenamesCustomRolesAndProtectsSystemNames(t *testing.T) {
 	}
 }
 
+func TestSetUserDefaultApproverRejectsSelfAndUnknownUsers(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+
+	uid, err := s.CreateUser(ctx, "employee@example.com", "Employee", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approverID, err := s.CreateUser(ctx, "approver@example.com", "Approver", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inactiveID, err := s.CreateUser(ctx, "gone@example.com", "Gone", "hash", "data_entry", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetUserDefaultApprover(ctx, actor, uid, approverID); err != nil {
+		t.Fatalf("SetUserDefaultApprover: %v", err)
+	}
+	u, err := s.UserByID(ctx, uid)
+	if err != nil || u.DefaultApproverID != approverID {
+		t.Fatalf("DefaultApproverID = %d, want %d (%v)", u.DefaultApproverID, approverID, err)
+	}
+
+	// Self-approval is impossible: a user can never be their own default.
+	if err := s.SetUserDefaultApprover(ctx, actor, uid, uid); !errors.Is(err, ErrValidation) {
+		t.Fatalf("self as default approver = %v, want %v", err, ErrValidation)
+	}
+	if err := s.SetUserDefaultApprover(ctx, actor, uid, 999999); !errors.Is(err, ErrValidation) {
+		t.Fatalf("unknown approver = %v, want %v", err, ErrValidation)
+	}
+	if err := s.SetUserDefaultApprover(ctx, actor, uid, inactiveID); !errors.Is(err, ErrValidation) {
+		t.Fatalf("inactive approver = %v, want %v", err, ErrValidation)
+	}
+	// None of the rejections may have moved the stored value.
+	u, _ = s.UserByID(ctx, uid)
+	if u.DefaultApproverID != approverID {
+		t.Fatalf("a rejected update changed the stored approver to %d", u.DefaultApproverID)
+	}
+	// 0 clears it.
+	if err := s.SetUserDefaultApprover(ctx, actor, uid, 0); err != nil {
+		t.Fatalf("clearing the default approver: %v", err)
+	}
+	u, _ = s.UserByID(ctx, uid)
+	if u.DefaultApproverID != 0 {
+		t.Fatalf("DefaultApproverID = %d after clearing, want 0", u.DefaultApproverID)
+	}
+}
+
 func TestCreateUserAssignsDefaultRole(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

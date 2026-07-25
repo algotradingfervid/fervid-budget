@@ -23,6 +23,10 @@ type User struct {
 	Active       bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// DefaultApproverID is who approves this user's requests unless the request
+	// says otherwise (G9); 0 means none. A user is never their own default —
+	// SetUserDefaultApprover enforces it.
+	DefaultApproverID int64
 }
 
 type Project struct {
@@ -103,6 +107,20 @@ type Attachment struct {
 	CreatedAt    time.Time
 }
 
+// AttachmentInput contains attachment metadata after the application has
+// safely persisted the uploaded file outside the database.
+type AttachmentInput struct {
+	OriginalName string
+	StoredPath   string
+	MimeType     string
+	SizeBytes    int64
+}
+
+type BudgetInput struct {
+	HeadID int64
+	Amount int64
+}
+
 type MonthLock struct {
 	Month     string
 	LockedBy  int64
@@ -149,17 +167,18 @@ type ProjectTotal struct {
 }
 
 type GridData struct {
-	Month    string
-	Rows     []GridRow
-	Projects []ProjectTotal
-	Groups   []GridGroup
-	Total    ProjectTotal
-	Locked   bool
-	Lock     MonthLock
-	Over     int
-	Under    int
-	OnTrack  int
-	NotPaid  int
+	Month      string
+	Rows       []GridRow
+	Projects   []ProjectTotal
+	Groups     []GridGroup
+	Total      ProjectTotal
+	Locked     bool
+	Lock       MonthLock
+	Over       int
+	Unbudgeted int
+	Under      int
+	OnTrack    int
+	NotPaid    int
 }
 
 type GridGroup struct {

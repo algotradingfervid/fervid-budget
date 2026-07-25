@@ -70,9 +70,24 @@ CREATE TABLE IF NOT EXISTS user_roles (
 			if err := seedSystemRoles(tx); err != nil {
 				return err
 			}
-			return backfillUserRoles(tx)
+			if err := backfillUserRoles(tx); err != nil {
+				return err
+			}
+			return addDefaultApproverColumn(tx)
 		},
 	},
+}
+
+// addDefaultApproverColumn is additive and guarded by columnExists, so
+// re-applying v1 to a database that already has the column is a no-op (G9).
+// Phase 2 reads this column to pre-select the approver on a new request.
+func addDefaultApproverColumn(tx *sql.Tx) error {
+	has, err := columnExists(tx, "users", "default_approver_id")
+	if err != nil || has {
+		return err
+	}
+	_, err = tx.Exec(`ALTER TABLE users ADD COLUMN default_approver_id INTEGER REFERENCES users(id)`)
+	return err
 }
 
 type systemRoleDef struct {

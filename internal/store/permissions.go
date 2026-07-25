@@ -528,6 +528,51 @@ func (s *Store) UserRoles(ctx context.Context, userID int64) ([]Role, error) {
 	return out, rows.Err()
 }
 
+// SetUserDefaultApprover records who approves this user's requests by default.
+// A user can never be their own default approver — self-approval is not
+// acceptable, and the rule lives here rather than in the <select> because a
+// hidden option is not validation. approverID 0 clears the field.
+func (s *Store) SetUserDefaultApprover(ctx context.Context, actor User, userID, approverID int64) error {
+	if approverID != 0 && approverID == userID {
+		return fmt.Errorf("%w: a user cannot be their own default approver", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var name string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM users WHERE id=?`, userID).Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	var approver any
+	if approverID != 0 {
+		var active int
+		err := tx.QueryRowContext(ctx, `SELECT active FROM users WHERE id=?`, approverID).Scan(&active)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: the chosen approver does not exist", ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if active != 1 {
+			return fmt.Errorf("%w: the chosen approver is not an active user", ErrValidation)
+		}
+		approver = approverID
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, approver, userID); err != nil {
+		return classify(err)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "user", EntityID: &userID, Summary: "Updated default approver for " + name, After: map[string]any{"default_approver_id": approverID}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // EffectivePermissions resolves a user's complete permission view: the union of
 // every grant across all assigned roles, and the broadest data scope per scoped
 // resource (all > assigned > own).

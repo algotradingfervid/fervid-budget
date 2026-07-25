@@ -23,6 +23,19 @@ func TestMigrateAppliesAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestMigrationV1AddsDefaultApproverColumn(t *testing.T) {
+	s := newTestStore(t)
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	got, err := columnExists(tx, "users", "default_approver_id")
+	if err != nil || !got {
+		t.Fatalf("columnExists(users, default_approver_id) = %v, %v; want true, nil", got, err)
+	}
+}
+
 func TestColumnExistsReportsSchemaShape(t *testing.T) {
 	s := newTestStore(t)
 	tx, err := s.DB().Begin()
