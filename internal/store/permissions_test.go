@@ -92,10 +92,20 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 			t.Fatalf("canonical grant %s:%s is missing from the vocabulary", g.Resource, g.Action)
 		}
 	}
+	// The cancellation flow Phase 2 adds gates its routes on these two pairs;
+	// the vocabulary has to carry them before those routes can be registered.
+	for _, g := range []Grant{
+		{"request", "cancel"}, {"approval", "cancel"},
+	} {
+		if !ValidGrant(g.Resource, g.Action) {
+			t.Fatalf("canonical grant %s:%s is missing from the vocabulary", g.Resource, g.Action)
+		}
+	}
 	// …and nothing beyond them: the lists are exact, not a prefix.
 	for _, g := range []Grant{
 		{"vendor", "delete"}, {"vendor_bank", "create"},
 		{"reservation", "view"}, {"config", "create"},
+		{"request", "approve"}, {"approval", "view"},
 	} {
 		if ValidGrant(g.Resource, g.Action) {
 			t.Fatalf("vocabulary admits %s:%s, which is not canonical", g.Resource, g.Action)
@@ -107,7 +117,7 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 			t.Fatalf("resource %q must not be data-scoped", res)
 		}
 	}
-	if want := 64; countGrants() != want {
+	if want := 66; countGrants() != want {
 		t.Fatalf("vocabulary holds %d (resource, action) pairs, want %d", countGrants(), want)
 	}
 }

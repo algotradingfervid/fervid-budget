@@ -21,6 +21,7 @@ Amended 2026-07-25 against `docs/superpowers/specs/2026-07-25-design-system-adop
 | A7 | Task 12 → **Task 13**, cut down. Phase 0 owns the app shell, the `NavGroup`/`NavItem`/`TabBar` model, `buildShell`/`resolveTabs` and `PageData.Shell`/`.Perms`; Task 13 no longer invents any of it. It now only (a) swaps the Phase 0 stub `PermissionSet` for the DB-backed one and re-points every nav/badge gate onto the canonical vocabulary, and (b) keeps the server-side URL-enforcement tests. | §4 Phase 1, D4 |
 | A8 | **Interface ownership.** `internal/store/permissions.go` already exists: Phase 0 Task 12 created it with the `PermissionSet` **interface** (`Can(resource, action) bool`, `Scope(resource) string`), the `Grant` struct, `const ScopeAll` and the temporary Casbin-backed `staticPermissionSet`/`NewPermissionSet`. Phase 1 Tasks 3 and 7 **append to that file and implement that same interface** — they never redeclare `PermissionSet` or `Grant`, and Task 7 returns the interface, not a competing struct. | D2, Phase 0 plan §Self-review |
 | A9 | `.badge` is retired globally by Phase 0 (**D5**): every template this phase touches emits `.pill`, and the Task 11 render test fails if `class="badge` reappears. Responsiveness is media-query driven (**D4**) — no `data-device` attribute anywhere. | D4, D5 |
+| A10 | Task 3 `resourceActions` gains `request`{cancel} and `approval`{cancel} — the two pairs Phase 2's cancellation routes are gated on. The vocabulary table in Global Constraints and `TestPermissionVocabularyIsCanonical` grow with them; the pair total goes **64 → 66**. Resource count is unchanged at 21. | Phase 2 plan (`6220ab2`) |
 
 **Deliberately not amended.** The seeded system-role grants in Task 8 keep exactly the actions they had. Phase 1V grants Accounts the new `vendor`/`vendor_bank` verbs and Phase 3 the `reservation` verbs, each in the phase that builds the screens behind them; seeding them here would hand out access to routes that do not exist yet. Admin still receives every action automatically, because `adminGrants()` iterates `resourceOrder` — the four new resources are included the moment Task 3 lands.
 
@@ -61,12 +62,12 @@ Copied verbatim from overview §7 (all phases obey):
 - **Clock injection:** reminder/settlement timing logic takes an injected `now func() time.Time` (or `time.Time`) so tests are deterministic — never call `time.Now()` inside tested branches directly. *(No timing logic in Phase 1; noted for continuity.)*
 - **Commits:** one per task, conventional messages.
 
-**Canonical permission vocabulary (overview §5, extended by adoption-spec D2) — single source of truth for this phase.** 21 resources, 64 `(resource, action)` pairs. The four resources marked ★ are the D2 additions; they are declared here so the roles matrix and Phases 1V–5 have a stable vocabulary from day one, even though the screens behind them land later.
+**Canonical permission vocabulary (overview §5, extended by adoption-spec D2) — single source of truth for this phase.** 21 resources, 66 `(resource, action)` pairs. The four resources marked ★ are the D2 additions; they are declared here so the roles matrix and Phases 1V–5 have a stable vocabulary from day one, even though the screens behind them land later. The two actions marked † are the Phase 2 cancellation-flow additions, declared here for the same reason: the routes behind them are gated on a vocabulary this phase owns.
 
 | Resource | Actions |
 |---|---|
-| `request` | view, create, edit, withdraw, reraise, comment |
-| `approval` | approve, reject, return, reassign, accept_partial |
+| `request` | view, create, edit, withdraw, reraise, comment, † cancel |
+| `approval` | approve, reject, return, reassign, accept_partial, † cancel |
 | `payment` | view, create, edit, void, process, settle, mark_partial, hold |
 | ★ `reservation` | reserve, release, reassign |
 | `attachment` | view, create |
@@ -538,10 +539,20 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 			t.Fatalf("canonical grant %s:%s is missing from the vocabulary", g.Resource, g.Action)
 		}
 	}
+	// The cancellation flow Phase 2 adds gates its routes on these two pairs;
+	// the vocabulary has to carry them before those routes can be registered.
+	for _, g := range []Grant{
+		{"request", "cancel"}, {"approval", "cancel"},
+	} {
+		if !ValidGrant(g.Resource, g.Action) {
+			t.Fatalf("canonical grant %s:%s is missing from the vocabulary", g.Resource, g.Action)
+		}
+	}
 	// …and nothing beyond them: the lists are exact, not a prefix.
 	for _, g := range []Grant{
 		{"vendor", "delete"}, {"vendor_bank", "create"},
 		{"reservation", "view"}, {"config", "create"},
+		{"request", "approve"}, {"approval", "view"},
 	} {
 		if ValidGrant(g.Resource, g.Action) {
 			t.Fatalf("vocabulary admits %s:%s, which is not canonical", g.Resource, g.Action)
@@ -553,7 +564,7 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 			t.Fatalf("resource %q must not be data-scoped", res)
 		}
 	}
-	if want := 64; countGrants() != want {
+	if want := 66; countGrants() != want {
 		t.Fatalf("vocabulary holds %d (resource, action) pairs, want %d", countGrants(), want)
 	}
 }
@@ -673,15 +684,17 @@ func scopeRank(scope string) int {
 // resourceActions is the canonical permission vocabulary (overview §5, extended
 // by adoption-spec D2). It is the single source of truth for grant validation,
 // for the Admin grant set, and for the presentation map in
-// internal/app/permmap.go. 21 resources, 64 (resource, action) pairs.
+// internal/app/permmap.go. 21 resources, 66 (resource, action) pairs.
 //
 // vendor, vendor_bank, reservation and config are declared here even though
 // Phases 1V and 3 build the screens behind them: the roles matrix has to be
 // able to grant them from day one, and a vocabulary that grows per phase would
-// make every earlier role definition incomplete.
+// make every earlier role definition incomplete. request:cancel and
+// approval:cancel are here for the same reason: Phase 2's cancellation flow
+// gates its routes on them.
 var resourceActions = map[string][]string{
-	"request":              {"view", "create", "edit", "withdraw", "reraise", "comment"},
-	"approval":             {"approve", "reject", "return", "reassign", "accept_partial"},
+	"request":              {"view", "create", "edit", "withdraw", "reraise", "comment", "cancel"},
+	"approval":             {"approve", "reject", "return", "reassign", "accept_partial", "cancel"},
 	"payment":              {"view", "create", "edit", "void", "process", "settle", "mark_partial", "hold"},
 	"reservation":          {"reserve", "release", "reassign"},
 	"attachment":           {"view", "create"},

@@ -158,15 +158,17 @@ func scopeRank(scope string) int {
 // resourceActions is the canonical permission vocabulary (overview §5, extended
 // by adoption-spec D2). It is the single source of truth for grant validation,
 // for the Admin grant set, and for the presentation map in
-// internal/app/permmap.go. 21 resources, 64 (resource, action) pairs.
+// internal/app/permmap.go. 21 resources, 66 (resource, action) pairs.
 //
 // vendor, vendor_bank, reservation and config are declared here even though
 // Phases 1V and 3 build the screens behind them: the roles matrix has to be
 // able to grant them from day one, and a vocabulary that grows per phase would
-// make every earlier role definition incomplete.
+// make every earlier role definition incomplete. request:cancel and
+// approval:cancel are here for the same reason: Phase 2's cancellation flow
+// gates its routes on them.
 var resourceActions = map[string][]string{
-	"request":              {"view", "create", "edit", "withdraw", "reraise", "comment"},
-	"approval":             {"approve", "reject", "return", "reassign", "accept_partial"},
+	"request":              {"view", "create", "edit", "withdraw", "reraise", "comment", "cancel"},
+	"approval":             {"approve", "reject", "return", "reassign", "accept_partial", "cancel"},
 	"payment":              {"view", "create", "edit", "void", "process", "settle", "mark_partial", "hold"},
 	"reservation":          {"reserve", "release", "reassign"},
 	"attachment":           {"view", "create"},
