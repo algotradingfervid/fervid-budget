@@ -1,0 +1,119 @@
+package app
+
+import "fervidbudget/internal/store"
+
+// The shell is permission-driven. Nothing in this file may branch on a role
+// name: every item declares the resource and action it needs and the
+// PermissionSet decides. Items with no Resource are available to every signed
+// in user; items marked Soon are announcements, not links, and are shown to
+// everyone exactly as the approved mockup does.
+
+type NavItem struct {
+	Key, Label, Href, Icon string
+	Resource, Action       string
+	Badge                  string
+	Soon                   bool
+}
+
+type NavGroup struct {
+	Title string
+	Items []NavItem
+}
+
+type TabItem struct {
+	Key, Label, Href, Icon string
+}
+
+type TabBar struct {
+	Left  []TabItem
+	Fab   TabItem
+	Right []TabItem
+}
+
+type Shell struct {
+	Groups                                        []NavGroup
+	Tabs                                          TabBar
+	Active                                        string
+	Badges                                        map[string]int
+	Unread                                        int
+	Chrome                                        string // "app" | "none"
+	Title, Sub, BackHref, ActionLabel, ActionHref string
+}
+
+// navSpec is the full navigation of the product, in the order the approved
+// mockup lays it out. Screens that are not built yet still carry the resource
+// and action they will be gated on, so they light up the moment their route
+// and policy exist.
+var navSpec = []NavGroup{
+	{Title: "", Items: []NavItem{
+		{Key: "dashboard", Label: "Home", Href: "/", Icon: "⌂"},
+	}},
+	{Title: "Requests", Items: []NavItem{
+		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤"},
+		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "request", Action: "approve", Badge: "approvals"},
+		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "request", Action: "pay", Badge: "accounts_queue"},
+		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable", Action: "read"},
+	}},
+	{Title: "Payments", Items: []NavItem{
+		{Key: "payments", Label: "Payments ledger", Href: "/payments", Icon: "▦", Resource: "payment", Action: "read", Badge: "receipts_missing"},
+	}},
+	{Title: "Budget", Items: []NavItem{
+		{Key: "variance-grid", Label: "Variance grid", Href: "/grid", Icon: "▥", Resource: "grid", Action: "read"},
+		{Key: "budgets", Label: "Budgets", Href: "/budgets", Icon: "◴", Resource: "budget", Action: "read"},
+		{Key: "monthly-plans", Label: "Monthly plans", Href: "/months", Icon: "◷", Resource: "budget", Action: "read", Badge: "open_months"},
+	}},
+	{Title: "Reports", Items: []NavItem{
+		{Key: "reports", Label: "Reports", Href: "/reports/monthly", Icon: "⤓", Resource: "report", Action: "read"},
+	}},
+	{Title: "Masters", Items: []NavItem{
+		{Key: "vendors", Label: "Vendors", Href: "/vendors", Icon: "◫", Resource: "vendor", Action: "read"},
+		{Key: "projects", Label: "Projects", Href: "/projects", Icon: "▣", Resource: "project", Action: "read"},
+		{Key: "heads", Label: "Heads", Href: "/heads", Icon: "≡", Resource: "head", Action: "read"},
+	}},
+	{Title: "Admin", Items: []NavItem{
+		{Key: "users", Label: "Users", Href: "/users", Icon: "◍", Resource: "user", Action: "read"},
+		{Key: "roles", Label: "Roles & permissions", Href: "/roles", Icon: "⚿", Resource: "role", Action: "read"},
+		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "read"},
+		{Key: "notif-admin", Label: "Notification rules", Href: "/notifications", Icon: "✉", Resource: "notification_rule", Action: "read"},
+		{Key: "audit", Label: "Audit log", Href: "/audit", Icon: "◎", Resource: "audit", Action: "read"},
+		{Key: "backups", Label: "Backups", Href: "/backups", Icon: "⇪", Resource: "backup", Action: "read"},
+	}},
+	{Title: "Coming soon", Items: []NavItem{
+		{Key: "invoices", Label: "Invoices", Icon: "▧", Soon: true},
+		{Key: "receipts", Label: "Payments received", Icon: "↧", Soon: true},
+		{Key: "inventory", Label: "Inventory", Icon: "▨", Soon: true},
+		{Key: "po", Label: "Purchase orders", Icon: "▩", Soon: true},
+	}},
+}
+
+// buildShell filters navSpec down to what the holder of perms may reach.
+// Groups left with no items disappear entirely.
+func buildShell(perms store.PermissionSet) []NavGroup {
+	groups := make([]NavGroup, 0, len(navSpec))
+	for _, group := range navSpec {
+		items := make([]NavItem, 0, len(group.Items))
+		for _, item := range group.Items {
+			if navItemVisible(item, perms) {
+				items = append(items, item)
+			}
+		}
+		if len(items) == 0 {
+			continue
+		}
+		groups = append(groups, NavGroup{Title: group.Title, Items: items})
+	}
+	return groups
+}
+
+func navItemVisible(item NavItem, perms store.PermissionSet) bool {
+	if item.Soon {
+		return true
+	}
+	if item.Resource == "" {
+		return true
+	}
+	if perms == nil {
+		return false
+	}
+	return perms.Can(item.Resource, item.Action)
+}
