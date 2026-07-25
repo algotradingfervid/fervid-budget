@@ -1253,3 +1253,53 @@ func (s *Store) CountRequests(ctx context.Context, opts RequestListOptions) (int
 	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
 	return n, err
 }
+
+// SimilarRequests reports recent requests that look like the one being raised:
+// the same payee, and either a near-identical amount or the very same invoice
+// reference, inside the configured window. It is a warning, not a gate — callers
+// must never refuse a submit on the strength of a non-empty result (G6).
+func (s *Store) SimilarRequests(ctx context.Context, opt SimilarRequestOptions) ([]Request, error) {
+	if opt.Days <= 0 {
+		opt.Days = 30
+	}
+	if opt.Limit <= 0 {
+		opt.Limit = 5
+	}
+	payee := strings.ToLower(strings.TrimSpace(opt.Payee))
+	if opt.VendorID <= 0 && payee == "" {
+		return nil, nil
+	}
+	// ±1% of the amount, so "₹1,00,000 again" is caught but "₹2,500" is not.
+	tolerance := opt.Amount / 100
+	if tolerance < 100 {
+		tolerance = 100
+	}
+	invoice := strings.ToLower(strings.TrimSpace(opt.InvoiceNo))
+	q := requestSelect + ` WHERE r.id<>?
+ AND r.status NOT IN ('withdrawn','rejected','cancelled')
+ AND r.created_at >= datetime('now', ?)
+ AND (( ? > 0 AND r.vendor_id = ? ) OR ( ? <> '' AND lower(COALESCE(v.name, r.vendor_payee)) = ? ))
+ AND (( ? > 0 AND abs(r.amount - ?) <= ? ) OR ( ? <> '' AND lower(r.invoice_no) = ? ))
+ ORDER BY r.created_at DESC LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, q,
+		opt.ExcludeID,
+		fmt.Sprintf("-%d days", opt.Days),
+		opt.VendorID, opt.VendorID,
+		payee, payee,
+		opt.Amount, opt.Amount, tolerance,
+		invoice, invoice,
+		opt.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Request
+	for rows.Next() {
+		r, err := scanRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

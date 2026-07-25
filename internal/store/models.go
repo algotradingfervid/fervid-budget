@@ -365,3 +365,15 @@ type AuditInput struct {
 	After      any
 	IP         string
 }
+
+// SimilarRequestOptions drives the duplicate check. It is advisory: the result
+// is shown to the person and never gates the submit (G6).
+type SimilarRequestOptions struct {
+	ExcludeID int64
+	VendorID  int64
+	Payee     string
+	Amount    int64
+	InvoiceNo string
+	Days      int // default 30
+	Limit     int // default 5
+}

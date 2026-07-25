@@ -1205,3 +1205,73 @@ func TestListRequestsBuckets(t *testing.T) {
 		t.Fatalf("treatment filter = %d, want 0", byTreatment)
 	}
 }
+
+func TestSimilarRequestsFindsRecentNearDuplicatesOnly(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	sundaram := seedTestVendor(t, s, ctx, "Sundaram Electricals Pvt Ltd")
+	anand := seedTestVendor(t, s, ctx, "Anand Steel Traders")
+	mk := func(vendorID, amount int64, invoice string) int64 {
+		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+			ShortTitle: "Switchgear", ProjectID: 1, HeadID: headID, Amount: amount, Purpose: "panels",
+			ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: invoice, InvoiceDate: "2026-07-18"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	recentA := mk(sundaram, 10000000, "SE/26-27/1102")
+	recentB := mk(sundaram, 10000000, "SE/26-27/1184")
+	stale := mk(sundaram, 10000000, "SE/26-27/0901")
+	_ = mk(anand, 10000000, "AS/26-27/0417")  // different vendor
+	_ = mk(sundaram, 250000, "SE/26-27/1200") // same vendor, nowhere near the amount
+	gone := mk(sundaram, 10000000, "SE/26-27/1300")
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET created_at=datetime('now','-31 days') WHERE id=?`, stale); err != nil {
+		t.Fatal(err)
+	}
+	// A withdrawn request is not a duplicate of anything.
+	if err := s.WithdrawRequest(ctx, req, gone); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.SimilarRequests(ctx, SimilarRequestOptions{
+		VendorID: sundaram, Amount: 10000000, InvoiceNo: "SE/26-27/1184",
+	})
+	if err != nil {
+		t.Fatalf("SimilarRequests: %v", err)
+	}
+	ids := map[int64]bool{}
+	for _, r := range got {
+		ids[r.ID] = true
+	}
+	if !ids[recentA] || !ids[recentB] {
+		t.Fatalf("near-duplicates missed: %#v", got)
+	}
+	if ids[stale] {
+		t.Fatal("a request older than 30 days was reported as a duplicate")
+	}
+	if ids[gone] {
+		t.Fatal("a withdrawn request was reported as a duplicate")
+	}
+	if len(got) != 2 {
+		t.Fatalf("similar = %d, want exactly the two recent Sundaram requests", len(got))
+	}
+	// ExcludeID keeps an edit from flagging itself.
+	got, _ = s.SimilarRequests(ctx, SimilarRequestOptions{VendorID: sundaram, Amount: 10000000, ExcludeID: recentB})
+	for _, r := range got {
+		if r.ID == recentB {
+			t.Fatal("a request was reported as its own duplicate")
+		}
+	}
+	// A free-text payee (reimbursement, employee advance) matches too.
+	byPayee, _ := s.SimilarRequests(ctx, SimilarRequestOptions{Payee: "sundaram electricals pvt ltd", Amount: 10000000})
+	if len(byPayee) != 2 {
+		t.Fatalf("payee-name match = %d, want 2", len(byPayee))
+	}
+	// Nothing similar returns an empty slice, never an error.
+	none, err := s.SimilarRequests(ctx, SimilarRequestOptions{VendorID: anand, Amount: 1})
+	if err != nil || len(none) != 0 {
+		t.Fatalf("no matches = %#v, %v; want empty, nil", none, err)
+	}
+}
