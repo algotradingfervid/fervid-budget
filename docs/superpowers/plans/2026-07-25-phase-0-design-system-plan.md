@@ -24,7 +24,7 @@ Two corrections landed after the tasks that introduced them:
 - `6821cc8` — `.a-list` was scoped to `.area`, but two approved mockups place it inside `.card`. Unscoped.
 - `ecf4b46` — Task 17 shipped a `PageData.Perms()` **method** that lazily rebuilt its own `auth.Manager`, because `app.go` was outside its file set. Replaced with a real `Perms store.PermissionSet` **field** resolved once in `renderStatus` from the same call that builds the shell. Also split the notification hrefs per adoption spec D7.
 
-**Baseline hazard, already mitigated:** `make test-e2e` re-runs `baseline.spec.ts`, which overwrites `output/playwright/baseline/`. A verified-identical copy is preserved at `output/playwright/baseline-keep/`. Task 20 must diff against **`baseline-keep`**.
+**Baseline hazard — fixed at the source, not documented around.** `baseline.spec.ts` used to write straight into `output/playwright/baseline/`, so `make test-e2e` (and `make test-all`) overwrote the very pre-redesign images the redesign was being compared against. It now writes to `output/playwright/current/`, and `baseline/` is a frozen record nothing in the suite touches. Diff `current/` against `baseline/`; `FERVID_SHOT_DIR=<name>` writes a third set.
 
 **Goal:** Port the approved mockup design system into the production application and replace the app shell, so every later phase renders approved screens without inventing markup.
 

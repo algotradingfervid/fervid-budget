@@ -2138,7 +2138,12 @@ pre {
   overflow-x: auto;
 }
 
+/* .table-wrap sets width:100%, so side margins here would push the box past
+   the container and overflow the document by exactly the margin. width:auto
+   lets a block fill what is left after its own margins, which is the inset
+   this rule was always after. */
 .payments-table {
+  width: auto;
   margin-right: 28px;
   margin-left: 28px;
 }

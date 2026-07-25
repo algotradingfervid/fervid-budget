@@ -10,7 +10,16 @@ import { expect, test } from './fixtures';
  * Output: output/playwright/baseline/<route>-<desktop|mobile>.png
  */
 
-const OUT_DIR = path.join('output', 'playwright', 'baseline');
+/**
+ * Writes to `current/` by default, never to `baseline/`.
+ *
+ * `output/playwright/baseline/` is the frozen pre-redesign record, and this
+ * spec used to write straight into it — so `make test-all`, which runs the
+ * whole suite, destroyed the very images the redesign was being compared
+ * against. Diff `current/` against `baseline/`; override with FERVID_SHOT_DIR
+ * if you want a third set to compare.
+ */
+const OUT_DIR = path.join('output', 'playwright', process.env.FERVID_SHOT_DIR || 'current');
 
 const ROUTES: Array<{ slug: string; path: string }> = [
   { slug: 'grid', path: '/' },
