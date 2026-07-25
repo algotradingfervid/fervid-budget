@@ -37,6 +37,14 @@ Amended **2026-07-25** against `docs/superpowers/specs/2026-07-25-design-system-
 - **Task 5's test depends on two later tasks.** `RequestAttachments` (Task 16) was implemented verbatim in `requests.go` as part of Task 5 so its test could compile — Task 16 must not declare it a second time. `ListRequests` (Task 11) was *not* implemented; the "nothing partial is left behind" assertion counts rows in `payment_requests` directly instead.
 - **Task 9 is already delivered by Phase 1 (decision D9)** and ships no new store code. `SetDefaultApprover`/`DefaultApprover` were not declared, `scanUser` was not touched (Phase 1 already selects `default_approver_id` in all three user queries and `User.DefaultApproverID` is `int64`, not `*int64`, so the plan's Task 9 test does not compile). `internal/store/approvers_test.go` pins the contract Phase 2 consumes through Phase 1's canonical API instead. Note the plan's expectation that a non-approver be rejected as a default approver is **not** enforced by the writer: `SetUserDefaultApprover` validates existence, activeness and self only, and `ListApprovers` is what keeps a non-approver off the form.
 
+**Implementation notes recorded while executing Tasks 10-18 (2026-07-25) — the plan text below is wrong on these points:**
+
+- **Task 15's `DecideCancellation` records `cancel`, not `cancel_accept`, when the approver accepts.** The plan's own test queries the audit trail of the request whose cancellation was *accepted* and requires the actions `cancel_request`, `cancel_decline` and `cancel` on it; the plan's implementation emits `cancel_accept` there and `cancel` only on the separate outright-cancel request, so the plan's code fails the plan's test (verified: `audit action "cancel" missing from the thread`). Accepting a cancellation *is* cancelling the request, so one action carries both and the summary records who asked.
+- **Task 15's `TestCancellationFreezesTheApprovedState` is written against `ListRequests`, which Task 17 introduces.** It cannot compile at Task 15. It ships verbatim in the Task 17 commit instead; Task 15 itself is proved by `TestCancellationRequestAcceptAndDecline`.
+- **Task 16 must not redeclare `RequestAttachments`** — Task 5 already shipped it verbatim from Task 16's text (see the Tasks 1-9 notes above). Declaring it again is a redeclaration compile error. Everything else in Task 16 is new.
+- **Task 16's `RequestThread` needed a deterministic audit order.** SQLite's `CURRENT_TIMESTAMP` resolves only to the second, so every event in one burst carries an identical `created_at`; `s.Audit` returns newest-first, and the plan's `sort.SliceStable` by `CreatedAt` alone therefore preserves *reverse* chronological order on ties, leaving the first line of the thread to SQLite's undefined tie-breaking (verified: three audit rows, one timestamp). `RequestThread` now re-sorts the trail by `(created_at, id)` ascending before merging — the audit id is the only strictly monotonic record of what happened first.
+- **Task 17's "Produces" line calls `ListRequests` Task 11.** It is Task 17; Task 11 is `WithdrawRequest`. The same stale numbering appears in the Tasks 1-9 note above.
+
 **Cross-phase notes raised by this amendment — both now RESOLVED (2026-07-25):**
 
 - **Cancel verbs — accepted, handed to Phase 1.** Phase 1 Task 3's `resourceActions` adds `request`{cancel} and `approval`{cancel} alongside the `vendor`/`vendor_bank`/`reservation`/`config` entries D2 assigns it. The canonical total goes 64 → **66** pairs; Phase 1's vocabulary tests and Global Constraints table were updated with it. Phase 2's cancellation routes register behind those two verbs and must not invent their own.
@@ -2216,7 +2224,7 @@ git commit -m "feat(store): default approver per user"
 - Consumes: `validateRequestInput`, `validateUrgency`, `forcesRequesterPayee`, `requestInTx`, `recordAuditTx`.
 - Produces: `func (s *Store) UpdateRequest(ctx, actor User, id int64, in RequestInput) error` — editable in **returned** and **pending** only (D1 removed `draft`); pending edits reset `reminder_last_sent` and reroute `manager_id`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestUpdateRequestPendingReroutesAndResetsReminder(t *testing.T) {
@@ -2284,12 +2292,12 @@ func TestUpdateRequestRejectedAfterApproval(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestUpdateRequest -v`
 Expected: FAIL — `s.UpdateRequest undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -2359,12 +2367,12 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestUpdateRequest -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -2385,7 +2393,7 @@ git commit -m "feat(store): UpdateRequest edit with reroute and reminder reset"
 
 **Amendment:** the old test opened by proving a *draft* could not be withdrawn. There are no drafts, so the negative leg now proves the boundary that actually matters: an **approved** request cannot be withdrawn unilaterally — the requester must ask for cancellation instead (G1). That is the same assertion in the world D1 created.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestWithdrawRequestFromPending(t *testing.T) {
@@ -2431,12 +2439,12 @@ func TestWithdrawRequestFromPending(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestWithdrawRequestFromPending -v`
 Expected: FAIL — `s.WithdrawRequest undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -2471,12 +2479,12 @@ func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestWithdrawRequestFromPending -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -2495,7 +2503,7 @@ git commit -m "feat(store): WithdrawRequest pending to withdrawn"
 - Consumes: `canTransition`, `requestInTx`, `recordAuditTx`, `money.FormatPaise`.
 - Produces: `func (s *Store) ApproveRequest(ctx, actor User, id, approvedAmount int64, note string) error` (pending → approved, sets `approved_amount`/`approved_by`/`approved_at`; only `manager_id == actor.ID`, and **never** when `actor.ID == requester_id`, G8).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestApproveRequestAdjustsAmountAndIsAssignedOnly(t *testing.T) {
@@ -2547,12 +2555,12 @@ func TestApproveRequestAdjustsAmountAndIsAssignedOnly(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestApproveRequestAdjusts -v`
 Expected: FAIL — `s.ApproveRequest undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -2598,12 +2606,12 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestApproveRequestAdjusts -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -2622,7 +2630,7 @@ git commit -m "feat(store): ApproveRequest with adjustable amount, assigned-only
 - Consumes: `canTransition`, `requestInTx`, `recordAuditTx`.
 - Produces: `func (s *Store) ReturnRequest(ctx, actor User, id int64, comment string) error` (pending → returned; comment required); `func (s *Store) RejectRequest(ctx, actor User, id int64, reason string) error` (pending → rejected, terminal; reason required). Both assigned-approver only.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestReturnAndRejectRequireTextAndAreAssignedOnly(t *testing.T) {
@@ -2677,12 +2685,12 @@ func TestReturnAndRejectRequireTextAndAreAssignedOnly(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestReturnAndReject -v`
 Expected: FAIL — `s.ReturnRequest undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -2733,12 +2741,12 @@ func (s *Store) RejectRequest(ctx context.Context, actor User, id int64, reason 
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestReturnAndReject -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -2759,7 +2767,7 @@ git commit -m "feat(store): ReturnRequest and RejectRequest with required text"
 
 **Amendment (A6/D1):** the old implementation produced a `draft`. There is no draft state, so a re-raise is simply a new submitted request that copies the rejected one's fields. The requester edits it afterwards through the normal pending-edit path if they need to.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestReassignAndReraise(t *testing.T) {
@@ -2833,12 +2841,12 @@ func TestReassignAndReraise(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestReassignAndReraise -v`
 Expected: FAIL — `s.ReassignRequest undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -2939,12 +2947,12 @@ func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestReassignAndReraise -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -2967,7 +2975,7 @@ git commit -m "feat(store): ReassignRequest and ReraiseRequest into a new pendin
 
 **How the payment freeze works — read this before Phase 3.** There is no separate "frozen" flag. Phase 3's reservation and payment paths key on `status = 'approved'`; `cancellation_requested` is not `approved`, so a frozen request simply cannot be reserved or paid, and an existing reservation is surfaced to the accountant by the same status. Phase 3 must therefore filter its queue on `approved` **only** — never on "not rejected". That is asserted here, in this phase, by `TestCancellationFreezesTheApprovedState`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestCancellationRequestAcceptAndDecline(t *testing.T) {
@@ -3096,12 +3104,12 @@ func TestCancellationFreezesTheApprovedState(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestCancellation -v`
 Expected: FAIL — `s.RequestCancellation undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -3231,12 +3239,12 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestCancellation -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -3257,7 +3265,7 @@ git commit -m "feat(store): post-approval cancellation request, decision and out
 
 **Amendment (A19):** `request-detail-employee.html` renders **one** stream headed "History and conversation", with events, comments and attachments interleaved in time order and a single note: "Everyone who can see this request sees this whole stream." The old plan rendered a `Conversation` list and a separate `History` list. `RequestThread` merges them in the store so no template has to sort three slices together.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestRequestCommentsAndAttachments(t *testing.T) {
@@ -3374,12 +3382,12 @@ func TestRequestThreadMergesEventsCommentsAndFiles(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestRequestCommentsAndAttachments|TestRequestThreadMerges' -v`
 Expected: FAIL — `s.AddRequestComment undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -3588,12 +3596,12 @@ func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEnt
 
 > Add `"encoding/json"` and `"sort"` to the imports of `internal/store/requests.go`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestRequestCommentsAndAttachments|TestRequestThreadMerges' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -3614,7 +3622,7 @@ git commit -m "feat(store): merged history-and-conversation thread with attachme
 
 **Amendment (A19):** `requests-list.html` and `approvals-list.html` both open on a `.segmented` tab bar — Open / Needs me / Closed / All, and To approve / Cancellations / Decided. Those tabs are `Bucket` values, resolved in SQL here rather than by filtering in Go, so the counts on the tabs and the rows under them can never disagree. `Type`, `Treatment` and `ProjectID` back the toolbar and the mobile filter sheet.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestListRequestsByScopeAndCount(t *testing.T) {
@@ -3719,12 +3727,12 @@ func TestListRequestsBuckets(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestListRequestsByScope|TestListRequestsBuckets' -v`
 Expected: FAIL — `s.ListRequests undefined`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `internal/store/requests.go`:
 
@@ -3837,13 +3845,13 @@ func (s *Store) CountRequests(ctx context.Context, opts RequestListOptions) (int
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestListRequestsByScope|TestListRequestsBuckets' -v`
 Then run the whole store suite: `go test ./internal/store/ -race`
 Expected: PASS (every request store test green).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/requests.go internal/store/requests_test.go
@@ -3864,7 +3872,7 @@ git commit -m "feat(store): ListRequests and CountRequests by scope, bucket and 
 
 **The rule, from `request-duplicate-warning.html`:** "The check compares payee, invoice reference, amount, project and head over the last 30 days," and "A duplicate warning never blocks submission. Legitimate repeat payments exist — the same rent, the same monthly retainer. The system points, the person decides." So this method is a **read**. It has no power to refuse anything, and no caller may treat an empty result as permission or a non-empty result as a denial.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestSimilarRequestsFindsRecentNearDuplicatesOnly(t *testing.T) {
@@ -3938,12 +3946,12 @@ func TestSimilarRequestsFindsRecentNearDuplicatesOnly(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestSimilarRequests -v`
 Expected: FAIL — `undefined: SimilarRequestOptions`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add to `internal/store/models.go`:
 
@@ -4015,13 +4023,13 @@ func (s *Store) SimilarRequests(ctx context.Context, opt SimilarRequestOptions) 
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestSimilarRequests -v`
 Then: `go test ./internal/store/ -race`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/models.go internal/store/requests.go internal/store/requests_test.go
