@@ -10,7 +10,7 @@ import { expect, test } from './fixtures';
 
 const ROUTES = [
   '/', '/payments', '/payments/new', '/budgets', '/months', '/reports/monthly',
-  '/projects', '/heads', '/users', '/roles', '/audit', '/backups',
+  '/projects', '/heads', '/vendors', '/vendors/new', '/users', '/roles', '/audit', '/backups',
 ];
 
 test.describe('app shell', () => {
