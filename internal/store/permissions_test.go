@@ -249,3 +249,43 @@ func TestSetUserRolesReplacesAssignment(t *testing.T) {
 		t.Fatalf("assign unknown role = %v, want %v", err, ErrValidation)
 	}
 }
+
+func TestEffectivePermissionsUnionAndBroadestScope(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+
+	uid, err := s.CreateUser(ctx, "union@example.com", "Union User", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Role A: can view requests scoped to own; Role B: can approve, request scope all.
+	roleA, _ := s.CreateRole(ctx, actor, "ViewOwn", "")
+	if err := s.UpdateRolePermissions(ctx, actor, roleA, []Grant{{"request", "view"}}, []ScopeGrant{{"request", "own"}}); err != nil {
+		t.Fatal(err)
+	}
+	roleB, _ := s.CreateRole(ctx, actor, "ApproveAll", "")
+	if err := s.UpdateRolePermissions(ctx, actor, roleB, []Grant{{"approval", "approve"}}, []ScopeGrant{{"request", "all"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetUserRoles(ctx, actor, uid, []int64{roleA, roleB}); err != nil {
+		t.Fatal(err)
+	}
+
+	ps, err := s.EffectivePermissions(ctx, uid)
+	if err != nil {
+		t.Fatalf("EffectivePermissions: %v", err)
+	}
+	if !ps.Can("request", "view") || !ps.Can("approval", "approve") {
+		t.Fatalf("union grants missing: %+v", ps)
+	}
+	if ps.Can("payment", "create") {
+		t.Fatal("granted a permission no role holds")
+	}
+	if got := ps.Scope("request"); got != "all" {
+		t.Fatalf("effective request scope = %q, want broadest 'all'", got)
+	}
+	if got := ps.Scope("payment"); got != "" {
+		t.Fatalf("unset scope = %q, want empty string", got)
+	}
+}

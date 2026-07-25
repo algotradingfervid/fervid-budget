@@ -491,3 +491,46 @@ func (s *Store) UserRoles(ctx context.Context, userID int64) ([]Role, error) {
 	}
 	return out, rows.Err()
 }
+
+// EffectivePermissions resolves a user's complete permission view: the union of
+// every grant across all assigned roles, and the broadest data scope per scoped
+// resource (all > assigned > own).
+func (s *Store) EffectivePermissions(ctx context.Context, userID int64) (PermissionSet, error) {
+	ps := &dbPermissionSet{grants: map[string]map[string]struct{}{}, scopes: map[string]string{}}
+	if userID == 0 {
+		return ps, nil
+	}
+	grantRows, err := s.db.QueryContext(ctx, `SELECT rp.resource, rp.action
+		FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id
+		WHERE ur.user_id=?`, userID)
+	if err != nil {
+		return ps, err
+	}
+	defer grantRows.Close()
+	for grantRows.Next() {
+		var resource, action string
+		if err := grantRows.Scan(&resource, &action); err != nil {
+			return ps, err
+		}
+		ps.add(resource, action)
+	}
+	if err := grantRows.Err(); err != nil {
+		return ps, err
+	}
+
+	scopeRows, err := s.db.QueryContext(ctx, `SELECT rds.resource, rds.scope
+		FROM user_roles ur JOIN role_data_scope rds ON rds.role_id=ur.role_id
+		WHERE ur.user_id=?`, userID)
+	if err != nil {
+		return ps, err
+	}
+	defer scopeRows.Close()
+	for scopeRows.Next() {
+		var resource, scope string
+		if err := scopeRows.Scan(&resource, &scope); err != nil {
+			return ps, err
+		}
+		ps.mergeScope(resource, scope)
+	}
+	return ps, scopeRows.Err()
+}
