@@ -392,3 +392,46 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 	}
 	return tx.Commit()
 }
+
+// CopyRole creates a new, non-system role named `name` whose grants and scopes
+// are copied from srcID.
+func (s *Store) CopyRole(ctx context.Context, actor User, srcID int64, name string) (int64, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, fmt.Errorf("%w: role name is required", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var srcName string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, srcID).Scan(&srcName); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO roles(name,description,is_system) SELECT ?, description, 0 FROM roles WHERE id=?`, name, srcID)
+	if err != nil {
+		return 0, classify(err)
+	}
+	newID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO role_permissions(role_id,resource,action) SELECT ?, resource, action FROM role_permissions WHERE role_id=?`, newID, srcID); err != nil {
+		return 0, classify(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO role_data_scope(role_id,resource,scope) SELECT ?, resource, scope FROM role_data_scope WHERE role_id=?`, newID, srcID); err != nil {
+		return 0, classify(err)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "role", EntityID: &newID, Summary: "Copied role " + srcName + " to " + name, After: map[string]any{"id": newID, "name": name, "source": srcName}}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newID, nil
+}

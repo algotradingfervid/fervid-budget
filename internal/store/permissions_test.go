@@ -162,3 +162,45 @@ func TestUpdateRolePermissionsPersistsAndValidates(t *testing.T) {
 		t.Fatalf("bad scope value = %v, want %v", err, ErrValidation)
 	}
 }
+
+func TestCopyRoleDuplicatesGrantsAndScopes(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+
+	srcID, err := s.CreateRole(ctx, actor, "Template", "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateRolePermissions(ctx, actor, srcID,
+		[]Grant{{"request", "view"}, {"approval", "approve"}},
+		[]ScopeGrant{{"request", "all"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	copyID, err := s.CopyRole(ctx, actor, srcID, "Template Copy")
+	if err != nil {
+		t.Fatalf("CopyRole: %v", err)
+	}
+	if copyID == srcID {
+		t.Fatal("copy reused the source id")
+	}
+	grants, scopes, err := s.RolePermissions(ctx, copyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != 2 || len(scopes) != 1 || scopes[0].Scope != "all" {
+		t.Fatalf("copied grants=%v scopes=%v", grants, scopes)
+	}
+	copied, err := s.Role(ctx, copyID)
+	if err != nil || copied.IsSystem {
+		t.Fatalf("copied role = %+v, %v (must not be a system role)", copied, err)
+	}
+
+	if _, err := s.CopyRole(ctx, actor, srcID, "Template"); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("copy into existing name = %v, want %v", err, ErrDuplicate)
+	}
+	if _, err := s.CopyRole(ctx, actor, 999999, "Ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("copy missing source = %v, want %v", err, ErrNotFound)
+	}
+}
