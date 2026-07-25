@@ -540,6 +540,130 @@ func TestShellActiveKeyTracksTheRequestPath(t *testing.T) {
 	}
 }
 
+// appScreens is every route the product renders today. The shell rewrite must
+// leave all of them serving a complete page.
+var appScreens = []string{
+	"/", "/payments", "/payments/new", "/budgets", "/months",
+	"/reports/monthly", "/projects", "/heads", "/users", "/audit", "/backups",
+}
+
+func TestEveryScreenRendersTheAppShell(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	for _, screen := range appScreens {
+		resp := s.request(http.MethodGet, screen, nil, "")
+		requireStatus(t, resp, http.StatusOK)
+		body := responseBody(t, resp)
+		for _, want := range []string{
+			`<div class="appshell">`,
+			`<aside class="sidebar">`,
+			`<div class="side-brand">`,
+			`<nav class="side-nav"`,
+			`<div class="side-user">`,
+			`<header class="m-topbar">`,
+			`<main class="page">`,
+			`<div class="page-inner">`,
+			`<nav class="tabbar"`,
+			`<div class="more-sheet"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s is missing shell markup %q", screen, want)
+			}
+		}
+		if !strings.Contains(body, `<div class="sgroup">Admin</div>`) {
+			t.Fatalf("%s did not render the permission-driven nav groups", screen)
+		}
+	}
+}
+
+func TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, "/payments", nil, ""))
+	if !strings.Contains(body, `<a class="active" href="/payments" aria-current="page">`) {
+		t.Fatalf("payments ledger is not marked active: %s", body)
+	}
+	if !strings.Contains(body, `<a class="soon" aria-disabled="true">`) {
+		t.Fatal("coming-soon nav entries are missing their disabled treatment")
+	}
+	if !strings.Contains(body, `<span class="n">Soon</span>`) {
+		t.Fatal("coming-soon nav entries are missing their pill")
+	}
+	if !strings.Contains(body, `href="/requests"`) || !strings.Contains(body, `href="/configuration"`) {
+		t.Fatal("nav dropped the routes later phases will add")
+	}
+
+	hash, err := auth.HashPassword("EntryPassword123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.CreateUser(s.ctx, "shell-nav@example.test", "Nav Entry", hash, "data_entry", true); err != nil {
+		t.Fatal(err)
+	}
+	entry := newAppTestClient(t, s)
+	entry.login("shell-nav@example.test", "EntryPassword123")
+	body = responseBody(t, entry.request(http.MethodGet, "/", nil, ""))
+	if !strings.Contains(body, `<aside class="sidebar">`) {
+		t.Fatal("data-entry user lost the app shell")
+	}
+	for _, forbidden := range []string{`href="/users"`, `href="/audit"`, `href="/backups"`, `<div class="sgroup">Admin</div>`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("data-entry shell exposes %q", forbidden)
+		}
+	}
+}
+
+func TestChromeNoneRendersWithoutTheAppShell(t *testing.T) {
+	s := newAppTestServer(t)
+	login := responseBody(t, s.request(http.MethodGet, "/login", nil, ""))
+	if strings.Contains(login, "<aside") || strings.Contains(login, "tabbar") {
+		t.Fatalf("login page rendered app chrome: %s", login)
+	}
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	req, err := http.NewRequest(http.MethodGet, s.server.URL+"/payments", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("HX-Request", "true")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireStatus(t, resp, http.StatusOK)
+	fragment := responseBody(t, resp)
+	for _, forbidden := range []string{"<aside", `class="appshell"`, `class="tabbar"`, `class="m-topbar"`, `class="more-sheet"`} {
+		if strings.Contains(fragment, forbidden) {
+			t.Fatalf("htmx fragment rendered %q", forbidden)
+		}
+	}
+}
+
+func TestTemplatesNeverCompareRoleNames(t *testing.T) {
+	source, err := os.ReadFile("templates.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{`eq .User.Role`, `eq $.User.Role`, `.User.Role "`} {
+		if count := strings.Count(string(source), banned); count != 0 {
+			t.Fatalf("templates.go still compares role names: %d occurrences of %q", count, banned)
+		}
+	}
+}
+
+// newAppTestClient gives a second, independently authenticated client against
+// the same server so one test can compare what two roles are shown.
+func newAppTestClient(t *testing.T, s *appTestServer) *appTestServer {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone := *s
+	clone.client = &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &clone
+}
+
 func strconvFormat(id int64) string {
 	return strconv.FormatInt(id, 10)
 }
