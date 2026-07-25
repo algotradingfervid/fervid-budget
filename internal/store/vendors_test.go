@@ -379,6 +379,79 @@ func TestUpdateVendorRejectsMissingRowAndDuplicateName(t *testing.T) {
 	}
 }
 
+func TestSearchVendorsIsActiveOnlyPrefixFirstAndBankFree(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.DB().Exec(`INSERT INTO vendors(name,display_name,vendor_type,status,gstin,city,bank_ifsc,bank_account_number) VALUES
+		('Sundaram Electricals Pvt Ltd','Sundaram Elec','company','active','29AABCS1429B1ZQ','Bengaluru',?,?),
+		('Sundaram Switchgear LLP','','company','active','','Hosur',?,?),
+		('Metro Sundaram Supplies','','company','active','','Chennai','',''),
+		('Sundaram Old Works','','company','inactive','','Bengaluru','','')`,
+		testIFSC, testAccountNumber, testIFSC, testAccountNumber); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.SearchVendors(ctx, "sund", 0)
+	if err != nil {
+		t.Fatalf("SearchVendors: %v", err)
+	}
+	var names []string
+	for _, v := range got {
+		names = append(names, v.Name)
+		if v.Bank != nil {
+			t.Fatalf("%s carried a bank block into the combobox: %+v", v.Name, v.Bank)
+		}
+	}
+	want := []string{"Sundaram Electricals Pvt Ltd", "Sundaram Switchgear LLP", "Metro Sundaram Supplies"}
+	if strings.Join(names, "|") != strings.Join(want, "|") {
+		t.Fatalf("SearchVendors(sund) = %v, want %v (prefix matches first, then by name)", names, want)
+	}
+	// The combobox is a picker for new work: an inactive vendor must not be
+	// offered even though it matches.
+	if rendered := fmt.Sprintf("%v", names); strings.Contains(rendered, "Sundaram Old Works") {
+		t.Fatalf("SearchVendors offered an inactive vendor: %v", names)
+	}
+	// Nothing anywhere on the result carries a bank value.
+	if rendered := fmt.Sprintf("%+v", got); strings.Contains(rendered, testIFSC) || strings.Contains(rendered, testAccountNumber) {
+		t.Fatalf("search results leaked bank detail: %s", rendered)
+	}
+}
+
+func TestSearchVendorsMatchesGSTINAndCityAndCapsTheLimit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status,gstin,city) VALUES
+		('Nova Print Works','company','active','29AAECW3311P1ZM','Chennai')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"29aaecw", "chennai", "nova"} {
+		got, err := s.SearchVendors(ctx, q, 0)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("SearchVendors(%q) = %d rows, %v; want 1", q, len(got), err)
+		}
+	}
+	if got, err := s.SearchVendors(ctx, "   ", 0); err != nil || len(got) != 0 {
+		t.Fatalf("SearchVendors(blank) = %d rows, %v; want 0", len(got), err)
+	}
+
+	// 40 more matches, so the default and the cap are both observable.
+	for i := 0; i < 40; i++ {
+		if _, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status) VALUES(?,'company','active')`,
+			fmt.Sprintf("Zenith Supplies %02d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := s.SearchVendors(ctx, "zenith", 0); len(got) != 10 {
+		t.Fatalf("SearchVendors default limit returned %d rows, want 10", len(got))
+	}
+	if got, _ := s.SearchVendors(ctx, "zenith", 100); len(got) != 25 {
+		t.Fatalf("SearchVendors(limit=100) returned %d rows, want the 25 cap", len(got))
+	}
+	if got, _ := s.SearchVendors(ctx, "zenith", 3); len(got) != 3 {
+		t.Fatalf("SearchVendors(limit=3) returned %d rows, want 3", len(got))
+	}
+}
+
 func TestListVendorsFiltersAndOrders(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

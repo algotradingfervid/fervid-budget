@@ -240,6 +240,52 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 	return out, rows.Err()
 }
 
+// SearchVendors backs the request form's combobox. It takes no PermissionSet
+// because it never has one to apply: a picker has no business carrying bank
+// details, so it is hard-wired to the bank-free projection. Only active
+// vendors are offered — an inactive vendor stays readable on the requests that
+// already name it, but must not be pickable for new work.
+//
+// Ordering puts exact prefix matches first, because someone who has typed
+// "sund" is looking for a vendor whose name starts that way, not one that
+// merely contains it.
+func (s *Store) SearchVendors(ctx context.Context, q string, limit int) ([]Vendor, error) {
+	needle := escapeLike(q)
+	if needle == "" {
+		return nil, nil
+	}
+	switch {
+	case limit <= 0:
+		limit = 10
+	case limit > 25:
+		limit = 25
+	}
+	prefix := needle + "%"
+	contains := "%" + needle + "%"
+
+	rows, err := s.db.QueryContext(ctx, `SELECT `+vendorColumns+` FROM vendors
+		WHERE status='active' AND (
+			lower(name) LIKE ? ESCAPE '\' OR lower(display_name) LIKE ? ESCAPE '\'
+			OR lower(gstin) LIKE ? ESCAPE '\' OR lower(city) LIKE ? ESCAPE '\')
+		ORDER BY (CASE WHEN lower(name) LIKE ? ESCAPE '\' OR lower(display_name) LIKE ? ESCAPE '\'
+			THEN 0 ELSE 1 END), name COLLATE NOCASE
+		LIMIT ?`,
+		contains, contains, contains, contains, prefix, prefix, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Vendor
+	for rows.Next() {
+		v, err := scanVendor(rows, false)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // normalizeVendorInput trims every field and applies the two defaults the
 // approved form itself defaults to, then validates. Returning a cleaned copy
 // keeps the caller's value untouched.
