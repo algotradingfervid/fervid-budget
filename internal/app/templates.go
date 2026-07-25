@@ -719,6 +719,50 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* Payment requests — mockups/screens/request-new-type.html.
+
+     Step 1 of 2. Picking a type is a NAVIGATION, not a form control (A16):
+     each card is a link to the same route carrying ?type=, so the form that
+     follows can be built for one type and never has to un-build itself. There
+     is deliberately no <select name="type"> anywhere in the application.
+
+     The banner keeps its heading on every device rather than carrying .d-only
+     as the mockup does: the mobile top bar renders the screen title as a <b>,
+     not a heading, so hiding this one would leave a phone with no h1 at all. */}}
+{{define "request_new_type"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">New request · step 1 of 2</div>
+    <h1>What are you asking to be paid?</h1>
+    <p class="sub">Pick a type. The form only asks for what that type needs. Nothing is saved until you submit.</p>
+  </div>
+  <div class="pb-actions"><a class="btn outline" href="/">Cancel</a></div>
+</section>
+
+<div class="type-grid">
+  {{range requestTypes}}
+  <a class="type-card" href="/requests/new?type={{.Key}}">
+    <span class="tc-ico" aria-hidden="true">{{.Icon}}</span>
+    <b>{{.Label}}</b>
+    <p>{{.Blurb}}</p>
+    <span class="tc-tag pill {{.TagClass}}">{{.Tag}}</span>
+  </a>
+  {{end}}
+</div>
+
+<div class="banner info" style="margin-top:16px">
+  <span class="b-ico" aria-hidden="true">?</span>
+  <div>
+    <b>Not sure which one?</b>
+    <p>If the money leaves the company and never comes back, it is an expense. If it is a deposit, a
+      guarantee, or something you will repay, pick the type that fits and mark it recoverable on the
+      next screen.</p>
+  </div>
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{define "audit"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Evidence</div><h1>Audit Log</h1><p class="sub muted">Review who changed financial records, when, and why.</p></div></section>

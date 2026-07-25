@@ -248,6 +248,52 @@ func TestRequestExportIsScopedAndCarriesThePhase2Columns(t *testing.T) {
 	}
 }
 
+// A16: picking a type is a navigation, not a form control. GET /requests/new is
+// step 1 of 2 and lists the four types as links; there is no <select name="type">
+// anywhere in the application.
+func TestRequestNewTypeChooser(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, "/requests/new", nil, ""))
+
+	if !strings.Contains(body, `class="type-grid"`) {
+		t.Fatal("the chooser does not use the .type-grid layout")
+	}
+	if n := strings.Count(body, `class="type-card"`); n != 4 {
+		t.Fatalf("the chooser renders %d type cards, want 4", n)
+	}
+	for _, want := range []string{
+		`href="/requests/new?type=vendor_invoice"`,
+		`href="/requests/new?type=vendor_advance"`,
+		`href="/requests/new?type=reimbursement"`,
+		`href="/requests/new?type=employee_advance"`,
+		"Vendor invoice payment", "Vendor advance", "Reimbursement", "Employee advance",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("type card %q missing", want)
+		}
+	}
+	// A16: the type is never a form control.
+	if strings.Contains(body, `name="type"`) {
+		t.Fatal("the chooser rendered a type form control; the type is a route parameter")
+	}
+	// D1: the screen says so, because the whole flow depends on it.
+	if !strings.Contains(strings.ToLower(body), "nothing is saved until you submit") {
+		t.Fatal("the chooser must state that nothing is saved until submit")
+	}
+	// The step-1 screen keeps its own heading on every device — the ux sweep
+	// requires a visible h1 at 390px as well as 1440px.
+	if !strings.Contains(body, "<h1>") {
+		t.Fatal("the chooser has no h1")
+	}
+
+	// An unknown type falls back to the chooser rather than rendering a broken form.
+	body = responseBody(t, s.request(http.MethodGet, "/requests/new?type=mystery", nil, ""))
+	if !strings.Contains(body, `class="type-grid"`) {
+		t.Fatal("an unknown type must fall back to the chooser")
+	}
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

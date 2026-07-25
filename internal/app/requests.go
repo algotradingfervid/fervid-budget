@@ -28,14 +28,44 @@ import (
 // every reveal is re-enforced by store.validateRequestInput, which is what a
 // hand-rolled POST runs into.
 
-// requestTypeLabels is the vocabulary of request-new-type.html. It is the only
-// place a request type is named for a human, and its keys are the only types
-// the chooser and the form will render.
-var requestTypeLabels = map[string]string{
-	"vendor_invoice":   "Vendor invoice payment",
-	"vendor_advance":   "Vendor advance",
-	"reimbursement":    "Reimbursement",
-	"employee_advance": "Employee advance",
+// requestTypeOption is one card on request-new-type.html: the whole vocabulary
+// of request types, in the order the approved screen lays them out. Adding a
+// type here is the only way to add one to the product.
+type requestTypeOption struct {
+	Key, Label, Icon, Blurb, Tag, TagClass string
+}
+
+var requestTypeOptions = []requestTypeOption{
+	{Key: "vendor_invoice", Label: "Vendor invoice payment", Icon: "▤",
+		Blurb: "You have an invoice from a vendor and it needs paying.",
+		Tag:   "Needs invoice number and date", TagClass: "neutral no-dot"},
+	{Key: "vendor_advance", Label: "Vendor advance", Icon: "◷",
+		Blurb: "Money to a vendor before any invoice exists — a deposit against an order.",
+		Tag:   "Needs a reason for the advance", TagClass: "neutral no-dot"},
+	{Key: "reimbursement", Label: "Reimbursement", Icon: "↺",
+		Blurb: "You already spent your own money for the company and want it back.",
+		Tag:   "Paid to you · needs the expense date", TagClass: "neutral no-dot"},
+	{Key: "employee_advance", Label: "Employee advance", Icon: "₹",
+		Blurb: "Money to you up front for organisation spending you are about to make.",
+		Tag:   "Usually recoverable", TagClass: "recoverable"},
+}
+
+// requestTypeLabels is derived from the ordered vocabulary above, so a type is
+// named for a human in exactly one place. Its keys are also the only types the
+// chooser and the form will render: anything else falls back to the chooser.
+var requestTypeLabels = func() map[string]string {
+	out := make(map[string]string, len(requestTypeOptions))
+	for _, option := range requestTypeOptions {
+		out[option.Key] = option.Label
+	}
+	return out
+}()
+
+// requestNew is both steps of the new-request flow on one route. With no
+// ?type= — or an unrecognised one — it is the chooser; with a known type it is
+// the form for that type and nothing else (A16).
+func (a *App) requestNew(w http.ResponseWriter, r *http.Request) {
+	a.render(w, r, "request_new_type", PageData{Title: "New request"})
 }
 
 // requestInput reads the whole form. Every field the adaptive form is capable

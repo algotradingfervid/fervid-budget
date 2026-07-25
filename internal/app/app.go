@@ -199,13 +199,14 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 			}
 			return *p
 		},
-		"pillClass":   pillClass,
-		"reqStatus":   requestStatusText,
-		"typeLabel":   typeLabel,
-		"recoverable": recoverableLabel,
-		"inWords":     money.InWords,
-		"amountValue": amountValue,
-		"dateLong":    formatLongDate,
+		"pillClass":    pillClass,
+		"reqStatus":    requestStatusText,
+		"typeLabel":    typeLabel,
+		"recoverable":  recoverableLabel,
+		"inWords":      money.InWords,
+		"amountValue":  amountValue,
+		"dateLong":     formatLongDate,
+		"requestTypes": func() []requestTypeOption { return requestTypeOptions },
 	}).Parse(templates))
 
 	ctx := contextWithTimeout()
@@ -292,6 +293,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	// zero. There is no draft route and no second submit step: D1 makes create
 	// and submit one POST.
 	mux.Handle("GET /requests/export.csv", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestsExport)))
+	mux.Handle("GET /requests/new", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.requestNew)))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
 	mux.Handle("POST /users", a.auth.RequirePermission("user", "edit", http.HandlerFunc(a.withCSRF(a.userSave))))
 	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))
