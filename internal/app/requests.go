@@ -469,6 +469,62 @@ func (a *App) requests(w http.ResponseWriter, r *http.Request) {
 		Counts: counts, Projects: projects})
 }
 
+// approvalTab is one `.segmented` tab on the manager queue. The queue is its
+// own screen rather than a scope of /requests because it answers a different
+// question — "what is mine to decide" — and its tabs are statuses, not buckets.
+type approvalTab struct {
+	Key, Label string
+	Statuses   []string
+}
+
+var approvalTabs = []approvalTab{
+	{"to-approve", "To approve", []string{"pending"}},
+	{"cancellations", "Cancellations", []string{"cancellation_requested"}},
+	{"decided", "Decided", []string{"approved", "rejected", "cancelled"}},
+}
+
+// approvals is the manager queue. Scope is always "assigned": holding
+// approval:approve says you may decide, and the manager_id on the row says
+// which requests are yours to decide. There is no bulk approval by design (A6).
+func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	query := r.URL.Query().Get("q")
+	bucket := r.URL.Query().Get("bucket")
+	if !knownApprovalTab(bucket) {
+		bucket = approvalTabs[0].Key
+	}
+	counts := map[string]int{}
+	var list []store.Request
+	for _, tab := range approvalTabs {
+		opts := store.RequestListOptions{Scope: "assigned", ViewerID: u.ID,
+			Statuses: tab.Statuses, Query: query}
+		n, err := a.st.CountRequests(r.Context(), opts)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		counts[tab.Key] = n
+		if tab.Key != bucket {
+			continue
+		}
+		if list, err = a.st.ListRequests(r.Context(), opts); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+	}
+	a.render(w, r, "approvals", PageData{Title: "Approvals", Requests: list, Bucket: bucket,
+		Counts: counts, Query: query})
+}
+
+func knownApprovalTab(key string) bool {
+	for _, tab := range approvalTabs {
+		if tab.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	q := r.URL.Query()

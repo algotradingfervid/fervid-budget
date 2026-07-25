@@ -162,16 +162,16 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 		wantRight []string
 	}{
 		// The centre action falls through any candidate whose screen is not
-		// built. /requests/new now exists, so a requester lands on New;
-		// /approvals is still in unbuiltPrefixes, so an approver who can also
-		// pay still falls through to Pay. Deleting that line when Phase 2's
-		// approvals queue ships flips the first case to Approve, and
-		// TestTabBarNeverLinksToAnUnbuiltRoute is what keeps the two in step.
+		// built. /requests/new and — since Phase 2 Task 25 — /approvals both
+		// exist, so approval:approve is now the first candidate that resolves
+		// and an approver who can also pay lands on Approve rather than falling
+		// through to Pay. TestTabBarNeverLinksToAnUnbuiltRoute keeps the two in
+		// step: a screen leaves unbuiltPrefixes and its tab lights up here.
 		{
-			name:      "approver falls through to pay until /approvals exists",
+			name:      "approver gets the approvals queue",
 			perms:     store.NewPermissionSet([]store.Grant{{Resource: "approval", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}, nil),
-			wantLabel: "Pay",
-			wantHref:  "/payments/new",
+			wantLabel: "Approve",
+			wantHref:  "/approvals",
 			wantRight: []string{"Payments", "More"},
 		},
 		{
@@ -198,8 +198,8 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 		{
 			name:      "every grant takes the first built match",
 			perms:     adminPerms(),
-			wantLabel: "Pay",
-			wantHref:  "/payments/new",
+			wantLabel: "Approve",
+			wantHref:  "/approvals",
 			wantRight: []string{"Payments", "More"},
 		},
 	} {

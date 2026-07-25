@@ -782,6 +782,65 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 	}
 }
 
+// A15: the manager queue is its own screen, with its own tabs and its own
+// empty state. Folding it into /requests?scope=assigned made the segmented
+// tabs mean two things at once.
+func TestApprovalsQueueIsItsOwnScreen(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Appr")
+	mgrID := seedSecondApprover(t, s)
+	mgr, err := s.st.UserByID(s.ctx, mgrID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester := s.seedRequester("appreq@example.test", "Appr Requester", "RequesterPass123")
+	mk := func(title string) int64 {
+		id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+			Type: "reimbursement", ShortTitle: title, ProjectID: 1, HeadID: headID, Amount: 18400,
+			Purpose: "p", ExpenseDate: "2026-07-17", ManagerID: mgrID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mk("Travel reimbursement")
+	frozen := mk("Binding wire advance")
+	if err := s.st.ApproveRequest(s.ctx, mgr, frozen, 18400, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.RequestCancellation(s.ctx, requester, frozen, "order withdrawn"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("kavita@example.test", "ApproverPass123")
+	body := responseBody(t, s.request(http.MethodGet, "/approvals", nil, ""))
+	for _, want := range []string{`class="segmented"`, `class="req-list"`, `class="req-card`,
+		"Travel reimbursement", `class="waiting you"`, "<h1>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("approvals queue is missing %q", want)
+		}
+	}
+	// A6: no bulk approval anywhere on the screen.
+	if strings.Contains(body, `type="checkbox"`) || strings.Contains(strings.ToLower(body), "approve selected") {
+		t.Fatal("the approvals queue offers bulk approval")
+	}
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("the approvals queue still renders .badge")
+	}
+	// The cancellation tab is a first-class part of the queue (G1).
+	if !strings.Contains(body, `href="/approvals?bucket=cancellations`) {
+		t.Fatal("no cancellations tab")
+	}
+	cancel := responseBody(t, s.request(http.MethodGet, "/approvals?bucket=cancellations", nil, ""))
+	if !strings.Contains(cancel, "Binding wire advance") || strings.Contains(cancel, "Travel reimbursement") {
+		t.Fatalf("the cancellations tab listed the wrong requests: %s", cancel)
+	}
+
+	// A requester without approval:approve cannot reach the queue at all.
+	s.login("appreq@example.test", "RequesterPass123")
+	requireStatus(t, s.request(http.MethodGet, "/approvals", nil, ""), http.StatusForbidden)
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

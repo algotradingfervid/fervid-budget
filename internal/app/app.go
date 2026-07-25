@@ -208,6 +208,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"dateLong":     formatLongDate,
 		"requestTypes": func() []requestTypeOption { return requestTypeOptions },
 		"requestTabs":  func() []requestTab { return requestTabs },
+		"approvalTabs": func() []approvalTab { return approvalTabs },
 		"waitingOn":    waitingOn,
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
@@ -304,6 +305,9 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /requests/duplicate-check", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestDuplicateCheck))))
 	mux.Handle("POST /requests", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestCreate))))
 	mux.Handle("GET /requests/{id}/submitted", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestSubmitted)))
+	// The manager queue is its own screen (A15), gated on the verb that lets a
+	// person decide rather than on the one that lets them read.
+	mux.Handle("GET /approvals", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.approvals)))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
 	mux.Handle("POST /users", a.auth.RequirePermission("user", "edit", http.HandlerFunc(a.withCSRF(a.userSave))))
 	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))

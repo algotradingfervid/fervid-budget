@@ -494,8 +494,11 @@ func TestShellIsBuiltFromPermissionsAndSkippedForHTMXFragments(t *testing.T) {
 	}
 	handler, manager := s.shellProbeHandler(t)
 
+	// The admin's centre action is Approve, not Pay: approval:approve is the
+	// first candidate in centreActions and Phase 2 built /approvals, so the
+	// fall-through that used to land on Pay no longer happens.
 	adminShell := renderAs(t, handler, manager, admin, "/payments", nil)
-	for _, want := range []string{"chrome=app", "active=payments", "fab=Pay", "groups=8", "badges=3", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log"} {
+	for _, want := range []string{"chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=3", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log"} {
 		if !strings.Contains(adminShell, want) {
 			t.Fatalf("admin shell missing %q: %s", want, adminShell)
 		}

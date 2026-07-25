@@ -1212,6 +1212,56 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The manager queue — mockups/screens/approvals-list.html.
+
+     Its own route, because it answers a different question from the requests
+     list: not "where are my requests" but "what is mine to decide". The tabs
+     are statuses, and Cancellations is one of them because a frozen payment is
+     a decision only this person can make (G1).
+
+     There is no checkbox column and no "approve selected" button. Every
+     approval is a decision made after opening the request (A6). */}}
+{{define "approvals"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Manager queue</div>
+    <h1>Waiting on you</h1>
+    <p class="sub">{{index .Counts "to-approve"}} to approve · {{index .Counts "cancellations"}} {{plural (index .Counts "cancellations") "cancellation" "cancellations"}} to decide</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="/requests/export.csv?scope=assigned&amp;q={{.Query}}">⤓ Export CSV</a>
+  </div>
+</section>
+
+<form class="toolbar" method="get" action="/approvals">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <div class="field search"><label for="aq">Search</label><input id="aq" name="q" value="{{.Query}}" placeholder="Number, payee, invoice, requester…"></div>
+  <span class="row-end"></span>
+  <button class="btn">Apply</button>
+</form>
+
+<form class="m-filters" method="get" action="/approvals">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search approvals…" aria-label="Search approvals"></span>
+  <button class="btn filter-btn" type="submit">Search</button>
+</form>
+
+<div class="segmented" style="margin-bottom:12px">
+  {{range approvalTabs}}<a class="{{if eq $.Bucket .Key}}is-active{{end}}"
+    {{if eq $.Bucket .Key}}aria-current="page"{{end}}
+    href="/approvals?bucket={{.Key}}&amp;q={{$.Query}}">{{.Label}} <span class="n">{{index $.Counts .Key}}</span></a>{{end}}
+</div>
+
+<div class="req-list">
+  {{range .Requests}}{{template "request_card" (card . $.User.ID)}}{{else}}<p class="empty">Nothing is waiting on you here.</p>{{end}}
+</div>
+
+<p class="hint">Every approval is a decision made after opening the request. There is no bulk
+  approval, by design.</p>
+{{template "bottom" .}}
+{{end}}
+
 {{/* The advisory duplicate warning — mockups/screens/request-duplicate-warning.html.
 
      "A duplicate warning never blocks submission. Legitimate repeat payments
