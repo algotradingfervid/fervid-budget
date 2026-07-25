@@ -446,3 +446,45 @@ func TestRequestRetainsHistoricalProjectHead(t *testing.T) {
 		t.Fatalf("historical names lost: project=%q head=%q", got.Project, got.Head)
 	}
 }
+
+func TestUrgencyReasonIsRequiredWhenUrgent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	mk := func(urgent bool, reason string) error {
+		_, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
+			ShortTitle: "Travel", ProjectID: 1, HeadID: headID, Amount: 18400, Purpose: "site visit",
+			ExpenseDate: "2026-07-17", ManagerID: mgr.ID, Urgent: urgent, UrgencyReason: reason})
+		return err
+	}
+	// Default mode is "reason" (seeded by migration v3).
+	if err := mk(true, "   "); !errors.Is(err, ErrValidation) {
+		t.Fatalf("urgent without a reason = %v, want ErrValidation", err)
+	}
+	if err := mk(true, "Personal card bill is due on 29 July"); err != nil {
+		t.Fatalf("urgent with a reason: %v", err)
+	}
+	// Not urgent needs no reason.
+	if err := mk(false, ""); err != nil {
+		t.Fatalf("non-urgent: %v", err)
+	}
+
+	// "free": urgent is allowed with no reason.
+	if err := s.SetAppSetting(ctx, mgr, "urgency_mode", "free"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mk(true, ""); err != nil {
+		t.Fatalf("urgency_mode=free rejected a reasonless urgent request: %v", err)
+	}
+
+	// "disabled": urgent may not be set at all.
+	if err := s.SetAppSetting(ctx, mgr, "urgency_mode", "disabled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mk(true, "still urgent"); !errors.Is(err, ErrValidation) {
+		t.Fatalf("urgency_mode=disabled accepted an urgent request = %v, want ErrValidation", err)
+	}
+	if err := mk(false, ""); err != nil {
+		t.Fatalf("urgency_mode=disabled rejected a normal request: %v", err)
+	}
+}

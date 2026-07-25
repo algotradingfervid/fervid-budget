@@ -353,6 +353,13 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 	if err := validateRequestInput(in); err != nil {
 		return 0, err
 	}
+	mode, err := s.urgencyMode(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateUrgency(in, mode); err != nil {
+		return 0, err
+	}
 	for _, att := range in.Attachments {
 		if err := validateAttachment(att); err != nil {
 			return 0, err
@@ -440,4 +447,38 @@ func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// urgencyMode returns the configured urgency policy: "reason" (default),
+// "free" or "disabled" (admin-configuration.html · Payments · Urgency).
+func (s *Store) urgencyMode(ctx context.Context) (string, error) {
+	mode, err := s.AppSetting(ctx, "urgency_mode")
+	if err != nil {
+		return "", err
+	}
+	switch mode {
+	case "free", "disabled", "reason":
+		return mode, nil
+	default:
+		return "reason", nil
+	}
+}
+
+// validateUrgency enforces G7. It is separate from validateRequestInput because
+// the rule is configuration-driven and validateRequestInput stays pure.
+func validateUrgency(in RequestInput, mode string) error {
+	if !in.Urgent {
+		return nil
+	}
+	switch mode {
+	case "disabled":
+		return fmt.Errorf("%w: urgent requests are switched off", ErrValidation)
+	case "free":
+		return nil
+	default:
+		if strings.TrimSpace(in.UrgencyReason) == "" {
+			return fmt.Errorf("%w: say why this is urgent", ErrValidation)
+		}
+	}
+	return nil
 }
