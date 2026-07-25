@@ -80,6 +80,7 @@ html {
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
   color: var(--fb-text);
   background: var(--fb-bg);
@@ -150,6 +151,7 @@ button {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar,
@@ -158,6 +160,7 @@ button {
   top: 0;
   align-self: start;
   height: 100vh;
+  height: 100dvh;
   padding: 16px 12px;
   overflow-y: auto;
   color: #f5fbf8;
@@ -1127,6 +1130,7 @@ body {
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--paper);
 }
 
@@ -1137,6 +1141,7 @@ body {
   flex-direction: column;
   gap: 8px;
   height: 100vh;
+  height: 100dvh;
   padding: 18px 12px;
   overflow-y: auto;
   background: #191817;
@@ -1647,6 +1652,7 @@ tr.total .pctxt {
 .login-body {
   display: grid;
   min-height: 100vh;
+  min-height: 100dvh;
   place-items: center;
   background: var(--paper);
 }
@@ -3776,6 +3782,261 @@ td .t-sub {
 }
 
 /* ==========================================================================
+   New components — mobile chrome
+   The three pieces are hidden on desktop and switched on inside the 860px
+   block below.
+   ========================================================================== */
+
+.m-topbar,
+.tabbar {
+  display: none;
+}
+
+.m-topbar .m-back {
+  display: grid;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: #fff;
+  background: rgba(255, 255, 255, .1);
+  border-radius: var(--r-sm);
+  font-size: 15px;
+  text-decoration: none;
+}
+
+.m-topbar .m-back:hover {
+  background: rgba(255, 255, 255, .18);
+  text-decoration: none;
+}
+
+.m-topbar .m-title { min-width: 0; }
+
+.m-topbar .m-title b {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 720;
+  line-height: 1.2;
+}
+
+.m-topbar .m-title small {
+  display: block;
+  color: #9d968e;
+  font-size: 11px;
+}
+
+.m-topbar .m-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.m-topbar .m-icon {
+  position: relative;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: #fff;
+  background: rgba(255, 255, 255, .1);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.m-topbar .m-icon:hover {
+  background: rgba(255, 255, 255, .18);
+  text-decoration: none;
+}
+
+.m-topbar .m-icon .dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  color: #fff;
+  background: var(--brand);
+  border: 2px solid var(--sidebar);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 16px;
+  text-align: center;
+}
+
+.m-topbar .m-cta {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 11px;
+  color: #fff;
+  background: var(--brand);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  font-weight: 720;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.m-topbar .m-cta:hover {
+  background: var(--brand-2);
+  text-decoration: none;
+}
+
+.tabbar a {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 5px 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.tabbar a:hover { text-decoration: none; }
+
+.tabbar a .ti {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.tabbar a.active { color: var(--brand-2); }
+
+.tabbar .fab {
+  display: grid;
+  width: 50px;
+  height: 50px;
+  place-items: center;
+  justify-self: center;
+  margin-bottom: 2px;
+  color: #fff;
+  background: var(--brand);
+  border-radius: var(--r-pill);
+  box-shadow: 0 6px 14px rgba(168, 58, 29, .38);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.tabbar .fab-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.tabbar .fab-wrap:hover { text-decoration: none; }
+
+/* Fixed, like .overlay — the mockup's absolute positioning only works
+   because its shell is a fake phone. */
+.more-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  padding: 0 0 90px;
+  overflow-y: auto;
+  background: var(--paper);
+}
+
+.more-sheet .ms-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  color: #fff;
+  background: var(--sidebar);
+}
+
+.more-sheet .ms-head b {
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.more-sheet .ms-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  margin-left: auto;
+  color: #fff;
+  background: rgba(255, 255, 255, .12);
+  border: 0;
+  border-radius: var(--r-sm);
+  font-size: 16px;
+}
+
+.more-sheet .ms-group {
+  margin: 14px 14px 5px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.more-sheet .ms-list {
+  margin: 0 14px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.more-sheet .ms-list a {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 13px;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.more-sheet .ms-list a:last-child { border-bottom: 0; }
+
+.more-sheet .ms-list a:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+.more-sheet .ms-list a .ico {
+  width: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.more-sheet .ms-list a .n {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.more-sheet .ms-list a.soon {
+  color: var(--muted-2);
+  opacity: .72;
+  cursor: not-allowed;
+}
+
+.more-sheet .ms-list a.soon .n {
+  padding: 1px 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+/* ==========================================================================
    Responsive — two breakpoints, 860 and 560. Nothing else.
    860 is the desktop/mobile line: the shell collapses here exactly once.
    ========================================================================== */
@@ -3982,6 +4243,41 @@ td .t-sub {
   .page:has(.m-filters) .toolbar,
   .page-inner:has(.m-filters) .toolbar {
     display: none;
+  }
+
+  /* Mobile chrome ------------------------------------------------------ */
+
+  /* Nothing may sit under the fixed tab bar. */
+  .page {
+    padding-bottom: 96px;
+  }
+
+  .m-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 54px;
+    padding: 8px 14px 8px 12px;
+    color: #fff;
+    background: var(--sidebar);
+  }
+
+  /* Fixed to the viewport, not the shell, and clear of the home indicator. */
+  .tabbar {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    align-items: end;
+    padding: 6px 6px 10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    background: rgba(251, 250, 247, .97);
+    border-top: 1px solid var(--line);
+    backdrop-filter: blur(6px);
   }
 
   .appshell,
