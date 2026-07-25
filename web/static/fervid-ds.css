@@ -2201,6 +2201,172 @@ pre {
 }
 
 /* ==========================================================================
+   New components — layout
+   ========================================================================== */
+
+.page-inner {
+  width: min(100%, 1180px);
+}
+
+.side-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 8px 16px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.side-brand .sq {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: #fff;
+  background: var(--brand);
+  border-radius: 7px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.side-brand b {
+  display: block;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: .01em;
+}
+
+.side-brand small {
+  color: #8f8880;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.side-nav a .n {
+  min-width: 19px;
+  padding: 1px 6px;
+  margin-left: auto;
+  color: #fff;
+  background: rgba(255, 255, 255, .14);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.side-nav a.active .n {
+  background: rgba(0, 0, 0, .28);
+}
+
+.side-nav a.soon {
+  color: #6b655e;
+  cursor: not-allowed;
+}
+
+.side-nav a.soon:hover {
+  color: #6b655e;
+  background: transparent;
+}
+
+.side-nav a.soon .n {
+  color: #8f8880;
+  background: rgba(255, 255, 255, .07);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r) var(--r) 0 0;
+}
+
+.card-head h2,
+.card-head h3 {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.card-body {
+  padding: 14px;
+}
+
+.panel-pad-sm {
+  padding: 12px;
+}
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 22px 0 9px;
+}
+
+.section-head:first-child {
+  margin-top: 0;
+}
+
+.section-head h2 {
+  font-size: 17px;
+}
+
+.section-head .more-link {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.greet {
+  margin-bottom: 12px;
+}
+
+.greet h1 {
+  font-size: 21px;
+}
+
+.greet p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
+
+.stack-8 > * + * { margin-top: 8px; }
+.stack-12 > * + * { margin-top: 12px; }
+.stack-16 > * + * { margin-top: 16px; }
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-end {
+  margin-left: auto;
+}
+
+/* Device-only blocks. `revert` — not `block` — so an element that is its own
+   grid or flex keeps that display when it becomes visible. */
+.m-only { display: none; }
+
+/* ==========================================================================
    Responsive — two breakpoints, 860 and 560. Nothing else.
    860 is the desktop/mobile line: the shell collapses here exactly once.
    ========================================================================== */
@@ -2209,6 +2375,9 @@ pre {
   body {
     font-size: 13px;
   }
+
+  .m-only { display: revert; }
+  .d-only { display: none; }
 
   .appshell,
   .app-shell,
