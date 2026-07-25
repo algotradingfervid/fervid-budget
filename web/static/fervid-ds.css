@@ -2094,11 +2094,15 @@ pre {
   min-width: 140px;
 }
 
+/* Single definition — the design-system checkline and the legacy one are the
+   same component, so this rule carries both sets of declarations. */
 .checkline {
   display: inline-flex !important;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: auto !important;
+  font-size: 13px;
+  font-weight: 650;
   white-space: nowrap;
 }
 
@@ -2362,9 +2366,15 @@ pre {
   margin-left: auto;
 }
 
-/* Device-only blocks. `revert` — not `block` — so an element that is its own
-   grid or flex keeps that display when it becomes visible. */
-.m-only { display: none; }
+/* Device-only blocks. Each is hidden by the viewport that should NOT see it,
+   so the element keeps its own display (grid, flex, table) on the viewport
+   that should. `display: revert` cannot do this: it rolls the whole author
+   origin back, so a .type-grid.m-only would come back as `block`, not `grid`
+   — measured, not assumed. Hence the complement query; it is the same 860px
+   line, not a new breakpoint. */
+@media (min-width: 861px) {
+  .m-only { display: none !important; }
+}
 
 /* ==========================================================================
    New components — status pills and the waiting-on line
@@ -2557,6 +2567,385 @@ pre {
 }
 
 /* ==========================================================================
+   New components — forms
+   ========================================================================== */
+
+.field > label,
+.flabel {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.field > label .req {
+  color: var(--bad);
+  font-weight: 800;
+}
+
+.field > label .opt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.err {
+  display: block;
+  color: var(--bad);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+fieldset {
+  margin: 0;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+fieldset + fieldset {
+  margin-top: 12px;
+}
+
+legend {
+  padding: 0 7px;
+  color: var(--brand-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* Money input — the field people get wrong on a phone. */
+.money-field .money-wrap {
+  position: relative;
+  display: block;
+}
+
+.money-field .money-wrap .cur {
+  position: absolute;
+  top: 50%;
+  left: 13px;
+  color: var(--muted);
+  font-size: 19px;
+  font-weight: 700;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.money-field input {
+  min-height: 54px;
+  padding-left: 34px;
+  font-size: 24px;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+}
+
+.money-field .in-words {
+  display: block;
+  margin-top: 5px;
+  color: var(--brand-2);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.money-field .in-words.empty {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Type chooser */
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.type-card {
+  display: block;
+  padding: 15px;
+  color: inherit;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  text-decoration: none;
+}
+
+.type-card:hover {
+  background: #fff;
+  border-color: var(--brand);
+  box-shadow: var(--shadow-1);
+  text-decoration: none;
+}
+
+.type-card .tc-ico {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  margin-bottom: 9px;
+  color: var(--brand-2);
+  background: var(--brand-tint);
+  border-radius: var(--r-sm);
+  font-size: 18px;
+}
+
+.type-card b {
+  display: block;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.type-card p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.type-card .tc-tag {
+  display: inline-block;
+  margin-top: 8px;
+}
+
+/* Choice list — radio cards. The highlight is CSS, not JS. */
+.choice {
+  display: grid;
+  gap: 8px;
+}
+
+.choice label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.choice label:hover {
+  background: #fff;
+  border-color: var(--line-2);
+}
+
+.choice label input {
+  flex: none;
+  margin-top: 2px;
+}
+
+.choice label b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 750;
+}
+
+.choice label small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.choice label:has(input:checked),
+.choice label.is-on {
+  background: var(--brand-tint);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+.choice label .outcome {
+  flex: none;
+  padding: 2px 8px;
+  margin-left: auto;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.choice label .outcome.good { color: var(--ok); background: var(--ok-soft); }
+.choice label .outcome.warn { color: var(--warn); background: var(--warn-soft); }
+
+/* Combobox */
+.combo {
+  position: relative;
+}
+
+.combo .combo-input {
+  padding-right: 34px;
+}
+
+.combo .combo-caret {
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  color: var(--muted);
+  font-size: 11px;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.combo-list {
+  display: block;
+  max-height: 290px;
+  margin-top: 5px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-2);
+}
+
+.combo-list .co {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+}
+
+.combo-list .co:last-child { border-bottom: 0; }
+
+.combo-list .co:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+.combo-list .co .co-main { min-width: 0; }
+
+.combo-list .co b {
+  display: block;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.combo-list .co small {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.combo-list .co .co-amt {
+  flex: none;
+  margin-left: auto;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.combo-list .co-add {
+  color: var(--brand-2);
+  background: var(--brand-tint);
+  font-weight: 750;
+}
+
+.combo-list .co.is-taken {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+/* Attachment uploader */
+.uploader {
+  padding: 13px;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r);
+}
+
+.uploader .up-ico {
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.uploader b {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.uploader small {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.file-row .f-ico {
+  display: grid;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--info);
+  background: var(--info-soft);
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.file-row b {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.file-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.file-row .f-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Action bar */
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 0 0;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.action-bar .ab-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.action-bar .row-end {
+  margin-left: auto;
+}
+
+/* ==========================================================================
    Responsive — two breakpoints, 860 and 560. Nothing else.
    860 is the desktop/mobile line: the shell collapses here exactly once.
    ========================================================================== */
@@ -2566,8 +2955,7 @@ pre {
     font-size: 13px;
   }
 
-  .m-only { display: revert; }
-  .d-only { display: none; }
+  .d-only { display: none !important; }
 
   .banner { flex-wrap: wrap; }
 
@@ -2575,6 +2963,54 @@ pre {
     width: 100%;
     margin-left: 0;
   }
+
+  .form-grid > .field.m-half {
+    grid-column: span 6;
+  }
+
+  .type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* On a phone the types must fit one view, so the icon sits beside the
+     text instead of above it. */
+  .type-card {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr);
+    padding: 13px;
+    column-gap: 12px;
+    row-gap: 2px;
+  }
+
+  .type-card .tc-ico {
+    grid-row: 1 / span 3;
+    width: 36px;
+    height: 36px;
+    margin-bottom: 0;
+    font-size: 16px;
+  }
+
+  .type-card .tc-tag {
+    justify-self: start;
+    margin-top: 6px;
+  }
+
+  /* No negative side margin: the production .page does not carry the
+     mockup's 14px padding, and -14px pushes the document 14px wide. */
+  .action-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 15;
+    padding: 11px 14px;
+    margin: 16px 0 0;
+    background: rgba(251, 250, 247, .97);
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -6px 18px rgba(31, 39, 37, .07);
+    backdrop-filter: blur(6px);
+  }
+
+  .action-bar .btn { flex: 1 1 auto; }
+  .action-bar .btn.wide { flex-basis: 100%; }
 
   .appshell,
   .app-shell,
