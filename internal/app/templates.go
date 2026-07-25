@@ -2,48 +2,8 @@ package app
 
 import (
 	"strings"
-	"sync"
 	"unicode"
-
-	"fervidbudget/internal/auth"
-	"fervidbudget/internal/config"
-	"fervidbudget/internal/store"
 )
-
-// Perms is how a template asks whether the signed-in user may do something.
-// No template compares a role name: every gated control names the resource and
-// action its route is guarded by, and the permission set answers.
-//
-// PageData carries the shell but not the PermissionSet the shell was built
-// from, so the lookup goes through templatePermissions below. The day PageData
-// gains a permission field populated in renderStatus, this method becomes a
-// field read and no template changes.
-func (d PageData) Perms() store.PermissionSet {
-	if d.User.ID == 0 {
-		return store.NewPermissionSet(nil)
-	}
-	return templatePermissions(d.User)
-}
-
-// templatePermissions resolves a user's permissions from the same policy the
-// middleware enforces — auth.New builds it from one static table, so there is
-// still exactly one place permissions are declared. It fails closed: a policy
-// that cannot be built grants nothing and every gated control stays hidden.
-var templatePermissions = func(user store.User) store.PermissionSet {
-	policy := templatePolicy()
-	if policy == nil {
-		return store.NewPermissionSet(nil)
-	}
-	return policy.Permissions(user)
-}
-
-var templatePolicy = sync.OnceValue(func() *auth.Manager {
-	manager, err := auth.New(config.Config{}, nil)
-	if err != nil {
-		return nil
-	}
-	return manager
-})
 
 // Initials renders the signed-in user's avatar text. Two letters at most, so
 // the round avatar in the sidebar never overflows.

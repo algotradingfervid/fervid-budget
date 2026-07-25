@@ -105,13 +105,18 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 	if data.Month == "" {
 		data.Month = time.Now().Format("2006-01")
 	}
-	// renderStatus is the single place where the signed-in user is known, so
-	// it is the single place the shell is built. htmx asks for a fragment, not
-	// a page: skip the nav, the tab bar and the badge query entirely.
+	// renderStatus is the single place where the signed-in user is known, so it
+	// is the single place permissions are resolved and the shell is built. The
+	// page body gates on the same set the nav does, so a control can never be
+	// visible on a screen its own nav entry is hidden from.
+	data.Perms = a.auth.Permissions(data.User)
+	// htmx asks for a fragment, not a page: skip the nav, the tab bar and the
+	// badge query entirely. The permission set still applies — a fragment gates
+	// its controls exactly as the full page would.
 	if isFragmentRequest(r) {
 		data.Shell = Shell{Chrome: chromeNone}
 	} else {
-		data.Shell = a.buildPageShell(r, data.User, data.Title)
+		data.Shell = a.buildPageShell(r, data.User, data.Perms, data.Title)
 	}
 
 	var body bytes.Buffer

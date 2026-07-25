@@ -651,6 +651,46 @@ func TestTemplatesNeverCompareRoleNames(t *testing.T) {
 	}
 }
 
+// The page body and the nav must gate on one permission set resolved once per
+// request, not on two independently built policies. If the body ever grows its
+// own policy again, a control can appear on a screen the nav hides.
+func TestPageBodyGatesOnTheRequestPermissionSet(t *testing.T) {
+	source, err := os.ReadFile("templates.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{"internal/auth", "internal/config"} {
+		if strings.Contains(string(source), banned) {
+			t.Fatalf("templates.go imports %q; permissions come from PageData.Perms, resolved in renderStatus", banned)
+		}
+	}
+
+	s := newAppTestServer(t)
+	hash, err := auth.HashPassword("EntryPassword123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.CreateUser(s.ctx, "entry@example.test", "Entry User", hash, "data_entry", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Month Close renders from the dashboard body, gated on month_lock:write —
+	// the same permission /months/{m}/lock is guarded by. It needs no rows, so
+	// it isolates the gate from the data.
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	admin := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	if !strings.Contains(admin, "Month Close") {
+		t.Fatal("admin cannot see Month Close despite holding month_lock:write")
+	}
+
+	entry := newAppTestClient(t, s)
+	entry.login("entry@example.test", "EntryPassword123")
+	restricted := responseBody(t, entry.request(http.MethodGet, "/", nil, ""))
+	if strings.Contains(restricted, "Month Close") {
+		t.Fatal("data-entry user sees Month Close despite lacking month_lock:write")
+	}
+}
+
 // newAppTestClient gives a second, independently authenticated client against
 // the same server so one test can compare what two roles are shown.
 func newAppTestClient(t *testing.T, s *appTestServer) *appTestServer {

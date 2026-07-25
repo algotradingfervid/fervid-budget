@@ -79,7 +79,10 @@ var navSpec = []NavGroup{
 		{Key: "users", Label: "Users", Href: "/users", Icon: "◍", Resource: "user", Action: "read"},
 		{Key: "roles", Label: "Roles & permissions", Href: "/roles", Icon: "⚿", Resource: "role", Action: "read"},
 		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "read"},
-		{Key: "notif-admin", Label: "Notification rules", Href: "/notifications", Icon: "✉", Resource: "notification_rule", Action: "read"},
+		// Two different screens, per adoption spec D7: /admin/notifications is
+		// the rule editor, /notifications (the topbar bell) is the user's own
+		// in-app centre. Phase 5 builds both.
+		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification_rule", Action: "read"},
 		{Key: "audit", Label: "Audit log", Href: "/audit", Icon: "◎", Resource: "audit", Action: "read"},
 		{Key: "backups", Label: "Backups", Href: "/backups", Icon: "⇪", Resource: "backup", Action: "read"},
 	}},
@@ -112,12 +115,12 @@ func buildShell(perms store.PermissionSet) []NavGroup {
 
 // buildPageShell assembles everything the chrome needs for one render: the nav
 // the user may reach, their tab bar, the active item and the badge counts they
-// are entitled to see. A signed-out request gets no chrome at all.
-func (a *App) buildPageShell(r *http.Request, user store.User, title string) Shell {
+// are entitled to see. A signed-out request gets no chrome at all. The caller
+// resolves the permission set, because the page body gates on the same one.
+func (a *App) buildPageShell(r *http.Request, user store.User, perms store.PermissionSet, title string) Shell {
 	if user.ID == 0 {
 		return Shell{Chrome: chromeNone}
 	}
-	perms := a.auth.Permissions(user)
 	shell := Shell{
 		Groups: buildShell(perms),
 		Tabs:   resolveTabs(perms),

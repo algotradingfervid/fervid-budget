@@ -34,9 +34,14 @@ type App struct {
 }
 
 type PageData struct {
-	Title          string
-	User           store.User
-	Shell          Shell
+	Title string
+	User  store.User
+	Shell Shell
+	// Perms is how a template asks whether the signed-in user may do something.
+	// No template compares a role name: every gated control names the resource
+	// and action its route is guarded by, and the permission set answers. It is
+	// always non-nil, so a signed-out render simply gates everything off.
+	Perms          store.PermissionSet
 	CSRF           string
 	Error          string
 	Notice         string
