@@ -678,6 +678,110 @@ func TestDuplicateCheckKnowsAReimbursementPaysItsRequester(t *testing.T) {
 	}
 }
 
+// The "waiting on" line is the signature element of the design: one plain
+// sentence naming who owes the next action, computed once so the list, the
+// approvals queue and the detail head can never disagree.
+func TestWaitingOnNamesWhoeverOwesTheNextAction(t *testing.T) {
+	const me, them = int64(7), int64(9)
+	req := func(status string, requester, manager int64) store.Request {
+		return store.Request{Status: status, RequesterID: requester, ManagerID: manager,
+			RequesterName: "Rhea", ManagerName: "Kavita"}
+	}
+	for _, tc := range []struct {
+		name      string
+		req       store.Request
+		wantText  string
+		wantClass string
+	}{
+		{"pending on me", req("pending", them, me), "Waiting on you", "you"},
+		{"pending on someone else", req("pending", me, them), "Waiting on Kavita", ""},
+		{"returned to me", req("returned", me, them), "Waiting on you", "you"},
+		{"returned to someone else", req("returned", them, me), "Waiting on Rhea", ""},
+		{"approved", req("approved", me, them), "Waiting on Accounts", ""},
+		{"cancellation on me", req("cancellation_requested", them, me), "Waiting on you", "you"},
+		{"rejected", req("rejected", me, them), "Closed. Raise a new request if needed", "closed"},
+		{"withdrawn", req("withdrawn", me, them), "Withdrawn by the requester", "closed"},
+		{"cancelled", req("cancelled", me, them), "Cancelled. Nothing can be paid against it", "closed"},
+	} {
+		got := waitingOn(tc.req, me)
+		if got.Text != tc.wantText || got.Class != tc.wantClass {
+			t.Errorf("%s: waitingOn = %q/%q, want %q/%q", tc.name, got.Text, got.Class, tc.wantText, tc.wantClass)
+		}
+	}
+}
+
+func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("List")
+	mgrID := seedSecondApprover(t, s)
+	mgr, err := s.st.UserByID(s.ctx, mgrID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester := s.seedRequester("lister@example.test", "Lister", "RequesterPass123")
+	mk := func(title string) int64 {
+		id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{Treatment: "budget",
+			Type: "reimbursement", ShortTitle: title, ProjectID: 1, HeadID: headID, Amount: 1000,
+			Purpose: "p", ExpenseDate: "2026-07-17", ManagerID: mgrID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mk("Still waiting")
+	returned := mk("Sent back to me")
+	if err := s.st.ReturnRequest(s.ctx, mgr, returned, "attach the receipt"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("lister@example.test", "RequesterPass123")
+	body := responseBody(t, s.request(http.MethodGet, "/requests", nil, ""))
+	for _, want := range []string{
+		`class="req-list"`, `class="req-card`, `class="rc-no"`, `class="rc-amt"`,
+		`class="rc-title"`, `class="rc-meta"`, `class="rc-foot"`,
+		`class="segmented"`, `class="m-filters"`, `id="filter-sheet"`, `class="overlay"`,
+		"Still waiting", "Sent back to me", "<h1>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the requests list is missing %q", want)
+		}
+	}
+	// D5: the design system removed .badge entirely.
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("the list still renders .badge; the design system uses .pill")
+	}
+	// The returned request says it is waiting on the viewer; the pending one is not.
+	if !strings.Contains(body, `class="waiting you"`) {
+		t.Fatalf("no 'waiting on you' line for the returned request: %s", body)
+	}
+	if !strings.Contains(body, "Waiting on Kavita Rao") {
+		t.Fatal("the pending request does not name its approver")
+	}
+	// The tabs carry counts that come from the same SQL as the rows.
+	if !strings.Contains(body, `href="/requests?bucket=needs-me`) {
+		t.Fatal("the Needs me tab is missing")
+	}
+	needsMe := responseBody(t, s.request(http.MethodGet, "/requests?bucket=needs-me", nil, ""))
+	if !strings.Contains(needsMe, "Sent back to me") || strings.Contains(needsMe, "Still waiting") {
+		t.Fatalf("the Needs me bucket listed the wrong requests: %s", needsMe)
+	}
+	closed := responseBody(t, s.request(http.MethodGet, "/requests?bucket=closed", nil, ""))
+	if strings.Contains(closed, "Still waiting") || strings.Contains(closed, "Sent back to me") {
+		t.Fatal("an open request was listed under Closed")
+	}
+	if !strings.Contains(closed, `class="empty"`) {
+		t.Fatal("an empty bucket says nothing at all")
+	}
+
+	// Q5: the list is scoped. Another requester sees none of it.
+	s.seedRequester("notlister@example.test", "Not Lister", "OtherPass1234")
+	s.login("notlister@example.test", "OtherPass1234")
+	other := responseBody(t, s.request(http.MethodGet, "/requests", nil, ""))
+	if strings.Contains(other, "Still waiting") {
+		t.Fatal("a requester can see another person's requests in the list")
+	}
+}
+
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)

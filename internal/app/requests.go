@@ -378,6 +378,97 @@ func (a *App) requestFormData(r *http.Request, title string) (PageData, error) {
 	return data, nil
 }
 
+// Waiting is the "waiting on" line: one plain sentence naming who owes the
+// next action on a request. Class is the Phase 0 modifier — "you" in brand
+// colour when it is the reader, "closed" when nobody owes anything any more.
+// It is computed once, here, so the list, the approvals queue and the detail
+// head cannot drift into three different answers.
+type Waiting struct {
+	Text  string
+	Class string
+}
+
+func waitingOn(req store.Request, viewerID int64) Waiting {
+	you := Waiting{Text: "Waiting on you", Class: "you"}
+	switch req.Status {
+	case "pending", "cancellation_requested":
+		if req.ManagerID == viewerID {
+			return you
+		}
+		return Waiting{Text: "Waiting on " + req.ManagerName}
+	case "returned":
+		if req.RequesterID == viewerID {
+			return you
+		}
+		return Waiting{Text: "Waiting on " + req.RequesterName}
+	case "approved":
+		return Waiting{Text: "Waiting on Accounts"}
+	case "rejected":
+		return Waiting{Text: "Closed. Raise a new request if needed", Class: "closed"}
+	case "withdrawn":
+		return Waiting{Text: "Withdrawn by the requester", Class: "closed"}
+	case "cancelled":
+		return Waiting{Text: "Cancelled. Nothing can be paid against it", Class: "closed"}
+	default:
+		return Waiting{}
+	}
+}
+
+// requestCardData is what "request_card" is called with. It exists because a
+// {{template}} inside a {{range}} rebinds dot to the request, and $.User.ID
+// inside the card would then resolve against the card rather than the page —
+// silently, and with the wrong "waiting on" line to show for it.
+type requestCardData struct {
+	Req      store.Request
+	ViewerID int64
+}
+
+type requestTab struct{ Key, Label string }
+
+// requestTabs are the .segmented tabs. "needs-me" is the one the whole design
+// turns on: it is the only view that answers "what is mine to do".
+var requestTabs = []requestTab{
+	{"open", "Open"}, {"needs-me", "Needs me"}, {"closed", "Closed"}, {"all", "All"},
+}
+
+func (a *App) requests(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	q := r.URL.Query()
+	bucket := q.Get("bucket")
+	if bucket == "" {
+		bucket = "open"
+	}
+	opts := store.RequestListOptions{Scope: a.effectiveScope(u, q.Get("scope")), ViewerID: u.ID,
+		Bucket: bucket, Type: q.Get("type"), Treatment: q.Get("treatment"),
+		ProjectID: parseID(q.Get("project_id")), Query: q.Get("q")}
+	list, err := a.st.ListRequests(r.Context(), opts)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	// Every tab count comes from the same SQL as the rows, with only the bucket
+	// changed, so a tab can never promise a number the list does not show.
+	counts := map[string]int{}
+	for _, tab := range requestTabs {
+		counted := opts
+		counted.Bucket = tab.Key
+		n, err := a.st.CountRequests(r.Context(), counted)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		counts[tab.Key] = n
+	}
+	projects, err := a.st.ListProjects(r.Context(), true)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "requests", PageData{Title: "Requests", Requests: list, Scope: opts.Scope,
+		Bucket: bucket, TypeFilter: opts.Type, Treatment: opts.Treatment, Query: opts.Query,
+		Counts: counts, Projects: projects})
+}
+
 func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	q := r.URL.Query()

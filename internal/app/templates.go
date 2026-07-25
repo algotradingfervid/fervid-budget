@@ -462,9 +462,9 @@ const templates = `
   <fieldset {{if not .VendorEditable}}disabled{{end}}>
     <legend>Identity</legend>
     <div class="form-grid">
-      <div class="field span-6"><label for="v-name">Vendor name <span class="req">*</span></label><input id="v-name" name="name" value="{{.Vendor.Name}}" required></div>
+      <div class="field span-6"><label for="v-name">Vendor name <span class="req" aria-hidden="true">*</span></label><input id="v-name" name="name" value="{{.Vendor.Name}}" required></div>
       <div class="field span-3 m-half"><label for="v-short">Short name</label><input id="v-short" name="display_name" value="{{.Vendor.DisplayName}}"><span class="hint">Used in lists and dropdowns.</span></div>
-      <div class="field span-3 m-half"><label for="v-type">Type <span class="req">*</span></label><select id="v-type" name="vendor_type">
+      <div class="field span-3 m-half"><label for="v-type">Type <span class="req" aria-hidden="true">*</span></label><select id="v-type" name="vendor_type">
         <option value="company" {{select .Vendor.VendorType "company"}}>Company</option>
         <option value="proprietor" {{select .Vendor.VendorType "proprietor"}}>Proprietor</option>
         <option value="individual" {{select .Vendor.VendorType "individual"}}>Individual</option>
@@ -784,8 +784,8 @@ const templates = `
   <legend>Recoverable details</legend>
   <div class="form-grid">
     <div class="field span-6 m-half">
-      <label for="rcategory">Category <span class="req">*</span></label>
-      <select id="rcategory" name="recoverable_category"
+      <label for="rcategory">Category <span class="req" aria-hidden="true">*</span></label>
+      <select id="rcategory" name="recoverable_category" aria-required="true"
               hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
         <option value="emd" {{select .Request2.RecoverableCategory "emd"}}>EMD — earnest money deposit</option>
         <option value="pbg" {{select .Request2.RecoverableCategory "pbg"}}>PBG — performance bank guarantee</option>
@@ -797,13 +797,13 @@ const templates = `
       <span class="hint">Categories are maintained by your administrator.</span>
     </div>
     <div class="field span-6 m-half">
-      <label for="expected-return">Expected return date <span class="req">*</span></label>
-      <input id="expected-return" type="date" name="expected_return_date" value="{{.Request2.ExpectedReturnDate}}">
+      <label for="expected-return">Expected return date <span class="req" aria-hidden="true">*</span></label>
+      <input id="expected-return" type="date" name="expected_return_date" aria-required="true" value="{{.Request2.ExpectedReturnDate}}">
     </div>
     {{if or (eq .Request2.RecoverableCategory "emd") (eq .Request2.RecoverableCategory "pbg")}}
     <div class="field span-6 m-half" data-when="recoverable_category:emd|pbg">
-      <label for="rproject">Related project <span class="req">*</span></label>
-      <select id="rproject" name="project_id">
+      <label for="rproject">Related project <span class="req" aria-hidden="true">*</span></label>
+      <select id="rproject" name="project_id" aria-required="true">
         <option value="">Choose a project</option>
         {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
@@ -812,13 +812,13 @@ const templates = `
     {{end}}
     {{if or (eq .Request2.RecoverableCategory "icd") (eq .Request2.RecoverableCategory "security_deposit")}}
     <div class="field span-6 m-half" data-when="recoverable_category:icd|security_deposit">
-      <label for="counterparty">Counterparty company <span class="req">*</span></label>
-      <input id="counterparty" name="counterparty" value="{{.Request2.Counterparty}}" placeholder="Company receiving the deposit">
+      <label for="counterparty">Counterparty company <span class="req" aria-hidden="true">*</span></label>
+      <input id="counterparty" name="counterparty" aria-required="true" value="{{.Request2.Counterparty}}" placeholder="Company receiving the deposit">
     </div>
     {{end}}
     <div class="field span-12">
-      <label for="terms">Repayment or refund terms <span class="req">*</span></label>
-      <textarea id="terms" name="repayment_notes">{{.Request2.RepaymentNotes}}</textarea>
+      <label for="terms">Repayment or refund terms <span class="req" aria-hidden="true">*</span></label>
+      <textarea id="terms" name="repayment_notes" aria-required="true">{{.Request2.RepaymentNotes}}</textarea>
     </div>
     <div class="field span-12">
       <div class="banner brand" style="margin:0">
@@ -836,8 +836,8 @@ const templates = `
   <legend>Charge it to</legend>
   <div class="form-grid">
     <div class="field span-6 m-half">
-      <label for="project">Project <span class="req">*</span></label>
-      <select id="project" name="project_id"
+      <label for="project">Project <span class="req" aria-hidden="true">*</span></label>
+      <select id="project" name="project_id" aria-required="true"
               hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
         <option value="">Choose a project</option>
         {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
@@ -845,8 +845,8 @@ const templates = `
       <span class="hint">Picking a project narrows the heads below to that project's own.</span>
     </div>
     <div class="field span-6 m-half">
-      <label for="head">Head <span class="req">*</span></label>
-      <select id="head" name="head_id">
+      <label for="head">Head <span class="req" aria-hidden="true">*</span></label>
+      <select id="head" name="head_id" aria-required="true">
         <option value="">Choose a head</option>
         {{range .Heads}}{{if or (not (deref $.Request2.ProjectID)) (eq .ProjectID (deref $.Request2.ProjectID))}}<option value="{{.ID}}" {{if eq (deref $.Request2.HeadID) .ID}}selected{{end}}>{{.Project}} / {{.Name}}</option>{{end}}{{end}}
       </select>
@@ -885,12 +885,12 @@ const templates = `
     <legend>What is this for</legend>
     <div class="form-grid">
       <div class="field span-12">
-        <label for="short-title">Short title <span class="req">*</span></label>
+        <label for="short-title">Short title <span class="req" aria-hidden="true">*</span></label>
         <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required>
         <span class="hint">What your approver will see in their approval list.</span>
       </div>
       <div class="field span-12">
-        <span class="flabel">How should this be treated <span class="req">*</span></span>
+        <span class="flabel">How should this be treated <span class="req" aria-hidden="true">*</span></span>
         <div class="choice"
              hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
           <label>
@@ -912,7 +912,7 @@ const templates = `
     <legend>Amount and timing</legend>
     <div class="form-grid">
       <div class="field span-6 money-field">
-        <label for="amount">Amount <span class="req">*</span></label>
+        <label for="amount">Amount <span class="req" aria-hidden="true">*</span></label>
         <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required
           hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur"></span>
         <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
@@ -929,8 +929,8 @@ const templates = `
       </div>
       {{if eq (index .Settings "urgency_mode") "reason"}}
       <div class="field span-12" data-when="urgent:on" {{if not .Request2.Urgent}}hidden{{end}}>
-        <label for="urgency-reason">Why is it urgent <span class="req">*</span></label>
-        <input id="urgency-reason" name="urgency_reason" value="{{.Request2.UrgencyReason}}"
+        <label for="urgency-reason">Why is it urgent <span class="req" aria-hidden="true">*</span></label>
+        <input id="urgency-reason" name="urgency_reason" aria-required="true" value="{{.Request2.UrgencyReason}}"
                placeholder="Supply stops if this is not cleared by Monday">
       </div>
       {{end}}
@@ -943,7 +943,7 @@ const templates = `
     <legend>Vendor and {{if eq .FormType "vendor_invoice"}}invoice{{else}}advance{{end}}</legend>
     <div class="form-grid">
       <div class="field span-6">
-        <label for="vendor">Vendor <span class="req">*</span></label>
+        <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>
         {{/* The combobox is offered only to somebody who may actually reach
              GET /vendors/search. Everyone else — and every browser with no
              JavaScript — gets the plain select below, which posts the same
@@ -951,9 +951,9 @@ const templates = `
              what the server reads, and it comes from the vendor master. */}}
         {{if .Perms.Can "vendor" "view"}}
         <span class="combo">
-          <input class="combo-input" id="vendor" name="q" autocomplete="off" value="{{.Request2.Vendor}}"
+          <input class="combo-input" id="vendor" name="q" aria-required="true" autocomplete="off" value="{{.Request2.Vendor}}"
                  placeholder="Type a name, GSTIN or city"
-                 hx-get="/vendors/search" hx-trigger="keyup changed delay:250ms" hx-target="#vendor-options">
+                 hx-get="/vendors/search" hx-trigger="input changed delay:250ms" hx-target="#vendor-options">
           <span class="combo-caret" aria-hidden="true">▾</span>
         </span>
         <div id="vendor-options"></div>
@@ -969,7 +969,7 @@ const templates = `
         <input type="hidden" name="vendor_id" id="vendor-id" data-combo-value value="{{deref .Request2.VendorID}}">
         <span class="hint">Type to search the vendor master. Bank details stay in the vendor record — never on this form.</span>
         {{else}}
-        <select id="vendor" name="vendor_id">
+        <select id="vendor" name="vendor_id" aria-required="true">
           <option value="">Choose a vendor</option>
           {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
         </select>
@@ -978,17 +978,17 @@ const templates = `
       </div>
       {{if eq .FormType "vendor_invoice"}}
       <div class="field span-3 m-half">
-        <label for="invoice-no">Invoice number <span class="req">*</span></label>
+        <label for="invoice-no">Invoice number <span class="req" aria-hidden="true">*</span></label>
         <input id="invoice-no" name="invoice_no" value="{{.Request2.InvoiceNo}}" required
                hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur">
       </div>
       <div class="field span-3 m-half">
-        <label for="invoice-date">Invoice date <span class="req">*</span></label>
+        <label for="invoice-date">Invoice date <span class="req" aria-hidden="true">*</span></label>
         <input id="invoice-date" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required>
       </div>
       {{else}}
       <div class="field span-6">
-        <label for="advance-reason">Reason for the advance <span class="req">*</span></label>
+        <label for="advance-reason">Reason for the advance <span class="req" aria-hidden="true">*</span></label>
         <input id="advance-reason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required>
       </div>
       {{end}}
@@ -1006,7 +1006,7 @@ const templates = `
         <span class="hint">Reimbursements always pay the person raising them.</span>
       </div>
       <div class="field span-6 m-half">
-        <label for="expense-date">Expense date <span class="req">*</span></label>
+        <label for="expense-date">Expense date <span class="req" aria-hidden="true">*</span></label>
         <input id="expense-date" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required>
       </div>
     </div>
@@ -1023,7 +1023,7 @@ const templates = `
         <span class="hint">An employee advance always pays the person raising it.</span>
       </div>
       <div class="field span-12">
-        <label for="adv-reason">What the money is for <span class="req">*</span></label>
+        <label for="adv-reason">What the money is for <span class="req" aria-hidden="true">*</span></label>
         <input id="adv-reason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required>
       </div>
     </div>
@@ -1034,11 +1034,11 @@ const templates = `
     <legend>Purpose and documents</legend>
     <div class="form-grid">
       <div class="field span-12">
-        <label for="purpose">Purpose <span class="req">*</span></label>
+        <label for="purpose">Purpose <span class="req" aria-hidden="true">*</span></label>
         <textarea id="purpose" name="purpose" required>{{.Request2.Purpose}}</textarea>
       </div>
       <div class="field span-12">
-        <span class="flabel">Supporting document {{if eq (index .Settings "require_attachments") "1"}}<span class="req">*</span>{{else}}<span class="opt">optional</span>{{end}}</span>
+        <span class="flabel">Supporting document {{if eq (index .Settings "require_attachments") "1"}}<span class="req" aria-hidden="true">*</span>{{else}}<span class="opt">optional</span>{{end}}</span>
         <div class="stack-8">
           <div class="uploader">
             <div class="up-ico" aria-hidden="true">⇪</div>
@@ -1050,8 +1050,8 @@ const templates = `
       </div>
       {{if eq (index .Settings "require_attachments") "1"}}
       <div class="field span-12">
-        <label for="att-exception">If you cannot attach a document, say why <span class="req">*</span></label>
-        <input id="att-exception" name="attachment_exception_reason" value="{{.Request2.AttachmentExceptionReason}}"
+        <label for="att-exception">If you cannot attach a document, say why <span class="req" aria-hidden="true">*</span></label>
+        <input id="att-exception" name="attachment_exception_reason" aria-required="true" value="{{.Request2.AttachmentExceptionReason}}"
                placeholder="Vendor posts the invoice; it arrives Monday">
         <span class="hint">A missing document never blocks you — it asks for this instead, and your approver sees it.</span>
       </div>
@@ -1063,7 +1063,7 @@ const templates = `
     <legend>Who approves it</legend>
     <div class="form-grid">
       <div class="field span-6">
-        <label for="approver">Approver <span class="req">*</span></label>
+        <label for="approver">Approver <span class="req" aria-hidden="true">*</span></label>
         <select id="approver" name="manager_id" required {{if eq (index .Settings "allow_approver_choice") "0"}}disabled{{end}}>
           <option value="">Choose an approver</option>
           {{range .Approvers}}<option value="{{.ID}}" {{if eq $.Request2.ManagerID .ID}}selected{{end}}>{{.Name}}{{if eq $.Request2.ManagerID .ID}} (your default){{end}}</option>{{end}}
@@ -1090,6 +1090,125 @@ const templates = `
     <button class="btn primary" type="submit">Submit request</button>
   </div>
 </form>
+{{template "bottom" .}}
+{{end}}
+
+{{/* One request as a card. Shared by the list, the approvals queue and the
+     duplicate warning, so the three describe a request the same way.
+
+     It is called through the "card" function rather than with a bare dot: a
+     {{template}} inside a {{range}} rebinds dot to the request, and the viewer
+     id the "waiting on" line needs lives on the page. */}}
+{{define "request_card"}}
+{{$r := .Req}}{{$w := waitingOn $r .ViewerID}}
+<a class="req-card{{if $r.Urgent}} is-urgent{{end}}{{if eq $r.RequesterID .ViewerID}} is-mine{{end}}" href="/requests/{{$r.ID}}">
+  <span class="rc-top"><span class="rc-no">{{$r.Number}}</span><span class="rc-amt">{{money $r.Amount}}</span></span>
+  <span class="rc-title">{{$r.ShortTitle}}</span>
+  <span class="rc-meta">
+    {{if $r.Urgent}}<span class="pill urgent">Urgent</span> {{end}}
+    {{if eq $r.Treatment "recoverable"}}<span class="pill recoverable">Recoverable{{if $r.RecoverableCategory}} · {{recoverable $r.RecoverableCategory}}{{end}}</span> {{end}}
+    {{typeLabel $r.Type}}{{if $r.Project}} · {{$r.Project}}{{if $r.Head}} / {{$r.Head}}{{end}}{{end}}{{if $r.InvoiceNo}} · invoice {{$r.InvoiceNo}}{{end}}
+  </span>
+  <span class="rc-foot">
+    <span class="pill {{pillClass $r.Status}}">{{reqStatus $r.Status}}</span>
+    <span class="waiting {{$w.Class}}">{{$w.Text}}</span>
+  </span>
+</a>
+{{end}}
+
+{{/* The mobile filter sheet. It is a plain GET form, so the filters a phone
+     applies produce the same URL a desktop toolbar would — one shareable
+     address per view, and no state hiding in a drawer. */}}
+{{define "request_filter_sheet"}}
+<div class="overlay" id="filter-sheet" hidden>
+  <form class="sheet" method="get" action="/requests">
+    <div class="sh-head">
+      <div><h2>Filters</h2><p class="sh-sub">Narrow the list</p></div>
+      <button class="sh-close" type="button" data-close="filter-sheet" aria-label="Close">✕</button>
+    </div>
+    <div class="sh-body stack-12">
+      <input type="hidden" name="bucket" value="{{.Bucket}}">
+      <div class="field"><label for="fs-ty">Type</label><select id="fs-ty" name="type">
+        <option value="">Any type</option>
+        {{range requestTypes}}<option value="{{.Key}}" {{select $.TypeFilter .Key}}>{{.Label}}</option>{{end}}
+      </select></div>
+      <div class="field"><label for="fs-tr">Treatment</label><select id="fs-tr" name="treatment">
+        <option value="">Any</option>
+        <option value="budget" {{select .Treatment "budget"}}>Budget expense</option>
+        <option value="recoverable" {{select .Treatment "recoverable"}}>Recoverable</option>
+      </select></div>
+      <div class="field"><label for="fs-pr">Project</label><select id="fs-pr" name="project_id">
+        <option value="">All projects</option>
+        {{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+      </select></div>
+      <div class="field"><label for="fs-q">Search</label><input id="fs-q" name="q" value="{{.Query}}"></div>
+    </div>
+    <div class="sh-foot">
+      <a class="btn outline" href="/requests">Clear all</a>
+      <span class="row-end"></span>
+      <button class="btn primary" type="submit">Show requests</button>
+    </div>
+  </form>
+</div>
+{{end}}
+
+{{/* The requests list — mockups/screens/requests-list.html.
+
+     Sorted by who has been kept waiting longest, urgent first, and every card
+     ends with the plain sentence naming whoever owes the next action. The
+     .segmented tabs are links, not client-side tabs: each is its own URL, so a
+     view can be bookmarked and sent to somebody.
+
+     The desktop toolbar and the mobile .m-filters are both plain GET forms
+     over the same parameters; the stylesheet hides whichever does not belong
+     on the device. */}}
+{{define "requests"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Requests</div>
+    <h1>{{if eq .Scope "own"}}My requests{{else}}All requests{{end}}</h1>
+    <p class="sub">{{len .Requests}} shown · sorted by who is holding them up</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="/requests/export.csv?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;q={{.Query}}">⤓ Export CSV</a>
+    {{if .Perms.Can "request" "create"}}<a class="btn primary" href="/requests/new">＋ New request</a>{{end}}
+  </div>
+</section>
+
+<form class="toolbar" method="get" action="/requests">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <div class="field search"><label for="q">Search</label><input id="q" name="q" value="{{.Query}}" placeholder="Number, payee, invoice, purpose…"></div>
+  <div class="field"><label for="ty">Type</label><select id="ty" name="type">
+    <option value="">Any type</option>
+    {{range requestTypes}}<option value="{{.Key}}" {{select $.TypeFilter .Key}}>{{.Label}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="tr">Treatment</label><select id="tr" name="treatment">
+    <option value="">Any</option>
+    <option value="budget" {{select .Treatment "budget"}}>Budget expense</option>
+    <option value="recoverable" {{select .Treatment "recoverable"}}>Recoverable</option>
+  </select></div>
+  <span class="row-end"></span>
+  <button class="btn">Apply</button>
+</form>
+
+<form class="m-filters" method="get" action="/requests">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search requests…" aria-label="Search requests"></span>
+  <button class="btn filter-btn" type="button" data-open="filter-sheet">Filters</button>
+</form>
+
+<div class="segmented" style="margin-bottom:12px">
+  {{range requestTabs}}<a class="{{if eq $.Bucket .Key}}is-active{{end}}"
+    {{if eq $.Bucket .Key}}aria-current="page"{{end}}
+    href="/requests?bucket={{.Key}}&amp;q={{$.Query}}">{{.Label}} <span class="n">{{index $.Counts .Key}}</span></a>{{end}}
+</div>
+
+<div class="req-list">
+  {{range .Requests}}{{template "request_card" (card . $.User.ID)}}{{else}}<p class="empty">No requests match. Try another tab, or clear the filters.</p>{{end}}
+</div>
+
+{{template "request_filter_sheet" .}}
 {{template "bottom" .}}
 {{end}}
 

@@ -207,6 +207,11 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"amountValue":  amountValue,
 		"dateLong":     formatLongDate,
 		"requestTypes": func() []requestTypeOption { return requestTypeOptions },
+		"requestTabs":  func() []requestTab { return requestTabs },
+		"waitingOn":    waitingOn,
+		"card": func(r store.Request, viewerID int64) requestCardData {
+			return requestCardData{Req: r, ViewerID: viewerID}
+		},
 	}).Parse(templates))
 
 	ctx := contextWithTimeout()
@@ -292,6 +297,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	// /requests/new is always the form and never a request whose id parses to
 	// zero. There is no draft route and no second submit step: D1 makes create
 	// and submit one POST.
+	mux.Handle("GET /requests", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requests)))
 	mux.Handle("GET /requests/export.csv", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestsExport)))
 	mux.Handle("GET /requests/new", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.requestNew)))
 	mux.Handle("GET /requests/new/fields", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.requestFormFields)))

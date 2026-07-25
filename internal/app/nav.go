@@ -58,7 +58,7 @@ var navSpec = []NavGroup{
 	// phase that builds the screen drops the flag, and
 	// TestEveryLinkedNavItemResolves fails until it does.
 	{Title: "Requests", Items: []NavItem{
-		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤"},
+		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤", Resource: "request", Action: "view"},
 		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "approval", Action: "approve", Badge: "approvals"},
 		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "payment", Action: "process", Badge: "accounts_queue"},
 		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable_report", Action: "view"},
@@ -234,7 +234,6 @@ func can(perms store.PermissionSet, resource, action string) bool {
 // TestEveryLinkedNavItemResolves and TestTabBarNeverLinksToAnUnbuiltRoute fail
 // until the line goes, so it cannot be forgotten.
 var unbuiltPrefixes = []string{
-	"/requests",            // Phase 2
 	"/approvals",           // Phase 2
 	"/accounts-queue",      // Phase 2
 	"/configuration",       // Phase 2
