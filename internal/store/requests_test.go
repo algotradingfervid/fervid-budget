@@ -488,3 +488,55 @@ func TestUrgencyReasonIsRequiredWhenUrgent(t *testing.T) {
 		t.Fatalf("urgency_mode=disabled rejected a normal request: %v", err)
 	}
 }
+
+func TestAttachmentPolicyAsksForAReasonInsteadOfBlocking(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Kaveri Logistics")
+	mk := func(in RequestInput) (int64, error) {
+		in.Treatment, in.Type = "budget", "vendor_invoice"
+		in.ShortTitle, in.ProjectID, in.HeadID = "Freight", 1, headID
+		in.Amount, in.Purpose, in.ManagerID = 64500, "freight", mgr.ID
+		in.VendorID, in.InvoiceNo, in.InvoiceDate = vendorID, "KL/2026/0788", "2026-07-21"
+		return s.CreateRequest(ctx, req, in)
+	}
+	// Off by default: no file, no reason, accepted.
+	if _, err := mk(RequestInput{}); err != nil {
+		t.Fatalf("attachments optional: %v", err)
+	}
+	if err := s.SetAppSetting(ctx, mgr, "require_attachments", "1"); err != nil {
+		t.Fatal(err)
+	}
+	// On + no file + no reason -> rejected.
+	if _, err := mk(RequestInput{}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("required attachment missing = %v, want ErrValidation", err)
+	}
+	// On + no file + a reason -> accepted, and the reason is visible on the request.
+	id, err := mk(RequestInput{AttachmentExceptionReason: "Vendor sends the invoice by post; it arrives Monday"})
+	if err != nil {
+		t.Fatalf("exception reason must unblock the submit, got %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.AttachmentExceptionReason == "" {
+		t.Fatal("the exception reason was not stored where the approver can read it")
+	}
+	// On + a file -> accepted, no reason needed.
+	if _, err := mk(RequestInput{Attachments: []AttachmentInput{{OriginalName: "inv.pdf", StoredPath: "/tmp/inv.pdf", MimeType: "application/pdf", SizeBytes: 9}}}); err != nil {
+		t.Fatalf("attached file rejected: %v", err)
+	}
+
+	// Resubmitting a returned request obeys the same rule against stored files.
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='returned' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SubmitRequest(ctx, req, id); err != nil {
+		t.Fatalf("resubmit with a stored exception reason: %v", err)
+	}
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='returned', attachment_exception_reason='' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SubmitRequest(ctx, req, id); !errors.Is(err, ErrValidation) {
+		t.Fatalf("resubmit without file or reason = %v, want ErrValidation", err)
+	}
+}

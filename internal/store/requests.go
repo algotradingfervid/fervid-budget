@@ -360,6 +360,13 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 	if err := validateUrgency(in, mode); err != nil {
 		return 0, err
 	}
+	required, err := s.attachmentsRequired(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateAttachmentPolicy(required, len(in.Attachments), in.AttachmentExceptionReason); err != nil {
+		return 0, err
+	}
 	for _, att := range in.Attachments {
 		if err := validateAttachment(att); err != nil {
 			return 0, err
@@ -436,6 +443,17 @@ func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 	if !canTransition(before.Status, "pending") {
 		return fmt.Errorf("%w: a %s request cannot be submitted", ErrValidation, before.Status)
 	}
+	required, err := s.attachmentsRequired(ctx)
+	if err != nil {
+		return err
+	}
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM request_attachments WHERE request_id=?`, id).Scan(&n); err != nil {
+		return err
+	}
+	if err := validateAttachmentPolicy(required, n, before.AttachmentExceptionReason); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='pending', submitted_at=CURRENT_TIMESTAMP, reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
 		return err
 	}
@@ -481,4 +499,22 @@ func validateUrgency(in RequestInput, mode string) error {
 		}
 	}
 	return nil
+}
+
+// validateAttachmentPolicy implements G10. When attachments are compulsory the
+// system never hard-blocks: it asks for a written reason, because legitimate
+// documents are sometimes genuinely unavailable.
+func validateAttachmentPolicy(required bool, attachmentCount int, exceptionReason string) error {
+	if !required || attachmentCount > 0 {
+		return nil
+	}
+	if strings.TrimSpace(exceptionReason) == "" {
+		return fmt.Errorf("%w: attach a supporting document, or say why you cannot", ErrValidation)
+	}
+	return nil
+}
+
+func (s *Store) attachmentsRequired(ctx context.Context) (bool, error) {
+	v, err := s.AppSetting(ctx, "require_attachments")
+	return v == "1", err
 }
