@@ -307,3 +307,88 @@ func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 	}
 	return tx.Commit()
 }
+
+func (s *Store) RolePermissions(ctx context.Context, id int64) ([]Grant, []ScopeGrant, error) {
+	grantRows, err := s.db.QueryContext(ctx, `SELECT resource,action FROM role_permissions WHERE role_id=? ORDER BY resource,action`, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer grantRows.Close()
+	var grants []Grant
+	for grantRows.Next() {
+		var g Grant
+		if err := grantRows.Scan(&g.Resource, &g.Action); err != nil {
+			return nil, nil, err
+		}
+		grants = append(grants, g)
+	}
+	if err := grantRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	scopeRows, err := s.db.QueryContext(ctx, `SELECT resource,scope FROM role_data_scope WHERE role_id=? ORDER BY resource`, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer scopeRows.Close()
+	var scopes []ScopeGrant
+	for scopeRows.Next() {
+		var sc ScopeGrant
+		if err := scopeRows.Scan(&sc.Resource, &sc.Scope); err != nil {
+			return nil, nil, err
+		}
+		scopes = append(scopes, sc)
+	}
+	return grants, scopes, scopeRows.Err()
+}
+
+// UpdateRolePermissions replaces a role's entire grant + scope set atomically.
+// Every grant and scope is validated against the canonical vocabulary first.
+func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID int64, grants []Grant, scopes []ScopeGrant) error {
+	for _, g := range grants {
+		if !ValidGrant(g.Resource, g.Action) {
+			return fmt.Errorf("%w: unknown permission %s:%s", ErrValidation, g.Resource, g.Action)
+		}
+	}
+	for _, sc := range scopes {
+		if !ValidScope(sc.Resource, sc.Scope) {
+			return fmt.Errorf("%w: invalid data scope %s=%s", ErrValidation, sc.Resource, sc.Scope)
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var name string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, roleID).Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id=?`, roleID); err != nil {
+		return err
+	}
+	for _, g := range grants {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO role_permissions(role_id,resource,action) VALUES(?,?,?)`, roleID, g.Resource, g.Action); err != nil {
+			return classify(err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_data_scope WHERE role_id=?`, roleID); err != nil {
+		return err
+	}
+	for _, sc := range scopes {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO role_data_scope(role_id,resource,scope) VALUES(?,?,?)`, roleID, sc.Resource, sc.Scope); err != nil {
+			return classify(err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE roles SET updated_at=CURRENT_TIMESTAMP WHERE id=?`, roleID); err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "role", EntityID: &roleID, Summary: "Updated permissions for role " + name, After: map[string]any{"grants": len(grants), "scopes": len(scopes)}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

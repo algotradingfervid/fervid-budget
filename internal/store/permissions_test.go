@@ -119,3 +119,46 @@ func countGrants() int {
 	}
 	return total
 }
+
+func TestUpdateRolePermissionsPersistsAndValidates(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+	id, err := s.CreateRole(ctx, actor, "Approvers", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grants := []Grant{{"request", "view"}, {"request", "comment"}, {"approval", "approve"}}
+	scopes := []ScopeGrant{{"request", "all"}}
+	if err := s.UpdateRolePermissions(ctx, actor, id, grants, scopes); err != nil {
+		t.Fatalf("UpdateRolePermissions: %v", err)
+	}
+	gotGrants, gotScopes, err := s.RolePermissions(ctx, id)
+	if err != nil {
+		t.Fatalf("RolePermissions: %v", err)
+	}
+	if len(gotGrants) != 3 || len(gotScopes) != 1 || gotScopes[0].Scope != "all" {
+		t.Fatalf("persisted grants=%v scopes=%v", gotGrants, gotScopes)
+	}
+
+	// Replacing the set fully overwrites the previous grants (no accumulation).
+	if err := s.UpdateRolePermissions(ctx, actor, id, []Grant{{"grid", "view"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	gotGrants, gotScopes, _ = s.RolePermissions(ctx, id)
+	if len(gotGrants) != 1 || gotGrants[0] != (Grant{"grid", "view"}) || len(gotScopes) != 0 {
+		t.Fatalf("overwrite failed: grants=%v scopes=%v", gotGrants, gotScopes)
+	}
+
+	// Unknown resource/action and bad scope are rejected against the vocabulary.
+	if err := s.UpdateRolePermissions(ctx, actor, id, []Grant{{"payment", "read"}}, nil); !errors.Is(err, ErrValidation) {
+		t.Fatalf("unknown action = %v, want %v", err, ErrValidation)
+	}
+	if err := s.UpdateRolePermissions(ctx, actor, id, nil, []ScopeGrant{{"budget", "all"}}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("unscoped resource scope = %v, want %v", err, ErrValidation)
+	}
+	if err := s.UpdateRolePermissions(ctx, actor, id, nil, []ScopeGrant{{"request", "everything"}}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("bad scope value = %v, want %v", err, ErrValidation)
+	}
+}
