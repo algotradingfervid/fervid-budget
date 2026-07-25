@@ -656,6 +656,18 @@ func TestTemplatesNeverCompareRoleNames(t *testing.T) {
 	}
 }
 
+// Decision D5: the design system standardises on .pill. .badge survives in the
+// stylesheet as a safety net for one release, but no template may emit it.
+func TestNoTemplateUsesLegacyBadgeClass(t *testing.T) {
+	source, err := os.ReadFile("templates.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(source), `class="badge`); count != 0 {
+		t.Fatalf(`templates.go still emits class="badge" %d times; the design system uses .pill`, count)
+	}
+}
+
 // The page body and the nav must gate on one permission set resolved once per
 // request, not on two independently built policies. If the body ever grows its
 // own policy again, a control can appear on a screen the nav hides.

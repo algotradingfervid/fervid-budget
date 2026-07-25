@@ -1495,7 +1495,7 @@ func actionText(action string) string {
 func actionClass(action string) string {
 	switch action {
 	case "void", "login_failed":
-		return "danger"
+		return "bad"
 	case "lock", "unlock":
 		return "warn"
 	case "create":

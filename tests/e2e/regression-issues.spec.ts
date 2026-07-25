@@ -63,7 +63,7 @@ test.describe('documented issue regression guards', () => {
   test('ISS-003 labels spend without a budget as unbudgeted', async ({ adminPage, runId }) => {
     await createPayment(adminPage, runId, { month: '2027-09', amount: '20.00' });
     await adminPage.goto('/?month=2027-09&status=unbudgeted');
-    await expect(adminPage.locator('.badge.unbudgeted', { hasText: 'Unbudgeted spend' }).first()).toBeVisible();
+    await expect(adminPage.locator('.pill.unbudgeted', { hasText: 'Unbudgeted spend' }).first()).toBeVisible();
   });
 
   test('ISS-004 makes locked-month payment surfaces read-only', async ({ adminPage, runId }) => {

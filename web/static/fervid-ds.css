@@ -407,6 +407,10 @@ input[type="submit"].primary:hover {
   border-color: var(--fb-accent-strong);
 }
 
+/* `.btn.danger` is the approved spelling: the mockups use it on anchors as
+   well as buttons, and an <a class="btn danger"> matched none of the element
+   selectors below, so a destructive link rendered as an ordinary one. */
+.btn.danger,
 .btn-danger,
 button.danger,
 button[name="delete"],
@@ -414,6 +418,11 @@ button[name="void"] {
   color: #fff;
   background: var(--fb-danger);
   border-color: var(--fb-danger);
+}
+
+.btn.danger:hover {
+  background: #8f1b12;
+  border-color: #8f1b12;
 }
 
 .btn-ghost,
@@ -1704,6 +1713,15 @@ tr.total .pctxt {
   font-size: 30px;
 }
 
+/* The banner's action cluster. Without this the buttons stretch to the
+   banner's own align-items and wrap onto separate lines. */
+.page-banner .pb-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+}
+
 .page-banner > form,
 .page-banner > .btn,
 .page-banner > .badge {
@@ -2424,6 +2442,17 @@ pre {
 .pill.good       { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
 .pill.bad        { color: var(--bad);     background: var(--bad-soft);   border-color: var(--bad-line); }
 .pill.info       { color: var(--info);    background: var(--info-soft);  border-color: var(--info-line); }
+.pill.warn       { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
+
+/* Variance-grid tones. The grid renders statusFor() straight into the class,
+   so these five names are fixed by internal/app.statusForView, not chosen
+   here. They carry the same values the .badge equivalents did, so retiring
+   .badge (decision D5) recolours nothing. */
+.pill.under      { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
+.pill.on-track   { color: var(--brand-2); background: var(--brand-tint); border-color: var(--brand-tint-2); }
+.pill.over       { color: var(--bad);     background: var(--bad-soft);   border-color: var(--bad-line); }
+.pill.unbudgeted { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
+.pill.not-paid   { color: var(--muted);   background: var(--surface-2);  border-color: var(--line-2); }
 
 /* Urgent is a solid fill plus a glyph. As a tint it is indistinguishable
    from the terracotta .pill.approved. */
