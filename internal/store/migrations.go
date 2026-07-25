@@ -128,6 +128,130 @@ CREATE INDEX IF NOT EXISTS idx_vendors_status ON vendors(status);`)
 			return err
 		},
 	},
+	// Phase 2 owns exactly one migration, v3: the request workflow. Two schema
+	// decisions are load-bearing and must not be softened later.
+	//
+	// D1 — there are no drafts. `status` carries no DEFAULT, so every writer has
+	// to name a status, and CHECK (status <> 'draft') makes a draft row
+	// unrepresentable for the life of the table.
+	//
+	// A2 — `vendor_id` references the Phase-1V vendor master, while
+	// `vendor_payee` survives beside it as the payee snapshot for reimbursements
+	// and employee advances, which have no vendor row at all.
+	{
+		Version: 3,
+		Name:    "requests",
+		Up: func(tx *sql.Tx) error {
+			if _, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS payment_requests (
+  id INTEGER PRIMARY KEY,
+  number TEXT NOT NULL UNIQUE,
+  -- D1: there are no drafts. status has no DEFAULT, so every writer must name
+  -- one, and the CHECK makes 'draft' unrepresentable for the life of the table.
+  status TEXT NOT NULL CHECK (status <> 'draft'),
+  treatment TEXT NOT NULL,
+  type TEXT NOT NULL,
+  recoverable_category TEXT NOT NULL DEFAULT '',
+  -- A21: the category *code* lives in recoverable_category and drives the
+  -- Phase-2 rules; recoverable_category_id stays NULL until Phase 4 creates
+  -- recoverable_categories and back-fills it. The column deliberately carries
+  -- no REFERENCES clause: with PRAGMA foreign_keys=ON (store.Open sets it),
+  -- SQLite rejects *every* write to a child table whose parent table does not
+  -- exist yet — even when the value is NULL — so a forward reference here would
+  -- make CreateRequest fail until Phase 4 ships. Phase 4's v5 migration owns the
+  -- link.
+  recoverable_category_id INTEGER,
+  project_id INTEGER REFERENCES projects(id),
+  head_id INTEGER REFERENCES heads(id),
+  vendor_id INTEGER REFERENCES vendors(id),
+  vendor_payee TEXT NOT NULL DEFAULT '',
+  short_title TEXT NOT NULL DEFAULT '',
+  amount INTEGER NOT NULL,
+  purpose TEXT NOT NULL,
+  needed_by TEXT,
+  invoice_no TEXT NOT NULL DEFAULT '',
+  invoice_date TEXT,
+  expense_date TEXT,
+  advance_reason TEXT NOT NULL DEFAULT '',
+  counterparty TEXT NOT NULL DEFAULT '',
+  expected_return_date TEXT,
+  repayment_notes TEXT NOT NULL DEFAULT '',
+  urgent INTEGER NOT NULL DEFAULT 0,
+  urgency_reason TEXT NOT NULL DEFAULT '',
+  attachment_exception_reason TEXT NOT NULL DEFAULT '',
+  requester_id INTEGER NOT NULL REFERENCES users(id),
+  manager_id INTEGER NOT NULL REFERENCES users(id),
+  approved_amount INTEGER,
+  approved_by INTEGER REFERENCES users(id),
+  approved_at DATETIME,
+  decision_reason TEXT NOT NULL DEFAULT '',
+  cancel_reason TEXT NOT NULL DEFAULT '',
+  on_hold INTEGER NOT NULL DEFAULT 0,
+  hold_reason TEXT NOT NULL DEFAULT '',
+  processing_by INTEGER REFERENCES users(id),
+  processing_at DATETIME,
+  reminder_last_sent DATETIME,
+  submitted_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_requests_status ON payment_requests(status);
+CREATE INDEX IF NOT EXISTS idx_requests_manager ON payment_requests(manager_id, status);
+CREATE INDEX IF NOT EXISTS idx_requests_requester ON payment_requests(requester_id, status);
+CREATE INDEX IF NOT EXISTS idx_requests_vendor ON payment_requests(vendor_id, created_at);
+
+CREATE TABLE IF NOT EXISTS request_attachments (
+  id INTEGER PRIMARY KEY,
+  request_id INTEGER NOT NULL REFERENCES payment_requests(id),
+  original_name TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  mime_type TEXT,
+  size_bytes INTEGER NOT NULL,
+  uploaded_by INTEGER NOT NULL REFERENCES users(id),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_request_attachments_request ON request_attachments(request_id);
+
+CREATE TABLE IF NOT EXISTS request_comments (
+  id INTEGER PRIMARY KEY,
+  request_id INTEGER NOT NULL REFERENCES payment_requests(id),
+  author_id INTEGER NOT NULL REFERENCES users(id),
+  body TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_request_comments_request ON request_comments(request_id);
+
+CREATE TABLE IF NOT EXISTS request_number_seq (
+  year TEXT PRIMARY KEY,
+  last INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
+-- D6: the Phase-2 half of the Configuration screen. Phases 3-5 append keys.
+INSERT INTO app_settings(key,value) VALUES
+  ('number_prefix','PR'),
+  ('number_year_mode','calendar'),
+  ('number_width','6'),
+  ('require_attachments','0'),
+  ('attachment_max_mb','10'),
+  ('urgency_mode','reason'),
+  ('allow_approver_choice','1'),
+  ('allow_direct_payments','0'),
+  ('payment_modes','NEFT, RTGS, UPI, Cheque, Cash, Card, DD')
+ON CONFLICT(key) DO NOTHING;
+`); err != nil {
+				return err
+			}
+			// G9: default approver per employee. Phase 1's v1 already adds this
+			// column; the columnExists guard makes the double ownership harmless
+			// and keeps this migration runnable against a database that skipped
+			// it. Do not convert it to an unguarded ALTER — that fails hard.
+			return addDefaultApproverColumn(tx)
+		},
+	},
 }
 
 // addDefaultApproverColumn is additive and guarded by columnExists, so
