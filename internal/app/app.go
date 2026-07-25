@@ -108,6 +108,19 @@ type PageData struct {
 	// existing one — one question the template would otherwise have to ask two
 	// ways. It is derived from the same permission set .Perms is.
 	VendorEditable bool
+
+	// Payment requests (Phase 2). Request2 is the request a screen is about;
+	// the name keeps it clear of the *http.Request every handler already holds.
+	Requests   []store.Request
+	Request2   store.Request
+	Similar    []store.Request
+	Settings   map[string]string
+	Scope      string
+	Bucket     string
+	FormType   string
+	TypeFilter string
+	Treatment  string
+	Counts     map[string]int
 }
 
 type ReportSummary struct {
@@ -178,6 +191,21 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"vendorStatus":   vendorStatusText,
 		"categories":     categoryChain,
 		"plural":         plural,
+		// Payment requests. `deref` exists because several request columns are
+		// nullable (*int64) and html/template cannot compare a pointer to an int.
+		"deref": func(p *int64) int64 {
+			if p == nil {
+				return 0
+			}
+			return *p
+		},
+		"pillClass":   pillClass,
+		"reqStatus":   requestStatusText,
+		"typeLabel":   typeLabel,
+		"recoverable": recoverableLabel,
+		"inWords":     money.InWords,
+		"amountValue": amountValue,
+		"dateLong":    formatLongDate,
 	}).Parse(templates))
 
 	ctx := contextWithTimeout()
@@ -259,6 +287,11 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /vendors/{id}", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorDetail)))
 	mux.Handle("POST /vendors", a.auth.RequirePermission("vendor", "create", http.HandlerFunc(a.withCSRF(a.vendorCreate))))
 	mux.Handle("POST /vendors/{id}", a.auth.RequirePermission("vendor", "edit", http.HandlerFunc(a.withCSRF(a.vendorUpdate))))
+	// Payment requests (Phase 2). Literal segments beat the {id} wildcard, so
+	// /requests/new is always the form and never a request whose id parses to
+	// zero. There is no draft route and no second submit step: D1 makes create
+	// and submit one POST.
+	mux.Handle("GET /requests/export.csv", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestsExport)))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
 	mux.Handle("POST /users", a.auth.RequirePermission("user", "edit", http.HandlerFunc(a.withCSRF(a.userSave))))
 	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))
@@ -273,6 +306,30 @@ func (a *App) routes(mux *http.ServeMux) {
 
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data PageData) {
 	a.renderStatus(w, r, http.StatusOK, name, data)
+}
+
+// renderPartial executes one template without the shell. Every htmx fragment
+// that is a piece of a page — rather than a page in its own right — goes
+// through it: renderStatus already skips shell CONSTRUCTION when HX-Request is
+// present, and this is the rendering half of the same contract, for templates
+// that never call "top"/"bottom" at all. Permissions still apply, because a
+// fragment gates its controls exactly as the full page would.
+func (a *App) renderPartial(w http.ResponseWriter, r *http.Request, name string, data PageData) {
+	data.User = auth.CurrentUser(r)
+	data.Perms = a.auth.Permissions(data.User)
+	data.CSRF = a.auth.EnsureCSRF(w, r)
+	data.RequestID = requestID(r)
+	data.Shell = Shell{Chrome: chromeNone}
+
+	var buf bytes.Buffer
+	if err := a.tpl.ExecuteTemplate(&buf, name, data); err != nil {
+		a.respondError(w, r, http.StatusInternalServerError, "That section could not be rendered.", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		a.log.ErrorContext(r.Context(), "fragment write failed", "request_id", requestID(r), "error", err)
+	}
 }
 
 func (a *App) withCSRF(fn func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
