@@ -668,6 +668,62 @@ func TestNoTemplateUsesLegacyBadgeClass(t *testing.T) {
 	}
 }
 
+// /budgets, /projects and /heads edit rows in place: every cell holds a bare
+// <input form="head-12"> or <select> whose column header labels it on screen
+// but not programmatically, so a screen reader announces "edit text, blank"
+// once per row with nothing to tell the rows apart. Each control therefore
+// names its field *and* its row. Controls that already sit inside a visible
+// <label> — the Active checkbox, every field of the create form at the top of
+// each screen — are deliberately left alone: an aria-label there would replace
+// the visible text rather than supply the missing one.
+func TestInlineRowEditorsNameTheirFieldAndRow(t *testing.T) {
+	s := newAppTestServer(t)
+	s.seedHead("Alpha")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	for _, tc := range []struct {
+		path string
+		want []string
+	}{
+		{"/heads", []string{
+			`aria-label="Project for Rent Alpha"`,
+			`aria-label="Head name for Rent Alpha"`,
+			`aria-label="Due day for Rent Alpha"`,
+			`aria-label="Sort order for Rent Alpha"`,
+		}},
+		// The row control mirrors its column header ("Name"), not the create
+		// form's "Project name" label above it: getByLabel matches on substring,
+		// so reusing that phrase would make every existing "Project name"
+		// selector ambiguous the moment a project exists.
+		{"/projects", []string{
+			`aria-label="Name for Operations Alpha"`,
+			`aria-label="Sort order for Operations Alpha"`,
+		}},
+		{"/budgets", []string{
+			`aria-label="Budget for Operations Alpha / Rent Alpha"`,
+		}},
+		// The payments table is the one region on any screen that scrolls
+		// sideways without a focusable child, so it needs a tab stop of its own
+		// and a name saying what scrolls.
+		{"/payments", []string{
+			`class="table-wrap payments-table" tabindex="0" role="region" aria-label="Payments table, scrollable"`,
+		}},
+	} {
+		body := responseBody(t, s.request(http.MethodGet, tc.path, nil, ""))
+		for _, want := range tc.want {
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s does not render %s", tc.path, want)
+			}
+		}
+	}
+
+	for _, path := range []string{"/heads", "/projects"} {
+		if body := responseBody(t, s.request(http.MethodGet, path, nil, "")); strings.Contains(body, `aria-label="Active`) {
+			t.Errorf("GET %s overrides the visible Active label with an aria-label", path)
+		}
+	}
+}
+
 // The page body and the nav must gate on one permission set resolved once per
 // request, not on two independently built policies. If the body ever grows its
 // own policy again, a control can appear on a screen the nav hides.
