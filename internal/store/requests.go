@@ -548,3 +548,67 @@ func (s *Store) ListApprovers(ctx context.Context, excludeUserID int64) ([]User,
 	}
 	return out, rows.Err()
 }
+
+// editableStatuses: D1 removed 'draft'. A request may be corrected while it is
+// still pending, or after the approver returned it.
+var editableStatuses = map[string]bool{"returned": true, "pending": true}
+
+func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in RequestInput) error {
+	in.RequesterID = actor.ID
+	if forcesRequesterPayee(in.Type) {
+		in.VendorID = 0
+		in.VendorPayee = actor.Name
+	}
+	if err := validateRequestInput(in); err != nil {
+		return err
+	}
+	mode, err := s.urgencyMode(ctx)
+	if err != nil {
+		return err
+	}
+	if err := validateUrgency(in, mode); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.RequesterID != actor.ID {
+		return ErrForbidden
+	}
+	if !editableStatuses[before.Status] {
+		return fmt.Errorf("%w: a %s request cannot be edited", ErrValidation, before.Status)
+	}
+	// Pending edits reset the reminder timer and reroute to the chosen approver.
+	// P5 hook: re-notify the (possibly new) approver here.
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET
+ treatment=?, type=?, recoverable_category=?, project_id=?, head_id=?, vendor_id=?, vendor_payee=?,
+ short_title=?, amount=?, purpose=?, needed_by=?, invoice_no=?, invoice_date=?, expense_date=?,
+ advance_reason=?, counterparty=?, expected_return_date=?, repayment_notes=?, urgent=?,
+ urgency_reason=?, attachment_exception_reason=?, manager_id=?, reminder_last_sent=NULL,
+ updated_at=CURRENT_TIMESTAMP
+ WHERE id=?`,
+		in.Treatment, in.Type, in.RecoverableCategory, nullableID(in.ProjectID), nullableID(in.HeadID),
+		nullableID(in.VendorID), in.VendorPayee, strings.TrimSpace(in.ShortTitle),
+		in.Amount, in.Purpose, nullableText(in.NeededBy), in.InvoiceNo,
+		nullableText(in.InvoiceDate), nullableText(in.ExpenseDate), in.AdvanceReason,
+		in.Counterparty, nullableText(in.ExpectedReturnDate), in.RepaymentNotes,
+		boolInt(in.Urgent), in.UrgencyReason, in.AttachmentExceptionReason, in.ManagerID, id); err != nil {
+		return classify(err)
+	}
+	after, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "update", EntityType: "payment_request", EntityID: &id,
+		Summary: actor.Name + " edited request " + before.Number, Before: before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

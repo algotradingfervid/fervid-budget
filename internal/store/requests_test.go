@@ -588,3 +588,67 @@ func grantApprovalPermission(t *testing.T, s *Store, ctx context.Context, userID
 		t.Fatal(err)
 	}
 }
+
+func TestUpdateRequestPendingReroutesAndResetsReminder(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	newMgrID, err := s.CreateUser(ctx, "mgr2@example.com", "Second Manager", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := RequestInput{Treatment: "budget", Type: "vendor_advance", ShortTitle: "Advance",
+		ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance", ManagerID: mgr.ID,
+		VendorID: vendorID, AdvanceReason: "40% booking"}
+	id, err := s.CreateRequest(ctx, req, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a reminder having been sent.
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET reminder_last_sent=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	// Requester edits while pending, choosing a different approver.
+	edited := base
+	edited.Amount, edited.Purpose, edited.ManagerID = 2500, "advance revised", newMgrID
+	if err := s.UpdateRequest(ctx, req, id, edited); err != nil {
+		t.Fatalf("UpdateRequest pending: %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Amount != 2500 || got.ManagerID != newMgrID {
+		t.Fatalf("edit not applied: amount=%d manager=%d", got.Amount, got.ManagerID)
+	}
+	if got.ReminderLastSent != nil {
+		t.Fatalf("reminder timer not reset: %v", got.ReminderLastSent)
+	}
+	if got.Status != "pending" {
+		t.Fatalf("status changed on edit: %q", got.Status)
+	}
+	// A returned request is editable too — that is the correction flow.
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='returned' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateRequest(ctx, req, id, edited); err != nil {
+		t.Fatalf("UpdateRequest returned: %v", err)
+	}
+}
+
+func TestUpdateRequestRejectedAfterApproval(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	in := RequestInput{Treatment: "budget", Type: "vendor_advance", ShortTitle: "Advance",
+		ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance", ManagerID: mgr.ID,
+		VendorID: vendorID, AdvanceReason: "booking"}
+	id, _ := s.CreateRequest(ctx, req, in)
+	// Drive it to approved directly (ApproveRequest arrives in Task 12) to prove edits are then blocked.
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='approved' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	in.Amount = 999
+	if err := s.UpdateRequest(ctx, req, id, in); !errors.Is(err, ErrValidation) {
+		t.Fatalf("editing approved request = %v, want ErrValidation", err)
+	}
+}
