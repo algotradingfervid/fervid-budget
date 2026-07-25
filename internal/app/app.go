@@ -78,6 +78,19 @@ type PageData struct {
 	BudgetErrors   map[int64]string
 	ErrorCode      int
 	RequestID      string
+
+	// Roles admin screen.
+	Roles          []store.Role
+	Role           store.Role
+	PermColumns    []permColumn
+	PermMatrix     []permRow
+	RoleUserCounts map[int64]int
+
+	// Users screen.
+	AllRoles      []store.Role
+	UserRoleIDs   map[int64]map[int64]bool
+	Approvers     []store.User
+	ApproverNames map[int64]string
 }
 
 type ReportSummary struct {
@@ -214,6 +227,11 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /heads", a.auth.RequirePermission("head", "edit", http.HandlerFunc(a.withCSRF(a.headSave))))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
 	mux.Handle("POST /users", a.auth.RequirePermission("user", "edit", http.HandlerFunc(a.withCSRF(a.userSave))))
+	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))
+	mux.Handle("POST /roles", a.auth.RequirePermission("role", "edit", http.HandlerFunc(a.withCSRF(a.rolesSave))))
+	mux.Handle("POST /roles/new", a.auth.RequirePermission("role", "create", http.HandlerFunc(a.withCSRF(a.roleCreate))))
+	mux.Handle("POST /roles/{id}/copy", a.auth.RequirePermission("role", "create", http.HandlerFunc(a.withCSRF(a.roleCopy))))
+	mux.Handle("POST /roles/{id}/delete", a.auth.RequirePermission("role", "delete", http.HandlerFunc(a.withCSRF(a.roleDelete))))
 	mux.Handle("GET /audit", a.auth.RequirePermission("audit", "view", http.HandlerFunc(a.auditLog)))
 	mux.Handle("GET /backups", a.auth.RequirePermission("backup", "view", http.HandlerFunc(a.backups)))
 	mux.Handle("POST /backups", a.auth.RequirePermission("backup", "create", http.HandlerFunc(a.withCSRF(a.backupCreate))))
@@ -786,6 +804,139 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: action, EntityType: "user", EntityID: &savedID, Summary: strings.Title(action) + "d user " + strings.ToLower(strings.TrimSpace(r.FormValue("email")))})
 	http.Redirect(w, r, "/users", http.StatusSeeOther)
+}
+
+func (a *App) rolesPage(w http.ResponseWriter, r *http.Request) {
+	roles, err := a.st.AllRoles(r.Context())
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	selected := parseID(r.URL.Query().Get("role"))
+	if selected == 0 && len(roles) > 0 {
+		selected = roles[0].ID
+	}
+	role, err := a.st.Role(r.Context(), selected)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	grants, scopes, err := a.st.RolePermissions(r.Context(), selected)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	counts := map[int64]int{}
+	users, err := a.st.ListUsers(r.Context())
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	for _, u := range users {
+		urs, err := a.st.UserRoles(r.Context(), u.ID)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		for _, ur := range urs {
+			counts[ur.ID]++
+		}
+	}
+	a.render(w, r, "roles", PageData{
+		Title:          "Roles",
+		Roles:          roles,
+		Role:           role,
+		PermColumns:    permColumns,
+		PermMatrix:     buildPermMatrix(grants, scopes),
+		RoleUserCounts: counts,
+	})
+}
+
+// rolesSave persists the matrix. Grants are the union of the cells that were
+// ticked — each expanding to every canonical action behind it — and the
+// individual Advanced checkboxes. The union is order-independent, and it is
+// what lets a cell be only partially granted. UpdateRolePermissions then
+// replaces the role's whole grant set, so anything absent here is revoked.
+func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
+	roleID := parseID(r.FormValue("role_id"))
+	grants := expandCells(r.Form["cell"])
+	seen := map[store.Grant]bool{}
+	for _, g := range grants {
+		seen[g] = true
+	}
+	for _, raw := range r.Form["perm"] {
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		g := store.Grant{Resource: parts[0], Action: parts[1]}
+		if seen[g] {
+			continue
+		}
+		seen[g] = true
+		grants = append(grants, g)
+	}
+	// The two matrices carry two scope radio groups. They must not share a name:
+	// same-name radios are one group across the whole form, so enabling the
+	// mobile set would silently clear the desktop selection. The desktop group
+	// wins when it is enabled; the mobile group is the fallback. An empty value
+	// is the explicit "None" state and stores no scope row at all.
+	var scopes []store.ScopeGrant
+	for _, res := range scopedMatrixResources() {
+		v := strings.TrimSpace(r.FormValue("scope_" + res))
+		if v == "" {
+			v = strings.TrimSpace(r.FormValue("m_scope_" + res))
+		}
+		if v != "" {
+			scopes = append(scopes, store.ScopeGrant{Resource: res, Scope: v})
+		}
+	}
+	// Screen the grants before writing anything. UpdateRole and
+	// UpdateRolePermissions are two transactions, so a grant rejected by the
+	// second would otherwise leave the first one's rename committed. Every grant
+	// is re-validated inside UpdateRolePermissions as well — this is a guard
+	// against a half-applied save, not the security boundary.
+	for _, g := range grants {
+		if !store.ValidGrant(g.Resource, g.Action) {
+			a.respondError(w, r, http.StatusBadRequest, "That permission does not exist.", nil)
+			return
+		}
+	}
+	if err := a.st.UpdateRole(r.Context(), auth.CurrentUser(r), roleID, r.FormValue("name"), r.FormValue("description")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	if err := a.st.UpdateRolePermissions(r.Context(), auth.CurrentUser(r), roleID, grants, scopes); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/roles?role="+strconv.FormatInt(roleID, 10), http.StatusSeeOther)
+}
+
+func (a *App) roleCreate(w http.ResponseWriter, r *http.Request) {
+	id, err := a.st.CreateRole(r.Context(), auth.CurrentUser(r), r.FormValue("name"), r.FormValue("description"))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/roles?role="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+func (a *App) roleCopy(w http.ResponseWriter, r *http.Request) {
+	id, err := a.st.CopyRole(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("name"))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/roles?role="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+func (a *App) roleDelete(w http.ResponseWriter, r *http.Request) {
+	if err := a.st.DeleteRole(r.Context(), auth.CurrentUser(r), pathID(r)); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/roles", http.StatusSeeOther)
 }
 
 func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {

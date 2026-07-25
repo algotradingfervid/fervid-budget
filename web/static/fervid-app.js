@@ -418,6 +418,53 @@
   });
 
   /* ---------------------------------------------------------------- */
+  /* Roles matrix — twin renderings, one form                          */
+  /* ---------------------------------------------------------------- */
+
+  /* Both renderings live in one <form>, so exactly one may submit. The
+     desktop table is authoritative without JS — it scrolls inside
+     .table-wrap at any width — and below 860px we hand over to the
+     accordion. Nothing here decides what may be granted: every submitted
+     cell and permission is re-validated against the canonical vocabulary
+     in Go. */
+  function initRoleMatrix(root) {
+    var form = root.querySelector ? root.querySelector("#role-form") : null;
+    if (!form || form.getAttribute("data-matrix-bound") === "1") return;
+    var desktop = form.querySelector(".perm-table");
+    var mobile = form.querySelector(".perm-acc");
+    if (!desktop || !mobile) return;
+    form.setAttribute("data-matrix-bound", "1");
+
+    var narrow = window.matchMedia("(max-width: 860px)");
+    var setDisabled = function (scope, off) {
+      Array.prototype.forEach.call(scope.querySelectorAll("input"), function (input) {
+        input.disabled = off;
+      });
+    };
+    var handOver = function () {
+      setDisabled(desktop, narrow.matches);
+      setDisabled(mobile, !narrow.matches);
+    };
+    if (narrow.addEventListener) {
+      narrow.addEventListener("change", handOver);
+    } else if (narrow.addListener) {
+      narrow.addListener(handOver);
+    }
+    handOver();
+
+    /* A cell owns every canonical action behind it: toggling it toggles the
+       Advanced checkboxes it covers, so clearing a cell really does revoke. */
+    form.addEventListener("change", function (event) {
+      var cell = event.target;
+      if (!cell || !cell.matches || !cell.matches('input[name="cell"]')) return;
+      var selector = 'input[name="perm"][data-cell="' + window.CSS.escape(cell.value) + '"]';
+      Array.prototype.forEach.call(form.querySelectorAll(selector), function (box) {
+        box.checked = cell.checked;
+      });
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Boot, and re-boot after every htmx swap                           */
   /* ---------------------------------------------------------------- */
 
@@ -425,6 +472,7 @@
     initAccordions(document);
     syncConditionals(document);
     initMoneyFields(document);
+    initRoleMatrix(document);
   }
 
   document.addEventListener("htmx:afterSwap", function () { init(); });

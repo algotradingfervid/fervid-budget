@@ -283,6 +283,42 @@ func (s *Store) CreateRole(ctx context.Context, actor User, name, description st
 	return id, nil
 }
 
+// UpdateRole renames a role and rewrites its description. System role names are
+// immutable: seedSystemRoles and backfillUserRoles both resolve them by name,
+// so a rename would make the next migration run seed a duplicate.
+func (s *Store) UpdateRole(ctx context.Context, actor User, id int64, name, description string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("%w: role name is required", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var current string
+	var sys int
+	err = tx.QueryRowContext(ctx, `SELECT name,is_system FROM roles WHERE id=?`, id).Scan(&current, &sys)
+	if err == sql.ErrNoRows {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if sys == 1 && !strings.EqualFold(current, name) {
+		return fmt.Errorf("%w: system roles cannot be renamed", ErrForbidden)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE roles SET name=?, description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		name, strings.TrimSpace(description), id); err != nil {
+		return classify(err)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "role", EntityID: &id, Summary: "Updated role " + name, Before: map[string]any{"name": current}, After: map[string]any{"name": name}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -247,6 +247,26 @@ func isScopedResource(resource string) bool {
 	return store.ValidScope(resource, store.ScopeAll)
 }
 
+// scopedMatrixResources lists, in row order, the data-scoped resources the
+// matrix draws a scope control for — which is exactly the set the save handler
+// reads a "scope_<resource>" field for. store keeps scopedResources unexported
+// and exports no enumerator, so the matrix's own rows are the enumeration and
+// isScopedResource is what makes it authoritative.
+func scopedMatrixResources() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, group := range permGroups {
+		for _, resource := range group.Resources {
+			if seen[resource] || !isScopedResource(resource) {
+				continue
+			}
+			seen[resource] = true
+			out = append(out, resource)
+		}
+	}
+	return out
+}
+
 // expandCells turns submitted "<group>:<column>" cell values into the full set
 // of canonical grants behind them, deduplicated. Unknown rows, unknown columns
 // and cells with no canonical action expand to nothing, so a hand-crafted POST

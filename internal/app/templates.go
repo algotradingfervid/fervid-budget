@@ -237,6 +237,163 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The two scope pill groups render the same state under two names. Same-name
+     radios are one group across the whole form, so the mobile set must not
+     borrow the desktop names: enabling it would silently clear the desktop
+     selection. rolesSave reads scope_<resource> first and m_scope_<resource>
+     as the fallback. */}}
+{{define "permscope"}}
+<span class="perm-scope">
+  <label class="{{if eq .Scope ""}}is-on{{end}}"><input type="radio" name="scope_{{.ScopeResource}}" value="" {{if eq .Scope ""}}checked{{end}}> None</label>
+  <label class="{{if eq .Scope "own"}}is-on{{end}}"><input type="radio" name="scope_{{.ScopeResource}}" value="own" {{if eq .Scope "own"}}checked{{end}}> Own</label>
+  <label class="{{if eq .Scope "assigned"}}is-on{{end}}"><input type="radio" name="scope_{{.ScopeResource}}" value="assigned" {{if eq .Scope "assigned"}}checked{{end}}> Assigned</label>
+  <label class="{{if eq .Scope "all"}}is-on{{end}}"><input type="radio" name="scope_{{.ScopeResource}}" value="all" {{if eq .Scope "all"}}checked{{end}}> All</label>
+</span>
+{{end}}
+
+{{define "mpermscope"}}
+<span class="perm-scope">
+  <label class="{{if eq .Scope ""}}is-on{{end}}"><input type="radio" name="m_scope_{{.ScopeResource}}" value="" disabled {{if eq .Scope ""}}checked{{end}}> None</label>
+  <label class="{{if eq .Scope "own"}}is-on{{end}}"><input type="radio" name="m_scope_{{.ScopeResource}}" value="own" disabled {{if eq .Scope "own"}}checked{{end}}> Own</label>
+  <label class="{{if eq .Scope "assigned"}}is-on{{end}}"><input type="radio" name="m_scope_{{.ScopeResource}}" value="assigned" disabled {{if eq .Scope "assigned"}}checked{{end}}> Assigned</label>
+  <label class="{{if eq .Scope "all"}}is-on{{end}}"><input type="radio" name="m_scope_{{.ScopeResource}}" value="all" disabled {{if eq .Scope "all"}}checked{{end}}> All</label>
+</span>
+{{end}}
+
+{{/* Two renderings of one dataset inside one form. The desktop table is
+     authoritative without JavaScript — it scrolls inside .table-wrap at any
+     width — so the mobile accordion's inputs ship disabled and fervid-app.js
+     hands over below 860px. Exactly one rendering ever contributes to a POST.
+     An unavailable cell renders an em dash, never a disabled checkbox: a
+     disabled checkbox reads as "off", which is a different claim. */}}
+{{define "roles"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Access control</div>
+    <h1>Roles &amp; permissions</h1>
+    <p class="sub">Roles are data, not code. Create them, copy them, and set what each one may do and see.</p>
+  </div>
+  <div class="pb-actions">
+    {{if .Perms.Can "role" "create"}}<button class="btn outline" type="button" data-open="role-copy">Copy this role</button>
+    <button class="btn primary" type="button" data-open="role-new">＋ New role</button>{{end}}
+  </div>
+</section>
+
+<div class="segmented">
+  {{range .Roles}}<a class="{{if eq .ID $.Role.ID}}is-active{{end}}" href="/roles?role={{.ID}}">{{.Name}}{{if not .IsSystem}} <span class="n">custom</span>{{end}}</a>{{end}}
+</div>
+
+<form id="role-form" method="post" action="/roles">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="role_id" value="{{.Role.ID}}">
+
+  <div class="card">
+    <div class="card-head">
+      <h2>{{.Role.Name}}</h2>
+      <span class="pill good">{{index .RoleUserCounts .Role.ID}} users</span>
+      {{if and (not .Role.IsSystem) (.Perms.Can "role" "delete")}}<button class="btn small outline" type="button" data-open="role-delete">Delete role</button>{{end}}
+    </div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field span-4 m-half"><label for="rname">Role name</label><input id="rname" name="name" value="{{.Role.Name}}" required {{if .Role.IsSystem}}readonly{{end}}></div>
+        <div class="field span-8"><label for="rdesc">Description</label><input id="rdesc" name="description" value="{{.Role.Description}}"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-wrap d-only">
+    <table class="perm-table">
+      <thead>
+        <tr><th>Page</th>{{range .PermColumns}}<th class="c">{{.Label}}</th>{{end}}<th>Records it can see</th></tr>
+      </thead>
+      <tbody>
+        {{range .PermMatrix}}
+        <tr>
+          <td class="perm-row-head">{{.Label}}</td>
+          {{range .Cells}}<td class="c">{{if .Available}}<input type="checkbox" name="cell" value="{{.Value}}" data-cell="{{.Value}}" aria-label="{{.Label}}" {{if .Granted}}checked{{end}}>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
+          <td>{{if .Scoped}}{{template "permscope" .}}{{else}}<span class="perm-scope"><label class="is-on">None</label></span>{{end}}</td>
+        </tr>
+        <tr class="perm-advanced">
+          <td colspan="9">
+            <details>
+              <summary>Advanced — every permission behind this row</summary>
+              <div class="row">{{range .Advanced}}<label class="checkline"><input type="checkbox" name="perm" value="{{.Resource}}:{{.Action}}" data-cell="{{.Cell}}" {{if .Granted}}checked{{end}}> {{.Label}}</label>{{end}}</div>
+            </details>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="perm-acc m-only">
+    {{range .PermMatrix}}
+    <div class="pa-item">
+      <button class="pa-head" type="button"><span class="chev">›</span><b>{{.Label}}</b><span class="n">{{.Held}} of {{.Total}}</span></button>
+      <div class="pa-body">
+        {{range .Cells}}{{if .Available}}<label class="checkline"><input type="checkbox" name="cell" disabled value="{{.Value}}" data-cell="{{.Value}}" {{if .Granted}}checked{{end}}> {{.Label}}</label>{{end}}{{end}}
+        <details>
+          <summary>Advanced</summary>
+          {{range .Advanced}}<label class="checkline"><input type="checkbox" name="perm" disabled value="{{.Resource}}:{{.Action}}" data-cell="{{.Cell}}" {{if .Granted}}checked{{end}}> {{.Label}}</label>{{end}}
+        </details>
+        {{if .Scoped}}<div class="field"><span class="flabel">Records it can see</span>{{template "mpermscope" .}}</div>{{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Changes apply to all {{index .RoleUserCounts .Role.ID}} users holding this role.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="/roles?role={{.Role.ID}}">Discard</a>
+    <button class="btn primary" type="submit">Save role</button>
+  </div>
+</form>
+
+{{/* The sheets sit outside #role-form: HTML forbids nested forms, and the
+     create/copy/delete posts must not carry the matrix. */}}
+<div class="overlay" id="role-new" hidden>
+  <div class="sheet">
+    <form method="post" action="/roles/new">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <div class="sh-head"><div><h2>New role</h2><p class="sh-sub">It starts with no permissions at all.</p></div><button class="sh-close" type="button" data-close="role-new">✕</button></div>
+      <div class="sh-body stack-12">
+        <div class="field"><label for="nr-name">Role name</label><input id="nr-name" name="name" required></div>
+        <div class="field"><label for="nr-desc">Description</label><input id="nr-desc" name="description"></div>
+      </div>
+      <div class="sh-foot"><button class="btn outline" type="button" data-close="role-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Create role</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="role-copy" hidden>
+  <div class="sheet">
+    <form method="post" action="/roles/{{.Role.ID}}/copy">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <div class="sh-head"><div><h2>Copy {{.Role.Name}}</h2><p class="sh-sub">The copy starts with the same permissions and data scope.</p></div><button class="sh-close" type="button" data-close="role-copy">✕</button></div>
+      <div class="sh-body stack-12">
+        <div class="field"><label for="cr-name">New role name</label><input id="cr-name" name="name" required></div>
+      </div>
+      <div class="sh-foot"><button class="btn outline" type="button" data-close="role-copy">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Copy role</button></div>
+    </form>
+  </div>
+</div>
+
+{{if not .Role.IsSystem}}
+<div class="overlay" id="role-delete" hidden>
+  <div class="sheet">
+    <form method="post" action="/roles/{{.Role.ID}}/delete">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <div class="sh-head"><div><h2>Delete {{.Role.Name}}?</h2><p class="sh-sub">{{index .RoleUserCounts .Role.ID}} users hold this role and will lose everything it grants.</p></div><button class="sh-close" type="button" data-close="role-delete">✕</button></div>
+      <div class="sh-foot"><button class="btn outline" type="button" data-close="role-delete">Cancel</button><span class="row-end"></span><button class="btn danger" type="submit">Delete role</button></div>
+    </form>
+  </div>
+</div>
+{{end}}
+{{template "bottom" .}}
+{{end}}
+
 {{define "audit"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Evidence</div><h1>Audit Log</h1><p class="sub muted">Review who changed financial records, when, and why.</p></div></section>

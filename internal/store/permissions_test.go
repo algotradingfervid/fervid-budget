@@ -368,6 +368,50 @@ func TestDeleteRoleRejectsSystemRole(t *testing.T) {
 	}
 }
 
+func TestUpdateRoleRenamesCustomRolesAndProtectsSystemNames(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+
+	id, err := s.CreateRole(ctx, actor, "Reviewer", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateRole(ctx, actor, id, "Senior reviewer", "second"); err != nil {
+		t.Fatalf("UpdateRole: %v", err)
+	}
+	role, err := s.Role(ctx, id)
+	if err != nil || role.Name != "Senior reviewer" || role.Description != "second" {
+		t.Fatalf("Role = %+v, %v", role, err)
+	}
+	if err := s.UpdateRole(ctx, actor, id, "   ", ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("blank name = %v, want %v", err, ErrValidation)
+	}
+
+	// A system role's description is editable; its name is not — seedSystemRoles
+	// and backfillUserRoles both resolve system roles by name, so a rename would
+	// duplicate them on the next migration run.
+	var adminID int64
+	roles, _ := s.AllRoles(ctx)
+	for _, r := range roles {
+		if r.Name == "Admin" {
+			adminID = r.ID
+		}
+	}
+	if err := s.UpdateRole(ctx, actor, adminID, "Admin", "Full access, reworded"); err != nil {
+		t.Fatalf("editing a system role description: %v", err)
+	}
+	if err := s.UpdateRole(ctx, actor, adminID, "Superuser", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("renaming a system role = %v, want %v", err, ErrForbidden)
+	}
+	if _, err := s.CreateRole(ctx, actor, "Auditor", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateRole(ctx, actor, id, "auditor", ""); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("rename onto an existing name = %v, want %v", err, ErrDuplicate)
+	}
+}
+
 func TestCreateUserAssignsDefaultRole(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

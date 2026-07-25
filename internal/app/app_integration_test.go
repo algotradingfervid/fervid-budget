@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"html/template"
 	"io"
 	"log/slog"
@@ -707,3 +708,173 @@ func newAppTestClient(t *testing.T, s *appTestServer) *appTestServer {
 func strconvFormat(id int64) string {
 	return strconv.FormatInt(id, 10)
 }
+
+func TestRolesAdminScreenRendersApprovedMatrix(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	body := responseBody(t, s.request(http.MethodGet, "/roles", nil, ""))
+
+	// The approved chrome: segmented switcher, role card, both matrices, the
+	// scope pill group and the sticky action bar.
+	for _, want := range []string{
+		`class="segmented"`, `class="card"`, `class="card-head"`, `class="pill good"`,
+		`class="form-grid"`, `class="field span-4 m-half"`,
+		`class="table-wrap d-only"`, `class="perm-table"`,
+		`class="perm-acc m-only"`, `class="pa-head"`, `class="chev"`, `class="pa-body"`,
+		`class="perm-scope"`, `class="action-bar"`, `class="ab-note d-only"`,
+		`class="btn primary"`, `class="btn outline"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/roles is missing the approved markup %q", want)
+		}
+	}
+	// Every seeded role is a segment; custom roles are badged.
+	for _, want := range []string{"Requester", "Manager", "Accounts", "Admin"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/roles page missing role %q", want)
+		}
+	}
+	// All nine rows, by their design labels.
+	for _, want := range []string{
+		"Payment requests", "Payments", "Reservations", "Recoverables", "Vendors",
+		"Vendor bank details", "Budgets &amp; variance grid", "Reports", "Administration",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/roles matrix missing row %q", want)
+		}
+	}
+	// Cells, the Advanced disclosure, and an em dash where a row has no
+	// canonical action for a column (Reservations has no View).
+	for _, want := range []string{`name="cell"`, `name="perm"`, "Advanced", "—"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/roles matrix missing %q", want)
+		}
+	}
+	// Only one of the two renderings may post: the mobile inputs ship disabled.
+	if !strings.Contains(body, `name="cell" disabled`) {
+		t.Fatal("mobile accordion inputs must be rendered disabled so only one matrix submits")
+	}
+	// D5: .badge is retired.
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("/roles still renders the retired .badge class")
+	}
+}
+
+func TestRolesAdminCreateEditCopyDelete(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// Create a custom role.
+	resp := s.postForm("/roles/new", url.Values{"name": {"Reviewer"}, "description": {"read only"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	roles, err := s.st.AllRoles(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewerID int64
+	for _, r := range roles {
+		if r.Name == "Reviewer" {
+			reviewerID = r.ID
+		}
+	}
+	if reviewerID == 0 {
+		t.Fatal("Reviewer role was not created")
+	}
+
+	// Save through the matrix: one cell expands to every canonical action behind
+	// it, one Advanced checkbox adds a single refinement, and the name and
+	// description in the card are persisted alongside.
+	save := url.Values{
+		"role_id":       {strconvFormat(reviewerID)},
+		"name":          {"Reviewer"},
+		"description":   {"Reviews and approves"},
+		"cell":          {"requests:approve", "reports:view"},
+		"perm":          {"request:view"},
+		"scope_request": {"all"},
+	}
+	resp = s.postForm("/roles", save)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	grants, scopes, err := s.st.RolePermissions(s.ctx, reviewerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := map[string]bool{}
+	for _, g := range grants {
+		held[g.Resource+":"+g.Action] = true
+	}
+	for _, want := range []string{
+		"approval:approve", "approval:reject", "approval:return", "approval:reassign",
+		"approval:accept_partial", "report:view", "request:view",
+	} {
+		if !held[want] {
+			t.Fatalf("cell expansion did not grant %s (got %v)", want, grants)
+		}
+	}
+	if len(grants) != 7 {
+		t.Fatalf("saved %d grants, want exactly the 7 the cells and refinement cover: %v", len(grants), grants)
+	}
+	if len(scopes) != 1 || scopes[0].Resource != "request" || scopes[0].Scope != "all" {
+		t.Fatalf("saved scopes = %v, want request=all", scopes)
+	}
+	role, err := s.st.Role(s.ctx, reviewerID)
+	if err != nil || role.Description != "Reviews and approves" {
+		t.Fatalf("role card did not save: %+v, %v", role, err)
+	}
+
+	// Clearing a cell revokes everything behind it: the same POST without
+	// requests:approve leaves only what is still submitted.
+	save.Del("cell")
+	save.Add("cell", "reports:view")
+	resp = s.postForm("/roles", save)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	grants, _, err = s.st.RolePermissions(s.ctx, reviewerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range grants {
+		if g.Resource == "approval" {
+			t.Fatalf("clearing the Approve cell left %s:%s behind", g.Resource, g.Action)
+		}
+	}
+	if len(grants) != 2 {
+		t.Fatalf("after clearing the cell: %v, want report:view + request:view", grants)
+	}
+
+	// A hand-crafted POST cannot invent a grant outside the vocabulary.
+	resp = s.postForm("/roles", url.Values{
+		"role_id": {strconvFormat(reviewerID)},
+		"name":    {"Reviewer"},
+		"perm":    {"payment:read"},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	_ = responseBody(t, resp)
+
+	// Copy the role.
+	resp = s.postForm("/roles/"+strconvFormat(reviewerID)+"/copy", url.Values{"name": {"Reviewer Copy"}})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	// Delete the custom role; deleting a system role is rejected.
+	resp = s.postForm("/roles/"+strconvFormat(reviewerID)+"/delete", nil)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if _, err := s.st.Role(s.ctx, reviewerID); !errorsIsNotFound(err) {
+		t.Fatalf("Reviewer still present after delete: %v", err)
+	}
+	var adminID int64
+	for _, r := range roles {
+		if r.Name == "Admin" {
+			adminID = r.ID
+		}
+	}
+	resp = s.postForm("/roles/"+strconvFormat(adminID)+"/delete", nil)
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+}
+
+func errorsIsNotFound(err error) bool { return errors.Is(err, store.ErrNotFound) }

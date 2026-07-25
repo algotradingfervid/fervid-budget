@@ -3563,6 +3563,20 @@ legend {
   border-color: var(--brand);
 }
 
+/* The mockup's scope pills are static labels; production needs a real radio
+   inside each one so a keyboard can reach it. The input is taken out of the
+   visual flow and the label carries its focus ring. */
+.perm-scope input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.perm-scope label:has(input:focus-visible) {
+  box-shadow: 0 0 0 2px var(--brand);
+}
+
 .perm-acc {
   display: grid;
   gap: 8px;
