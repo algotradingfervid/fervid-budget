@@ -31,16 +31,16 @@ type badgeSpec struct {
 
 var badgeSpecs = []badgeSpec{
 	{
-		Key: "my_payments", Resource: "payment", Action: "read", PerUser: true,
+		Key: "my_payments", Resource: "payment", Action: "view", PerUser: true,
 		Expr: `SELECT COUNT(*) FROM payments WHERE voided_at IS NULL AND entered_by = ?`,
 	},
 	{
-		Key: "receipts_missing", Resource: "payment_attachment", Action: "create",
+		Key: "receipts_missing", Resource: "attachment", Action: "create",
 		Expr: `SELECT COUNT(*) FROM payments p WHERE p.voided_at IS NULL
 		         AND NOT EXISTS (SELECT 1 FROM payment_attachments a WHERE a.payment_id = p.id)`,
 	},
 	{
-		Key: "open_months", Resource: "budget", Action: "read",
+		Key: "open_months", Resource: "month", Action: "view",
 		Expr: `SELECT COUNT(*) FROM budget_months WHERE status = 'open'`,
 	},
 }

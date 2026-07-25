@@ -55,36 +55,36 @@ var navSpec = []NavGroup{
 	}},
 	{Title: "Requests", Items: []NavItem{
 		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤"},
-		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "request", Action: "approve", Badge: "approvals"},
-		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "request", Action: "pay", Badge: "accounts_queue"},
-		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable", Action: "read"},
+		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "approval", Action: "approve", Badge: "approvals"},
+		{Key: "accounts-queue", Label: "Accounts queue", Href: "/accounts-queue", Icon: "₹", Resource: "payment", Action: "process", Badge: "accounts_queue"},
+		{Key: "recoverables", Label: "Recoverables", Href: "/recoverables", Icon: "↩", Resource: "recoverable_report", Action: "view"},
 	}},
 	{Title: "Payments", Items: []NavItem{
-		{Key: "payments", Label: "Payments ledger", Href: "/payments", Icon: "▦", Resource: "payment", Action: "read", Badge: "receipts_missing"},
+		{Key: "payments", Label: "Payments ledger", Href: "/payments", Icon: "▦", Resource: "payment", Action: "view", Badge: "receipts_missing"},
 	}},
 	{Title: "Budget", Items: []NavItem{
-		{Key: "variance-grid", Label: "Variance grid", Href: "/grid", Icon: "▥", Resource: "grid", Action: "read"},
-		{Key: "budgets", Label: "Budgets", Href: "/budgets", Icon: "◴", Resource: "budget", Action: "read"},
-		{Key: "monthly-plans", Label: "Monthly plans", Href: "/months", Icon: "◷", Resource: "budget", Action: "read", Badge: "open_months"},
+		{Key: "variance-grid", Label: "Variance grid", Href: "/grid", Icon: "▥", Resource: "grid", Action: "view"},
+		{Key: "budgets", Label: "Budgets", Href: "/budgets", Icon: "◴", Resource: "budget", Action: "view"},
+		{Key: "monthly-plans", Label: "Monthly plans", Href: "/months", Icon: "◷", Resource: "month", Action: "view", Badge: "open_months"},
 	}},
 	{Title: "Reports", Items: []NavItem{
-		{Key: "reports", Label: "Reports", Href: "/reports/monthly", Icon: "⤓", Resource: "report", Action: "read"},
+		{Key: "reports", Label: "Reports", Href: "/reports/monthly", Icon: "⤓", Resource: "report", Action: "view"},
 	}},
 	{Title: "Masters", Items: []NavItem{
-		{Key: "vendors", Label: "Vendors", Href: "/vendors", Icon: "◫", Resource: "vendor", Action: "read"},
-		{Key: "projects", Label: "Projects", Href: "/projects", Icon: "▣", Resource: "project", Action: "read"},
-		{Key: "heads", Label: "Heads", Href: "/heads", Icon: "≡", Resource: "head", Action: "read"},
+		{Key: "vendors", Label: "Vendors", Href: "/vendors", Icon: "◫", Resource: "vendor", Action: "view"},
+		{Key: "projects", Label: "Projects", Href: "/projects", Icon: "▣", Resource: "project", Action: "view"},
+		{Key: "heads", Label: "Heads", Href: "/heads", Icon: "≡", Resource: "head", Action: "view"},
 	}},
 	{Title: "Admin", Items: []NavItem{
-		{Key: "users", Label: "Users", Href: "/users", Icon: "◍", Resource: "user", Action: "read"},
-		{Key: "roles", Label: "Roles & permissions", Href: "/roles", Icon: "⚿", Resource: "role", Action: "read"},
-		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "read"},
+		{Key: "users", Label: "Users", Href: "/users", Icon: "◍", Resource: "user", Action: "view"},
+		{Key: "roles", Label: "Roles & permissions", Href: "/roles", Icon: "⚿", Resource: "role", Action: "view"},
+		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "view"},
 		// Two different screens, per adoption spec D7: /admin/notifications is
 		// the rule editor, /notifications (the topbar bell) is the user's own
 		// in-app centre. Phase 5 builds both.
-		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification_rule", Action: "read"},
-		{Key: "audit", Label: "Audit log", Href: "/audit", Icon: "◎", Resource: "audit", Action: "read"},
-		{Key: "backups", Label: "Backups", Href: "/backups", Icon: "⇪", Resource: "backup", Action: "read"},
+		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification", Action: "view"},
+		{Key: "audit", Label: "Audit log", Href: "/audit", Icon: "◎", Resource: "audit", Action: "view"},
+		{Key: "backups", Label: "Backups", Href: "/backups", Icon: "⇪", Resource: "backup", Action: "view"},
 	}},
 	{Title: "Coming soon", Items: []NavItem{
 		{Key: "invoices", Label: "Invoices", Icon: "▧", Soon: true},
@@ -179,7 +179,7 @@ var centreActions = []struct {
 	Resource, Action string
 	Tab              TabItem
 }{
-	{Resource: "request", Action: "approve", Tab: TabItem{Key: "approvals", Label: "Approve", Href: "/approvals", Icon: "✓"}},
+	{Resource: "approval", Action: "approve", Tab: TabItem{Key: "approvals", Label: "Approve", Href: "/approvals", Icon: "✓"}},
 	{Resource: "payment", Action: "create", Tab: TabItem{Key: "pay", Label: "Pay", Href: "/payments/new", Icon: "₹"}},
 	{Resource: "request", Action: "create", Tab: TabItem{Key: "new", Label: "New", Href: "/requests/new", Icon: "＋"}},
 }
@@ -203,7 +203,7 @@ func resolveTabs(perms store.PermissionSet) TabBar {
 			break
 		}
 	}
-	if can(perms, "payment", "read") {
+	if can(perms, "payment", "view") {
 		tabs.Right = append(tabs.Right, TabItem{Key: "payments", Label: "Payments", Href: "/payments", Icon: "▦"})
 	} else {
 		tabs.Right = append(tabs.Right, TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"})

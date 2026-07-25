@@ -14,16 +14,27 @@ func adminPerms() store.PermissionSet {
 	return store.NewPermissionSet([]store.Grant{{Resource: "*", Action: "*"}})
 }
 
-// dataEntryPerms mirrors the data_entry policies registered in auth.New.
+// dataEntryPerms mirrors the seeded Accounts role, which is what a legacy
+// data_entry user resolves to.
 func dataEntryPerms() store.PermissionSet {
 	return store.NewPermissionSet([]store.Grant{
+		{Resource: "request", Action: "view"},
+		{Resource: "request", Action: "comment"},
+		{Resource: "payment", Action: "view"},
 		{Resource: "payment", Action: "create"},
-		{Resource: "payment", Action: "read"},
-		{Resource: "payment_attachment", Action: "create"},
-		{Resource: "payment_attachment", Action: "read"},
-		{Resource: "report", Action: "read"},
+		{Resource: "payment", Action: "edit"},
+		{Resource: "payment", Action: "void"},
+		{Resource: "payment", Action: "process"},
+		{Resource: "payment", Action: "settle"},
+		{Resource: "payment", Action: "mark_partial"},
+		{Resource: "payment", Action: "hold"},
+		{Resource: "attachment", Action: "view"},
+		{Resource: "attachment", Action: "create"},
+		{Resource: "grid", Action: "view"},
+		{Resource: "report", Action: "view"},
 		{Resource: "report", Action: "export"},
-		{Resource: "grid", Action: "read"},
+		{Resource: "recoverable_report", Action: "view"},
+		{Resource: "recoverable_report", Action: "export"},
 	})
 }
 
@@ -67,7 +78,7 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 		{
 			name:  "data entry sees only its own screens",
 			perms: dataEntryPerms(),
-			want:  []string{"Home", "My requests", "Payments ledger", "Reports", "Variance grid"},
+			want:  []string{"Accounts queue", "Home", "My requests", "Payments ledger", "Recoverables", "Reports", "Variance grid"},
 		},
 		{
 			name:  "no grants leaves only ungated items",
@@ -131,14 +142,14 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 	}{
 		{
 			name:      "approver gets approve",
-			perms:     store.NewPermissionSet([]store.Grant{{Resource: "request", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "read"}}),
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "approval", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}),
 			wantLabel: "Approve",
 			wantHref:  "/approvals",
 			wantRight: []string{"Payments", "More"},
 		},
 		{
 			name:      "payer gets pay",
-			perms:     store.NewPermissionSet([]store.Grant{{Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "read"}}),
+			perms:     store.NewPermissionSet([]store.Grant{{Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}),
 			wantLabel: "Pay",
 			wantHref:  "/payments/new",
 			wantRight: []string{"Payments", "More"},

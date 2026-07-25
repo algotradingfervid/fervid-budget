@@ -15,8 +15,6 @@ import (
 	"fervidbudget/internal/config"
 	"fervidbudget/internal/store"
 
-	"github.com/casbin/casbin/v2"
-	"github.com/casbin/casbin/v2/model"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -27,47 +25,13 @@ const sessionCookie = "fervid_session"
 const csrfCookie = "fervid_csrf"
 
 type Manager struct {
-	cfg      config.Config
-	store    *store.Store
-	enforcer *casbin.Enforcer
-	onError  func(http.ResponseWriter, *http.Request, int, string)
+	cfg     config.Config
+	store   *store.Store
+	onError func(http.ResponseWriter, *http.Request, int, string)
 }
 
 func New(cfg config.Config, st *store.Store) (*Manager, error) {
-	m, err := model.NewModelFromString(`
-[request_definition]
-r = sub, obj, act
-[policy_definition]
-p = sub, obj, act
-[role_definition]
-g = _, _
-[policy_effect]
-e = some(where (p.eft == allow))
-[matchers]
-m = g(r.sub, p.sub) && (p.obj == "*" || p.obj == r.obj) && (p.act == "*" || p.act == r.act)
-`)
-	if err != nil {
-		return nil, err
-	}
-	e, err := casbin.NewEnforcer(m)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range [][]string{
-		{"admin", "*", "*"},
-		{"data_entry", "payment", "create"},
-		{"data_entry", "payment", "read"},
-		{"data_entry", "payment_attachment", "create"},
-		{"data_entry", "payment_attachment", "read"},
-		{"data_entry", "report", "read"},
-		{"data_entry", "report", "export"},
-		{"data_entry", "grid", "read"},
-	} {
-		_, _ = e.AddPolicy(p)
-	}
-	_, _ = e.AddGroupingPolicy("admin", "admin")
-	_, _ = e.AddGroupingPolicy("data_entry", "data_entry")
-	return &Manager{cfg: cfg, store: st, enforcer: e}, nil
+	return &Manager{cfg: cfg, store: st}, nil
 }
 
 func HashPassword(password string) (string, error) {
@@ -130,42 +94,52 @@ func (m *Manager) RequireLogin(next http.Handler) http.Handler {
 	})
 }
 
+// permsFor loads the caller's effective permission set from the roles tables.
+// Correctness-first: it queries per request (a short-TTL cache keyed by user id
+// is a later option).
+func (m *Manager) permsFor(u store.User) (store.PermissionSet, error) {
+	if u.ID == 0 {
+		return store.EmptyPermissions(), nil
+	}
+	return m.store.EffectivePermissions(context.Background(), u.ID)
+}
+
+// Permissions returns the caller's effective permission set for template use;
+// on error it returns an empty (deny-all) set. store.PermissionSet is an
+// interface, so the deny-all value comes from store.EmptyPermissions() rather
+// than a struct literal.
+func (m *Manager) Permissions(u store.User) store.PermissionSet {
+	ps, err := m.permsFor(u)
+	if err != nil {
+		return store.EmptyPermissions()
+	}
+	return ps
+}
+
 // Can is the single authorisation question the whole application asks. Every
 // gate — middleware, handler check or rendered control — goes through it so
 // permissions are decided in exactly one place.
 func (m *Manager) Can(u store.User, resource, action string) bool {
-	if u.Role == "" || resource == "" || action == "" {
+	ps, err := m.permsFor(u)
+	if err != nil {
 		return false
 	}
-	ok, err := m.enforcer.Enforce(u.Role, resource, action)
-	return err == nil && ok
+	return ps.Can(resource, action)
 }
 
-// Permissions snapshots everything a user may do so a page render can ask
-// hundreds of questions without re-entering the policy engine each time.
-// Phase 1 swaps the source of these grants for the roles table; the returned
-// interface does not change.
-func (m *Manager) Permissions(u store.User) store.PermissionSet {
-	if u.Role == "" {
-		return store.NewPermissionSet(nil)
-	}
-	policies, err := m.enforcer.GetImplicitPermissionsForUser(u.Role)
+// Scope reports the broadest data scope the caller holds over a scoped
+// resource ("own" | "assigned" | "all"), or "" when it holds none.
+func (m *Manager) Scope(u store.User, resource string) string {
+	ps, err := m.permsFor(u)
 	if err != nil {
-		return store.NewPermissionSet(nil)
+		return ""
 	}
-	grants := make([]store.Grant, 0, len(policies))
-	for _, policy := range policies {
-		if len(policy) < 3 {
-			continue
-		}
-		grants = append(grants, store.Grant{Resource: policy[1], Action: policy[2]})
-	}
-	return store.NewPermissionSet(grants)
+	return ps.Scope(resource)
 }
 
-func (m *Manager) RequirePermission(obj, act string, next http.Handler) http.Handler {
+func (m *Manager) RequirePermission(resource, action string, next http.Handler) http.Handler {
 	return m.RequireLogin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !m.Can(CurrentUser(r), obj, act) {
+		if !m.Can(CurrentUser(r), resource, action) {
 			m.writeError(w, r, http.StatusForbidden, "You do not have permission to perform this action.")
 			return
 		}

@@ -71,14 +71,14 @@ func TestBadgeCountsRunOnlyThePermittedSubSelects(t *testing.T) {
 			want:     map[string]int{"my_payments": 2, "open_months": 1, "receipts_missing": 2},
 		},
 		{
-			name:     "payment read only counts payments",
-			perms:    NewPermissionSet([]Grant{{Resource: "payment", Action: "read"}}),
+			name:     "payment view only counts payments",
+			perms:    NewPermissionSet([]Grant{{Resource: "payment", Action: "view"}}),
 			wantKeys: []string{"my_payments"},
 			want:     map[string]int{"my_payments": 2},
 		},
 		{
 			name:     "attachment creator only counts missing receipts",
-			perms:    NewPermissionSet([]Grant{{Resource: "payment_attachment", Action: "create"}}),
+			perms:    NewPermissionSet([]Grant{{Resource: "attachment", Action: "create"}}),
 			wantKeys: []string{"receipts_missing"},
 			want:     map[string]int{"receipts_missing": 2},
 		},

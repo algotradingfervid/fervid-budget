@@ -95,8 +95,8 @@ func TestHashAndCheckPassword(t *testing.T) {
 
 func TestSessionMiddlewareAndPermissions(t *testing.T) {
 	manager, st := newTestManager(t)
-	admin := createTestUser(t, st, "admin@example.test", "admin", true)
-	entry := createTestUser(t, st, "entry@example.test", "data_entry", true)
+	admin := createTestUser(t, st, "admin@example.test", "admin", true)      // -> Admin role
+	entry := createTestUser(t, st, "entry@example.test", "data_entry", true) // -> Accounts role
 
 	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if CurrentUser(r).ID == 0 {
@@ -111,9 +111,10 @@ func TestSessionMiddlewareAndPermissions(t *testing.T) {
 		action     string
 		wantStatus int
 	}{
-		{name: "admin wildcard", user: admin, object: "user", action: "update", wantStatus: http.StatusNoContent},
-		{name: "data entry create payment", user: entry, object: "payment", action: "create", wantStatus: http.StatusNoContent},
-		{name: "data entry denied users", user: entry, object: "user", action: "read", wantStatus: http.StatusForbidden},
+		{name: "admin manages users", user: admin, object: "user", action: "edit", wantStatus: http.StatusNoContent},
+		{name: "accounts creates payment", user: entry, object: "payment", action: "create", wantStatus: http.StatusNoContent},
+		{name: "accounts denied users", user: entry, object: "user", action: "view", wantStatus: http.StatusForbidden},
+		{name: "accounts denied roles", user: entry, object: "role", action: "view", wantStatus: http.StatusForbidden},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			request := authenticatedRequest(t, manager, testCase.user, http.MethodGet, "/")
@@ -123,6 +124,16 @@ func TestSessionMiddlewareAndPermissions(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.Code, testCase.wantStatus)
 			}
 		})
+	}
+
+	if !manager.Can(admin, "role", "create") {
+		t.Fatal("admin should manage roles")
+	}
+	if manager.Can(entry, "role", "view") {
+		t.Fatal("accounts must not view roles")
+	}
+	if got := manager.Scope(entry, "payment"); got != "all" {
+		t.Fatalf("accounts payment scope = %q, want all", got)
 	}
 
 	response := httptest.NewRecorder()
@@ -144,14 +155,15 @@ func TestCanAndPermissionsSnapshotAgree(t *testing.T) {
 		action   string
 		want     bool
 	}{
-		{name: "admin wildcard resource", user: admin, resource: "role", action: "edit", want: true},
+		{name: "admin role edit", user: admin, resource: "role", action: "edit", want: true},
 		{name: "admin payment create", user: admin, resource: "payment", action: "create", want: true},
-		{name: "data entry payment create", user: entry, resource: "payment", action: "create", want: true},
-		{name: "data entry report export", user: entry, resource: "report", action: "export", want: true},
-		{name: "data entry role edit denied", user: entry, resource: "role", action: "edit", want: false},
-		{name: "data entry unknown resource denied", user: entry, resource: "sprocket", action: "read", want: false},
-		{name: "data entry known resource wrong action", user: entry, resource: "payment", action: "void", want: false},
-		{name: "anonymous denied", user: store.User{}, resource: "payment", action: "read", want: false},
+		{name: "accounts payment create", user: entry, resource: "payment", action: "create", want: true},
+		{name: "accounts report export", user: entry, resource: "report", action: "export", want: true},
+		{name: "accounts role edit denied", user: entry, resource: "role", action: "edit", want: false},
+		{name: "accounts unknown resource denied", user: entry, resource: "sprocket", action: "read", want: false},
+		// Accounts holds request:view and request:comment but never raises one.
+		{name: "accounts known resource wrong action", user: entry, resource: "request", action: "create", want: false},
+		{name: "anonymous denied", user: store.User{}, resource: "payment", action: "view", want: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			if got := manager.Can(testCase.user, testCase.resource, testCase.action); got != testCase.want {
@@ -167,14 +179,18 @@ func TestCanAndPermissionsSnapshotAgree(t *testing.T) {
 		})
 	}
 
+	// Only request and payment are data-scoped; every other resource answers "".
 	if got := manager.Permissions(entry).Scope("payment"); got != store.ScopeAll {
-		t.Fatalf("data_entry Scope(payment) = %q, want %q", got, store.ScopeAll)
+		t.Fatalf("accounts Scope(payment) = %q, want %q", got, store.ScopeAll)
 	}
 	if got := manager.Permissions(entry).Scope("role"); got != "" {
-		t.Fatalf("data_entry Scope(role) = %q, want empty scope", got)
+		t.Fatalf("accounts Scope(role) = %q, want empty scope", got)
 	}
-	if got := manager.Permissions(admin).Scope("role"); got != store.ScopeAll {
-		t.Fatalf("admin Scope(role) = %q, want %q", got, store.ScopeAll)
+	if got := manager.Permissions(admin).Scope("payment"); got != store.ScopeAll {
+		t.Fatalf("admin Scope(payment) = %q, want %q", got, store.ScopeAll)
+	}
+	if got := manager.Permissions(admin).Scope("role"); got != "" {
+		t.Fatalf("admin Scope(role) = %q, want empty scope on an unscoped resource", got)
 	}
 	if got := manager.Permissions(store.User{}).Scope("payment"); got != "" {
 		t.Fatalf("anonymous Scope(payment) = %q, want empty scope", got)
