@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenCreatesSchemaBasics(t *testing.T) {
@@ -68,6 +69,262 @@ func TestProjectAndHeadUniqueness(t *testing.T) {
 	if _, err := s.UpsertHead(ctx, 0, otherProjectID, "Rent", "15", true, 1); err != nil {
 		t.Fatalf("same head name in different project should be allowed: %v", err)
 	}
+}
+
+func TestCaseInsensitiveIdentifiersAndDueDayValidation(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if _, err := s.CreateUser(ctx, "ADMIN@example.com", "Admin", "hash", "admin", true); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := s.CreateUser(ctx, "admin@example.com", "Second", "hash", "admin", true); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("case-insensitive email duplicate = %v, want %v", err, ErrDuplicate)
+	}
+	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
+	if err != nil {
+		t.Fatalf("UpsertProject: %v", err)
+	}
+	if _, err := s.UpsertProject(ctx, 0, "operations", true, 2); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("case-insensitive project duplicate = %v, want %v", err, ErrDuplicate)
+	}
+	if _, err := s.UpsertHead(ctx, 0, projectID, "Rent", "31", true, 1); err != nil {
+		t.Fatalf("UpsertHead: %v", err)
+	}
+	if _, err := s.UpsertHead(ctx, 0, projectID, "rent", "1", true, 2); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("case-insensitive head duplicate = %v, want %v", err, ErrDuplicate)
+	}
+	if _, err := s.UpsertHead(ctx, 0, projectID, "Utilities", "32", true, 2); !errors.Is(err, ErrValidation) {
+		t.Fatalf("invalid due day = %v, want %v", err, ErrValidation)
+	}
+}
+
+func TestSetBudgetsIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	err := s.SetBudgets(ctx, actor, "2026-08", []BudgetInput{{HeadID: headID, Amount: 10000}, {HeadID: 999999, Amount: 20000}})
+	if err == nil {
+		t.Fatal("SetBudgets succeeded with a nonexistent head")
+	}
+	if _, err := s.Budget(ctx, headID, "2026-08"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("budget persisted despite failed batch: %v", err)
+	}
+	var plans int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM budget_months WHERE month='2026-08'`).Scan(&plans); err != nil {
+		t.Fatal(err)
+	}
+	if plans != 0 {
+		t.Fatalf("month plan persisted despite failed batch: %d", plans)
+	}
+}
+
+func TestLoginAttemptLockAndReset(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	userID, err := s.CreateUser(ctx, "login@example.com", "Login User", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		until, err := s.RecordFailedLogin(ctx, "login@example.com")
+		if err != nil || !until.IsZero() {
+			t.Fatalf("failure %d = %v, %v", i+1, until, err)
+		}
+	}
+	until, err := s.RecordFailedLogin(ctx, "login@example.com")
+	if err != nil || until.Before(time.Now()) {
+		t.Fatalf("fifth failed login lock = %v, %v", until, err)
+	}
+	locked, gotUntil, err := s.LoginLocked(ctx, "LOGIN@example.com")
+	if err != nil || !locked || gotUntil.IsZero() {
+		t.Fatalf("LoginLocked = %v, %v, %v", locked, gotUntil, err)
+	}
+	if err := s.ResetLoginAttempts(ctx, userID); err != nil {
+		t.Fatal(err)
+	}
+	locked, _, err = s.LoginLocked(ctx, "login@example.com")
+	if err != nil || locked {
+		t.Fatalf("LoginLocked after reset = %v, %v", locked, err)
+	}
+}
+
+func TestLastActiveAdminAndAttachmentInvariants(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	if err := s.UpdateUser(ctx, actor.ID, actor.Name, "data_entry", true, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("demoting final admin = %v, want %v", err, ErrValidation)
+	}
+	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-09-02", Amount: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddAttachment(ctx, actor, paymentID, "receipt.txt", "/tmp/receipt.txt", "text/plain", 12); err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+	attachments, err := s.Attachments(ctx, paymentID)
+	if err != nil || len(attachments) != 1 {
+		t.Fatalf("Attachments = %+v, %v", attachments, err)
+	}
+	if got, err := s.AttachmentByID(ctx, attachments[0].ID); err != nil || got.PaymentID != paymentID {
+		t.Fatalf("AttachmentByID = %+v, %v", got, err)
+	}
+	if err := s.LockMonth(ctx, actor, "2026-09", "close"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddAttachment(ctx, actor, paymentID, "second.txt", "/tmp/second.txt", "text/plain", 1); !errors.Is(err, ErrLockedMonth) {
+		t.Fatalf("locked AddAttachment = %v, want %v", err, ErrLockedMonth)
+	}
+	if err := s.UnlockMonth(ctx, actor, "2026-09", "correction"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.VoidPayment(ctx, actor, paymentID, "duplicate"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddAttachment(ctx, actor, paymentID, "third.txt", "/tmp/third.txt", "text/plain", 1); !errors.Is(err, ErrValidation) {
+		t.Fatalf("voided AddAttachment = %v, want %v", err, ErrValidation)
+	}
+	audit, err := s.Audit(ctx, "payment", paymentID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attached bool
+	for _, entry := range audit {
+		attached = attached || entry.Action == "attach"
+	}
+	if !attached {
+		t.Fatalf("attachment was not recorded on the payment timeline: %+v", audit)
+	}
+}
+
+func TestCreatePaymentWithAttachmentIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	_, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-10-02", Amount: 5000}, &AttachmentInput{OriginalName: "", StoredPath: "/tmp/nope", SizeBytes: 1})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("invalid attachment = %v, want %v", err, ErrValidation)
+	}
+	payments, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-10", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payments) != 0 {
+		t.Fatalf("payment was written despite rejected attachment: %+v", payments)
+	}
+	id, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-10-02", Amount: 5000}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", MimeType: "application/pdf", SizeBytes: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachments, err := s.Attachments(ctx, id)
+	if err != nil || len(attachments) != 1 {
+		t.Fatalf("atomic attachment = %+v, %v", attachments, err)
+	}
+}
+
+func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
+	ctx := context.Background()
+	t.Run("create", func(t *testing.T) {
+		s := newTestStore(t)
+		actor, headID := seedActorAndHead(t, s, ctx)
+		abortAuditAction(t, s, "create")
+		if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000}); err == nil {
+			t.Fatal("CreatePayment succeeded despite audit failure")
+		}
+		if got := paymentCount(t, s); got != 0 {
+			t.Fatalf("payment persisted after failed audit: %d", got)
+		}
+	})
+	t.Run("update_with_attachment", func(t *testing.T) {
+		s := newTestStore(t)
+		actor, headID := seedActorAndHead(t, s, ctx)
+		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000, VendorPayee: "Original"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		abortAuditAction(t, s, "update")
+		err = s.UpdatePaymentWithAttachment(ctx, actor, paymentID, PaymentInput{HeadID: headID, PaidOn: "2026-11-03", Amount: 2000, VendorPayee: "Changed"}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", SizeBytes: 1})
+		if err == nil {
+			t.Fatal("UpdatePaymentWithAttachment succeeded despite audit failure")
+		}
+		payment, err := s.Payment(ctx, paymentID)
+		if err != nil || payment.Amount != 1000 || payment.VendorPayee != "Original" {
+			t.Fatalf("payment changed after failed audit: %+v, %v", payment, err)
+		}
+		attachments, err := s.Attachments(ctx, paymentID)
+		if err != nil || len(attachments) != 0 {
+			t.Fatalf("attachment persisted after failed audit: %+v, %v", attachments, err)
+		}
+	})
+	t.Run("void", func(t *testing.T) {
+		s := newTestStore(t)
+		actor, headID := seedActorAndHead(t, s, ctx)
+		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		abortAuditAction(t, s, "void")
+		if err := s.VoidPayment(ctx, actor, paymentID, "duplicate"); err == nil {
+			t.Fatal("VoidPayment succeeded despite audit failure")
+		}
+		payment, err := s.Payment(ctx, paymentID)
+		if err != nil || payment.VoidedAt != nil {
+			t.Fatalf("payment was voided after failed audit: %+v, %v", payment, err)
+		}
+	})
+	t.Run("attachment", func(t *testing.T) {
+		s := newTestStore(t)
+		actor, headID := seedActorAndHead(t, s, ctx)
+		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		abortAuditAction(t, s, "attach")
+		if err := s.AddAttachment(ctx, actor, paymentID, "receipt.pdf", "/tmp/receipt.pdf", "application/pdf", 1); err == nil {
+			t.Fatal("AddAttachment succeeded despite audit failure")
+		}
+		attachments, err := s.Attachments(ctx, paymentID)
+		if err != nil || len(attachments) != 0 {
+			t.Fatalf("attachment persisted after failed audit: %+v, %v", attachments, err)
+		}
+	})
+}
+
+func TestUpdatePaymentWithAttachmentCommitsTogether(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-12-01", Amount: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdatePaymentWithAttachment(ctx, actor, paymentID, PaymentInput{HeadID: headID, PaidOn: "2026-12-02", Amount: 2000}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", SizeBytes: 1}); err != nil {
+		t.Fatal(err)
+	}
+	payment, err := s.Payment(ctx, paymentID)
+	if err != nil || payment.Amount != 2000 {
+		t.Fatalf("updated payment = %+v, %v", payment, err)
+	}
+	attachments, err := s.Attachments(ctx, paymentID)
+	if err != nil || len(attachments) != 1 {
+		t.Fatalf("updated attachment = %+v, %v", attachments, err)
+	}
+}
+
+func abortAuditAction(t *testing.T, s *Store, action string) {
+	t.Helper()
+	if _, err := s.DB().Exec(`CREATE TRIGGER abort_audit BEFORE INSERT ON audit_log WHEN NEW.action = '` + action + `' BEGIN SELECT RAISE(ABORT, 'audit blocked'); END`); err != nil {
+		t.Fatalf("create audit trigger: %v", err)
+	}
+}
+
+func paymentCount(t *testing.T, s *Store) int {
+	t.Helper()
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 
 func TestCreateMonthPlanCopiesOnlyActiveHeads(t *testing.T) {

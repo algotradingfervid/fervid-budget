@@ -114,4 +114,10 @@ CREATE INDEX IF NOT EXISTS idx_budget_months_status ON budget_months(status);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_attachments_payment ON payment_attachments(payment_id);
+-- The original table constraints are retained for compatibility with existing
+-- databases.  These expression indexes make identifiers case-insensitive too.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nocase ON users(lower(email));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name_nocase ON projects(lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_heads_project_name_nocase ON heads(project_id, lower(name));
+CREATE INDEX IF NOT EXISTS idx_users_login_lock ON users(email, locked);
 `
