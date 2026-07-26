@@ -240,6 +240,8 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"hhmm":          hhmm,
 		"since":         since,
 		"reservedLabel": reservedLabel,
+		"stale":         stale,
+		"activeHold":    activeHold,
 		"sub":           subPaise,
 		"approvedOf":    approvedOf,
 		"trailAction":   trailAction,
@@ -391,6 +393,15 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /requests/{id}/reservation", a.auth.RequireLogin(http.HandlerFunc(a.reservationForm)))
 	mux.Handle("POST /requests/{id}/release", a.auth.RequirePermission("reservation", "release", http.HandlerFunc(a.withCSRF(a.requestRelease))))
 	mux.Handle("POST /requests/{id}/reassign", a.auth.RequirePermission("reservation", "reassign", http.HandlerFunc(a.withCSRF(a.requestReassign))))
+	// The 26-hour nudge (Q6). Reading it needs payment:process — the grant that
+	// puts a person in front of reserved rows at all — and every choice it
+	// offers is gated again on the verb that choice actually needs.
+	mux.Handle("GET /requests/{id}/reservation/stale", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.requestStale)))
+	// L7: a hold is Accounts' pause button, not the approver's. payment:hold is
+	// one grant for both directions, because the person who can stop a payment
+	// is the person who must be able to start it again.
+	mux.Handle("POST /requests/{id}/hold", a.auth.RequirePermission("payment", "hold", http.HandlerFunc(a.withCSRF(a.requestHold))))
+	mux.Handle("POST /requests/{id}/unhold", a.auth.RequirePermission("payment", "hold", http.HandlerFunc(a.withCSRF(a.requestUnhold))))
 	mux.Handle("GET /accounts-queue", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.accountsQueue)))
 	// A partial settlement is the one outcome Accounts cannot close on its own,
 	// so the manager gets a screen of their own (S11). Reading it needs only

@@ -1347,3 +1347,239 @@ func TestApprovalReassignmentIsNotAReservationEvent(t *testing.T) {
 		t.Fatalf("both reassignments read %q; the trail cannot tell them apart", auditPhrase("reassign"))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 19 — hold, unhold and the stale reservation screen (L7, Q6)
+// ---------------------------------------------------------------------------
+
+// The plan wrote these two against "/requests/to-pay". That route was never
+// built: the accounts queue shipped as GET /accounts-queue with ?tab=, so the
+// queue reads below are the same two assertions against the route that exists.
+func TestHoldAndUnholdMoveTheRequestThroughTheQueue(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Hold")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	if !strings.Contains(body, "PR-2026-000001") {
+		t.Fatalf("approved request missing from the queue:\n%s", body)
+	}
+	// Hold takes it out of the takeable tab (L7) and onto the hold tab.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
+	body = responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	if strings.Contains(body, "Take for processing") {
+		t.Fatalf("held request is still takeable:\n%s", body)
+	}
+	held := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=hold", nil, ""))
+	if !strings.Contains(held, "PR-2026-000001") {
+		t.Fatalf("held request missing from the hold tab:\n%s", held)
+	}
+	// The request screen explains the hold and offers the Accounts-only release.
+	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	for _, want := range []string{`class="pill hold"`, `class="banner warn"`, "Which site is this for?", "Release hold", `class="comment-box"`} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("on-hold request detail missing %q:\n%s", want, detail)
+		}
+	}
+	// Unhold restores it.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", reqID), url.Values{}), http.StatusSeeOther)
+	body = responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	if !strings.Contains(body, "Take for processing") {
+		t.Fatalf("unheld request is not takeable again:\n%s", body)
+	}
+}
+
+func TestStaleReservationScreenOffersTheFourChoices(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Stale")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 7800000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET processing_at=datetime('now','-26 hours') WHERE id=?`, reqID); err != nil {
+		t.Fatal(err)
+	}
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation/stale", reqID), nil, ""))
+	for _, want := range []string{
+		`class="banner warn"`, "reserved by you for", "26 h",
+		`class="req-head"`, `class="pill processing"`, `class="waiting"`,
+		`class="a-list"`, "Carry on and record the payment", "Release it", "Hand it to a colleague", "Put it on hold",
+		"Who has been told", `<ol class="thread">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("stale reservation screen missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// A hold describes an approved request that Accounts has paused. Every writer
+// that moves a request off 'approved' has to clear it, or the request dies with
+// on_hold still set: the queue's hold tab goes on listing a cancelled request
+// and offering a reply that can change nothing, and its own detail screen goes
+// on calling it "On hold, waiting on the requester".
+func TestCancellingAHeldRequestClearsTheHold(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("HoldCancel")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel", reqID), url.Values{"reason": {"Site dropped"}}), http.StatusSeeOther)
+
+	if requestStatusApp(t, s, reqID) != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", requestStatusApp(t, s, reqID))
+	}
+	var onHold int
+	if err := s.st.DB().QueryRow(`SELECT on_hold FROM payment_requests WHERE id=?`, reqID).Scan(&onHold); err != nil {
+		t.Fatal(err)
+	}
+	if onHold != 0 {
+		t.Fatalf("cancelled request still carries on_hold=%d", onHold)
+	}
+	held := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=hold", nil, ""))
+	if strings.Contains(held, "PR-2026-000001") {
+		t.Fatalf("cancelled request is still in the hold tab:\n%s", held)
+	}
+	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	for _, unwanted := range []string{`class="pill hold"`, "Release hold", "This request is on hold"} {
+		if strings.Contains(detail, unwanted) {
+			t.Fatalf("cancelled request still shows %q:\n%s", unwanted, detail)
+		}
+	}
+	if !strings.Contains(detail, "Cancelled") {
+		t.Fatalf("cancelled request does not say so:\n%s", detail)
+	}
+}
+
+// The same rule on the other exit from 'approved'. A hold that survived into
+// cancellation_requested would answer before the status did, and the manager
+// who owes the decision would read "Waiting on the requester to clarify" on the
+// one screen that is supposed to tell them it is theirs.
+func TestAskingForCancellationOnAHeldRequestClearsTheHold(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("HoldAsk")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel-request", reqID), url.Values{"reason": {"No longer needed"}}), http.StatusSeeOther)
+
+	var onHold int
+	if err := s.st.DB().QueryRow(`SELECT on_hold FROM payment_requests WHERE id=?`, reqID).Scan(&onHold); err != nil {
+		t.Fatal(err)
+	}
+	if onHold != 0 {
+		t.Fatalf("cancellation_requested request still carries on_hold=%d", onHold)
+	}
+	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	if strings.Contains(detail, `class="pill hold"`) {
+		t.Fatalf("pill still says On hold while a cancellation is pending:\n%s", detail)
+	}
+	for _, want := range []string{"Cancellation requested", `class="waiting you"`} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("pending cancellation missing %q:\n%s", want, detail)
+		}
+	}
+}
+
+// The on-hold state carries exactly one banner in
+// mockups/screens/request-on-hold.html. The approved lock stacked above it told
+// the requester that "payment freezes while your approver decides" when the
+// approver is deciding nothing — Accounts is holding it.
+func TestTheHoldBannerIsTheOnlyBannerOnAHeldRequest(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("HoldBanner")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	if !strings.Contains(detail, "Approved requests are locked") {
+		t.Fatalf("approved request is missing its lock banner:\n%s", detail)
+	}
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
+
+	detail = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	if strings.Contains(detail, "Approved requests are locked") {
+		t.Fatalf("the approved lock stacks above the hold banner:\n%s", detail)
+	}
+	if !strings.Contains(detail, "This request is on hold") {
+		t.Fatalf("hold banner missing:\n%s", detail)
+	}
+	// The hold is an event in the same stream, and threadDot/threadGlyph are
+	// what colour it: request-on-hold.html renders it as a warn ⏸, not the
+	// untinted grey dot every unknown action falls through to.
+	if !strings.Contains(detail, `<span class="tl-dot warn" aria-hidden="true">⏸</span>`) {
+		t.Fatalf("the hold line in the thread is undecorated:\n%s", detail)
+	}
+}
+
+// Q6 is only a screen if something links to it. The queue is the one place that
+// knows which reservation has crossed the one-day mark, so the mockup's own
+// Resume on that row goes to the nudge, not back to the payment form.
+func TestTheQueueLinksAStaleReservationToTheNudgeScreen(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("StaleLink")
+	fresh := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 4400000)
+	old := s.seedApprovedRequest(2, admin.ID, admin.ID, headID, 7800000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", fresh), url.Values{}), http.StatusSeeOther)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", old), url.Values{}), http.StatusSeeOther)
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET processing_at=datetime('now','-26 hours') WHERE id=?`, old); err != nil {
+		t.Fatal(err)
+	}
+
+	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=processing", nil, ""))
+	if !strings.Contains(body, fmt.Sprintf("/requests/%d/reservation/stale", old)) {
+		t.Fatalf("the stale row does not link to the nudge screen:\n%s", body)
+	}
+	// The reservation taken a moment ago is not stale, and resuming it must
+	// still open the payment form.
+	if strings.Contains(body, fmt.Sprintf("/requests/%d/reservation/stale", fresh)) {
+		t.Fatalf("a fresh reservation is being called stale:\n%s", body)
+	}
+	if !strings.Contains(body, fmt.Sprintf("/payments/new?request=%d", fresh)) {
+		t.Fatalf("the fresh row lost its Resume link:\n%s", body)
+	}
+}
+
+// The screen is one .a-list of exactly the four choices
+// mockups/screens/accounts-stale-processing.html names, and every link on it
+// has to land somewhere the reader can act. "Put it on hold" cannot go to the
+// request: the hold control there is gated on 'approved', and this screen only
+// exists while the request is reserved.
+func TestStaleScreenOffersFourChoicesThatAllLandSomewhereUsable(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("StaleFour")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 7800000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET processing_at=datetime('now','-26 hours') WHERE id=?`, reqID); err != nil {
+		t.Fatal(err)
+	}
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation/stale", reqID), nil, ""))
+
+	list := body[strings.Index(body, `class="a-list"`):]
+	list = list[:strings.Index(list, "</div>")]
+	if n := strings.Count(list, "<a href="); n != 4 {
+		t.Fatalf("the a-list offers %d choices, want the mockup's four:\n%s", n, list)
+	}
+	if strings.Contains(body, "Leave it and go back to the queue") {
+		t.Fatalf("a fifth choice the mockup does not have:\n%s", list)
+	}
+	// Every href on the screen has to answer for a signed-in accountant.
+	for _, href := range []string{
+		fmt.Sprintf("/payments/new?request=%d", reqID),
+		fmt.Sprintf("/requests/%d/reservation", reqID),
+	} {
+		if !strings.Contains(list, `href="`+href+`"`) {
+			t.Fatalf("choice %q missing:\n%s", href, list)
+		}
+		resp := s.request(http.MethodGet, href, nil, "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200: a choice on the nudge screen is a dead end", href, resp.StatusCode)
+		}
+		responseBody(t, resp)
+	}
+	// The bare request is not one of them: at 'processing' it has no hold
+	// control and no release control either.
+	if strings.Contains(list, fmt.Sprintf(`href="/requests/%d"`, reqID)) {
+		t.Fatalf("a choice still points at the request itself:\n%s", list)
+	}
+}

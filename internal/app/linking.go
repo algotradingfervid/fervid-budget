@@ -671,6 +671,82 @@ func (a *App) requestReassign(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// Holding a request, and the reservation that has been open too long (L7, Q6).
+//
+// A hold is the one pause in the whole flow that is not a decision: nothing is
+// rejected, nothing is released, the request simply stops being payable until
+// the question Accounts asked is answered. It is therefore a state of the
+// request screen rather than a screen of its own — the requester reads the
+// question where they read everything else, and answers in the same comment box.
+//
+// L7 is the rule underneath: the request stays 'approved', so the queue's own
+// availability test (approved · unclaimed · not on hold) takes it out of the
+// takeable set without inventing a status for it. Only payment:hold lifts it.
+// ---------------------------------------------------------------------------
+
+// requestHold pauses payment with the question that caused it. The reason is
+// mandatory in the store, so an empty one is refused whether it arrives from
+// the sheet or from a script.
+func (a *App) requestHold(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := a.st.HoldRequest(r.Context(), auth.CurrentUser(r), req.ID, r.FormValue("reason")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+}
+
+// requestUnhold puts it back in the queue. No reason is required: the hold
+// itself is the thing that needed explaining, and lifting it is answering the
+// question rather than asking a new one.
+func (a *App) requestUnhold(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := a.st.UnholdRequest(r.Context(), auth.CurrentUser(r), req.ID); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+}
+
+// requestStale is the 26-hour nudge (Q6). Nothing here releases anything and
+// nothing on the screen is automatic: a reservation that has been open a day
+// may well be a transfer already moving through a bank portal, so the screen
+// only names the four things a person may decide to do next.
+//
+// Loaded through loadViewableRequest for the same reason the release screen is:
+// holding payment:process is permission to work the queue, not permission to
+// read a request outside the caller's data scope (Q5/R6).
+func (a *App) requestStale(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	// Off 'processing' every sentence on this screen is false — there is no
+	// holder to name, no elapsed time to count and no reservation to give up.
+	if req.Status != "processing" || req.ProcessingBy == nil {
+		a.respondError(w, r, http.StatusConflict, "This request is not reserved by anyone.", nil)
+		return
+	}
+	trail, terr := a.mergedTrail(r, req.ID, 0)
+	if terr != nil {
+		a.respondStoreError(w, r, terr)
+		return
+	}
+	a.render(w, r, "reservation_stale", PageData{
+		Title:       "Reserved too long",
+		Request2:    a.withHolderName(r, req),
+		Audit:       trail,
+		ReserveMine: heldByCaller(req, auth.CurrentUser(r).ID),
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Display helpers. Registered in the FuncMap, so a time or an amount is spelled
 // for a person in exactly one place.
 // ---------------------------------------------------------------------------
@@ -707,6 +783,25 @@ func reservedLabel(t *time.Time) string {
 		return hhmm(t)
 	}
 	return since(t)
+}
+
+// stale is the predicate reservedLabel switches on, exposed on its own so a row
+// that has crossed the one-day mark can be linked to the nudge screen (Q6)
+// rather than merely labelled with the elapsed hours. The count in
+// LinkableSet.Counts is an aggregate over the whole scope and cannot say which
+// row it means; this can.
+func stale(t *time.Time) bool {
+	return t != nil && time.Since(*t) >= store.StaleReservation
+}
+
+// activeHold is the hold as a reader experiences it, rather than the column.
+// Every writer that moves a request off 'approved' clears the hold, so the two
+// are the same thing on a well-formed row — but the pill, the waiting line and
+// the release control all lie the moment they disagree, and a row written
+// before that rule existed is exactly when they would. Asking one question in
+// one place is what keeps the answer from drifting between them.
+func activeHold(req store.Request) bool {
+	return req.OnHold && req.Status == "approved"
 }
 
 func subPaise(a, b int64) int64 { return a - b }
@@ -747,7 +842,9 @@ func trailAction(e store.AuditEntry) string {
 // two things is how they drift.
 func auditTone(action string) string {
 	switch action {
-	case "submit", "reraise", "process", "reassign", "approval_reassign":
+	// "unhold" sits with the reservation movements: lifting a hold puts the
+	// request back in the takeable queue, which is the same kind of event.
+	case "submit", "reraise", "process", "reassign", "approval_reassign", "unhold":
 		return "brand"
 	case "approve", "settle", "accept_partial", "record_payment":
 		return "ok"

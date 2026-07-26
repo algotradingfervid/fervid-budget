@@ -393,6 +393,22 @@ type Waiting struct {
 
 func waitingOn(req store.Request, viewerID int64) Waiting {
 	you := Waiting{Text: "Waiting on you", Class: "you"}
+	// A hold is not a status — the request stays 'approved' so the queue's own
+	// availability test takes it out of the takeable set (L7) — but it is the
+	// only thing anybody is waiting on while it lasts. It therefore answers
+	// before the status does, or a held request would read "Waiting on
+	// Accounts" while Accounts is the one waiting.
+	//
+	// activeHold, not req.OnHold: answering before the status is only right
+	// while 'approved' is the status. On anything else there is a real decision
+	// pending, and hiding it behind the hold would take the approvals queue's
+	// answer away from the one person who owes it.
+	if activeHold(req) {
+		if req.RequesterID == viewerID {
+			return you
+		}
+		return Waiting{Text: "Waiting on " + req.RequesterName + " to clarify"}
+	}
 	switch req.Status {
 	case "pending", "cancellation_requested":
 		if req.ManagerID == viewerID {
@@ -1037,13 +1053,18 @@ func amountValue(paise int64) string {
 // threadDot and threadGlyph decorate one line of the merged thread. Kind wins
 // over Action: a comment is shown as the person who wrote it, whatever the
 // audit called the event behind it.
+//
+// The hold pair is here because the hold lives on this stream, not on a trail
+// of its own: request-on-hold.html renders it as a warn ⏸, and "unhold" is a
+// return to the takeable queue, which is what auditTone tones "brand". The two
+// helpers describe the same two events and have to agree about them.
 func threadDot(e store.ThreadEntry) string {
 	switch e.Action {
-	case "submit", "reraise":
+	case "submit", "reraise", "unhold":
 		return "brand"
 	case "approve":
 		return "ok"
-	case "return", "cancel_request", "cancel_decline":
+	case "return", "cancel_request", "cancel_decline", "hold":
 		return "warn"
 	case "reject", "cancel", "withdraw":
 		return "bad"
@@ -1070,8 +1091,10 @@ func threadGlyph(e store.ThreadEntry) string {
 		return "✕"
 	case "update":
 		return "✎"
-	case "cancel", "cancel_request", "cancel_decline":
+	case "cancel", "cancel_request", "cancel_decline", "hold":
 		return "⏸"
+	case "unhold":
+		return "◷"
 	default:
 		return "·"
 	}

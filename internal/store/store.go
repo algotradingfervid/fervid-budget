@@ -1113,7 +1113,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		COALESCE(SUM(CASE WHEN r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0 THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0 THEN COALESCE(r.approved_amount, r.amount) ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.status='processing' THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN r.on_hold=1 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.on_hold=1 AND r.status='approved' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.status='partial_review' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.status IN ('completed','completed_partial') THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.status='processing' AND r.processing_by=? THEN 1 ELSE 0 END),0),
@@ -1148,7 +1148,11 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	case "processing":
 		q += `r.status='processing'`
 	case "hold":
-		q += `r.on_hold=1`
+		// A hold pauses an approved request and every writer that moves a
+		// request off 'approved' clears it, so the status test is belt and
+		// braces: it stops a row written before that rule existed from sitting
+		// in this tab for ever, being offered a reply that can change nothing.
+		q += `r.on_hold=1 AND r.status='approved'`
 	case "partial_review":
 		q += `r.status='partial_review'`
 	case "paid":

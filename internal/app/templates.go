@@ -705,7 +705,13 @@ const templates = `
         <td class="c" data-label="Action">
           {{if .OnHold}}<a class="btn small" href="/requests/{{.ID}}">Read reply</a>
           {{else if eq .Status "partial_review"}}<a class="btn small outline" href="/requests/{{.ID}}/partial-review">View</a>
-          {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID)}}<a class="btn small" href="/payments/new?request={{.ID}}">Resume</a>
+          {{/* Past the one-day mark the mockup's own Resume goes to
+               accounts-stale-processing.html, not back to the form: the nudge
+               screen is the only place that names what may be done about a
+               reservation this old, and this row is the only thing that knows
+               which reservation it is. The count in the banner above is an
+               aggregate and cannot. */}}
+          {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID)}}<a class="btn small" href="{{if stale .ProcessingAt}}/requests/{{.ID}}/reservation/stale{{else}}/payments/new?request={{.ID}}{{end}}">Resume</a>
           {{else if and .ProcessingBy ($.Perms.Can "reservation" "reassign")}}<a class="btn small outline" href="/requests/{{.ID}}/reservation">Reassign</a>
           {{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}
         </td>
@@ -1025,6 +1031,82 @@ const templates = `
   <li><div class="tl-body muted">No reservation history yet.</div></li>
   {{end}}
 </ol>
+{{template "bottom" .}}
+{{end}}
+
+{{/* Q6 — the 26-hour nudge, mockups/screens/accounts-stale-processing.html.
+
+     Nothing on this screen releases anything, and nothing about it is
+     automatic. An automatic release would let a second accountant pay an
+     invoice that is already moving through a bank portal, so the reminder
+     nudges and a person decides — which is why the whole page is one .a-list of
+     four choices and no default.
+
+     The mockup's data-for="admin" bar is server-side gating here, as
+     everywhere: "Carry on" is the holder's, "Release it" needs the holder plus
+     reservation:release, "Hand it to a colleague" needs reservation:reassign
+     and "Put it on hold" needs payment:hold. A choice the reader could not take
+     is not shown greyed out — it is not shown. */}}
+{{define "reservation_stale"}}
+{{template "top" .}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">◷</span>
+  <div>
+    <b>This has been reserved by {{if .ReserveMine}}you{{else}}{{.Request2.ProcessingByName}}{{end}} for {{since .Request2.ProcessingAt}}</b>
+    <p>A reminder went out at the one-day mark. Nothing is released automatically — a transfer may
+      already be under way, so only you or an authorised colleague can act.</p>
+  </div>
+</div>
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money (approvedOf .Request2)}}</span></div>
+  <h1>{{.Request2.Vendor}}{{if .Request2.ShortTitle}} — {{.Request2.ShortTitle}}{{end}}</h1>
+  <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Request2.Project}} · {{.Request2.Project}}{{if .Request2.Head}} / {{.Request2.Head}}{{end}}{{end}}{{if .Request2.NeededBy}} · needed by {{dateLong .Request2.NeededBy}}{{end}}</p>
+  <div class="rh-status">
+    <span class="pill processing">Processing — {{.Request2.ProcessingByName}}</span>
+    <span class="waiting">Reserved by {{if .ReserveMine}}you{{else}}{{.Request2.ProcessingByName}}{{end}} since {{datep .Request2.ProcessingAt}}</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Pick one</h2></div>
+  <div class="a-list">
+    {{if and .ReserveMine (.Perms.Can "payment" "create")}}<a href="/payments/new?request={{.Request2.ID}}"><span class="al-main"><b>Carry on and record the payment</b><small>Opens the payment form with your reservation intact</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
+    {{/* The store lets a non-holder release when the caller resolved
+         reservation:reassign — taking work off somebody is that verb — so an
+         administrator clearing a colleague's stale reservation is offered the
+         choice the store would honour, rather than having to infer it from the
+         reassign entry that happens to share this href. */}}
+    {{if and (.Perms.Can "reservation" "release") (or .ReserveMine (.Perms.Can "reservation" "reassign"))}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Release it</b><small>Requires a reason and confirming no payment was initiated</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
+    {{if .Perms.Can "reservation" "reassign"}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Hand it to a colleague</b><small>Stays reserved, assigned to them, with your reason recorded</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
+    {{/* A hold pauses an approved request, and this screen only exists while the
+         request is reserved — so the first step is the release screen, not the
+         request. The mockup links straight to the on-hold state; sending the
+         reader there would land them on a page whose hold control is gated off. */}}
+    {{if .Perms.Can "payment" "hold"}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Put it on hold</b><small>If you are waiting on the requester for something — release the reservation first</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
+  </div>
+</div>
+
+<div class="section-head"><h2>Who has been told</h2></div>
+<ol class="thread">
+  {{range .Audit}}
+  <li>
+    <span class="tl-dot {{auditTone .Action}}" aria-hidden="true">{{auditGlyph .Action}}</span>
+    <div class="tl-head"><b>{{.ActorName}} {{auditPhrase .Action}}</b><time>{{date .CreatedAt}}</time></div>
+    <div class="tl-body">{{trailBody .}}</div>
+  </li>
+  {{else}}
+  <li><div class="tl-body muted">Nothing has happened on this request yet.</div></li>
+  {{end}}
+</ol>
+
+{{if .Perms.Can "reservation" "reassign"}}
+<div class="action-bar">
+  <span class="ab-note d-only">Administrators can force a reassignment.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="/requests/{{.Request2.ID}}/reservation">Reassign with reason</a>
+</div>
+{{end}}
 {{template "bottom" .}}
 {{end}}
 
@@ -2141,7 +2223,12 @@ const templates = `
   <p class="rh-meta">{{typeLabel .Request2.Type}}{{if .Request2.Project}} · {{.Request2.Project}}{{if .Request2.Head}} / {{.Request2.Head}}{{end}}{{end}} · raised by {{.Request2.RequesterName}} on {{date .Request2.CreatedAt}}</p>
   <div class="rh-status">
     {{if .Request2.Urgent}}<span class="pill urgent">Urgent</span>{{end}}
-    <span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    {{/* L7: a hold leaves the status 'approved' so the queue's availability
+         test drops it out of the takeable set without a status of its own.
+         The pill has to say what is true anyway — a screen reading "Approved —
+         awaiting payment" over a banner saying payment is blocked is a lie
+         either the reader or the accountant acts on. */}}
+    {{if activeHold .Request2}}<span class="pill hold">On hold</span>{{else}}<span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>{{end}}
     {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
   </div>
 </div>
@@ -2158,13 +2245,32 @@ const templates = `
 {{template "top" .}}
 {{template "request_head" .}}
 
-{{if and (eq .Request2.RequesterID .User.ID) (eq .Request2.Status "approved")}}
+{{/* Not while the request is on hold. mockups/screens/request-on-hold.html
+     carries exactly one banner in that state, and stacking this one above it
+     tells the requester that "payment freezes while your approver decides" when
+     the approver is deciding nothing — Accounts is holding it, and the banner
+     below says so. */}}
+{{if and (eq .Request2.RequesterID .User.ID) (eq .Request2.Status "approved") (not (activeHold .Request2))}}
 <div class="banner locked">
   <span class="b-ico" aria-hidden="true">🔒</span>
   <div>
     <b>Approved requests are locked</b>
     <p>You can no longer edit this. If it should not be paid, ask for it to be cancelled — payment
       freezes while your approver decides.</p>
+  </div>
+</div>
+{{end}}
+{{/* L7 — mockups/screens/request-on-hold.html. The hold is a state of this
+     screen rather than a screen of its own: the question Accounts asked belongs
+     where the requester already reads everything about their request, and they
+     answer it in the comment box the thread already carries. */}}
+{{if activeHold .Request2}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">⏸</span>
+  <div>
+    <b>This request is on hold</b>
+    <p>“{{.Request2.HoldReason}}”</p>
+    <p>Payment is blocked until Accounts lifts the hold.</p>
   </div>
 </div>
 {{end}}
@@ -2257,7 +2363,11 @@ const templates = `
 {{template "request_thread" .}}
 
 {{$mine := eq .Request2.RequesterID .User.ID}}{{$mineToDecide := eq .Request2.ManagerID .User.ID}}
+{{$mayHold := .Perms.Can "payment" "hold"}}{{$held := activeHold .Request2}}
 <div class="action-bar">
+  {{/* The hold's own note. The mockup gives the hold state a bar of its own;
+       there is only ever one bar on this screen, so the note joins this one. */}}
+  {{if $held}}{{if $mayHold}}<span class="ab-note d-only">Releasing returns it to Approved — awaiting payment.</span>{{else}}<span class="ab-note d-only">Only Accounts can take this off hold.</span>{{end}}{{end}}
   <span class="row-end"></span>
   {{/* One action bar, not two: at phone width it is sticky to the bottom of the
        viewport, so a second one would sit on top of this. The payment link
@@ -2294,7 +2404,35 @@ const templates = `
   {{if and (eq .Request2.Status "partial_review") $mineToDecide (.Perms.Can "approval" "accept_partial")}}
     <a class="btn primary" href="/requests/{{.Request2.ID}}/partial-review">Decide the partial payment</a>
   {{end}}
+  {{/* L7: only Accounts holds and only Accounts lifts. "Keep on hold" is the
+       screen itself — the accountant read the answer and decided it was not
+       enough — so it links here rather than posting anything. */}}
+  {{if and $held $mayHold}}
+    <a class="btn outline" href="/requests/{{.Request2.ID}}">Keep on hold</a>
+    <form method="post" action="/requests/{{.Request2.ID}}/unhold"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Release hold</button></form>
+  {{end}}
+  {{if and (not $held) (eq .Request2.Status "approved") $mayHold}}
+    <button class="btn outline" type="button" data-open="hold-sheet">Put on hold</button>
+  {{end}}
 </div>
+
+{{/* Placing a hold has no mockup of its own — the approved design jumps
+     straight to the on-hold state — so the reason is captured in the same
+     .overlay > .sheet every other reason on this screen uses. The store
+     refuses an empty reason, which is what makes the asterisk true. */}}
+{{if and (not $held) (eq .Request2.Status "approved") $mayHold}}
+<div class="overlay" id="hold-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/hold">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="sh-head"><div><h2>Put {{.Request2.Number}} on hold</h2><p class="sh-sub">Payment is blocked until Accounts lifts it</p></div><button class="sh-close" type="button" data-close="hold-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="hold-reason">What do you need from the requester <span class="req" aria-hidden="true">*</span></label><textarea id="hold-reason" name="reason" required placeholder="They see this exactly as you write it."></textarea></div>
+      <p class="hint" style="margin:0">{{.Request2.RequesterName}} is asked to answer. Nobody in Accounts can reserve or pay this until you release it.</p>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="hold-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Put on hold</button></div>
+  </form>
+</div>
+{{end}}
 
 {{if and $mineToDecide (eq .Request2.Status "pending")}}{{template "request_sheets" .}}{{end}}
 {{template "bottom" .}}

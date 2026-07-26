@@ -854,7 +854,15 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 	if !canTransition(before.Status, "cancellation_requested") {
 		return fmt.Errorf("%w: a %s request cannot be sent for cancellation", ErrValidation, before.Status)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancellation_requested', cancel_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
+	// A hold only ever describes an approved request that Accounts has paused
+	// (L7). The moment the request leaves 'approved' the pause is meaningless —
+	// payment is frozen by the cancellation itself — and a hold left set here
+	// would outlive its own status, so the queue's hold tab and the detail
+	// screen's pill would both go on describing a request nobody is holding.
+	// Clearing it keeps the invariant simple: on_hold=1 implies status
+	// 'approved'. The reason is not lost; the audit row below carries the whole
+	// before/after snapshot.
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancellation_requested', cancel_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
 		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
@@ -902,7 +910,11 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 	if before.Status != "cancellation_requested" || !canTransition(before.Status, to) {
 		return fmt.Errorf("%w: there is no cancellation to decide on a %s request", ErrValidation, before.Status)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, to, note, id); err != nil {
+	// Same invariant as RequestCancellation: a hold belongs to an approved
+	// request. Accepting kills the request outright, and declining returns it to
+	// 'approved' from a state that already cleared the hold, so neither branch
+	// may leave one set.
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, to, note, id); err != nil {
 		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
@@ -943,7 +955,10 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 	if !canTransition(before.Status, "cancelled") {
 		return fmt.Errorf("%w: a %s request cannot be cancelled", ErrValidation, before.Status)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancelled', cancel_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
+	// A cancelled request is dead, so nothing may still be "on hold" on it: the
+	// hold tab would keep listing it and offering "Read reply" on a request no
+	// reply can change.
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancelled', cancel_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
 		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
