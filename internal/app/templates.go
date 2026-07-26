@@ -763,6 +763,151 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The manager's partial review — mockups/screens/payment-partial-review.html.
+
+     This is the one settlement Accounts cannot close on its own, so the screen
+     puts the whole question on one page: what was approved, what left the bank,
+     what is still owed, why Accounts thinks that is legitimate, and the payment
+     itself — read-only, because a recorded payment is never amended (S12).
+
+     Two decisions, each in its own .overlay > .sheet. Both are permanent in
+     different directions: accepting writes the balance off for good (G14), and
+     raising a concern is a line in the trail rather than a chat message. An
+     inline disclosure would offer either one with a shrug.
+
+     The mockup's data-for / data-not-for persona attributes are prototype
+     scaffolding. The action bar is chosen here, server-side, on the very
+     permission the decision routes are gated by — never hidden in the browser,
+     which hides nothing from a hand-rolled POST. */}}
+{{define "partial_review"}}
+{{template "top" .}}
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money (approvedOf .Request2)}}</span></div>
+  <h1>{{.Request2.Vendor}} — {{.Request2.ShortTitle}}</h1>
+  <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Request2.Project}} · {{.Request2.Project}}{{if .Request2.Head}} / {{.Request2.Head}}{{end}}{{end}}{{if .Request2.ApprovedAt}} · approved {{datep .Request2.ApprovedAt}}{{end}}</p>
+  {{/* The same status pill and waiting line every other screen uses, so the
+       queue, the request and this page cannot give three answers to "whose
+       move is it". */}}
+  <div class="rh-status">
+    <span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
+  </div>
+</div>
+
+<div class="compare" style="margin-bottom:14px">
+  <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
+  <div class="cmp-row"><span class="l">Paid on {{dateLong .Payment.PaidOn}}</span><span class="v">{{money .Payment.Amount}}</span></div>
+  <div class="cmp-row diff"><span class="l">Still owed to the vendor</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+</div>
+
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>{{.Payment.EnteredByName}} marked this a genuine partial payment</b>
+    <p>“{{.Payment.PartialReason}}”</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>The payment that was recorded</h2><span class="pill neutral no-dot">Cannot be edited</span></div>
+  <dl class="dl">
+    <div><dt>Amount paid</dt><dd class="big">{{money .Payment.Amount}}</dd></div>
+    <div><dt>Paid on</dt><dd>{{dateLong .Payment.PaidOn}}</dd></div>
+    <div><dt>Mode</dt><dd>{{paymentMode .Payment.PaymentMode}}</dd></div>
+    {{if .Payment.ReferenceNo}}<div><dt>Reference</dt><dd class="num">{{.Payment.ReferenceNo}}</dd></div>{{end}}
+    <div><dt>Recorded by</dt><dd>{{.Payment.EnteredByName}} at {{date .Payment.CreatedAt}}</dd></div>
+    {{if and .Attachments (.Perms.Can "attachment" "view")}}<div><dt>Proof</dt><dd>{{range .Attachments}}<a href="/attachments/{{.ID}}">{{.OriginalName}}</a> {{end}}</dd></div>{{end}}
+  </dl>
+</div>
+
+{{/* One stream, both entities: the request's own history, the payment's and the
+     words people wrote, interleaved oldest-first by the handler — two blocks
+     would sink every comment below every event whatever time it was written. */}}
+<div class="section-head"><h2>History and conversation</h2></div>
+<ol class="thread">
+  {{range .Trail}}
+  {{if .Comment}}
+  <li class="is-comment{{if eq .ActorID $.User.ID}} is-me{{end}}">
+    <span class="tl-dot" aria-hidden="true">{{initials .ActorName}}</span>
+    <div class="tl-head"><b>{{.ActorName}}</b><time>{{date .CreatedAt}}</time></div>
+    <div class="tl-body"><p>{{.Body}}</p></div>
+  </li>
+  {{else}}
+  <li>
+    <span class="tl-dot {{auditTone .Action}}" aria-hidden="true">{{auditGlyph .Action}}</span>
+    <div class="tl-head"><b>{{.ActorName}} {{auditPhrase .Action}}</b><time>{{date .CreatedAt}}</time></div>
+    <div class="tl-body">{{.Body}}</div>
+  </li>
+  {{end}}
+  {{end}}
+</ol>
+
+{{if .Perms.Can "request" "comment"}}
+<form class="comment-box" method="post" action="/requests/{{.Request2.ID}}/comment">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{/* A reply asked mid-decision comes back to the decision. */}}
+  <input type="hidden" name="return_to" value="partial-review">
+  <label for="cmt" class="flabel">Reply to Accounts</label>
+  <textarea id="cmt" name="body" placeholder="Ask {{.Payment.EnteredByName}} something before you decide." required></textarea>
+  <div class="cb-actions"><span class="row-end"></span><button class="btn primary small" type="submit">Post comment</button></div>
+</form>
+{{end}}
+
+{{/* Two questions, not one: may this person accept a shortfall at all, and is
+     this shortfall theirs to accept. The request was routed to one manager and
+     the store refuses everybody else, so the bar offers the decision to exactly
+     the person who can carry it out. */}}
+{{if and (eq .User.ID .Request2.ManagerID) (.Perms.Can "approval" "accept_partial")}}
+<div class="action-bar">
+  <span class="ab-note d-only">No further payment can be attached either way.</span>
+  <span class="row-end"></span>
+  <button class="btn outline" type="button" data-open="concern-sheet">Raise a concern</button>
+  {{/* The mockup's green .btn.approve has no rule in fervid-ds.css, so the
+       accept is a plain .btn.primary like every other button in this file. */}}
+  <button class="btn primary" type="button" data-open="close-sheet">Accept and close</button>
+</div>
+
+<div class="overlay" id="close-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/accept-partial">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="sh-head"><div><h2>Accept {{money .Payment.Amount}} and close?</h2><p class="sh-sub">{{.Request2.Number}} · {{money (sub (approvedOf .Request2) .Payment.Amount)}} will never be paid against this request</p></div><button class="sh-close" type="button" data-close="close-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="compare">
+        <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
+        <div class="cmp-row"><span class="l">Paid and accepted</span><span class="v">{{money .Payment.Amount}}</span></div>
+        <div class="cmp-row diff"><span class="l">Written off from this request</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+      </div>
+      <p class="hint" style="margin:0">The request closes as <b>Completed — partial accepted</b>. If the balance is still due later, {{.Request2.RequesterName}} raises a new request for {{money (sub (approvedOf .Request2) .Payment.Amount)}}.</p>
+      <div class="field"><label for="cl-note">Note <span class="opt">optional</span></label><textarea id="cl-note" name="note" placeholder="Recorded in the history and visible to everyone."></textarea></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="close-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Accept and close</button></div>
+  </form>
+</div>
+
+<div class="overlay" id="concern-sheet" hidden>
+  <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/raise-concern">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="sh-head"><div><h2>Raise a concern</h2><p class="sh-sub">The request stays open as Partial — under discussion</p></div><button class="sh-close" type="button" data-close="concern-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-body stack-12">
+      <div class="field"><label for="cn-reason">What is wrong <span class="req" aria-hidden="true">*</span></label><textarea id="cn-reason" name="comment" required placeholder="Accounts can reply in the conversation, but the recorded payment cannot be changed."></textarea></div>
+      <div class="banner warn" style="margin:0"><span class="b-ico" aria-hidden="true">i</span><div><b>This does not reverse anything</b><p>The {{money .Payment.Amount}} has left the bank. Raising a concern keeps the request open so the two of you can agree what happens next.</p></div></div>
+    </div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="concern-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Raise concern</button></div>
+  </form>
+</div>
+{{else}}
+<div class="action-bar">
+  {{/* Only promise the reply the box above actually offers: a reader holding
+       request:view and nothing else cannot comment, and should not be told
+       otherwise on a page that renders no comment box. */}}
+  <span class="ab-note d-only">{{.Request2.ManagerName}} decides{{if .Perms.Can "request" "comment"}}. You can still comment.{{else}} this one.{{end}}</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="/requests/{{.Request2.ID}}">Back</a>
+</div>
+{{end}}
+{{template "bottom" .}}
+{{end}}
+
 {{define "months"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Month control</div><h1>Monthly Plans</h1><p class="sub muted">Create each month, review prior months, and open locked history whenever needed.</p></div><a class="btn outline" href="/reports/monthly">Reports</a></section>
@@ -2022,6 +2167,12 @@ const templates = `
   {{end}}
   {{if and (eq .Request2.Status "cancellation_requested") $mineToDecide (.Perms.Can "approval" "cancel")}}
     <a class="btn primary" href="/requests/{{.Request2.ID}}/cancellation">Decide the cancellation</a>
+  {{end}}
+  {{/* S11: the partial review is the manager's screen, and the Accounts queue
+       that also links to it is gated on payment:process — a verb a manager does
+       not hold. Without this the decider has no way in. */}}
+  {{if and (eq .Request2.Status "partial_review") $mineToDecide (.Perms.Can "approval" "accept_partial")}}
+    <a class="btn primary" href="/requests/{{.Request2.ID}}/partial-review">Decide the partial payment</a>
   {{end}}
 </div>
 

@@ -752,7 +752,15 @@ func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+	dest := fmt.Sprintf("/requests/%d", req.ID)
+	// The partial review is a decision screen, and a manager who asks Accounts a
+	// question mid-decision should land back on the decision. The field carries
+	// a token, never a URL: the destination is built from the id this handler
+	// already loaded, so nothing a form says can redirect anybody off-site.
+	if r.FormValue("return_to") == "partial-review" && req.Status == "partial_review" {
+		dest += "/partial-review"
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
 // The cancellation flow (G1, G2, G3). An approved request cannot be withdrawn

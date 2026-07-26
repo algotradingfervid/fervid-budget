@@ -138,6 +138,11 @@ type PageData struct {
 	Settlement  SettlementPreview
 	ReserveMine bool
 	Holder      string
+	// Trail is the one screen whose history spans two entities. Thread is the
+	// request's merged stream and cannot carry the payment's audit rows, so the
+	// partial review merges the two-entity trail with the conversation itself
+	// and renders the result as a single chronological `.thread`.
+	Trail []TrailLine
 	// Config is the Configuration screen's values. It is deliberately not
 	// Settings: Settings is what a *form* consults about the rules it must
 	// follow, Config is what the screen that edits those rules renders from.
@@ -366,6 +371,14 @@ func (a *App) routes(mux *http.ServeMux) {
 	// it changes anything: it is pure and writes nothing (D8).
 	mux.Handle("POST /requests/{id}/settlement-preview", a.auth.RequirePermission("payment", "settle", http.HandlerFunc(a.withCSRF(a.settlementPreview))))
 	mux.Handle("GET /accounts-queue", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.accountsQueue)))
+	// A partial settlement is the one outcome Accounts cannot close on its own,
+	// so the manager gets a screen of their own (S11). Reading it needs only
+	// request:view — everyone on the thread may follow what is happening — while
+	// both decisions are gated on approval:accept_partial, because accepting a
+	// shortfall and disputing it are two answers to the same question.
+	mux.Handle("GET /requests/{id}/partial-review", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestPartialReview)))
+	mux.Handle("POST /requests/{id}/accept-partial", a.auth.RequirePermission("approval", "accept_partial", http.HandlerFunc(a.withCSRF(a.requestAcceptPartial))))
+	mux.Handle("POST /requests/{id}/raise-concern", a.auth.RequirePermission("approval", "accept_partial", http.HandlerFunc(a.withCSRF(a.requestRaiseConcern))))
 	// One detail screen for every audience: the action bar changes on
 	// permission, the page does not. Each decision posts to its own route so
 	// the gate is the verb the decision needs, not the one that opened the page.

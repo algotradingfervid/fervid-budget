@@ -360,6 +360,137 @@ func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID i
 }
 
 // ---------------------------------------------------------------------------
+// The manager's partial review (S11, G14). Accounts can close a request that
+// settles; the one outcome it cannot close is money still owed, so that request
+// stops here and a person decides. Both decisions are permanent and neither
+// moves any money: accepting writes off the balance, raising a concern keeps
+// the request open. Nothing on this screen can amend the payment (S12).
+// ---------------------------------------------------------------------------
+
+// requestPartialReview renders the screen. The trail spans two entities — the
+// request and the payment recorded against it — which is why it is built from
+// mergedTrail rather than the request's own thread.
+func (a *App) requestPartialReview(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	// The screen exists only while money is genuinely still owed. Off that one
+	// status every sentence on it is false — "Still owed to the vendor ₹0.00",
+	// a quoted reason nobody gave, and two sheets offering to decide something
+	// already decided — so the request itself answers instead.
+	if req.Status != "partial_review" {
+		http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+		return
+	}
+	pay, err := a.st.PaymentForRequest(r.Context(), req.ID)
+	if err != nil {
+		// No payment means nothing to review. Say so in words rather than
+		// rendering a screen whose whole subject is missing.
+		if errors.Is(err, store.ErrNotFound) {
+			a.respondError(w, r, http.StatusNotFound,
+				"No payment has been recorded against this request yet, so there is nothing to review.", err)
+			return
+		}
+		a.respondStoreError(w, r, err)
+		return
+	}
+	comments, err := a.st.RequestComments(r.Context(), req.ID)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	trail, err := a.mergedTrail(r, req.ID, pay.ID)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	// The bank advice sits in the read-only card, because "is this shortfall
+	// legitimate" is a question about the proof as much as the figures.
+	atts, err := a.st.Attachments(r.Context(), pay.ID)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "partial_review", PageData{
+		Title:       "Partial payment " + req.Number,
+		Request2:    req,
+		Payment:     pay,
+		Attachments: atts,
+		Trail:       partialTrail(trail, comments),
+	})
+}
+
+// TrailLine is one line of the partial review's single stream. The screen is a
+// decision, and a decision is read as a story: three sources — the request's
+// audit, the payment's audit and the conversation — have to be interleaved by
+// time, because rendering them as two blocks sinks every comment below every
+// event and puts a message written on Monday under a payment made on Friday.
+type TrailLine struct {
+	// Comment distinguishes the words somebody wrote from the events the system
+	// recorded; they are the same stream but not the same markup.
+	Comment   bool
+	Action    string
+	ActorID   int64
+	ActorName string
+	Body      string
+	CreatedAt time.Time
+}
+
+// partialTrail merges the two-entity audit trail with the conversation, oldest
+// first. It drops the audit rows the conversation already renders in full:
+// commenting, attaching and raising a concern each write an audit line as well
+// as the thing itself — RaiseConcern copies the whole comment into its summary —
+// so keeping both would print those sentences twice. It is the same rule
+// store.RequestThread applies to the request's own stream.
+func partialTrail(entries []store.AuditEntry, comments []store.RequestComment) []TrailLine {
+	out := make([]TrailLine, 0, len(entries)+len(comments))
+	for _, e := range entries {
+		if e.EntityType == "payment_request" && (e.Action == "comment" || e.Action == "attach" || e.Action == "concern") {
+			continue
+		}
+		var actorID int64
+		if e.ActorID != nil {
+			actorID = *e.ActorID
+		}
+		out = append(out, TrailLine{Action: trailAction(e), ActorID: actorID,
+			ActorName: e.ActorName, Body: trailBody(e), CreatedAt: e.CreatedAt})
+	}
+	for _, c := range comments {
+		out = append(out, TrailLine{Comment: true, ActorID: c.AuthorID,
+			ActorName: c.AuthorName, Body: c.Body, CreatedAt: c.CreatedAt})
+	}
+	// Stable, so an event and a comment sharing one second keep the order they
+	// were merged in — the audit rows arrive already tie-broken on id, which is
+	// the only strictly monotonic record of what happened first.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
+}
+
+// requestAcceptPartial closes the request as completed_partial — a terminal
+// state deliberately distinct from a clean completed (G14), so a balance that
+// was written off stays visible for the life of the record.
+func (a *App) requestAcceptPartial(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	if err := a.st.AcceptPartial(r.Context(), auth.CurrentUser(r), id, r.FormValue("note")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
+}
+
+// requestRaiseConcern keeps the request in review and puts the manager's words
+// in the conversation. It reverses nothing: the money has already left.
+func (a *App) requestRaiseConcern(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	if err := a.st.RaiseConcern(r.Context(), auth.CurrentUser(r), id, r.FormValue("comment")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d/partial-review", id), http.StatusSeeOther)
+}
+
+// ---------------------------------------------------------------------------
 // Display helpers. Registered in the FuncMap, so a time or an amount is spelled
 // for a person in exactly one place.
 // ---------------------------------------------------------------------------

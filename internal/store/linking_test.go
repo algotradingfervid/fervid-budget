@@ -611,6 +611,42 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 	if comments != 1 {
 		t.Fatalf("concern comment not persisted: %d", comments)
 	}
+	// A concern writes a comment and an audit row whose summary is that same
+	// comment, so the merged thread has to print the manager's words once.
+	thread, err := s.RequestThread(ctx, concerned)
+	if err != nil {
+		t.Fatalf("thread: %v", err)
+	}
+	printed := 0
+	for _, e := range thread {
+		if strings.Contains(e.Title+e.Body, "Please confirm the balance timeline") {
+			printed++
+		}
+	}
+	if printed != 1 {
+		t.Fatalf("the concern appears %d times in the thread, want 1", printed)
+	}
+
+	// Both answers belong to the request's own manager. Holding the verb is not
+	// holding the request: ApproveRequest and decideRequest refuse a stranger
+	// here, and a balance written off for good is the last place to relax it.
+	notMine := settleToReview(4)
+	if err := s.AcceptPartial(ctx, acc, notMine, ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("accept by someone who is not the manager = %v, want ErrForbidden", err)
+	}
+	if err := s.RaiseConcern(ctx, acc, notMine, "Not mine to judge"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("concern by someone who is not the manager = %v, want ErrForbidden", err)
+	}
+	if got := requestStatus(t, s, ctx, notMine); got != "partial_review" {
+		t.Fatalf("status after an outsider's decision = %q, want partial_review", got)
+	}
+	var strayed int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM request_comments WHERE request_id=?`, notMine).Scan(&strayed); err != nil {
+		t.Fatal(err)
+	}
+	if strayed != 0 {
+		t.Fatalf("a refused concern still wrote %d comment(s)", strayed)
+	}
 }
 
 func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {

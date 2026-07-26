@@ -968,6 +968,18 @@ func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note st
 		return err
 	}
 	defer tx.Rollback()
+	// Whose decision this is, asked here and not only by the template. Holding
+	// approval:accept_partial says a person may accept a shortfall; it never
+	// says whose. ApproveRequest and decideRequest both refuse an actor who is
+	// not the request's own manager, and writing a balance off for good is the
+	// last place to relax that.
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if before.ManagerID != actor.ID {
+		return ErrForbidden
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='completed_partial', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='partial_review'`, id)
 	if err != nil {
 		return err
@@ -999,14 +1011,17 @@ func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment 
 		return err
 	}
 	defer tx.Rollback()
-	var status string
-	if err := tx.QueryRowContext(ctx, `SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrNotFound
-		}
+	before, err := requestInTx(ctx, tx, id)
+	if err != nil {
 		return err
 	}
-	if status != "partial_review" {
+	// Disputing a shortfall is the other half of accepting it, so it answers to
+	// the same owner: the manager the request was routed to, not everybody who
+	// happens to hold the verb.
+	if before.ManagerID != actor.ID {
+		return ErrForbidden
+	}
+	if before.Status != "partial_review" {
 		return fmt.Errorf("%w: only a partial-review request can receive a concern", ErrForbidden)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO request_comments(request_id,author_id,body) VALUES(?,?,?)`, id, actor.ID, comment); err != nil {

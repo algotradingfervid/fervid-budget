@@ -859,3 +859,155 @@ func TestPaymentDetailHeadTrailAndProofReadLikeTheMockup(t *testing.T) {
 		t.Fatalf("the trail prints the actor's name twice:\n%s", body)
 	}
 }
+
+// The manager's side of a partial settlement (S11, G14). Two decisions, each in
+// its own .overlay > .sheet, and the accept lands in a terminal state that is
+// visibly not a clean "completed".
+func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Review")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 9500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"}, "amount": {"60000.00"}, "vendor_payee": {"Nova Print Works"}, "settlement": {"partial"}, "partial_reason": {"Vendor delivered 700 of the 1,000 copies."}, "reference_no": {"N9912"}}
+	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, ""))
+	for _, want := range []string{
+		`class="req-head"`, `class="pill partial"`, `class="waiting you"`,
+		`class="compare"`, "Still owed to the vendor", "35,000.00",
+		`class="banner warn"`, "Vendor delivered 700 of the 1,000 copies.",
+		`class="pill neutral no-dot"`, "Cannot be edited",
+		`<ol class="thread">`, `class="comment-box"`,
+		`id="close-sheet"`, "Accept and close", "Completed — partial accepted",
+		`id="concern-sheet"`, "Raise a concern", "This does not reverse anything",
+		`class="overlay"`, `class="sheet"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("partial review missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "<details") {
+		t.Fatalf("partial review uses a <details> instead of a sheet:\n%s", body)
+	}
+	if strings.Count(body, `class="overlay"`) != 2 {
+		t.Fatalf("expected two sheets (accept and concern):\n%s", body)
+	}
+
+	// Raising a concern keeps it open and records the comment.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/raise-concern", reqID), url.Values{"comment": {"Confirm the balance timeline"}}), http.StatusSeeOther)
+	if got := requestStatusApp(t, s, reqID); got != "partial_review" {
+		t.Fatalf("status after concern = %q, want partial_review", got)
+	}
+	// Accepting closes it into the distinct terminal state (G14).
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", reqID), url.Values{"note": {"Balance invoiced separately."}}), http.StatusSeeOther)
+	if got := requestStatusApp(t, s, reqID); got != "completed_partial" {
+		t.Fatalf("status after accept = %q, want completed_partial (G14)", got)
+	}
+	after := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	if !strings.Contains(after, `class="pill completed-partial"`) || !strings.Contains(after, "Completed — partial accepted") {
+		t.Fatalf("accepted request does not render .pill.completed-partial:\n%s", after)
+	}
+
+	// Once the decision is made there is nothing left to decide, and the screen
+	// says so by not existing: it would otherwise offer "Accept ₹60,000 and
+	// close?" against a request that closed, over a balance of nothing.
+	gone := s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, "")
+	requireStatus(t, gone, http.StatusSeeOther)
+	if loc := gone.Header.Get("Location"); loc != fmt.Sprintf("/requests/%d", reqID) {
+		t.Fatalf("partial review of a closed request redirected to %q", loc)
+	}
+	_ = responseBody(t, gone)
+}
+
+// seedPartialReview takes one request all the way to partial_review through the
+// product, so every test below starts where the manager starts. The caller must
+// already be signed in as somebody who can reserve and settle.
+func (s *appTestServer) seedPartialReview(reqID, headID int64, reason string) {
+	s.t.Helper()
+	requireStatus(s.t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
+		"paid_on": {"2026-07-23"}, "amount": {"60000.00"}, "vendor_payee": {"Nova Print Works"},
+		"settlement": {"partial"}, "partial_reason": {reason}, "reference_no": {"N9912"}}
+	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
+}
+
+// TestPartialReviewDecisionsBelongToTheRequestsOwnManager is the ownership
+// proof. approval:accept_partial says a person may accept a shortfall; it never
+// says whose. Every other manager verb in the system — ApproveRequest,
+// ReturnRequest, DecideCancellation — refuses an actor who is not the request's
+// own manager, and writing off money permanently is not the exception.
+func TestPartialReviewDecisionsBelongToTheRequestsOwnManager(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Owner")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 9500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.seedPartialReview(reqID, headID, "Vendor delivered 700 of the 1,000 copies.")
+
+	// A second person holding every verb and seeing every request, who simply
+	// is not this request's manager.
+	s.seedColleague("other-manager@example.test", "Other Manager", "OtherManagerPass1")
+	s.login("other-manager@example.test", "OtherManagerPass1")
+
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, ""))
+	if strings.Contains(body, `class="overlay"`) || strings.Contains(body, `data-open="close-sheet"`) {
+		t.Fatalf("a decision that is not theirs was offered:\n%s", body)
+	}
+	if !strings.Contains(body, admin.Name+" decides.") {
+		t.Fatalf("the onlooker's action bar does not name the decider:\n%s", body)
+	}
+	// The server refuses it too, not only the template.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/raise-concern", reqID),
+		url.Values{"comment": {"Not mine to judge"}}), http.StatusForbidden)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", reqID),
+		url.Values{"note": {"Closing someone else's request"}}), http.StatusForbidden)
+	if got := requestStatusApp(t, s, reqID); got != "partial_review" {
+		t.Fatalf("status after an outsider's decision = %q, want partial_review", got)
+	}
+}
+
+// TestPartialReviewThreadIsOneChronologicalStream covers the two ways the trail
+// can lie: printing the story out of order, and printing the same sentence
+// twice because raising a concern writes both a comment and an audit row.
+func TestPartialReviewThreadIsOneChronologicalStream(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Stream")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 9500000)
+	// A comment written long before the payment. Its own timestamp is the only
+	// thing that may decide where in the story it belongs.
+	if _, err := s.st.DB().Exec(`INSERT INTO request_comments(request_id,author_id,body,created_at) VALUES(?,?,?,?)`,
+		reqID, admin.ID, "EARLYWORD the invoice is already with the vendor", "2026-07-01 09:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.seedPartialReview(reqID, headID, "Vendor delivered 700 of the 1,000 copies.")
+
+	path := fmt.Sprintf("/requests/%d/partial-review", reqID)
+	body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	early, paid := strings.Index(body, "EARLYWORD"), strings.Index(body, "recorded a payment")
+	if early < 0 || paid < 0 {
+		t.Fatalf("the thread is missing the comment or the payment event:\n%s", body)
+	}
+	if early > paid {
+		t.Fatalf("a comment written before the payment renders after it:\n%s", body)
+	}
+
+	// Raising a concern writes a comment and an audit row carrying the same
+	// words. The screen the concern lands on prints it once.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/raise-concern", reqID),
+		url.Values{"comment": {"CONCERNWORD confirm the balance timeline"}}), http.StatusSeeOther)
+	after := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	if n := strings.Count(after, "CONCERNWORD"); n != 1 {
+		t.Fatalf("the concern is printed %d times, want 1:\n%s", n, after)
+	}
+
+	// Replying mid-decision returns to the decision, rather than ejecting the
+	// manager to the request they were reading it from.
+	reply := s.postForm(fmt.Sprintf("/requests/%d/comment", reqID),
+		url.Values{"body": {"Noted, thank you."}, "return_to": {"partial-review"}})
+	requireStatus(t, reply, http.StatusSeeOther)
+	if loc := reply.Header.Get("Location"); loc != path {
+		t.Fatalf("reply from the partial review redirected to %q, want %q", loc, path)
+	}
+	_ = responseBody(t, reply)
+}

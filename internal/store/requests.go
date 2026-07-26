@@ -1126,8 +1126,11 @@ func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEnt
 	out := make([]ThreadEntry, 0, len(audit)+len(comments)+len(atts))
 	for _, a := range audit {
 		// The comment and attach events are rendered by their own richer
-		// entries below; keeping both would double every line.
-		if a.Action == "comment" || a.Action == "attach" {
+		// entries below; keeping both would double every line. A concern is the
+		// same case wearing a different verb: RaiseConcern writes a comment row
+		// and an audit row whose summary is that comment, so the manager's words
+		// would otherwise appear twice in one stream.
+		if a.Action == "comment" || a.Action == "attach" || a.Action == "concern" {
 			continue
 		}
 		var actorID int64
