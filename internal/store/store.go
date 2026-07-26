@@ -24,12 +24,17 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	// The pragmas ride on the DSN, not on a db.Exec: PRAGMA state is
+	// per-connection, and database/sql opens more connections on demand, so a
+	// single `db.Exec("PRAGMA …")` configures only whichever connection happened
+	// to serve it. Every later connection would then run with foreign keys off
+	// and no busy handler — the second is what makes concurrent reservations
+	// (ReserveRequest) fail with SQLITE_BUSY instead of waiting their turn.
+	// modernc.org/sqlite applies every _pragma query parameter to each new
+	// connection; without a "file:" prefix it strips the query before opening,
+	// so a path containing spaces still opens correctly.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec(`PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;`); err != nil {
-		db.Close()
 		return nil, err
 	}
 	if _, err := db.Exec(schemaSQL); err != nil {
@@ -707,6 +712,35 @@ func recordAuditTx(ctx context.Context, tx *sql.Tx, in AuditInput) error {
 	after, _ := json.Marshal(in.After)
 	_, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json,ip) VALUES(?,?,?,?,?,?,?,?,?)`, in.ActorID, in.ActorName, in.Action, in.EntityType, in.EntityID, in.Summary, nullJSON(before), nullJSON(after), in.IP)
 	return err
+}
+
+// ReserveRequest atomically moves an approved, unclaimed, not-on-hold request to
+// 'processing' reserved by actor. The single conditional UPDATE is the
+// concurrency guarantee: only the first committer matches, so a losing caller
+// sees RowsAffected()==0 and is told the request is unavailable (S2, S5, L8).
+func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests
+		SET status='processing', processing_by=?, processing_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND status='approved' AND processing_by IS NULL AND on_hold=0`, actor.ID, id)
+	if err != nil {
+		return classify(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: request is not available to process", ErrForbidden)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "process", EntityType: "payment_request", EntityID: &id, Summary: "Reserved request for processing", After: map[string]any{"processing_by": actor.ID}}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {

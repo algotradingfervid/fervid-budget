@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -180,5 +181,103 @@ func TestPaymentForRequestAndHistoricalFields(t *testing.T) {
 	}
 	if _, err := s.PaymentForRequest(ctx, 424242); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("PaymentForRequest(unlinked) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestReserveRequestMovesApprovedToProcessing(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+		t.Fatalf("status = %q, want processing", got)
+	}
+	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != acc.ID {
+		t.Fatalf("processing_by = %v, want %d", pb, acc.ID)
+	}
+	// Illegal source states are rejected (L11): a second reserve, and reserving a
+	// non-approved (e.g. still-pending) request, both fail.
+	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("double reserve = %v, want ErrForbidden", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET status='pending' WHERE id=?`, reqID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reserve pending = %v, want ErrForbidden", err)
+	}
+}
+
+func TestReserveRequestSkipsOnHoldRequests(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET on_hold=1 WHERE id=?`, reqID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reserve on-hold = %v, want ErrForbidden", err)
+	}
+}
+
+// TestReserveRequestIsAtomicUnderConcurrency is the S5 proof: many accountants
+// race to reserve one request; exactly one wins and the rest get ErrForbidden.
+func TestReserveRequestIsAtomicUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	_, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+
+	const racers = 8
+	accts := make([]User, racers)
+	for i := range accts {
+		id, err := s.CreateUser(ctx, fmt.Sprintf("racer%d@example.com", i), fmt.Sprintf("Racer %d", i), "hash", "admin", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if accts[i], err = s.UserByID(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, racers)
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = s.ReserveRequest(ctx, accts[i], reqID)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winner := -1
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			if winner != -1 {
+				t.Fatalf("more than one winner: %d and %d", winner, i)
+			}
+			winner = i
+		case errors.Is(err, ErrForbidden):
+		default:
+			t.Fatalf("racer %d unexpected error: %v", i, err)
+		}
+	}
+	if winner == -1 {
+		t.Fatal("no racer won the reservation")
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+		t.Fatalf("final status = %q, want processing", got)
+	}
+	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != accts[winner].ID {
+		t.Fatalf("processing_by = %v, want winner %d", pb, accts[winner].ID)
 	}
 }
