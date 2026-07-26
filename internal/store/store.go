@@ -1067,6 +1067,143 @@ func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
 	return tx.Commit()
 }
 
+// LinkablePaymentRequests powers the Accounts queue and the request picker.
+// Available is the S3 set — approved · unclaimed · not on hold — the only rows
+// that may be reserved. Unavailable is everything else the tab asked for that
+// the caller may see but not take. Both are searchable by number / requester /
+// payee / project / head / amount (S4). Counts always span the caller's scope.
+func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOptions) (LinkableSet, error) {
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	// Staleness is measured against an injected clock, never julianday('now'):
+	// a test must be able to decide what "26 hours ago" means. CURRENT_TIMESTAMP
+	// writes UTC in this format, so the cutoff compares as plain text.
+	staleCutoff := now.UTC().Add(-StaleReservation).Format("2006-01-02 15:04:05")
+	var out LinkableSet
+
+	scopeSQL, scopeArgs := "", []any(nil)
+	switch opts.Scope {
+	case "own":
+		scopeSQL, scopeArgs = ` AND r.requester_id=?`, []any{opts.ViewerID}
+	case "assigned":
+		scopeSQL, scopeArgs = ` AND r.manager_id=?`, []any{opts.ViewerID}
+	}
+
+	// Counts first: one aggregate pass over the scope, independent of the tab,
+	// the search and the limit. Stale reservations are counted here too, because
+	// the banner is rendered on tabs whose rows do not include them.
+	countQ := `SELECT
+		COALESCE(SUM(CASE WHEN r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0 THEN COALESCE(r.approved_amount, r.amount) ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='processing' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.on_hold=1 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='partial_review' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status IN ('completed','completed_partial') THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='processing' AND r.processing_by=? THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='processing' AND r.processing_by IS NOT NULL AND r.processing_by<>? THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='processing' AND r.processing_by=? AND r.processing_at IS NOT NULL AND r.processing_at<=? THEN 1 ELSE 0 END),0)
+		FROM payment_requests r WHERE 1=1` + scopeSQL
+	countArgs := append([]any{opts.ViewerID, opts.ViewerID, opts.ViewerID, staleCutoff}, scopeArgs...)
+	if err := s.db.QueryRowContext(ctx, countQ, countArgs...).Scan(
+		&out.Counts.Approved, &out.Counts.ApprovedAmount, &out.Counts.Processing,
+		&out.Counts.Hold, &out.Counts.PartialReview, &out.Counts.Paid,
+		&out.Counts.ReservedByMe, &out.Counts.ReservedByOthers, &out.Counts.StaleReservations); err != nil {
+		return out, err
+	}
+
+	q := `SELECT r.id, r.number, r.status, r.amount, r.approved_amount, COALESCE(r.vendor_payee,''),
+		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
+		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
+		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at
+		FROM payment_requests r
+		LEFT JOIN projects p ON p.id=r.project_id
+		LEFT JOIN heads h ON h.id=r.head_id
+		LEFT JOIN users pu ON pu.id=r.processing_by
+		JOIN users u ON u.id=r.requester_id
+		WHERE `
+	var args []any
+	switch opts.Status {
+	case "", "approved":
+		// The approved pool: what may be taken, plus what has been taken out of
+		// it. The picker needs the second half to render .co.is-taken rows rather
+		// than silently hiding a request someone is already paying.
+		q += `r.status IN ('approved','processing')`
+	case "processing":
+		q += `r.status='processing'`
+	case "hold":
+		q += `r.on_hold=1`
+	case "partial_review":
+		q += `r.status='partial_review'`
+	case "paid":
+		q += `r.status IN ('completed','completed_partial')`
+	default:
+		return out, fmt.Errorf("%w: unknown queue tab %q", ErrValidation, opts.Status)
+	}
+	q += scopeSQL
+	args = append(args, scopeArgs...)
+	if search := strings.ToLower(strings.TrimSpace(opts.Query)); search != "" {
+		q += ` AND (lower(r.number) LIKE ? ESCAPE '\' OR lower(u.name) LIKE ? ESCAPE '\' OR lower(COALESCE(r.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(h.name,'')) LIKE ? ESCAPE '\' OR CAST(r.amount AS TEXT) LIKE ? ESCAPE '\')`
+		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
+		needle := "%" + esc + "%"
+		args = append(args, needle, needle, needle, needle, needle, needle)
+	}
+	// CURRENT_TIMESTAMP is second-resolution, so a burst of approvals shares one
+	// timestamp; id breaks the tie and keeps the order stable.
+	q += ` ORDER BY r.approved_at, r.id`
+	if opts.Limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, opts.Limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r Request
+		var approved, processingBy, headID sql.NullInt64
+		var processingAt, approvedAt sql.NullTime
+		var onHold int
+		if err := rows.Scan(&r.ID, &r.Number, &r.Status, &r.Amount, &approved, &r.VendorPayee,
+			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
+			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
+			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt); err != nil {
+			return out, err
+		}
+		if approved.Valid {
+			v := approved.Int64
+			r.ApprovedAmount = &v
+		}
+		if processingBy.Valid {
+			v := processingBy.Int64
+			r.ProcessingBy = &v
+		}
+		if headID.Valid {
+			v := headID.Int64
+			r.HeadID = &v
+		}
+		if processingAt.Valid {
+			v := processingAt.Time
+			r.ProcessingAt = &v
+		}
+		if approvedAt.Valid {
+			v := approvedAt.Time
+			r.ApprovedAt = &v
+		}
+		r.OnHold = onHold == 1
+		// Availability is re-derived from the row, never from the tab, so no tab
+		// can ever hand the UI a "Take for processing" button it must not have.
+		if r.Status == "approved" && !processingBy.Valid && !r.OnHold {
+			out.Available = append(out.Available, r)
+		} else {
+			out.Unavailable = append(out.Unavailable, r)
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),

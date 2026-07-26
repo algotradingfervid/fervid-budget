@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // seedRequestParty creates the users, project, and head that request fixtures
@@ -655,4 +656,183 @@ func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatalf("reserve after unhold: %v", err)
 	}
+}
+
+func TestLinkablePaymentRequestsFilterAndSearch(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	linkable := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000) // approved, unclaimed, not held
+	held := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 600000, 600000)     // on hold → not takeable
+	reserved := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 700000, 700000) // reserved → not takeable
+	pending := seedApprovedRequest(t, s, ctx, 4, req.ID, mgrID, headID, 800000, 800000)  // not approved → invisible here
+	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET on_hold=1 WHERE id=?`, held); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, reserved); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET status='pending' WHERE id=?`, pending); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID})
+	if err != nil {
+		t.Fatalf("linkable: %v", err)
+	}
+	if len(all.Available) != 1 || all.Available[0].ID != linkable {
+		t.Fatalf("takeable set = %+v, want only request %d (S3)", all.Available, linkable)
+	}
+	// The taken/held rows are visible but never takeable — this is what the
+	// picker renders as .co.is-taken instead of silently hiding them.
+	if len(all.Unavailable) != 2 {
+		t.Fatalf("unavailable set = %+v, want the held and the reserved request", all.Unavailable)
+	}
+	for _, r := range all.Unavailable {
+		if r.ID == pending {
+			t.Fatal("a non-approved request leaked into the queue")
+		}
+	}
+
+	// Search narrows both sets, by number, payee and amount (S4).
+	byNumber, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Query: "PR-2026-000001"})
+	if err != nil || len(byNumber.Available) != 1 || byNumber.Available[0].ID != linkable {
+		t.Fatalf("search by number = %+v, err=%v", byNumber.Available, err)
+	}
+	byPayee, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Query: "Acme Landlord"})
+	if err != nil || len(byPayee.Available) != 1 {
+		t.Fatalf("search by payee = %+v, err=%v", byPayee.Available, err)
+	}
+	byAmount, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Query: "500000"})
+	if err != nil || len(byAmount.Available) != 1 {
+		t.Fatalf("search by amount = %+v, err=%v", byAmount.Available, err)
+	}
+	none, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Query: "nonexistent-xyz"})
+	if err != nil || len(none.Available) != 0 || len(none.Unavailable) != 0 {
+		t.Fatalf("search miss = %+v, err=%v", none, err)
+	}
+}
+
+// TestLinkablePaymentRequestsTabsCountsAndReserver builds one of every state the
+// accounts queue can show and asserts each .segmented tab, each .metric-strip
+// metric and the reserver identity the rows print. Without these the queue is
+// unbuildable.
+func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	deepakID, err := s.CreateUser(ctx, "deepak@example.com", "Deepak Menon", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deepak, _ := s.UserByID(ctx, deepakID)
+	mgr, _ := s.UserByID(ctx, mgrID)
+
+	open1 := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	open2 := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 300000, 300000)
+	mine := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 100000, 100000)
+	stale := seedApprovedRequest(t, s, ctx, 4, req.ID, mgrID, headID, 78000, 78000)
+	theirs := seedApprovedRequest(t, s, ctx, 5, req.ID, mgrID, headID, 33500, 33500)
+	onHold := seedApprovedRequest(t, s, ctx, 6, req.ID, mgrID, headID, 25000, 25000)
+	inReview := seedApprovedRequest(t, s, ctx, 7, req.ID, mgrID, headID, 95000, 95000)
+	paidClean := seedApprovedRequest(t, s, ctx, 8, req.ID, mgrID, headID, 41300, 41300)
+	paidPartial := seedApprovedRequest(t, s, ctx, 9, req.ID, mgrID, headID, 60000, 60000)
+
+	for _, id := range []int64{mine, stale, inReview, paidClean, paidPartial} {
+		if err := s.ReserveRequest(ctx, acc, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ReserveRequest(ctx, deepak, theirs); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HoldRequest(ctx, acc, onHold, "waiting on the requester"); err != nil {
+		t.Fatal(err)
+	}
+	// One reservation is 26 hours old; the queue banner counts it as stale.
+	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET processing_at=? WHERE id=?`,
+		time.Date(2026, 7, 24, 12, 40, 0, 0, time.UTC).Format("2006-01-02 15:04:05"), stale); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordPaymentForRequest(ctx, acc, inReview, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "700 of 1000 copies delivered", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordPaymentForRequest(ctx, acc, paidClean, PaymentInput{HeadID: headID, PaidOn: "2026-07-24", Amount: 41300, VendorPayee: "Nova"}, "settled", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordPaymentForRequest(ctx, acc, paidPartial, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "balance later", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AcceptPartial(ctx, mgr, paidPartial, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 7, 25, 14, 40, 0, 0, time.UTC)
+	set, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Now: now})
+	if err != nil {
+		t.Fatalf("linkable: %v", err)
+	}
+	c := set.Counts
+	// .segmented tabs.
+	if c.Approved != 2 {
+		t.Fatalf("Approved tab = %d, want 2", c.Approved)
+	}
+	// mine + stale + theirs. The plan's draft asserted 2 here (own reservations
+	// only), but accounts-queue.html reads "Processing 5" against "Reserved by
+	// you 2" and "Reserved by others 3" — the tab counts every reservation, and
+	// the reserved-by-you / reserved-by-others metrics split it. Counting only
+	// one's own would also contradict the rows: the same method returns all
+	// three under Status:"processing" a few lines below.
+	if c.Processing != 3 {
+		t.Fatalf("Processing tab = %d, want 3 (mine + stale + Deepak's)", c.Processing)
+	}
+	if c.Hold != 1 {
+		t.Fatalf("On hold tab = %d, want 1", c.Hold)
+	}
+	if c.PartialReview != 1 {
+		t.Fatalf("Partial review tab = %d, want 1", c.PartialReview)
+	}
+	if c.Paid != 2 { // completed + completed_partial both count as paid (G14)
+		t.Fatalf("Paid tab = %d, want 2 (completed and completed_partial)", c.Paid)
+	}
+	// .metric-strip metrics.
+	if c.ApprovedAmount != 800000 {
+		t.Fatalf("approved total = %d, want 800000 (₹8,000.00)", c.ApprovedAmount)
+	}
+	if c.ReservedByMe != 2 {
+		t.Fatalf("reserved by me = %d, want 2", c.ReservedByMe)
+	}
+	if c.ReservedByOthers != 1 {
+		t.Fatalf("reserved by others = %d, want 1", c.ReservedByOthers)
+	}
+	if c.StaleReservations != 1 {
+		t.Fatalf("stale reservations = %d, want 1 (the 26-hour-old one)", c.StaleReservations)
+	}
+
+	// Rows carry who holds the reservation and since when, which is what
+	// "Reserved by you · 14:02" and "Reserved by Deepak M" render from.
+	byStatus, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Status: "processing", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[int64]Request{}
+	for _, r := range append(append([]Request{}, byStatus.Available...), byStatus.Unavailable...) {
+		found[r.ID] = r
+	}
+	if r, ok := found[theirs]; !ok || r.ProcessingByName != "Deepak Menon" {
+		t.Fatalf("reserved-by-others row = %+v, want ProcessingByName Deepak Menon", r)
+	}
+	if r, ok := found[theirs]; !ok || r.ProcessingAt == nil {
+		t.Fatalf("reserved row has no ProcessingAt; the queue cannot print the reserved-at time")
+	}
+	// A row someone else holds is never offered as takeable.
+	for _, r := range byStatus.Available {
+		if r.ID == theirs {
+			t.Fatal("a request reserved by another accountant was offered as takeable")
+		}
+	}
+	if _, ok := found[open1]; ok {
+		t.Fatalf("status=processing returned the approved request %d", open1)
+	}
+	_ = open2
 }

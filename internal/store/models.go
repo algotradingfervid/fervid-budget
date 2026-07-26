@@ -266,6 +266,7 @@ type Request struct {
 	HoldReason                string
 	ProcessingBy              *int64
 	ProcessingAt              *time.Time
+	ProcessingByName          string // joined name of the reserver; "" when unreserved
 	ReminderLastSent          *time.Time
 	SubmittedAt               *time.Time
 	CreatedAt                 time.Time
@@ -315,6 +316,43 @@ type RequestListOptions struct {
 	ProjectID int64
 	Query     string
 	Limit     int
+}
+
+// StaleReservation is how long a reservation may sit before the queue nudges.
+// Nothing is ever released automatically — a bank transfer may be under way.
+const StaleReservation = 24 * time.Hour
+
+type LinkableOptions struct {
+	Scope    string // "own" | "assigned" | "all", from auth.Scope
+	ViewerID int64
+	Status   string // "" or "approved" (the approved pool) | "processing" | "hold" | "partial_review" | "paid"
+	Query    string
+	Limit    int
+	Now      time.Time // injected clock; zero means time.Now()
+}
+
+// LinkableCounts feeds the queue's .segmented tabs and .metric-strip. It is
+// always computed over the caller's whole scope, never over the current page or
+// the current search, so the tab numbers do not move as you type.
+type LinkableCounts struct {
+	Approved          int
+	Processing        int
+	Hold              int
+	PartialReview     int
+	Paid              int
+	ReservedByMe      int
+	ReservedByOthers  int
+	StaleReservations int
+	ApprovedAmount    int64
+}
+
+// LinkableSet splits what the caller may act on from what they may only see.
+// Unavailable is deliberately not hidden: the picker renders it as .co.is-taken
+// so an accountant learns the request exists and who holds it.
+type LinkableSet struct {
+	Available   []Request
+	Unavailable []Request
+	Counts      LinkableCounts
 }
 
 type RequestComment struct {
