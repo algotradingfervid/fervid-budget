@@ -252,6 +252,39 @@ ON CONFLICT(key) DO NOTHING;
 			return addDefaultApproverColumn(tx)
 		},
 	},
+	// Phase 3 owns exactly one migration, v4: it links a payment to the request
+	// it settles. Three additive columns and one partial unique index, so the
+	// historical ledger is untouched — every pre-Phase-3 payment keeps
+	// request_id NULL and stays editable and voidable (X6).
+	//
+	// S9 — exactly one payment per request. The index is partial
+	// (WHERE request_id IS NOT NULL) because SQLite treats NULLs as distinct
+	// anyway; stating it keeps the intent readable and the index small.
+	{
+		Version: 4,
+		Name:    "payments_request_linking",
+		Up: func(tx *sql.Tx) error {
+			adds := []struct{ col, ddl string }{
+				{"request_id", `ALTER TABLE payments ADD COLUMN request_id INTEGER REFERENCES payment_requests(id)`},
+				{"settlement", `ALTER TABLE payments ADD COLUMN settlement TEXT NOT NULL DEFAULT ''`},
+				{"partial_reason", `ALTER TABLE payments ADD COLUMN partial_reason TEXT NOT NULL DEFAULT ''`},
+			}
+			for _, a := range adds {
+				exists, err := columnExists(tx, "payments", a.col)
+				if err != nil {
+					return err
+				}
+				if exists {
+					continue
+				}
+				if _, err := tx.Exec(a.ddl); err != nil {
+					return err
+				}
+			}
+			_, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_request ON payments(request_id) WHERE request_id IS NOT NULL`)
+			return err
+		},
+	},
 }
 
 // addDefaultApproverColumn is additive and guarded by columnExists, so
