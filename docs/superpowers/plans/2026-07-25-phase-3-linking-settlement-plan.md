@@ -27,6 +27,16 @@ Amended 2026-07-25 against `docs/superpowers/specs/2026-07-25-design-system-adop
 2. **`payment-request-picker.html` promises a Configuration toggle this phase does not build.** Its `.banner.info` ends "An administrator can re-enable direct entry in Configuration if you ever need it." D6 gives the Configuration screen to Phase 2 and lets Phases 3–5 append fieldsets, but spec §4 → Phase 3 lists no fieldset for this phase. Task 13 renders the banner **without that final sentence** — shipping a promise of a control that does not exist is worse than omitting it — and the "Legacy path retirement" constraint below stands unweakened. If the toggle is genuinely wanted, it needs a spec decision and its own task, not a silent addition here.
 3. **`completed_partial` is a new status in Phase 2's vocabulary.** Phase 2 owns `canTransition`; Task 8 extends it (`partial_review → completed_partial`) rather than duplicating the state machine here.
 
+**Implementation notes recorded while executing Tasks 1–10 (2026-07-26) — the plan text below is wrong on these points:**
+
+- **Task 3's concurrency proof could not pass against `store.Open` as it stood, for a reason the plan does not mention.** `Open` configured SQLite with `db.Exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")`, but PRAGMA state is **per connection** and `database/sql` opens further connections on demand, so only the first connection was ever configured. The eight racing reservations therefore failed with `database is locked (5) (SQLITE_BUSY)` instead of `ErrForbidden`, and — more seriously — foreign keys were silently **off** on every connection but one. `Open` now passes the pragmas as DSN `_pragma` query parameters (`path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"`), which modernc.org/sqlite applies to each new connection; without a `file:` prefix it strips the query before opening, so paths containing spaces still work. Verified separately that the race test does its job: with the `WHERE status='approved' AND processing_by IS NULL AND on_hold=0` guard removed it reports *"more than one winner: 0 and 1"*.
+- **Task 5's `active` column exists**, so the deactivated-target check ships as written. **Task 9's `AddRequestComment` returns `(int64, error)`**, not `error`; the test calls it as `if _, err := …`.
+- **Task 8's `canTransition` snippet is written for the wrong type.** `legalTransitions` is `map[string]map[string]bool`, not `map[string][]string`; the edge ships as `"partial_review": {"completed": true, "completed_partial": true}`. Phase 2's exhaustive `TestCanTransition` still passes untouched, because `partial_review` is not in its status list. `requestStatuses` (an unused map) was left alone — nothing reads it, and no task asked for it.
+- **Task 10's `LinkablePaymentRequests` did not exist**; it is new code, not a rewrite. Three things in the task are wrong:
+  1. **Staleness cannot be counted while scanning the returned rows.** The plan's own test calls the method with the default (approved) tab and expects `StaleReservations == 1`, but that tab's query returns no `processing` rows at all, so the row-loop counter is always 0 there — and the Approved tab is exactly where `accounts-queue.html` renders the "1 open over a day" banner. The count moved into the aggregate pass with an injected cutoff (`now-StaleReservation`, formatted as SQLite's `CURRENT_TIMESTAMP` text), which is the fallback the task's own closing note describes. `julianday('now')` is still never used.
+  2. **The default tab must return the taken rows too.** The plan filters `""`/`"approved"` to `status='approved' AND processing_by IS NULL AND on_hold=0`, which makes `Unavailable` permanently empty — yet the plan's test requires the held and the reserved request in it, and the picker's `.co.is-taken` rows exist for precisely that. The default tab now selects `status IN ('approved','processing')`; takeability is still re-derived per row, so no tab can offer a request that is not free.
+  3. **The `Processing` tab counts every reservation, not just the caller's.** The plan's test asserts `c.Processing == 2` (own only) while the plan's own SQL counts 3, and `accounts-queue.html` reads "Processing 5" against "Reserved by you 2" and "Reserved by others 3" — 2+3. Counting only one's own would also contradict the rows the same call returns under `Status:"processing"`, which include Deepak's. The SQL is kept; **that one assertion in the plan's test was corrected to 3**, with the reason recorded in the test.
+
 ---
 
 **Goal:** Put an atomic reservation → payment → settlement flow in front of the existing ledger so every new payment is created only by linking to one approved, actor-reserved request, with exactly one payment per request and an explicit settlement that drives the request to *completed*, *completed_partial* or *partial_review* — rendered on the approved design system.
@@ -68,7 +78,7 @@ Amended 2026-07-25 against `docs/superpowers/specs/2026-07-25-design-system-adop
 - Consumes: Phase-1 `migration{Version int, Name string, Up func(*sql.Tx) error}` slice and `columnExists(tx *sql.Tx, table, col string) (bool, error)`; table `payment_requests` (Phase 2).
 - Produces: `payments.request_id INTEGER` (nullable), `payments.settlement TEXT NOT NULL DEFAULT ''`, `payments.partial_reason TEXT NOT NULL DEFAULT ''`, unique index `idx_payments_request` (partial, `WHERE request_id IS NOT NULL`); test helpers `seedRequestParty`, `seedApprovedRequest`, `requestStatus`, `requestProcessingBy`.
 
-- [ ] **Step 1: Write the failing test** (create `internal/store/linking_test.go`)
+- [x] **Step 1: Write the failing test** (create `internal/store/linking_test.go`)
 
 ```go
 package store
@@ -237,12 +247,12 @@ func TestMigrationV4IsIdempotentAndLeavesHistoricalPaymentsUntouched(t *testing.
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestMigrationV4AddsLinkingColumnsAndIndex|TestPaymentRequestIndexRejectsDuplicateLinkButAllowsNullHistoricals|TestMigrationV4IsIdempotent' -v`
 Expected: FAIL — `pragma_table_info('payments')` returns 0 for the new columns and `idx_payments_request` is absent, so `TestMigrationV4AddsLinkingColumnsAndIndex` fails ("payments.request_id missing after migration"); the duplicate-link insert succeeds (no index) so that test fails too.
 
-- [ ] **Step 3: Write minimal implementation** (append v4 to `internal/store/migrations.go`; the `migrations` slice and helpers already exist from Phase 1/2)
+- [x] **Step 3: Write minimal implementation** (append v4 to `internal/store/migrations.go`; the `migrations` slice and helpers already exist from Phase 1/2)
 
 ```go
 {
@@ -272,12 +282,12 @@ Expected: FAIL — `pragma_table_info('payments')` returns 0 for the new columns
 },
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestMigrationV4AddsLinkingColumnsAndIndex|TestPaymentRequestIndexRejectsDuplicateLinkButAllowsNullHistoricals|TestMigrationV4IsIdempotent' -v`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/migrations.go internal/store/linking_test.go
@@ -297,7 +307,7 @@ git commit -m "feat(store): add payments request linking columns and one-per-req
 - Consumes: migration v4 columns (Task 1); `seedRequestParty`, `seedActorAndHead`.
 - Produces: `Payment.RequestID *int64`, `Payment.Settlement string`, `Payment.PartialReason string`; `func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment, error)`.
 
-- [ ] **Step 1: Write the failing test** (append to `internal/store/linking_test.go`)
+- [x] **Step 1: Write the failing test** (append to `internal/store/linking_test.go`)
 
 ```go
 func TestPaymentForRequestAndHistoricalFields(t *testing.T) {
@@ -321,12 +331,12 @@ func TestPaymentForRequestAndHistoricalFields(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestPaymentForRequestAndHistoricalFields -v`
 Expected: FAIL — build error `p.RequestID undefined (type store.Payment has no field or method RequestID)` and `s.PaymentForRequest undefined`; run reports `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `internal/store/models.go`, add to the `Payment` struct (after `Remarks`):
 
@@ -388,12 +398,12 @@ func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestPaymentForRequestAndHistoricalFields -v`
 Expected: PASS. Also run `go test ./internal/store/ -run TestPaymentCreateEditVoidAndAudit -v` — Expected: PASS (existing payment scans still work with the widened SELECT).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/models.go internal/store/store.go internal/store/linking_test.go
@@ -412,7 +422,7 @@ git commit -m "feat(store): expose payment linkage fields and PaymentForRequest"
 - Consumes: `payment_requests` (Phase 2); `seedRequestParty`, `seedApprovedRequest`, `requestStatus`, `requestProcessingBy`.
 - Produces: `func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error`.
 
-- [ ] **Step 1: Write the failing test** (add `"sync"` to the `import` block of `linking_test.go`, then append)
+- [x] **Step 1: Write the failing test** (add `"sync"` to the `import` block of `linking_test.go`, then append)
 
 ```go
 func TestReserveRequestMovesApprovedToProcessing(t *testing.T) {
@@ -514,12 +524,12 @@ func TestReserveRequestIsAtomicUnderConcurrency(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestReserveRequest' -v`
 Expected: FAIL — build error `s.ReserveRequest undefined (type *Store has no field or method ReserveRequest)`; `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
+- [x] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
 
 ```go
 // ReserveRequest atomically moves an approved, unclaimed, not-on-hold request to
@@ -552,14 +562,14 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes (including the race detector)**
+- [x] **Step 4: Run test to verify it passes (including the race detector)**
 
 Run: `go test ./internal/store/ -run 'TestReserveRequest' -v`
 Expected: PASS (4 tests).
 Run: `go test -race ./internal/store/ -run TestReserveRequestIsAtomicUnderConcurrency -v`
 Expected: PASS with no data-race report.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/store.go internal/store/linking_test.go
@@ -580,7 +590,7 @@ git commit -m "feat(store): atomic ReserveRequest with concurrency test (approve
 - Consumes: `ReserveRequest` (Task 3); helpers.
 - Produces: `func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason string, confirmed, authorized bool) error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
@@ -645,12 +655,12 @@ func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 
 > If the audit table name in `recordAuditTx` differs from `audit_log`, match it in the trail assertion; the store logic is unaffected.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestReleaseRequestRequiresConfirmReasonAndAuthority -v`
 Expected: FAIL — `s.ReleaseRequest undefined`; `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
+- [x] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
 
 ```go
 // ReleaseRequest returns a 'processing' request to 'approved'. confirmed must be
@@ -696,12 +706,12 @@ func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestReleaseRequestRequiresConfirmReasonAndAuthority -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/store.go internal/store/linking_test.go
@@ -722,7 +732,7 @@ git commit -m "feat(store): ReleaseRequest with confirm, required reason and ass
 - Consumes: `ReserveRequest` (Task 3); helpers; `UserByID`.
 - Produces: `func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserID int64, reason string, authorized bool) error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T) {
@@ -782,12 +792,12 @@ func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestReassignReservationRequiresPermissionReasonAndActiveTarget -v`
 Expected: FAIL — `s.ReassignReservation undefined (type *Store has no field or method ReassignReservation)`; `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation** (add to `internal/store/store.go`, next to `ReleaseRequest`)
+- [x] **Step 3: Write minimal implementation** (add to `internal/store/store.go`, next to `ReleaseRequest`)
 
 ```go
 // ReassignReservation hands a reservation to another user without ever returning
@@ -856,12 +866,12 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 
 > If `users` has no `active` column in this codebase, drop the `active` scan and its check; every other assertion is unaffected.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestReassignReservationRequiresPermissionReasonAndActiveTarget -v`
 Expected: PASS. Then `go test -race ./internal/store/ -run 'TestReserveRequest|TestReassignReservation'` — Expected: `ok`, no race report (reassign and reserve contend on the same conditional UPDATE).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/store.go internal/store/linking_test.go
@@ -882,7 +892,7 @@ git commit -m "feat(store): ReassignReservation with reassign permission and req
 - Consumes: `ReserveRequest` (Task 3); `Payment`/`PaymentForRequest` (Task 2); `validatePayment`, `paymentFromInput`, `addAttachmentTx`, `recordAuditTx`, `money.FormatPaise`.
 - Produces: `func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, requestID int64, in PaymentInput, settlement, partialReason string, attachment *AttachmentInput) (int64, error)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
@@ -1010,12 +1020,12 @@ func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 
 > `TestRecordPaymentRejectsOverpayment` needs `"strings"` in `linking_test.go`'s import block; add it with this task.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run 'TestRecordPayment' -v`
 Expected: FAIL — `s.RecordPaymentForRequest undefined`; `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
+- [x] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
 
 ```go
 // RecordPaymentForRequest writes the single linked payment for a request the
@@ -1118,12 +1128,12 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestRecordPayment' -v`
 Expected: PASS (4 tests, including `TestRecordPaymentRejectsOverpayment`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/store.go internal/store/linking_test.go
@@ -1142,7 +1152,7 @@ git commit -m "feat(store): RecordPaymentForRequest with settlement transitions 
 - Consumes: `paymentInTx` (now returns `RequestID`, Task 2); `RecordPaymentForRequest` (Task 6).
 - Produces: `UpdatePaymentWithAttachment`/`VoidPayment` reject linked payments with `ErrValidation`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestLinkedPaymentIsImmutable(t *testing.T) {
@@ -1170,12 +1180,12 @@ func TestLinkedPaymentIsImmutable(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestLinkedPaymentIsImmutable -v`
 Expected: FAIL — `UpdatePayment` succeeds (or `VoidPayment` succeeds) instead of returning `ErrValidation`; test fails at the first assertion.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `UpdatePaymentWithAttachment`, immediately after `before, err := paymentInTx(ctx, tx, id)` (and its error check), before the `VoidedAt` check, insert:
 
@@ -1193,12 +1203,12 @@ In `VoidPayment`, immediately after `before, err := paymentInTx(ctx, tx, id)` (a
 	}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestLinkedPaymentIsImmutable -v`
 Expected: PASS. Also run `go test ./internal/store/ -run TestPaymentCreateEditVoidAndAudit -v` — Expected: PASS (historical `request_id IS NULL` payments remain editable/voidable, X6).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/store.go internal/store/linking_test.go
@@ -1222,7 +1232,7 @@ git commit -m "feat(store): make request-linked payments immutable"
 - Consumes: `RecordPaymentForRequest` (Task 6); `request_comments` (Phase 2); `canTransition` (Phase 2).
 - Produces: `func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note string) error`; `func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment string) error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestAcceptPartialAndRaiseConcern(t *testing.T) {
@@ -1294,12 +1304,12 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestAcceptPartialAndRaiseConcern -v`
 Expected: FAIL — `s.AcceptPartial undefined` / `s.RaiseConcern undefined`; `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
+- [x] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
 
 ```go
 // AcceptPartial closes a 'partial_review' request as 'completed_partial' — a
@@ -1373,12 +1383,12 @@ Also extend Phase 2's `canTransition` (`internal/store/requests.go`) so the new 
 	// "completed_partial" has no outgoing edges — terminal, like "completed".
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run 'TestAcceptPartialAndRaiseConcern|TestCanTransition' -v`
 Expected: PASS. `TestCanTransition` is Phase 2's table test; it must still pass with the new edge, and no existing edge may be removed to make it do so.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/store.go internal/store/requests.go internal/store/linking_test.go
@@ -1397,7 +1407,7 @@ git commit -m "feat(store): accept partial into the distinct completed_partial t
 - Consumes: `payment_requests` (Phase 2); `AddRequestComment` (Phase 2).
 - Produces: `func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason string) error`; `func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
@@ -1445,12 +1455,12 @@ func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestHoldUnholdPreserveApprovedFieldsAndAllowComments -v`
 Expected: FAIL — `s.HoldRequest undefined` / `s.UnholdRequest undefined`; `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
+- [x] **Step 3: Write minimal implementation** (add to `internal/store/store.go`)
 
 ```go
 // HoldRequest pauses an approved, not-already-held request (L7). reason required.
@@ -1503,14 +1513,14 @@ func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestHoldUnholdPreserveApprovedFieldsAndAllowComments -v`
 Expected: PASS.
 
 > If Phase 2's `AddRequestComment` signature differs from `AddRequestComment(ctx, actor User, requestID int64, body string) error`, adjust the call in the test to match; the store logic is unaffected.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/store.go internal/store/linking_test.go
@@ -1540,7 +1550,7 @@ Staleness ("1 open over a day", "26 h") is computed in Go from `ProcessingAt` ag
   - `func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOptions) (LinkableSet, error)`
   - `const StaleReservation = 24 * time.Hour`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestLinkablePaymentRequestsFilterAndSearch(t *testing.T) {
@@ -1719,12 +1729,12 @@ func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 
 > `TestLinkablePaymentRequestsTabsCountsAndReserver` needs `"time"` in `linking_test.go`'s import block; add it with this task.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/store/ -run TestLinkablePaymentRequests -v`
 Expected: FAIL — `undefined: LinkableOptions` / `undefined: LinkableSet` and `s.LinkablePaymentRequests undefined`; `FAIL fervidbudget/internal/store [build failed]`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `internal/store/models.go`, add `ProcessingByName string` to `Request` (immediately after `ProcessingAt`) and the Phase-3 queue types:
 
@@ -1900,12 +1910,12 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 
 > Two notes. **Staleness** is counted only over rows the query returned, which is correct for every tab the mockup shows the banner on (Approved and Processing both include the caller's reservations); if a later screen needs it on a tab that excludes them, move the count into the aggregate pass with an injected cutoff parameter rather than reintroducing `julianday('now')`. **Availability** is re-derived from the row itself, not from the tab, so the `processing`/`hold` tabs can never hand the UI a "Take for processing" button.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestLinkablePaymentRequests -v`
 Expected: PASS (2 tests). Then run the whole store suite: `go test -race ./internal/store/` — Expected: `ok`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store/models.go internal/store/store.go internal/store/linking_test.go
