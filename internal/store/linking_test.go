@@ -281,3 +281,62 @@ func TestReserveRequestIsAtomicUnderConcurrency(t *testing.T) {
 		t.Fatalf("processing_by = %v, want winner %d", pb, accts[winner].ID)
 	}
 }
+
+func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	otherID, err := s.CreateUser(ctx, "other@example.com", "Other", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.UserByID(ctx, otherID)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	const reason = "Vendor bank details need confirming before I can transfer."
+	// No confirm → validation, still processing (S7).
+	if err := s.ReleaseRequest(ctx, acc, reqID, reason, false, false); !errors.Is(err, ErrValidation) {
+		t.Fatalf("release without confirm = %v, want ErrValidation", err)
+	}
+	// G12: no reason → validation, still processing, nothing recorded.
+	if err := s.ReleaseRequest(ctx, acc, reqID, "   ", true, false); !errors.Is(err, ErrValidation) {
+		t.Fatalf("release without reason = %v, want ErrValidation", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+		t.Fatalf("status after refused release = %q, want processing", got)
+	}
+	// Non-assignee, non-authorized → forbidden (S6).
+	if err := s.ReleaseRequest(ctx, other, reqID, reason, true, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-assignee release = %v, want ErrForbidden", err)
+	}
+	// Assignee with confirm + reason → back to approved, unclaimed.
+	if err := s.ReleaseRequest(ctx, acc, reqID, reason, true, false); err != nil {
+		t.Fatalf("assignee release: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "approved" {
+		t.Fatalf("status after release = %q, want approved", got)
+	}
+	if pb := requestProcessingBy(t, s, ctx, reqID); pb != nil {
+		t.Fatalf("processing_by not cleared: %v", pb)
+	}
+	// G12: the reason is in the audit trail, which is what the release .thread renders.
+	var trail int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE entity_type='payment_request' AND entity_id=? AND action='release' AND summary LIKE ?`, reqID, "%"+reason+"%").Scan(&trail); err != nil {
+		t.Fatal(err)
+	}
+	if trail != 1 {
+		t.Fatalf("release reason not in the audit trail: %d matching entries", trail)
+	}
+	// Authorized caller (reservation:release granted broadly) may release someone else's hold.
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseRequest(ctx, other, reqID, "Reserved over a day, freeing it for the queue.", true, true); err != nil {
+		t.Fatalf("authorized release: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "approved" {
+		t.Fatalf("status after authorized release = %q, want approved", got)
+	}
+}

@@ -743,6 +743,48 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 	return tx.Commit()
 }
 
+// ReleaseRequest returns a 'processing' request to 'approved'. confirmed must be
+// true ("no payment initiated" — S7) and reason is required (G12): the release is
+// visible to the requester and the approver, and the reservation .thread renders
+// it. Only the assignee, or an authorized caller (handler resolved
+// reservation:release beyond their own reservations), may release (S6). There is
+// no auto-release; this is the only path back to approved.
+func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason string, confirmed, authorized bool) error {
+	if !confirmed {
+		return fmt.Errorf("%w: confirm that no payment was initiated before releasing", ErrValidation)
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("%w: a reason is required so the requester and approver know why", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	var processingBy sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT status, processing_by FROM payment_requests WHERE id=?`, id).Scan(&status, &processingBy); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if status != "processing" {
+		return fmt.Errorf("%w: only a processing request can be released", ErrForbidden)
+	}
+	if !authorized && (!processingBy.Valid || processingBy.Int64 != actor.ID) {
+		return fmt.Errorf("%w: only the assignee may release this request", ErrForbidden)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='approved', processing_by=NULL, processing_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing'`, id); err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "release", EntityType: "payment_request", EntityID: &id, Summary: "Released reservation: " + reason, Before: map[string]any{"processing_by": processingBy.Int64}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
