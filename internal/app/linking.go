@@ -253,7 +253,10 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 			HeadID:      headID,
 			PaidOn:      time.Now().Format("2006-01-02"),
 			Amount:      approvedOf(req),
-			VendorPayee: req.VendorPayee,
+			// The display payee, not the snapshot column: a vendor_invoice names
+			// its payee with vendor_id and leaves vendor_payee empty, so the
+			// snapshot would write a payment with nobody to pay.
+			VendorPayee: req.Vendor,
 			InvoiceNo:   req.InvoiceNo,
 		},
 	})

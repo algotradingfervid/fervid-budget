@@ -326,7 +326,7 @@ const templates = `
   <div>
     <div class="eyebrow">Accounts · payment entry</div>
     <h1>Record the payment</h1>
-    <p class="sub">{{.Request2.Number}} · {{.Request2.VendorPayee}} · one request, one payment</p>
+    <p class="sub">{{.Request2.Number}} · {{.Request2.Vendor}} · one request, one payment</p>
   </div>
 </section>
 
@@ -342,7 +342,7 @@ const templates = `
   <dl class="dl">
     <div><dt>Approved amount</dt><dd class="big">{{money (approvedOf .Request2)}}</dd></div>
     <div><dt>Approved by</dt><dd>{{.Request2.ApprovedByName}}{{if .Request2.ApprovedAt}} · {{datep .Request2.ApprovedAt}}{{end}}</dd></div>
-    <div><dt>Payee</dt><dd>{{.Request2.VendorPayee}}</dd></div>
+    <div><dt>Payee</dt><dd>{{.Request2.Vendor}}</dd></div>
     <div><dt>Charge to</dt><dd>{{.Request2.Project}} / {{.Request2.Head}}</dd></div>
     <div style="grid-column:1/-1"><dt>Purpose</dt><dd>{{.Request2.Purpose}}</dd></div>
   </dl>
@@ -352,7 +352,7 @@ const templates = `
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="request_id" value="{{.Request2.ID}}">
   <input type="hidden" name="head_id" value="{{.SelectedHeadID}}">
-  <input type="hidden" name="vendor_payee" value="{{.Request2.VendorPayee}}">
+  <input type="hidden" name="vendor_payee" value="{{.Request2.Vendor}}">
   <input type="hidden" name="invoice_no" value="{{.Request2.InvoiceNo}}">
   <fieldset>
     <legend>Payment</legend>
@@ -431,7 +431,7 @@ const templates = `
 <div class="overlay" id="settle-sheet">
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settle-title">
     <div class="sh-head">
-      <div><h2 id="settle-title">Confirm the payment</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.VendorPayee}}</p></div>
+      <div><h2 id="settle-title">Confirm the payment</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.Vendor}}</p></div>
       <a class="sh-close" href="/payments/new?request={{.Request2.ID}}" aria-label="Close">✕</a>
     </div>
     <div class="sh-body stack-12">
@@ -546,7 +546,7 @@ const templates = `
   {{end}}
   {{range .Linkable.Unavailable}}
   <a class="co is-taken" href="/requests/{{.ID}}">
-    <span class="co-main"><b>{{.Number}} · {{.VendorPayee}}</b>
+    <span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
       <small>{{if .OnHold}}On hold — {{.HoldReason}}{{else if .ProcessingByName}}Reserved by {{.ProcessingByName}} at {{hhmm .ProcessingAt}} — you cannot take this one{{else}}{{reqStatus .Status}} — you cannot take this one{{end}}</small></span>
     <span class="co-amt">{{money (approvedOf .)}}</span>
   </a>
@@ -558,7 +558,7 @@ const templates = `
 {{/* One takeable row's contents, so the button and the read-only link that may
      stand in for it cannot describe the same request differently. Dot is one
      store.Request. */}}
-{{define "picker_row"}}<span class="co-main"><b>{{.Number}} · {{.VendorPayee}}</b>
+{{define "picker_row"}}<span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
     <small>{{.RequesterName}} · {{.Project}} / {{.Head}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
   <span class="co-amt">{{money (approvedOf .)}}</span>{{end}}
 
@@ -679,7 +679,7 @@ const templates = `
       {{range .Linkable.Available}}
       <tr>
         <td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a> <span class="t-sub">{{.RequesterName}} · approved {{datep .ApprovedAt}}</span></td>
-        <td data-label="Payee">{{.VendorPayee}}</td>
+        <td data-label="Payee">{{.Vendor}}</td>
         <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
         <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
@@ -690,7 +690,7 @@ const templates = `
       {{range .Linkable.Unavailable}}
       <tr>
         <td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a> <span class="t-sub">{{.RequesterName}} · approved {{datep .ApprovedAt}}</span></td>
-        <td data-label="Payee">{{.VendorPayee}}</td>
+        <td data-label="Payee">{{.Vendor}}</td>
         <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
         <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
@@ -744,7 +744,7 @@ const templates = `
 
 <div class="req-head">
   <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money (approvedOf .Request2)}}</span></div>
-  <h1>{{.Request2.VendorPayee}}{{if .Request2.ShortTitle}} — {{.Request2.ShortTitle}}{{end}}</h1>
+  <h1>{{.Request2.Vendor}}{{if .Request2.ShortTitle}} — {{.Request2.ShortTitle}}{{end}}</h1>
   <p class="rh-meta">{{.Request2.Project}} / {{.Request2.Head}}{{if .Request2.ApprovedAt}} · approved {{datep .Request2.ApprovedAt}}{{end}}</p>
   <div class="rh-status">
     <span class="pill processing">Processing — {{.Holder}}</span>
@@ -935,7 +935,7 @@ const templates = `
   <div>
     <div class="eyebrow">Accounts · reservation</div>
     <h1>Release or reassign this request</h1>
-    <p class="sub">{{.Request2.Number}} · {{.Request2.VendorPayee}} · {{money (approvedOf .Request2)}}</p>
+    <p class="sub">{{.Request2.Number}} · {{.Request2.Vendor}} · {{money (approvedOf .Request2)}}</p>
   </div>
 </section>
 

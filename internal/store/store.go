@@ -1128,7 +1128,12 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		return out, err
 	}
 
+	// Two payee columns, exactly as Request() reads them: vendor_payee is the raw
+	// snapshot, filled only for reimbursement and employee advance, and Vendor is
+	// the display payee a vendor_invoice actually has. A screen that renders the
+	// snapshot asks the accountant to pay a blank.
 	q := `SELECT r.id, r.number, r.status, r.amount, r.approved_amount, COALESCE(r.vendor_payee,''),
+		COALESCE(NULLIF(v.name,''),r.vendor_payee,''),
 		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
 		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
 		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at
@@ -1136,6 +1141,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		LEFT JOIN projects p ON p.id=r.project_id
 		LEFT JOIN heads h ON h.id=r.head_id
 		LEFT JOIN users pu ON pu.id=r.processing_by
+		LEFT JOIN vendors v ON v.id=r.vendor_id
 		JOIN users u ON u.id=r.requester_id
 		WHERE `
 	var args []any
@@ -1163,7 +1169,9 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	q += scopeSQL
 	args = append(args, scopeArgs...)
 	if search := strings.ToLower(strings.TrimSpace(opts.Query)); search != "" {
-		q += ` AND (lower(r.number) LIKE ? ESCAPE '\' OR lower(u.name) LIKE ? ESCAPE '\' OR lower(COALESCE(r.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(h.name,'')) LIKE ? ESCAPE '\' OR CAST(r.amount AS TEXT) LIKE ? ESCAPE '\')`
+		// The payee is searched as it is displayed: typing a vendor's name must
+		// find the row that shows that name.
+		q += ` AND (lower(r.number) LIKE ? ESCAPE '\' OR lower(u.name) LIKE ? ESCAPE '\' OR lower(COALESCE(NULLIF(v.name,''),r.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(h.name,'')) LIKE ? ESCAPE '\' OR CAST(r.amount AS TEXT) LIKE ? ESCAPE '\')`
 		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
 		needle := "%" + esc + "%"
 		args = append(args, needle, needle, needle, needle, needle, needle)
@@ -1185,7 +1193,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		var approved, processingBy, headID sql.NullInt64
 		var processingAt, approvedAt sql.NullTime
 		var onHold int
-		if err := rows.Scan(&r.ID, &r.Number, &r.Status, &r.Amount, &approved, &r.VendorPayee,
+		if err := rows.Scan(&r.ID, &r.Number, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
 			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
 			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
 			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt); err != nil {

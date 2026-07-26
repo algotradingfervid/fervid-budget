@@ -39,6 +39,33 @@ func (s *appTestServer) seedApprovedRequest(seq int, requesterID, managerID, hea
 	return id
 }
 
+// seedVendorRequest inserts an approved request the way the *real form* writes
+// one: the payee is a vendor_id and the vendor_payee snapshot is empty. That
+// column is only filled for reimbursement and employee advance, so every fixture
+// that writes vendor_payee directly is the one shape the UI can never produce —
+// which is exactly how the blank-payee defect survived a green suite.
+func (s *appTestServer) seedVendorRequest(seq int, requesterID, managerID, headID, amount int64, vendorName string) (reqID, vendorID int64) {
+	s.t.Helper()
+	var projectID int64
+	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		s.t.Fatal(err)
+	}
+	vres, err := s.st.DB().Exec(`INSERT INTO vendors(name,status) VALUES(?,'active')`, vendorName)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	vendorID, _ = vres.LastInsertId()
+	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,project_id,head_id,amount,purpose,short_title,vendor_id,vendor_payee,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
+		VALUES(?,'approved','budget','vendor_invoice',?,?,?,?,?,?,'',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		fmt.Sprintf("PR-2026-%06d", seq), projectID, headID, amount, "Annual licence", "Annual licence", vendorID,
+		requesterID, managerID, amount, managerID)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	reqID, _ = res.LastInsertId()
+	return reqID, vendorID
+}
+
 // strconvPath keeps the id-in-a-path formatting in one place, so the older test
 // file does not have to grow an "fmt" import for it.
 func strconvPath(format string, id int64) string { return fmt.Sprintf(format, id) }
@@ -1581,5 +1608,61 @@ func TestStaleScreenOffersFourChoicesThatAllLandSomewhereUsable(t *testing.T) {
 	// control and no release control either.
 	if strings.Contains(list, fmt.Sprintf(`href="/requests/%d"`, reqID)) {
 		t.Fatalf("a choice still points at the request itself:\n%s", list)
+	}
+}
+
+// A vendor-invoice request names its payee with vendor_id; the vendor_payee
+// snapshot column is empty. store.Request resolves the display payee into
+// Request.Vendor, and every screen in the settlement flow must read THAT — not
+// the raw snapshot — or the accountant is asked to pay a blank, the payment row
+// is written with no payee at all, and the payment detail renders an empty h1.
+func TestTheVendorNameSurvivesTheWholeSettlementFlow(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Payee")
+	const vendorName = "Sundaram Electricals Pvt Ltd"
+	reqID, _ := s.seedVendorRequest(1, admin.ID, admin.ID, headID, 500000, vendorName)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// The queue names the vendor, and searching for it finds the row.
+	queue := responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	if !strings.Contains(queue, vendorName) {
+		t.Fatalf("the queue does not name the vendor:\n%s", queue)
+	}
+	found := responseBody(t, s.request(http.MethodGet, "/accounts-queue?q=Sundaram", nil, ""))
+	if !strings.Contains(found, "PR-2026-000001") {
+		t.Fatalf("searching the queue by vendor name found nothing:\n%s", found)
+	}
+
+	// The entry screen names it, and so does the confirmation sheet.
+	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	entry := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, ""))
+	if !strings.Contains(entry, vendorName) {
+		t.Fatalf("the payment entry screen does not name the vendor:\n%s", entry)
+	}
+	form := url.Values{"amount": {"5000.00"}, "paid_on": {"2026-07-25"}, "payment_mode": {"bank_transfer"}, "reference_no": {"N1"}}
+	sheet := responseBody(t, s.postFormHX(strconvPath("/requests/%d/settlement-preview", reqID), form))
+	if !strings.Contains(sheet, vendorName) {
+		t.Fatalf("the settlement sheet does not name the vendor:\n%s", sheet)
+	}
+
+	// Settling carries the payee onto the payment row itself.
+	settle := url.Values{
+		"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
+		"paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "payment_mode": {"bank_transfer"},
+		"reference_no": {"N1"}, "vendor_payee": {vendorName}, "settlement": {"settled"},
+	}
+	resp := s.postForm("/payments", settle)
+	requireStatus(t, resp, http.StatusSeeOther)
+	loc := resp.Header.Get("Location")
+	var storedPayee string
+	if err := s.st.DB().QueryRow(`SELECT COALESCE(vendor_payee,'') FROM payments WHERE request_id=?`, reqID).Scan(&storedPayee); err != nil {
+		t.Fatal(err)
+	}
+	if storedPayee != vendorName {
+		t.Fatalf("payments.vendor_payee = %q, want %q — the payment was written with no payee", storedPayee, vendorName)
+	}
+	detail := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
+	if !strings.Contains(detail, "<h1>"+vendorName+"</h1>") {
+		t.Fatalf("the payment detail h1 does not name the vendor:\n%s", detail)
 	}
 }
