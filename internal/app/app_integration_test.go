@@ -620,18 +620,19 @@ func TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach(t *testing.T
 	// The screens later phases add are announced, not linked: their nav entries
 	// are present so the structure is stable, but they render without an href
 	// so nobody can click through to a route that does not exist yet.
-	for _, label := range []string{"Accounts queue", "Recoverables"} {
+	for _, label := range []string{"Recoverables"} {
 		if !strings.Contains(body, label) {
 			t.Fatalf("nav dropped %q, which later phases will build", label)
 		}
 	}
-	if strings.Contains(body, `href="/accounts-queue"`) || strings.Contains(body, `href="/recoverables"`) {
+	if strings.Contains(body, `href="/recoverables"`) {
 		t.Fatal("an unbuilt screen is rendered as a link; it must be a Soon announcement")
 	}
 	// …and a screen that has been built is a link, which is the other half of
 	// the same switch: Phase 2 removed /requests, /approvals and /configuration
-	// from unbuiltPrefixes as it built each of them.
-	for _, href := range []string{`href="/requests"`, `href="/approvals"`, `href="/configuration"`} {
+	// from unbuiltPrefixes as it built each of them, and Phase 3 removed
+	// /accounts-queue.
+	for _, href := range []string{`href="/requests"`, `href="/approvals"`, `href="/configuration"`, `href="/accounts-queue"`} {
 		if !strings.Contains(body, href) {
 			t.Fatalf("%s is built but the nav still announces it as Soon", href)
 		}

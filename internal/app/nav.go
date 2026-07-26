@@ -234,7 +234,6 @@ func can(perms store.PermissionSet, resource, action string) bool {
 // TestEveryLinkedNavItemResolves and TestTabBarNeverLinksToAnUnbuiltRoute fail
 // until the line goes, so it cannot be forgotten.
 var unbuiltPrefixes = []string{
-	"/accounts-queue",      // Phase 2
 	"/recoverables",        // Phase 4
 	"/admin/notifications", // Phase 5
 }

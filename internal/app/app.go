@@ -358,6 +358,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	// (spec D2) precisely so "may take work" and "may take work off somebody
 	// else" stop being the same grant.
 	mux.Handle("POST /requests/{id}/record-payment", a.auth.RequirePermission("reservation", "reserve", http.HandlerFunc(a.withCSRF(a.requestRecordPayment))))
+	mux.Handle("GET /accounts-queue", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.accountsQueue)))
 	// One detail screen for every audience: the action bar changes on
 	// permission, the page does not. Each decision posts to its own route so
 	// the gate is the verb the decision needs, not the one that opened the page.

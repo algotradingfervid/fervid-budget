@@ -197,6 +197,108 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The Accounts work queue — mockups/screens/accounts-queue.html.
+
+     Two departures from the mockup, both deliberate. Its "Take for processing"
+     is a link; reserving is a mutation, so here it is a submit button inside a
+     POST form. And its .page-banner carries .d-only, which would leave a phone
+     with no visible h1 at all — the banner is unconditional and the heading
+     travels with it.
+
+     .metric.warn has no rule in the design system, so the "Reserved by you"
+     tile is a plain .metric until Phase 0 grows one. */}}
+{{define "accounts_queue"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Accounts</div>
+    <h1>Payment queue</h1>
+    <p class="sub">{{.Linkable.Counts.Approved}} approved and unclaimed · {{money .Linkable.Counts.ApprovedAmount}} · one request, one payment</p>
+  </div>
+  <div class="pb-actions">
+    {{if .Perms.Can "payment" "create"}}<a class="btn primary" href="/payments/new">＋ Record a payment</a>{{end}}
+  </div>
+</section>
+
+<div class="metric-strip">
+  <div class="metric"><span class="metric-label">Approved, unclaimed</span><span class="metric-value">{{.Linkable.Counts.Approved}}</span><span class="metric-foot">{{money .Linkable.Counts.ApprovedAmount}}</span></div>
+  <div class="metric"><span class="metric-label">Reserved by you</span><span class="metric-value">{{.Linkable.Counts.ReservedByMe}}</span><span class="metric-foot">{{if .Linkable.Counts.StaleReservations}}{{.Linkable.Counts.StaleReservations}} open over a day{{else}}All recent{{end}}</span></div>
+  <div class="metric"><span class="metric-label">Reserved by others</span><span class="metric-value">{{.Linkable.Counts.ReservedByOthers}}</span><span class="metric-foot">Visible, not yours</span></div>
+  <div class="metric"><span class="metric-label">On hold</span><span class="metric-value">{{.Linkable.Counts.Hold}}</span><span class="metric-foot">Waiting on the requester</span></div>
+</div>
+
+<div class="segmented" style="margin-bottom:12px">
+  {{$counts := .Linkable.Counts}}
+  <a class="{{if eq .Tab "approved"}}is-active{{end}}" {{if eq .Tab "approved"}}aria-current="page"{{end}} href="/accounts-queue?tab=approved">Approved <span class="n">{{$counts.Approved}}</span></a>
+  <a class="{{if eq .Tab "processing"}}is-active{{end}}" {{if eq .Tab "processing"}}aria-current="page"{{end}} href="/accounts-queue?tab=processing">Processing <span class="n">{{$counts.Processing}}</span></a>
+  <a class="{{if eq .Tab "hold"}}is-active{{end}}" {{if eq .Tab "hold"}}aria-current="page"{{end}} href="/accounts-queue?tab=hold">On hold <span class="n">{{$counts.Hold}}</span></a>
+  <a class="{{if eq .Tab "partial_review"}}is-active{{end}}" {{if eq .Tab "partial_review"}}aria-current="page"{{end}} href="/accounts-queue?tab=partial_review">Partial review <span class="n">{{$counts.PartialReview}}</span></a>
+  <a class="{{if eq .Tab "paid"}}is-active{{end}}" {{if eq .Tab "paid"}}aria-current="page"{{end}} href="/accounts-queue?tab=paid">Paid <span class="n">{{$counts.Paid}}</span></a>
+</div>
+
+<form class="m-filters" method="get" action="/accounts-queue">
+  <input type="hidden" name="tab" value="{{.Tab}}">
+  <span class="m-search"><input id="queue-q" name="q" value="{{.Query}}" placeholder="Number, payee, project…" aria-label="Search the payment queue"></span>
+  <button class="btn filter-btn" type="submit">Search</button>
+</form>
+
+{{if .Linkable.Counts.StaleReservations}}
+<div class="banner brand">
+  <span class="b-ico" aria-hidden="true">◷</span>
+  <div>
+    <b>You have {{.Linkable.Counts.ReservedByMe}} {{plural .Linkable.Counts.ReservedByMe "request" "requests"}} reserved</b>
+    <p>{{.Linkable.Counts.StaleReservations}} of them {{plural .Linkable.Counts.StaleReservations "has" "have"}} been open for more than a day. Finish {{plural .Linkable.Counts.StaleReservations "it" "them"}} or release {{plural .Linkable.Counts.StaleReservations "it" "them"}} so someone else can.</p>
+  </div>
+  <span class="b-actions"><a class="btn small outline" href="/accounts-queue?tab=processing">Review</a></span>
+</div>
+{{end}}
+
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Request</th><th>Payee</th><th>Project / head</th><th class="num">Amount</th><th>Needed by</th><th>Status</th><th class="c">Action</th></tr></thead>
+    <tbody>
+      {{range .Linkable.Available}}
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a> <span class="t-sub">{{.RequesterName}} · approved {{datep .ApprovedAt}}</span></td>
+        <td data-label="Payee">{{.VendorPayee}}</td>
+        <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
+        <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
+        <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
+        <td data-label="Status"><span class="pill approved">Approved</span></td>
+        <td class="c" data-label="Action">{{if $.Perms.Can "reservation" "reserve"}}<form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn small primary" type="submit">Take for processing</button></form>{{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}</td>
+      </tr>
+      {{end}}
+      {{range .Linkable.Unavailable}}
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a> <span class="t-sub">{{.RequesterName}} · approved {{datep .ApprovedAt}}</span></td>
+        <td data-label="Payee">{{.VendorPayee}}</td>
+        <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
+        <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
+        <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
+        <td data-label="Status">
+          {{if .OnHold}}<span class="pill hold">On hold</span>
+          {{else if eq .Status "partial_review"}}<span class="pill partial">Partial — manager review</span>
+          {{else if eq .Status "completed_partial"}}<span class="pill completed-partial">Completed — partial accepted</span>
+          {{else if eq .Status "completed"}}<span class="pill completed">Completed</span>
+          {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID)}}<span class="pill processing">Reserved by you · {{reservedLabel .ProcessingAt}}</span>
+          {{else}}<span class="pill processing">Reserved by {{.ProcessingByName}}</span>{{end}}
+        </td>
+        <td class="c" data-label="Action">
+          {{if .OnHold}}<a class="btn small" href="/requests/{{.ID}}">Read reply</a>
+          {{else if eq .Status "partial_review"}}<a class="btn small outline" href="/requests/{{.ID}}/partial-review">View</a>
+          {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID)}}<a class="btn small" href="/payments/new?request={{.ID}}">Resume</a>
+          {{else if and .ProcessingBy ($.Perms.Can "reservation" "reassign")}}<a class="btn small outline" href="/requests/{{.ID}}/reservation">Reassign</a>
+          {{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{if and (not .Linkable.Available) (not .Linkable.Unavailable)}}<tr><td colspan="7" class="empty">Nothing in this tab right now.</td></tr>{{end}}
+    </tbody>
+  </table>
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{/* G15 — losing the reservation race is a screen, not an error page.
      mockups/screens/accounts-reservation-conflict.html: name the winner, say in
      as many words that nothing was saved, show the request in context, and

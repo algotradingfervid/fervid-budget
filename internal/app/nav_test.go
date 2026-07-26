@@ -89,15 +89,15 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 			perms: adminPerms(),
 			want:  specLabels(false),
 		},
-		// These lists are the screens that exist *today*. "Accounts queue" and
-		// "Recoverables" are permitted but not built yet, so they carry Soon and
-		// appear in the coming-soon count below instead. The phase that builds
-		// each one drops its flag and moves it here — Phase 2 has just done so
-		// for "My requests", which is why it now sits in this list.
+		// These lists are the screens that exist *today*. "Recoverables" is
+		// permitted but not built yet, so it carries Soon and appears in the
+		// coming-soon count below instead. The phase that builds each one drops
+		// its flag and moves it here — Phase 2 did so for "My requests", and
+		// Phase 3 has just done so for "Accounts queue".
 		{
 			name:  "data entry sees only its own screens",
 			perms: dataEntryPerms(),
-			want:  []string{"Home", "My requests", "Payments ledger", "Reports", "Variance grid"},
+			want:  []string{"Accounts queue", "Home", "My requests", "Payments ledger", "Reports", "Variance grid"},
 		},
 		{
 			name:  "no grants leaves only ungated items",
@@ -128,10 +128,11 @@ func TestBuildShellKeepsComingSoonAndDropsEmptyGroups(t *testing.T) {
 		}
 	}
 	// Four future products (Invoices, Payments received, Inventory, Purchase
-	// orders) plus the two permitted-but-unbuilt queues — Accounts queue and
-	// Recoverables. "My requests" left this count when Phase 2 built /requests.
-	// A Soon item may carry the href its screen will occupy; the template
-	// renders it without one, so it cannot become a clickable dead end.
+	// orders) plus the one permitted-but-unbuilt queue, Recoverables. "My
+	// requests" left this count when Phase 2 built /requests; "Accounts queue"
+	// left it when Phase 3 built /accounts-queue. A Soon item may carry the href
+	// its screen will occupy; the template renders it without one, so it cannot
+	// become a clickable dead end.
 	soon := 0
 	for _, group := range entryGroups {
 		for _, item := range group.Items {
@@ -140,8 +141,8 @@ func TestBuildShellKeepsComingSoonAndDropsEmptyGroups(t *testing.T) {
 			}
 		}
 	}
-	if soon != 6 {
-		t.Fatalf("coming-soon items visible to data_entry = %d, want 6", soon)
+	if soon != 5 {
+		t.Fatalf("coming-soon items visible to data_entry = %d, want 5", soon)
 	}
 }
 

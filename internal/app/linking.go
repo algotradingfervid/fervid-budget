@@ -133,6 +133,36 @@ type PaidRequestRow struct {
 	Status     string // the request's status: completed | completed_partial | partial_review
 }
 
+// accountsQueue is the Accounts work queue. Every tab is a store status filter
+// and every count spans the caller's whole scope, so typing in the search box
+// narrows the rows and never moves the numbers above them.
+func (a *App) accountsQueue(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	tab := r.URL.Query().Get("tab")
+	if tab == "" {
+		tab = queueTabs[0].Key
+	}
+	known := false
+	for _, t := range queueTabs {
+		if t.Key == tab {
+			known = true
+		}
+	}
+	if !known {
+		a.respondError(w, r, http.StatusBadRequest, "That queue tab does not exist.", nil)
+		return
+	}
+	query := r.URL.Query().Get("q")
+	set, err := a.st.LinkablePaymentRequests(r.Context(), store.LinkableOptions{
+		Scope: a.auth.Scope(u, "request"), ViewerID: u.ID, Status: tab, Query: query,
+	})
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "accounts_queue", PageData{Title: "Payment queue", Linkable: set, Tab: tab, Query: query})
+}
+
 // settlementError re-renders the confirmation sheet with the message in place,
 // so a rejected settlement never throws the accountant onto an error page and
 // never loses the figures they typed. Task 15 owns the sheet; until then this is

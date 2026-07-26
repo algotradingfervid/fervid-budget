@@ -136,6 +136,92 @@ func TestReservationConflictRendersScreenNotErrorPage(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Task 12 — the accounts queue
+// ---------------------------------------------------------------------------
+
+func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Queue")
+	open := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 23500000)
+	mine := s.seedApprovedRequest(2, admin.ID, admin.ID, headID, 10000000)
+	held := s.seedApprovedRequest(3, admin.ID, admin.ID, headID, 2500000)
+	if err := s.st.ReserveRequest(s.ctx, admin, mine); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.HoldRequest(s.ctx, admin, held, "await vendor GST"); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	for _, want := range []string{
+		`class="metric-strip"`,
+		"Approved, unclaimed",
+		"Reserved by you",
+		"Reserved by others",
+		"On hold",
+		`class="segmented"`,
+		"Approved <span class=\"n\">1</span>",
+		"Processing <span class=\"n\">1</span>",
+		"On hold <span class=\"n\">1</span>",
+		"Partial review <span class=\"n\">0</span>",
+		"Paid <span class=\"n\">0</span>",
+		`class="m-filters"`,
+		`<table class="t-cards">`,
+		`data-label="Payee"`,
+		"Take for processing",
+		"PR-2026-000001",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("queue missing %q:\n%s", want, body)
+		}
+	}
+	// A reserved-by-you row offers Resume, never a second Take.
+	if strings.Count(body, "Take for processing") != 1 {
+		t.Fatalf("Take offered for a non-takeable row:\n%s", body)
+	}
+	// Design system, not the legacy markup.
+	if strings.Contains(body, `class="badge`) {
+		t.Fatalf("queue still renders .badge (D5):\n%s", body)
+	}
+
+	// The Processing tab shows the reserved row and hides the open one.
+	proc := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=processing", nil, ""))
+	if !strings.Contains(proc, "PR-2026-000002") || strings.Contains(proc, "PR-2026-000001") {
+		t.Fatalf("processing tab wrong:\n%s", proc)
+	}
+	if !strings.Contains(proc, "Resume") {
+		t.Fatalf("processing tab has no Resume action:\n%s", proc)
+	}
+	// The hold tab shows the held row, which is never takeable.
+	hold := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=hold", nil, ""))
+	if !strings.Contains(hold, "PR-2026-000003") || strings.Contains(hold, "Take for processing") {
+		t.Fatalf("hold tab wrong:\n%s", hold)
+	}
+	// An unknown tab is rejected, not silently treated as Approved.
+	resp := s.request(http.MethodGet, "/accounts-queue?tab=nonsense", nil, "")
+	requireStatus(t, resp, http.StatusBadRequest)
+	_ = responseBody(t, resp)
+	_ = open
+}
+
+func TestAccountsQueueSearchNarrowsRows(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("QueueSearch")
+	s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.seedApprovedRequest(2, admin.ID, admin.ID, headID, 600000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue?q=PR-2026-000002", nil, ""))
+	if !strings.Contains(body, "PR-2026-000002") || strings.Contains(body, "PR-2026-000001") {
+		t.Fatalf("queue search did not narrow:\n%s", body)
+	}
+	// Counts are scope-wide, not search-scoped: the tab still says 2.
+	if !strings.Contains(body, "Approved <span class=\"n\">2</span>") {
+		t.Fatalf("search distorted the tab counts:\n%s", body)
+	}
+}
+
 func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("X5")
