@@ -222,6 +222,101 @@ func TestAccountsQueueSearchNarrowsRows(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Task 13 — the request picker
+// ---------------------------------------------------------------------------
+
+func TestPaymentPickerRendersComboAndTakenRows(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Picker")
+	open := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
+	taken := s.seedApprovedRequest(2, admin.ID, admin.ID, headID, 3350000)
+	deepak := s.seedColleague("deepak@example.test", "Deepak Menon", "DeepakPass1234")
+	if err := s.st.ReserveRequest(s.ctx, deepak, taken); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	for _, want := range []string{
+		`class="banner info"`,
+		"Free payment entry has been removed",
+		`class="combo"`,
+		`class="combo-input"`,
+		`class="combo-list"`,
+		`class="co"`,
+		"PR-2026-000001",
+		`class="co-amt"`,
+		`class="co is-taken"`,
+		"Reserved by Deepak Menon",
+		"Recently paid by you",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("picker missing %q:\n%s", want, body)
+		}
+	}
+	// The picker promises no control this phase does not build: the mockup's
+	// "an administrator can re-enable direct entry in Configuration" is absent.
+	if strings.Contains(body, "re-enable direct entry") {
+		t.Fatalf("picker promises a Configuration toggle that does not exist:\n%s", body)
+	}
+	// A taken row must not be postable: no reservation action inside it.
+	takenRow := body[strings.Index(body, `class="co is-taken"`):]
+	if i := strings.Index(takenRow, "</a>"); i > 0 && strings.Contains(takenRow[:i], "/record-payment") {
+		t.Fatalf("taken row offers a reservation action:\n%s", takenRow[:i])
+	}
+	// htmx fragment: the list only, no shell.
+	frag := responseBody(t, s.htmxGet("/payments/new/options?q=PR-2026-000001"))
+	if !strings.Contains(frag, `class="combo-list"`) {
+		t.Fatalf("options fragment missing the list:\n%s", frag)
+	}
+	if strings.Contains(frag, "<aside") || strings.Contains(frag, "<!doctype") {
+		t.Fatalf("options fragment rendered the whole shell:\n%s", frag)
+	}
+	if strings.Contains(frag, "PR-2026-000002") {
+		t.Fatalf("options fragment ignored the search:\n%s", frag)
+	}
+	_ = open
+}
+
+func TestPaymentPickerListsOnlyYourOwnRecentPayments(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Recent")
+	deepak := s.seedColleague("deepak@example.test", "Deepak Menon", "DeepakPass1234")
+	// Deepak settles one; the admin must never see it under "paid by you".
+	theirs := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	if err := s.st.ReserveRequest(s.ctx, deepak, theirs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.RecordPaymentForRequest(s.ctx, deepak, theirs,
+		store.PaymentInput{HeadID: headID, PaidOn: "2026-07-24", Amount: 500000, VendorPayee: "Nova Print Works"},
+		"settled", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	// The admin settles their own.
+	mine := s.seedApprovedRequest(2, admin.ID, admin.ID, headID, 400000)
+	if err := s.st.ReserveRequest(s.ctx, admin, mine); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.RecordPaymentForRequest(s.ctx, admin, mine,
+		store.PaymentInput{HeadID: headID, PaidOn: "2026-07-25", Amount: 300000, VendorPayee: "Acme Landlord"},
+		"partial", "balance later", nil); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	recent := body[strings.Index(body, "Recently paid by you"):]
+	if !strings.Contains(recent, "PR-2026-000002") {
+		t.Fatalf("the caller's own settlement is missing:\n%s", recent)
+	}
+	if strings.Contains(recent, "PR-2026-000001") {
+		t.Fatalf("another accountant's settlement leaked into 'paid by you':\n%s", recent)
+	}
+	if !strings.Contains(recent, `class="pill partial"`) {
+		t.Fatalf("a partial settlement is not marked as one:\n%s", recent)
+	}
+}
+
 func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("X5")

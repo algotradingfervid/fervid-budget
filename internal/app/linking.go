@@ -163,6 +163,81 @@ func (a *App) accountsQueue(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "accounts_queue", PageData{Title: "Payment queue", Linkable: set, Tab: tab, Query: query})
 }
 
+// pickerData is the no-request branch of GET /payments/new and the fragment
+// behind it, built once so the two deliveries cannot disagree about what is
+// takeable.
+func (a *App) pickerData(r *http.Request) (PageData, error) {
+	u := auth.CurrentUser(r)
+	q := r.URL.Query().Get("q")
+	set, err := a.st.LinkablePaymentRequests(r.Context(), store.LinkableOptions{
+		Scope: a.auth.Scope(u, "request"), ViewerID: u.ID, Query: q, Limit: 20,
+	})
+	if err != nil {
+		return PageData{}, err
+	}
+	recent, err := a.recentPaidByActor(r, u.ID, 5)
+	if err != nil {
+		return PageData{}, err
+	}
+	return PageData{Title: "Record a payment", Linkable: set, RecentPaid: recent, Query: q}, nil
+}
+
+// recentPaidByActor assembles "Recently paid by you" from the ledger. There is
+// no store method joining payments to their requests, and the store layer is
+// closed for this phase's UI work, so the join happens here: read the ledger
+// newest-first, keep the caller's own linked rows, and name each one from the
+// request it settled.
+func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]PaidRequestRow, error) {
+	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Status: "all", Limit: 200})
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(payments, func(i, j int) bool { return payments[i].CreatedAt.After(payments[j].CreatedAt) })
+	out := make([]PaidRequestRow, 0, limit)
+	for _, p := range payments {
+		if len(out) == limit {
+			break
+		}
+		if p.EnteredBy != actorID {
+			continue
+		}
+		// ListPayments does not select the linkage columns — RequestID is
+		// always nil on its rows — so the linkage is re-read per candidate.
+		linked, perr := a.st.Payment(r.Context(), p.ID)
+		if perr != nil {
+			return nil, perr
+		}
+		if linked.RequestID == nil {
+			continue
+		}
+		req, rerr := a.st.Request(r.Context(), *linked.RequestID)
+		if rerr != nil {
+			return nil, rerr
+		}
+		out = append(out, PaidRequestRow{
+			PaymentID: linked.ID, RequestID: req.ID, Number: req.Number,
+			Payee: linked.VendorPayee, Amount: linked.Amount, PaidOn: linked.PaidOn,
+			Settlement: linked.Settlement, Status: req.Status,
+		})
+	}
+	return out, nil
+}
+
+// paymentEntry is the with-request branch of GET /payments/new. Task 14 builds
+// the screen; until then it falls through to the legacy form.
+func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int64) {
+	a.paymentEntryLegacy(w, r)
+}
+
+func (a *App) paymentPickerOptions(w http.ResponseWriter, r *http.Request) {
+	data, err := a.pickerData(r)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.renderPartial(w, r, "payment_pick_options", data)
+}
+
 // settlementError re-renders the confirmation sheet with the message in place,
 // so a rejected settlement never throws the accountant onto an error page and
 // never loses the figures they typed. Task 15 owns the sheet; until then this is

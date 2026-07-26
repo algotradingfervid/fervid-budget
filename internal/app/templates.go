@@ -197,6 +197,94 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The request picker — mockups/screens/payment-request-picker.html.
+
+     Three deliberate points. A takeable .co is a submit button inside a POST
+     form, not a link, because selecting one reserves the request and a GET must
+     never mutate. A taken .co.is-taken links to the read-only request instead,
+     which is the only thing the loser may do. And the search degrades to a plain
+     GET on /payments/new when htmx is absent, re-rendering the same list from
+     the same template.
+
+     The mockup's banner ends "An administrator can re-enable direct entry in
+     Configuration if you ever need it." No such control exists, in this phase or
+     any planned one, so that sentence is not shipped. */}}
+{{define "payment_pick_options"}}
+<div class="combo-list" id="picker-list" role="listbox" aria-label="Approved requests">
+  {{range .Linkable.Available}}
+  <form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="co" type="submit">
+      <span class="co-main"><b>{{.Number}} · {{.VendorPayee}}</b>
+        <small>{{.RequesterName}} · {{.Project}} / {{.Head}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
+      <span class="co-amt">{{money (approvedOf .)}}</span>
+    </button>
+  </form>
+  {{end}}
+  {{range .Linkable.Unavailable}}
+  <a class="co is-taken" href="/requests/{{.ID}}">
+    <span class="co-main"><b>{{.Number}} · {{.VendorPayee}}</b>
+      <small>{{if .OnHold}}On hold — {{.HoldReason}}{{else if .ProcessingByName}}Reserved by {{.ProcessingByName}} at {{hhmm .ProcessingAt}} — you cannot take this one{{else}}{{reqStatus .Status}} — you cannot take this one{{end}}</small></span>
+    <span class="co-amt">{{money (approvedOf .)}}</span>
+  </a>
+  {{end}}
+  {{if and (not .Linkable.Available) (not .Linkable.Unavailable)}}<div class="co"><span class="co-main"><b>No approved requests match</b><small>Clear the search, or check the queue.</small></span></div>{{end}}
+</div>
+{{end}}
+
+{{define "payment_pick_request"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Accounts · new payment</div>
+    <h1>Which approved request is this for?</h1>
+    <p class="sub">Every payment belongs to exactly one approved request.</p>
+  </div>
+  <div class="pb-actions">
+    {{if .Perms.Can "payment" "process"}}<a class="btn outline" href="/accounts-queue">Open the queue</a>{{end}}
+  </div>
+</section>
+
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>Free payment entry has been removed</b>
+    <p>Payments recorded before this module remain in the ledger as history. New money out starts here.</p>
+  </div>
+</div>
+
+<form class="field" method="get" action="/payments/new" style="margin-bottom:4px">
+  <label for="picker">Search approved requests</label>
+  <span class="combo">
+    <input class="combo-input" id="picker" name="q" value="{{.Query}}" autocomplete="off"
+           hx-get="/payments/new/options" hx-trigger="keyup changed delay:250ms, search"
+           hx-target="#picker-list" hx-swap="outerHTML">
+    <span class="combo-caret" aria-hidden="true">▾</span>
+  </span>
+  <span class="hint">Search by request number, requester, payee, project, head or amount.</span>
+</form>
+
+{{template "payment_pick_options" .}}
+
+<div class="section-head"><h2>Recently paid by you</h2></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Request</th><th>Payee</th><th class="num">Paid</th><th>Date</th><th>Status</th></tr></thead>
+    <tbody>
+      {{range .RecentPaid}}
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="/payments/{{.PaymentID}}">{{.Number}}</a></td>
+        <td data-label="Payee">{{.Payee}}</td>
+        <td class="num" data-label="Paid">{{money .Amount}}</td>
+        <td data-label="Date">{{dateLong .PaidOn}}</td>
+        <td data-label="Status">{{if eq .Status "partial_review"}}<span class="pill partial">Partial — manager review</span>{{else if eq .Status "completed_partial"}}<span class="pill completed-partial">Completed — partial accepted</span>{{else}}<span class="pill completed">Completed</span>{{end}}</td>
+      </tr>
+      {{else}}<tr><td colspan="5" class="empty">You have not recorded a payment yet.</td></tr>{{end}}
+    </tbody>
+  </table>
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{/* The Accounts work queue — mockups/screens/accounts-queue.html.
 
      Two departures from the mockup, both deliberate. Its "Take for processing"

@@ -314,6 +314,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /months", a.auth.RequirePermission("month", "view", http.HandlerFunc(a.months)))
 	mux.Handle("POST /months", a.auth.RequirePermission("month", "create", http.HandlerFunc(a.withCSRF(a.monthCreate))))
 	mux.Handle("GET /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentForm)))
+	mux.Handle("GET /payments/new/options", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentPickerOptions)))
 	mux.Handle("GET /payments", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.payments)))
 	mux.Handle("POST /payments", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.withCSRF(a.paymentCreate))))
 	mux.Handle("GET /payments/{id}", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.paymentDetail)))
@@ -522,7 +523,27 @@ func (a *App) grid(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "grid", PageData{Title: "Variance Grid", Grid: grid, CloseGrid: closeGrid, Month: month, Status: status, Query: q, Payments: payments})
 }
 
+// paymentForm has two branches and no third. Without ?request= it is the
+// picker: every payment belongs to exactly one approved request, so choosing
+// one is the first step rather than an optional extra. With ?request= it is the
+// entry screen for a reservation the caller holds.
 func (a *App) paymentForm(w http.ResponseWriter, r *http.Request) {
+	linkedID := parseID(r.URL.Query().Get("request"))
+	if linkedID == 0 {
+		data, err := a.pickerData(r)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		a.render(w, r, "payment_pick_request", data)
+		return
+	}
+	a.paymentEntry(w, r, linkedID)
+}
+
+// paymentEntryLegacy is the pre-Phase-3 free-entry form, kept only as the shape
+// the edit screen still renders from. Task 14 replaces the entry branch.
+func (a *App) paymentEntryLegacy(w http.ResponseWriter, r *http.Request) {
 	heads, err := a.st.ListHeads(r.Context(), true)
 	if err != nil {
 		a.respondStoreError(w, r, err)
