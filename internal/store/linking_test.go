@@ -611,3 +611,48 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 		t.Fatalf("concern comment not persisted: %d", comments)
 	}
 }
+
+func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 480000)
+
+	if err := s.HoldRequest(ctx, acc, reqID, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("hold without reason = %v, want ErrValidation", err)
+	}
+	if err := s.HoldRequest(ctx, acc, reqID, "await vendor GST"); err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	var onHold int
+	var holdReason string
+	var amount, approved int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT on_hold,hold_reason,amount,approved_amount FROM payment_requests WHERE id=?`, reqID).Scan(&onHold, &holdReason, &amount, &approved); err != nil {
+		t.Fatal(err)
+	}
+	if onHold != 1 || holdReason != "await vendor GST" || amount != 500000 || approved != 480000 {
+		t.Fatalf("hold changed approved fields: on_hold=%d reason=%q amount=%d approved=%d", onHold, holdReason, amount, approved)
+	}
+	// Q6: while on hold the requester may still add a comment; no field changes.
+	// (Phase 2's AddRequestComment returns the new comment id alongside its error.)
+	if _, err := s.AddRequestComment(ctx, req, reqID, "Attaching the corrected invoice"); err != nil {
+		t.Fatalf("comment while on hold: %v", err)
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT amount,approved_amount FROM payment_requests WHERE id=?`, reqID).Scan(&amount, &approved); err != nil {
+		t.Fatal(err)
+	}
+	if amount != 500000 || approved != 480000 {
+		t.Fatalf("comment changed approved fields: amount=%d approved=%d", amount, approved)
+	}
+	// A held request cannot be reserved (L7).
+	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reserve held = %v, want ErrForbidden", err)
+	}
+	// Unhold restores availability.
+	if err := s.UnholdRequest(ctx, acc, reqID); err != nil {
+		t.Fatalf("unhold: %v", err)
+	}
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatalf("reserve after unhold: %v", err)
+	}
+}

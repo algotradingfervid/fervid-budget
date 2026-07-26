@@ -1018,6 +1018,55 @@ func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment 
 	return tx.Commit()
 }
 
+// HoldRequest pauses an approved, not-already-held request (L7). reason required.
+func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("%w: a hold reason is required", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET on_hold=1, hold_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='approved' AND on_hold=0`, reason, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("%w: only an approved, not-already-held request can be held", ErrForbidden)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "hold", EntityType: "payment_request", EntityID: &id, Summary: "On hold: " + reason}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UnholdRequest lifts a hold. The route gate (payment.hold) restricts this to
+// Accounts (L7).
+func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND on_hold=1`, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("%w: request is not on hold", ErrForbidden)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unhold", EntityType: "payment_request", EntityID: &id, Summary: "Hold lifted"}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
