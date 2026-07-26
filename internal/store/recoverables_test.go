@@ -288,3 +288,128 @@ func TestListRecoverableCategoriesWithUsageCountsRequests(t *testing.T) {
 		t.Fatalf("EMD Requires() = %q, want Related project", usage[1].Requires())
 	}
 }
+
+// The register joins payment_requests to recoverable_categories on the id, and
+// Phase 2 hardcoded that id to NULL. If CreateRequest does not fill it, every
+// screen in Phase 4 shows a blank category for every request the real form ever
+// produced — while tests that INSERT the id by hand still pass.
+func TestCreateRequestLinksRecoverableCategoryID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, _ := seedRequestActors(t, s, ctx)
+
+	id, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
+		RecoverableCategory: "emd", ProjectID: 1, Amount: 500000, Purpose: "Tender EMD",
+		ExpectedReturnDate: "2027-03-31", RepaymentNotes: "Refund on award", ManagerID: mgr.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	var gotID *int64
+	var gotCode string
+	if err := s.DB().QueryRowContext(ctx, `SELECT recoverable_category_id,recoverable_category FROM payment_requests WHERE id=?`, id).
+		Scan(&gotID, &gotCode); err != nil {
+		t.Fatal(err)
+	}
+	if gotCode != "emd" {
+		t.Fatalf("recoverable_category = %q, want emd", gotCode)
+	}
+	if gotID == nil {
+		t.Fatal("recoverable_category_id is NULL: the register would show a blank category for this request")
+	}
+	var name string
+	if err := s.DB().QueryRowContext(ctx, `SELECT name FROM recoverable_categories WHERE id=?`, *gotID).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "EMD" {
+		t.Fatalf("linked category = %q, want EMD", name)
+	}
+}
+
+// A budget request has no category, so the link column must stay NULL rather
+// than pointing at whatever a stale code happened to say.
+func TestBudgetRequestHasNoCategoryLink(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+
+	id, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "budget", Type: "reimbursement", ShortTitle: "Team lunch",
+		ProjectID: 1, HeadID: headID, Amount: 50000, Purpose: "team lunch",
+		ExpenseDate: "2026-07-21", ManagerID: mgr.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	var gotID *int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT recoverable_category_id FROM payment_requests WHERE id=?`, id).Scan(&gotID); err != nil {
+		t.Fatal(err)
+	}
+	if gotID != nil {
+		t.Fatalf("budget request linked to category %d", *gotID)
+	}
+}
+
+// V4: categories are admin-configurable, so the rules must come from the table.
+// With the Phase-2 map still in charge, a category an admin adds is simply an
+// unknown code and every request naming it is rejected.
+func TestAdminAddedCategoryRulesAreEnforced(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, _ := seedRequestActors(t, s, ctx)
+	admin, _ := s.UserByID(ctx, mgr.ID)
+	if _, err := s.UpsertRecoverableCategory(ctx, admin, 0, "Retention money", false, true, true, 7); err != nil {
+		t.Fatalf("add category: %v", err)
+	}
+
+	base := func() RequestInput {
+		return RequestInput{
+			Treatment: "recoverable", Type: "recoverable", ShortTitle: "Retention",
+			RecoverableCategory: "retention_money", Amount: 250000, Purpose: "Retention held",
+			ExpectedReturnDate: "2027-06-30", RepaymentNotes: "Release at defect liability end",
+			ManagerID: mgr.ID,
+		}
+	}
+	// The new category requires a counterparty, and that rule is enforced.
+	if _, err := s.CreateRequest(ctx, req, base()); !errors.Is(err, ErrValidation) {
+		t.Fatalf("admin category rule not enforced: %v", err)
+	}
+	in := base()
+	in.Counterparty = "Ridge Metro"
+	id, err := s.CreateRequest(ctx, req, in)
+	if err != nil {
+		t.Fatalf("admin-added category rejected: %v", err)
+	}
+	var linked *int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT recoverable_category_id FROM payment_requests WHERE id=?`, id).Scan(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if linked == nil {
+		t.Fatal("admin-added category did not link")
+	}
+}
+
+// Deactivating a category is how an admin retires it. It must stop being usable
+// on new requests, otherwise the setting does nothing.
+func TestDeactivatedCategoryIsRejectedOnNewRequests(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, _ := seedRequestActors(t, s, ctx)
+	admin, _ := s.UserByID(ctx, mgr.ID)
+	var pbgID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='pbg'`).Scan(&pbgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertRecoverableCategory(ctx, admin, pbgID, "PBG", true, false, false, 3); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	_, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "recoverable", ShortTitle: "PBG",
+		RecoverableCategory: "pbg", ProjectID: 1, Amount: 100000, Purpose: "Bank guarantee",
+		ExpectedReturnDate: "2027-03-31", RepaymentNotes: "On completion", ManagerID: mgr.ID,
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("deactivated category accepted: %v", err)
+	}
+}

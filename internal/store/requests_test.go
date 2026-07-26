@@ -181,7 +181,7 @@ func TestValidateRequestInputPerType(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := validateRequestInput(c.in)
+			err := validateRequestInput(c.in, recoverableCategoryRules)
 			if c.ok && err != nil {
 				t.Fatalf("want ok, got %v", err)
 			}
@@ -556,7 +556,7 @@ func TestSelfApprovalIsRejectedAndNeverOffered(t *testing.T) {
 	// Pure-input form of the same rule.
 	if err := validateRequestInput(RequestInput{Treatment: "budget", Type: "reimbursement",
 		ShortTitle: "t", ProjectID: 1, HeadID: 2, Amount: 1, Purpose: "p",
-		ExpenseDate: "2026-07-21", ManagerID: 9, RequesterID: 9}); !errors.Is(err, ErrValidation) {
+		ExpenseDate: "2026-07-21", ManagerID: 9, RequesterID: 9}, recoverableCategoryRules); !errors.Is(err, ErrValidation) {
 		t.Fatalf("validateRequestInput self-approval = %v, want ErrValidation", err)
 	}
 

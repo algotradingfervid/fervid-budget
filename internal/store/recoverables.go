@@ -111,6 +111,40 @@ func categoryCode(name string) string {
 	return strings.Trim(b.String(), "_")
 }
 
+// recoverableRules is the rule set validateRequestInput enforces, read from the
+// table rather than the built-in map so a category an admin adds is usable at
+// once (V4). Only active categories are offered, so deactivating one stops new
+// requests naming it — which is the whole point of the Active switch.
+func (s *Store) recoverableRules(ctx context.Context) (map[string]recoverableRule, error) {
+	cats, err := s.ListRecoverableCategories(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	rules := make(map[string]recoverableRule, len(cats))
+	for _, c := range cats {
+		rules[c.Code] = recoverableRule{RequiresProject: c.RequiresProject, RequiresCounterparty: c.RequiresCounterparty}
+	}
+	return rules, nil
+}
+
+// recoverableCategoryLink resolves a request's category code to the row id
+// stored in payment_requests.recoverable_category_id, or nil when the request
+// is not recoverable. Every Phase-4 register query joins on that id.
+func (s *Store) recoverableCategoryLink(ctx context.Context, treatment, code string) (any, error) {
+	if treatment != "recoverable" || strings.TrimSpace(code) == "" {
+		return nil, nil
+	}
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil, nil // validation already rejected unknown codes
+	}
+	if err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
 const recoverableCategorySelect = `SELECT id,code,name,requires_project,requires_counterparty,active,sort_order,created_at
 	FROM recoverable_categories`
 

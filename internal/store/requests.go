@@ -104,10 +104,16 @@ func canTransition(from, to string) bool {
 	return legalTransitions[from][to]
 }
 
-// recoverableCategoryRules is the Phase-2 view of the recoverable categories.
-// Phase 4 creates `recoverable_categories` and replaces this map with rows from
-// it (requires_project / requires_counterparty) without changing call sites.
-var recoverableCategoryRules = map[string]struct{ RequiresProject, RequiresCounterparty bool }{
+type recoverableRule struct{ RequiresProject, RequiresCounterparty bool }
+
+// recoverableCategoryRules is the built-in default rule set.
+//
+// Phase 4 moved the authority to the recoverable_categories table, which
+// migration v6 seeds from exactly this map — so an admin can add a category and
+// have its rules enforced without a code change (V4). The map survives as the
+// seed and as the rule set the pure validator tests use;
+// TestSeededCategoriesMatchPhase2Rules fails if the two ever drift.
+var recoverableCategoryRules = map[string]recoverableRule{
 	"emd":              {RequiresProject: true},
 	"pbg":              {RequiresProject: true},
 	"icd":              {RequiresCounterparty: true},
@@ -116,7 +122,9 @@ var recoverableCategoryRules = map[string]struct{ RequiresProject, RequiresCount
 	"other":            {},
 }
 
-func validateRequestInput(in RequestInput) error {
+// validateRequestInput stays pure: the caller supplies the recoverable rule set
+// so the rules can come from the database without this function reaching for it.
+func validateRequestInput(in RequestInput, rules map[string]recoverableRule) error {
 	if in.Amount <= 0 {
 		return fmt.Errorf("%w: a positive amount is required", ErrValidation)
 	}
@@ -163,7 +171,7 @@ func validateRequestInput(in RequestInput) error {
 		return nil
 	}
 	needsRecoverable := func() error {
-		rule, ok := recoverableCategoryRules[in.RecoverableCategory]
+		rule, ok := rules[in.RecoverableCategory]
 		if !ok {
 			return fmt.Errorf("%w: choose a recoverable category", ErrValidation)
 		}
@@ -360,7 +368,15 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 		in.VendorID = 0
 		in.VendorPayee = actor.Name
 	}
-	if err := validateRequestInput(in); err != nil {
+	rules, err := s.recoverableRules(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateRequestInput(in, rules); err != nil {
+		return 0, err
+	}
+	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
+	if err != nil {
 		return 0, err
 	}
 	mode, err := s.urgencyMode(ctx)
@@ -400,8 +416,8 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
   vendor_id,vendor_payee,short_title,amount,purpose,needed_by,invoice_no,invoice_date,expense_date,
   advance_reason,counterparty,expected_return_date,repayment_notes,urgent,urgency_reason,
   attachment_exception_reason,requester_id,manager_id,submitted_at)
- VALUES(?,'pending',?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
-		number, in.Treatment, in.Type, in.RecoverableCategory,
+ VALUES(?,'pending',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
+		number, in.Treatment, in.Type, in.RecoverableCategory, categoryID,
 		nullableID(in.ProjectID), nullableID(in.HeadID),
 		nullableID(in.VendorID), in.VendorPayee, strings.TrimSpace(in.ShortTitle),
 		in.Amount, in.Purpose, nullableText(in.NeededBy), in.InvoiceNo,
@@ -564,7 +580,15 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 		in.VendorID = 0
 		in.VendorPayee = actor.Name
 	}
-	if err := validateRequestInput(in); err != nil {
+	rules, err := s.recoverableRules(ctx)
+	if err != nil {
+		return err
+	}
+	if err := validateRequestInput(in, rules); err != nil {
+		return err
+	}
+	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
+	if err != nil {
 		return err
 	}
 	mode, err := s.urgencyMode(ctx)
@@ -592,13 +616,13 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 	// Pending edits reset the reminder timer and reroute to the chosen approver.
 	// P5 hook: re-notify the (possibly new) approver here.
 	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET
- treatment=?, type=?, recoverable_category=?, project_id=?, head_id=?, vendor_id=?, vendor_payee=?,
+ treatment=?, type=?, recoverable_category=?, recoverable_category_id=?, project_id=?, head_id=?, vendor_id=?, vendor_payee=?,
  short_title=?, amount=?, purpose=?, needed_by=?, invoice_no=?, invoice_date=?, expense_date=?,
  advance_reason=?, counterparty=?, expected_return_date=?, repayment_notes=?, urgent=?,
  urgency_reason=?, attachment_exception_reason=?, manager_id=?, reminder_last_sent=NULL,
  updated_at=CURRENT_TIMESTAMP
  WHERE id=?`,
-		in.Treatment, in.Type, in.RecoverableCategory, nullableID(in.ProjectID), nullableID(in.HeadID),
+		in.Treatment, in.Type, in.RecoverableCategory, categoryID, nullableID(in.ProjectID), nullableID(in.HeadID),
 		nullableID(in.VendorID), in.VendorPayee, strings.TrimSpace(in.ShortTitle),
 		in.Amount, in.Purpose, nullableText(in.NeededBy), in.InvoiceNo,
 		nullableText(in.InvoiceDate), nullableText(in.ExpenseDate), in.AdvanceReason,
