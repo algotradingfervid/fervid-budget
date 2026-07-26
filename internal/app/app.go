@@ -242,15 +242,18 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"reservedLabel": reservedLabel,
 		"sub":           subPaise,
 		"approvedOf":    approvedOf,
+		"trailAction":   trailAction,
 		"auditTone":     auditTone,
 		"auditGlyph":    auditGlyph,
+		"auditPhrase":   auditPhrase,
+		"trailBody":     trailBody,
 		"initials":      initials,
 		"paymentModes":  paymentModes,
 		"queueTabs":     func() []queueTab { return queueTabs },
 		// Configuration. The screen is a rendering of this table, so a later
 		// phase adds a section by appending to it and nothing else.
 		"configSections": func() []ConfigSection { return configSections },
-		"waitingOn":    waitingOn,
+		"waitingOn":      waitingOn,
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
 		},
@@ -544,7 +547,6 @@ func (a *App) paymentForm(w http.ResponseWriter, r *http.Request) {
 	a.paymentEntry(w, r, linkedID)
 }
 
-
 func (a *App) payments(w http.ResponseWriter, r *http.Request) {
 	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	status := queryDefault(r, "status", "active")
@@ -599,6 +601,12 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", payID), http.StatusSeeOther)
 }
 
+// paymentDetail is one screen with two readings. A payment linked to a request
+// is the end of that request's story, so it shows what was approved beside what
+// was paid and the whole trail from submission to settlement — and offers
+// nothing that would change it (S12). A historical, request-less payment is
+// still a ledger row and keeps the pre-Phase-3 screen until Phase 6 redraws the
+// ledger (X6).
 func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	p, err := a.st.Payment(r.Context(), id)
@@ -609,6 +617,42 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 	atts, err := a.st.Attachments(r.Context(), id)
 	if err != nil {
 		a.respondStoreError(w, r, err)
+		return
+	}
+	if p.RequestID != nil {
+		req, rerr := a.st.Request(r.Context(), *p.RequestID)
+		if rerr != nil {
+			a.respondStoreError(w, r, rerr)
+			return
+		}
+		// Half this screen is the request: its number, its people, its whole
+		// history. Reading it therefore obeys the same row scope /requests/{id}
+		// obeys, or payment:view becomes a way around Q5/R6.
+		u := auth.CurrentUser(r)
+		if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+			a.respondError(w, r, http.StatusForbidden, "You cannot see the request behind this payment.", nil)
+			return
+		}
+		// The trail the screen shows spans both entities: the request from
+		// submission to approval, then the payment from reservation to
+		// settlement. There is no store read across entity types, so the two
+		// audit listings are merged and ordered oldest-first.
+		trail, terr := a.mergedTrail(r, req.ID, p.ID)
+		if terr != nil {
+			a.respondStoreError(w, r, terr)
+			return
+		}
+		// The proof list is both halves too: the bank advice Accounts uploaded
+		// and the invoice the request came in with (payment-detail.html).
+		reqAtts, aerr := a.st.RequestAttachments(r.Context(), req.ID)
+		if aerr != nil {
+			a.respondStoreError(w, r, aerr)
+			return
+		}
+		a.render(w, r, "payment_detail", PageData{
+			Title: "Payment · " + req.Number, Payment: p, Request2: req,
+			Attachments: atts, RequestAtts: reqAtts, Audit: trail,
+		})
 		return
 	}
 	audit, err := a.st.Audit(r.Context(), "payment", id, 50)
@@ -623,6 +667,14 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 	p, err := a.st.Payment(r.Context(), pathID(r))
 	if err != nil {
 		a.respondStoreError(w, r, err)
+		return
+	}
+	// S12: a payment that settled a request cannot be edited, and the store
+	// refuses the write. Serving the form anyway would let somebody fill in a
+	// screen whose Save can only ever fail, so the URL goes where the payment
+	// actually lives.
+	if p.RequestID != nil {
+		http.Redirect(w, r, fmt.Sprintf("/payments/%d", p.ID), http.StatusSeeOther)
 		return
 	}
 	heads, err := a.st.ListHeads(r.Context(), true)

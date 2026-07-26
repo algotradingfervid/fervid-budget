@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -411,6 +412,18 @@ func waitingOn(req store.Request, viewerID int64) Waiting {
 		return Waiting{Text: "Withdrawn by the requester", Class: "closed"}
 	case "cancelled":
 		return Waiting{Text: "Cancelled. Nothing can be paid against it", Class: "closed"}
+	case "processing":
+		if req.ProcessingBy != nil && *req.ProcessingBy == viewerID {
+			return you
+		}
+		return Waiting{Text: "Waiting on Accounts"}
+	case "partial_review":
+		if req.ManagerID == viewerID {
+			return you
+		}
+		return Waiting{Text: "Waiting on " + req.ManagerName}
+	case "completed", "completed_partial":
+		return Waiting{Text: "Nothing pending", Class: "done"}
 	default:
 		return Waiting{}
 	}
@@ -518,7 +531,18 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 	if err != nil {
 		return PageData{}, err
 	}
-	return PageData{Title: title, Request2: req, Thread: thread, RequestAtts: atts}, nil
+	data := PageData{Title: title, Request2: req, Thread: thread, RequestAtts: atts}
+	// Q4: the requester reads the outcome on the request, not in the ledger. No
+	// payment yet is the ordinary case for most of a request's life, so
+	// ErrNotFound is an answer here rather than a failure.
+	pay, perr := a.st.PaymentForRequest(r.Context(), req.ID)
+	switch {
+	case perr == nil:
+		data.Payment = pay
+	case !errors.Is(perr, store.ErrNotFound):
+		return PageData{}, perr
+	}
+	return data, nil
 }
 
 // requestEditForm is the correction screen. Only the person who raised a
@@ -915,6 +939,13 @@ func pillClass(status string) string {
 		return "cancelreq"
 	case "withdrawn":
 		return "cancelled"
+	// The Phase-3 statuses whose enum name is not the design system's class
+	// name. Everything else already matches, and a status with no rule of its
+	// own would render an invisible pill.
+	case "partial_review":
+		return "partial"
+	case "completed_partial":
+		return "completed-partial"
 	default:
 		return status
 	}
@@ -939,6 +970,14 @@ func requestStatusText(status string) string {
 		return "Cancellation requested"
 	case "cancelled":
 		return "Cancelled"
+	case "processing":
+		return "With Accounts"
+	case "partial_review":
+		return "Partial — manager review"
+	case "completed":
+		return "Completed"
+	case "completed_partial":
+		return "Completed — partial accepted"
 	default:
 		return status
 	}

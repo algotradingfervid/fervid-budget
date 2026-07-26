@@ -30,6 +30,8 @@ func dataEntryPerms() store.PermissionSet {
 		{Resource: "payment", Action: "settle"},
 		{Resource: "payment", Action: "mark_partial"},
 		{Resource: "payment", Action: "hold"},
+		{Resource: "reservation", Action: "reserve"},
+		{Resource: "reservation", Action: "release"},
 		{Resource: "attachment", Action: "view"},
 		{Resource: "attachment", Action: "create"},
 		{Resource: "grid", Action: "view"},

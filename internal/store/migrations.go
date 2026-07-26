@@ -285,6 +285,26 @@ ON CONFLICT(key) DO NOTHING;
 			return err
 		},
 	},
+	// The reservation verbs entered the vocabulary with Phase 3, after v1 had
+	// already seeded the starter roles on every existing database — and
+	// seedSystemRoles only runs inside v1. Without this, an installed system
+	// upgrades to a phase whose whole flow the Accounts role cannot start.
+	//
+	// It adds the two grants and nothing else: a re-seed would also reset every
+	// deliberate change an administrator has made to a system role.
+	{
+		Version: 5,
+		Name:    "accounts_reservation_grants",
+		Up: func(tx *sql.Tx) error {
+			for _, action := range []string{"reserve", "release"} {
+				if _, err := tx.Exec(`INSERT OR IGNORE INTO role_permissions(role_id,resource,action)
+					SELECT id,'reservation',? FROM roles WHERE is_system=1 AND lower(name)='accounts'`, action); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // addDefaultApproverColumn is additive and guarded by columnExists, so
@@ -343,6 +363,10 @@ var systemRoleDefaults = []systemRoleDef{
 			{"request", "view"}, {"request", "comment"},
 			{"payment", "view"}, {"payment", "create"}, {"payment", "edit"}, {"payment", "void"},
 			{"payment", "process"}, {"payment", "settle"}, {"payment", "mark_partial"}, {"payment", "hold"},
+			// Phase 3 put taking a request out of the queue on its own verbs.
+			// Accounts is the role that takes work; reassign — taking work off
+			// somebody else — stays with an administrator.
+			{"reservation", "reserve"}, {"reservation", "release"},
 			{"attachment", "view"}, {"attachment", "create"},
 			{"grid", "view"}, {"report", "view"}, {"report", "export"},
 			{"recoverable_report", "view"}, {"recoverable_report", "export"},

@@ -524,3 +524,338 @@ func TestSettlementPreviewRefusesWhenTheReservationIsGone(t *testing.T) {
 		t.Fatalf("a lost reservation must land on the conflict screen:\n%s", body)
 	}
 }
+
+// Task 16 — the settlement lands on the payment, and the payment carries the
+// whole story: what was approved, what left the bank, who did each step, and
+// nothing that would let anybody change it afterwards (S10, S12, S13, Q4).
+
+func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Settle")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	// Settle for less than approved (S10).
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N221260725004417"}}
+	resp := s.postForm("/payments", form)
+	requireStatus(t, resp, http.StatusSeeOther)
+	loc := resp.Header.Get("Location")
+	if !strings.HasPrefix(loc, "/payments/") {
+		t.Fatalf("settlement redirect = %q, want the payment detail screen", loc)
+	}
+	_ = responseBody(t, resp)
+	if got := requestStatusApp(t, s, reqID); got != "completed" {
+		t.Fatalf("status = %q, want completed", got)
+	}
+
+	body := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
+	for _, want := range []string{
+		`class="banner good"`, "The request is completed",
+		`class="req-head"`, "from PR-2026-000001",
+		`class="pill completed"`, `class="waiting done"`,
+		`class="compare"`, `class="cmp-row match"`, "confirmed settled by Accounts",
+		"1,00,000.00", "98,000.00", "2,000.00",
+		`class="pill neutral no-dot"`, "Read-only",
+		`<ol class="thread">`, `class="tl-dot`, "reserved it for processing", "recorded a payment",
+		"Full trail, request to payment",
+		`class="action-bar"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("payment detail missing %q:\n%s", want, body)
+		}
+	}
+	// S12: no edit or void control on a linked payment, and the route refuses too.
+	if strings.Contains(body, "/edit") || strings.Contains(body, "/void") {
+		t.Fatalf("linked payment offers a mutation control:\n%s", body)
+	}
+	var payID int64
+	if err := s.st.DB().QueryRow(`SELECT id FROM payments WHERE request_id=?`, reqID).Scan(&payID); err != nil {
+		t.Fatal(err)
+	}
+	if resp := s.postForm(fmt.Sprintf("/payments/%d/void", payID), url.Values{"reason": {"nope"}}); resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("linked payment void accepted: %d", resp.StatusCode)
+	}
+
+	// Q4: the request page shows the outcome and links to the payment.
+	reqBody := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	if !strings.Contains(reqBody, `class="compare"`) || !strings.Contains(reqBody, "98,000.00") || !strings.Contains(reqBody, loc) {
+		t.Fatalf("request outcome missing the comparison or the payment link:\n%s", reqBody)
+	}
+}
+
+func TestDoubleConfirmLandsOnTheExistingPayment(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Double")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme"}, "settlement": {"settled"}, "reference_no": {"N1"}}
+	first := s.postForm("/payments", form)
+	requireStatus(t, first, http.StatusSeeOther)
+	_ = responseBody(t, first)
+	// The accountant taps Confirm twice. The second must not look like a failure.
+	second := s.postForm("/payments", form)
+	requireStatus(t, second, http.StatusSeeOther)
+	if second.Header.Get("Location") != first.Header.Get("Location") {
+		t.Fatalf("double confirm went to %q, want the existing payment %q", second.Header.Get("Location"), first.Header.Get("Location"))
+	}
+	_ = responseBody(t, second)
+	var n int
+	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payments WHERE request_id=?`, reqID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("double confirm created %d payments (S9 broken)", n)
+	}
+}
+
+func TestPartialSettlementRoutesToReview(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Partial")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-06-15"}, "amount": {"3000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"partial"}, "partial_reason": {"balance later"}, "reference_no": {"N2"}}
+	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	if got := requestStatusApp(t, s, reqID); got != "partial_review" {
+		t.Fatalf("status = %q, want partial_review", got)
+	}
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	if !strings.Contains(body, "balance later") || !strings.Contains(body, `class="pill partial"`) {
+		t.Fatalf("partial outcome missing from the request:\n%s", body)
+	}
+}
+
+// settleOneRequest drives the whole flow once — reserve, then confirm — and
+// returns the request and the payment it produced. Half the assertions below
+// are about what a settled payment must never offer, and none of them are about
+// how it got settled.
+func (s *appTestServer) settleOneRequest(seq int, headID, amount int64, paid, settlement, paidOn string) (int64, int64) {
+	s.t.Helper()
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	reqID := s.seedApprovedRequest(seq, admin.ID, admin.ID, headID, amount)
+	requireStatus(s.t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{
+		"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
+		"paid_on": {paidOn}, "amount": {paid}, "vendor_payee": {"Acme Landlord"},
+		"settlement": {settlement}, "reference_no": {"N221260725004417"},
+	}
+	if settlement == "partial" {
+		form.Set("partial_reason", "balance next month")
+	}
+	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
+	var payID int64
+	if err := s.st.DB().QueryRow(`SELECT id FROM payments WHERE request_id=?`, reqID).Scan(&payID); err != nil {
+		s.t.Fatal(err)
+	}
+	return reqID, payID
+}
+
+// S12 again, from the other two directions the reviewer found open: the ledger
+// row and the edit URL. The detail screen already hides both controls because a
+// control the route would reject is a lie — but so is a form the store would
+// reject, and so is an Edit button three columns from it.
+func TestLinkedPaymentIsImmutableInTheLedgerAndOnItsEditRoute(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Immutable")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	_, linkedID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
+
+	// A payment recorded before this module has no request behind it and stays
+	// editable (X6), so the ledger has to tell the two apart rather than lock
+	// the whole screen.
+	histID, err := s.st.CreatePayment(s.ctx, admin, store.PaymentInput{HeadID: headID, PaidOn: "2026-07-10", Amount: 12345, VendorPayee: "Legacy Vendor", PaymentMode: "cash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ledger := responseBody(t, s.request(http.MethodGet, "/payments?month=2026-07", nil, ""))
+	for _, forbidden := range []string{fmt.Sprintf("/payments/%d/edit", linkedID), fmt.Sprintf("/payments/%d/void", linkedID)} {
+		if strings.Contains(ledger, forbidden) {
+			t.Fatalf("the ledger offers %q on a request-linked payment:\n%s", forbidden, ledger)
+		}
+	}
+	if !strings.Contains(ledger, fmt.Sprintf("/payments/%d/edit", histID)) {
+		t.Fatalf("the ledger stopped offering Edit on a historical payment:\n%s", ledger)
+	}
+
+	resp := s.request(http.MethodGet, fmt.Sprintf("/payments/%d/edit", linkedID), nil, "")
+	requireStatus(t, resp, http.StatusSeeOther)
+	if got, want := resp.Header.Get("Location"), fmt.Sprintf("/payments/%d", linkedID); got != want {
+		t.Fatalf("edit form for a linked payment redirected to %q, want %q", got, want)
+	}
+	_ = responseBody(t, resp)
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d/edit", histID), nil, ""), http.StatusOK)
+}
+
+// The seeded Accounts role is the only non-admin role designed to process a
+// payment. If it cannot reserve, nothing in this phase is reachable without
+// being an administrator.
+func TestSeededAccountsRoleTakesARequestForProcessing(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("AccountsRole")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	clerk := s.seedColleague("clerk@example.test", "Priya Nair", "ClerkPassword123")
+	s.assignRole(clerk.ID, "Accounts")
+
+	s.login("clerk@example.test", "ClerkPassword123")
+	resp := s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{})
+	requireStatus(t, resp, http.StatusSeeOther)
+	loc := resp.Header.Get("Location")
+	_ = responseBody(t, resp)
+	if !strings.HasPrefix(loc, "/payments/new") {
+		t.Fatalf("Accounts reservation went to %q, want the payment entry screen", loc)
+	}
+	body := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
+	if !strings.Contains(body, "Record the payment") {
+		t.Fatalf("Accounts cannot reach the entry screen:\n%s", body)
+	}
+}
+
+// The queue gates its take button on reservation:reserve; the picker offered
+// one to anybody who could open it, and the POST behind it answers 403.
+func TestPickerOffersNoTakeControlWithoutTheReservationGrant(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("PickerGate")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.seedUserWithGrants("ledger@example.test", "LedgerPassword123", "Ledger only", []store.Grant{
+		{Resource: "payment", Action: "view"}, {Resource: "payment", Action: "create"},
+	})
+
+	s.login("ledger@example.test", "LedgerPassword123")
+	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	if strings.Contains(body, fmt.Sprintf(`action="/requests/%d/record-payment"`, reqID)) {
+		t.Fatalf("the picker offers a take control the route answers 403 to:\n%s", body)
+	}
+	if !strings.Contains(body, `class="co is-taken"`) {
+		t.Fatalf("the picker dropped the request instead of showing it read-only:\n%s", body)
+	}
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusForbidden)
+}
+
+// Q4 read by the audience it is for. The requester holds no payment grant at
+// all, so the outcome has to be on the request itself — and the link beside it
+// must not be offered to somebody the payment route would turn away.
+func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Outcome")
+	requester := s.seedRequester("ravi@example.test", "Ravi Kumar", "RequesterPass123")
+	reqID := s.seedApprovedRequest(1, requester.ID, admin.ID, headID, 10000000)
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N1"}}
+	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+
+	s.login("ravi@example.test", "RequesterPass123")
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	for _, want := range []string{"Payment outcome", `class="compare"`, "98,000.00", "confirmed settled by Accounts"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the requester's own request is missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `href="/payments/`) {
+		t.Fatalf("the requester is offered a payment link the route answers 403 to:\n%s", body)
+	}
+}
+
+// The payment screen is half a request screen. Reading it must therefore obey
+// the same row scope /requests/{id} obeys, or payment:view becomes a way round
+// it.
+func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Scope")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	_, linkedID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
+	histID, err := s.st.CreatePayment(s.ctx, admin, store.PaymentInput{HeadID: headID, PaidOn: "2026-07-10", Amount: 12345, VendorPayee: "Legacy Vendor", PaymentMode: "cash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.seedUserWithGrants("auditor@example.test", "AuditorPassword123", "Ledger reader", []store.Grant{
+		{Resource: "payment", Action: "view"},
+	})
+
+	s.login("auditor@example.test", "AuditorPassword123")
+	resp := s.request(http.MethodGet, fmt.Sprintf("/payments/%d", linkedID), nil, "")
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+	// The request-less ledger row is untouched: this closes a way into request
+	// data, not a way into the ledger.
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", histID), nil, ""), http.StatusOK)
+}
+
+// The trail's head already names the actor. Most request-side audit summaries
+// are written to start with the same name, so the body repeated it.
+func TestTrailBodyDropsTheActorNameTheHeadAlreadyCarries(t *testing.T) {
+	for _, tc := range []struct{ name, actor, summary, want string }{
+		{"request side", "Priya Nair", "Priya Nair approved request PR-2026-000001 for ₹1,00,000.00", "Approved request PR-2026-000001 for ₹1,00,000.00"},
+		{"payment side", "Priya Nair", "Reserved request for processing", "Reserved request for processing"},
+		{"no actor", "", "Recorded payment ₹98,000.00", "Recorded payment ₹98,000.00"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := trailBody(store.AuditEntry{ActorName: tc.actor, Summary: tc.summary}); got != tc.want {
+				t.Fatalf("trailBody = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Every other dot in a `.thread` is a monochrome text symbol the CSS tints with
+// `color:`. An emoji ignores that and lands as a colour sticker.
+func TestAuditGlyphsStayMonochrome(t *testing.T) {
+	for _, action := range []string{"submit", "approve", "process", "hold", "record_payment", "release", "reject", "update", "attach", "attach_payment", "anything"} {
+		if glyph := auditGlyph(action); strings.ContainsAny(glyph, "📎📄📌") {
+			t.Fatalf("auditGlyph(%q) = %q, want a monochrome text glyph", action, glyph)
+		}
+	}
+	if got := auditGlyph("attach"); got != "⇪" {
+		t.Fatalf("auditGlyph(attach) = %q, want the thread's own upload glyph", got)
+	}
+}
+
+// The head, the trail and the proof list, read against the mockup: one answer
+// to "who is this waiting on" shared with every other screen, no name printed
+// twice, and the request's own invoice sitting beside the bank advice.
+func TestPaymentDetailHeadTrailAndProofReadLikeTheMockup(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Reads")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	if _, err := s.st.DB().Exec(`INSERT INTO request_attachments(request_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`,
+		reqID, "SE-26-27-1184.pdf", "req/SE.pdf", "application/pdf", 219136, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.DB().Exec(`INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary) VALUES(?,?,?,?,?,?)`,
+		admin.ID, admin.Name, "approve", "payment_request", reqID, admin.Name+" approved request PR-2026-000001 for ₹5,000.00"); err != nil {
+		t.Fatal(err)
+	}
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"3000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"partial"}, "partial_reason": {"balance next month"}, "reference_no": {"N2"}}
+	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	var payID int64
+	if err := s.st.DB().QueryRow(`SELECT id FROM payments WHERE request_id=?`, reqID).Scan(&payID); err != nil {
+		t.Fatal(err)
+	}
+
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", payID), nil, ""))
+	for _, want := range []string{
+		// The waiting line is waitingOn's, so it says "you" to the manager it
+		// is waiting on rather than reading them their own name.
+		`class="pill partial"`, "Partial — manager review", `class="waiting you"`, "Waiting on you",
+		// The trail's body no longer repeats the name in the head above it.
+		`<div class="tl-body">Approved request PR-2026-000001`,
+		// The mockup's second proof row: the request's own invoice.
+		"SE-26-27-1184.pdf", "Invoice from the request",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("payment detail missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `<div class="tl-body">`+admin.Name+" approved") {
+		t.Fatalf("the trail prints the actor's name twice:\n%s", body)
+	}
+}

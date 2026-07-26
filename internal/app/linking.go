@@ -409,6 +409,27 @@ func approvedOf(req store.Request) int64 {
 	return req.Amount
 }
 
+// trailAction disambiguates an audit row before it is decorated or spelled. The
+// full trail merges two entity types, and "create" or "update" on a payment is a
+// different sentence from the same word on a request — so the entity is folded
+// into the action once, here, rather than in every switch downstream. Every name
+// it invents is one no store writer uses, so nothing else changes meaning.
+func trailAction(e store.AuditEntry) string {
+	if e.EntityType != "payment" {
+		return e.Action
+	}
+	switch e.Action {
+	case "create":
+		return "record_payment"
+	case "update":
+		return "amend_payment"
+	case "attach":
+		return "attach_payment"
+	default:
+		return e.Action
+	}
+}
+
 // auditTone and auditGlyph decorate one `.tl-dot` of a trail built from audit
 // rows. They are deliberately not threadDot/threadGlyph: those two take a
 // store.ThreadEntry and belong to the request conversation, and one name meaning
@@ -417,11 +438,11 @@ func auditTone(action string) string {
 	switch action {
 	case "submit", "reraise", "process", "reassign":
 		return "brand"
-	case "approve", "settle", "accept_partial":
+	case "approve", "settle", "accept_partial", "record_payment":
 		return "ok"
 	case "hold", "mark_partial", "release", "concern", "return":
 		return "warn"
-	case "reject", "cancel", "withdraw":
+	case "reject", "cancel", "withdraw", "void":
 		return "bad"
 	default:
 		return ""
@@ -438,17 +459,100 @@ func auditGlyph(action string) string {
 		return "◷"
 	case "hold":
 		return "⏸"
-	case "mark_partial", "concern":
+	case "mark_partial", "concern", "record_payment":
 		return "₹"
 	case "release", "return":
 		return "↩"
-	case "reject", "cancel", "withdraw":
+	case "reject", "cancel", "withdraw", "void":
 		return "✕"
-	case "update":
+	case "update", "amend_payment":
 		return "✎"
+	case "attach", "attach_payment":
+		// The thread's own upload glyph. Every dot in a `.thread` is a
+		// monochrome text symbol the CSS tints with `color:`; an emoji ignores
+		// that and lands as a colour sticker in a column of grey marks.
+		return "⇪"
 	default:
 		return "·"
 	}
+}
+
+// auditPhrase is the trail's headline, written to follow the actor's name:
+// "Priya Nair reserved it for processing". The audit summary underneath carries
+// the figures; this line carries the verb, so a reader skimming the left column
+// of the thread gets the story without reading a single amount.
+func auditPhrase(action string) string {
+	switch action {
+	case "submit":
+		return "submitted the request"
+	case "update":
+		return "edited the request"
+	case "attach":
+		return "attached a document"
+	case "comment":
+		return "commented"
+	case "approve":
+		return "approved the request"
+	case "return":
+		return "returned the request for correction"
+	case "reject":
+		return "rejected the request"
+	case "withdraw":
+		return "withdrew the request"
+	case "reraise":
+		return "raised the request again"
+	case "cancel_request":
+		return "asked for the request to be cancelled"
+	case "cancel":
+		return "cancelled the request"
+	case "process":
+		return "reserved it for processing"
+	case "release":
+		return "released the reservation"
+	case "reassign":
+		return "reassigned the reservation"
+	case "hold":
+		return "put the request on hold"
+	case "unhold":
+		return "took the request off hold"
+	case "concern":
+		return "raised a concern"
+	case "settle":
+		return "settled the request"
+	case "mark_partial":
+		return "marked it a partial payment"
+	case "accept_partial":
+		return "accepted the partial payment"
+	case "record_payment":
+		return "recorded a payment"
+	case "amend_payment":
+		return "corrected the payment"
+	case "attach_payment":
+		return "attached proof of payment"
+	case "void":
+		return "voided the payment"
+	default:
+		return actionText(action)
+	}
+}
+
+// trailBody is the audit summary as the trail prints it, under a head that has
+// already named the actor. Every request-side writer composes its summary as
+// "<actor> did this", so rendering both put the name on the screen twice; the
+// mockup's bodies carry the figures and nothing else. The name is removed only
+// when the summary genuinely opens with it — payment-side summaries ("Recorded
+// payment ₹98,000.00") never do, and come through untouched.
+func trailBody(e store.AuditEntry) string {
+	if e.ActorName == "" {
+		return e.Summary
+	}
+	rest := strings.TrimPrefix(e.Summary, e.ActorName+" ")
+	if rest == e.Summary || rest == "" {
+		return e.Summary
+	}
+	letters := []rune(rest)
+	letters[0] = unicode.ToUpper(letters[0])
+	return string(letters)
 }
 
 // initials is the two-letter avatar a comment's `.tl-dot` shows.

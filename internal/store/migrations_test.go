@@ -128,3 +128,61 @@ func TestMigrationBackfillsExistingUsers(t *testing.T) {
 		t.Fatalf("legacy admin back-fill = %+v, %v; want [Admin]", roles, err)
 	}
 }
+
+// The reservation verbs entered the vocabulary with Phase 3, long after v1 had
+// seeded the starter roles on every installed database — and seedSystemRoles
+// runs only inside v1. Without the v5 back-fill, an upgraded system has an
+// Accounts role that cannot take a request out of the queue, which is the first
+// step of every payment this phase records.
+func TestMigrationBackfillsAccountsReservationGrants(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	var roleID int64
+	if err := s.DB().QueryRow(`SELECT id FROM roles WHERE lower(name)='accounts'`).Scan(&roleID); err != nil {
+		t.Fatal(err)
+	}
+	grants, _, err := s.RolePermissions(ctx, roleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []Grant{{"reservation", "reserve"}, {"reservation", "release"}} {
+		if !hasGrant(grants, want) {
+			t.Fatalf("seeded Accounts role is missing %+v: %+v", want, grants)
+		}
+	}
+
+	// Simulate the installed database: the grants are absent and the schema is
+	// one version behind. Re-running migrate must put them back without
+	// resetting anything else about the role.
+	if _, err := s.DB().Exec(`DELETE FROM role_permissions WHERE role_id=? AND resource='reservation'`, roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`INSERT OR IGNORE INTO role_permissions(role_id,resource,action) VALUES(?,'vendor','view')`, roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`PRAGMA user_version = 4`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("re-migrate: %v", err)
+	}
+	grants, _, err = s.RolePermissions(ctx, roleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []Grant{{"reservation", "reserve"}, {"reservation", "release"}, {"vendor", "view"}} {
+		if !hasGrant(grants, want) {
+			t.Fatalf("after the back-fill the Accounts role is missing %+v: %+v", want, grants)
+		}
+	}
+}
+
+func hasGrant(grants []Grant, want Grant) bool {
+	for _, g := range grants {
+		if g == want {
+			return true
+		}
+	}
+	return false
+}
