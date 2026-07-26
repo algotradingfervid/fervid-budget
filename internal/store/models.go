@@ -94,6 +94,12 @@ type Payment struct {
 	VoidedAt      *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	// Phase 3 linkage. RequestID is nil for every historical payment, which is
+	// what keeps those rows editable and voidable (X6); a non-nil RequestID
+	// makes the payment immutable (S12).
+	RequestID     *int64
+	Settlement    string // "" (historical) | "settled" | "partial"
+	PartialReason string
 }
 
 type Attachment struct {

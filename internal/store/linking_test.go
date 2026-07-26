@@ -162,3 +162,23 @@ func TestMigrationV4IsIdempotentAndLeavesHistoricalPaymentsUntouched(t *testing.
 	}
 	_ = errors.Is
 }
+
+func TestPaymentForRequestAndHistoricalFields(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	payID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-11", Amount: 3210})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Payment(ctx, payID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.RequestID != nil || p.Settlement != "" || p.PartialReason != "" {
+		t.Fatalf("historical payment carries linkage fields: %+v", p)
+	}
+	if _, err := s.PaymentForRequest(ctx, 424242); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("PaymentForRequest(unlinked) = %v, want ErrNotFound", err)
+	}
+}

@@ -661,10 +661,27 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
-		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at
+		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
 		FROM payments py JOIN heads h ON h.id=py.head_id JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.id=?`, id)
 	var p Payment
-	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
+	if err == sql.ErrNoRows {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
+// PaymentForRequest returns the single payment linked to a request, or
+// ErrNotFound when none exists yet. It powers the requester's outcome view (Q4).
+func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
+		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
+		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
+		FROM payments py JOIN heads h ON h.id=py.head_id JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.request_id=?`, requestID)
+	var p Payment
+	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
 	if err == sql.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -673,8 +690,8 @@ func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
 
 func paymentInTx(ctx context.Context, tx *sql.Tx, id int64) (Payment, error) {
 	var p Payment
-	err := tx.QueryRowContext(ctx, `SELECT id,head_id,paid_on,amount,COALESCE(vendor_payee,''),COALESCE(payment_mode,''),COALESCE(invoice_no,''),COALESCE(reference_no,''),COALESCE(remarks,''),entered_by,updated_by,voided_by,COALESCE(void_reason,''),voided_at,created_at,updated_at FROM payments WHERE id=?`, id).
-		Scan(&p.ID, &p.HeadID, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt)
+	err := tx.QueryRowContext(ctx, `SELECT id,head_id,paid_on,amount,COALESCE(vendor_payee,''),COALESCE(payment_mode,''),COALESCE(invoice_no,''),COALESCE(reference_no,''),COALESCE(remarks,''),entered_by,updated_by,voided_by,COALESCE(void_reason,''),voided_at,created_at,updated_at,request_id,COALESCE(settlement,''),COALESCE(partial_reason,'') FROM payments WHERE id=?`, id).
+		Scan(&p.ID, &p.HeadID, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
 	if err == sql.ErrNoRows {
 		return p, ErrNotFound
 	}
