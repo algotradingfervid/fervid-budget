@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -140,8 +142,7 @@ func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 		return err
 	}
 	if err := copyTree(ctx, backupAttachments, newAttachments); err != nil {
-		_ = os.Remove(newDB)
-		return err
+		return errors.Join(err, os.Remove(newDB))
 	}
 
 	dbOld, err := replacePath(opts.DBPath, newDB, stamp)
@@ -152,13 +153,11 @@ func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 	}
 	attachmentsOld, err := replacePath(opts.AttachmentDir, newAttachments, stamp)
 	if err != nil {
-		_ = rollbackReplace(opts.DBPath, dbOld)
-		_ = os.RemoveAll(newAttachments)
-		return err
+		rollbackErr := rollbackReplace(opts.DBPath, dbOld)
+		cleanupErr := os.RemoveAll(newAttachments)
+		return errors.Join(err, rollbackErr, cleanupErr)
 	}
-	_ = os.RemoveAll(dbOld)
-	_ = os.RemoveAll(attachmentsOld)
-	return nil
+	return errors.Join(os.RemoveAll(dbOld), os.RemoveAll(attachmentsOld))
 }
 
 func PruneBackups(backupDir string, keepDays int, now time.Time) error {
@@ -199,18 +198,51 @@ func backupSQLite(ctx context.Context, sourcePath, destPath string) error {
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	return copyFile(ctx, sourcePath, destPath)
-}
-
-func writeBackupManifest(dir string, manifest backupManifest) error {
-	f, err := os.OpenFile(filepath.Join(dir, "manifest.json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return err
+	}
+	// VACUUM INTO asks SQLite to create a transactionally consistent database
+	// image. A plain file copy can miss pages that are still in a WAL file.
+	db, err := sql.Open("sqlite", sourcePath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.Remove(destPath)
+		}
+	}()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return err
+	}
+	_, execErr := db.ExecContext(ctx, "VACUUM INTO ?", destPath)
+	closeErr := db.Close()
+	if execErr != nil {
+		return errors.Join(execErr, closeErr)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	complete = true
+	return nil
+}
+
+func writeBackupManifest(dir string, manifest backupManifest) error {
+	path := filepath.Join(dir, "manifest.json")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return err
+	}
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(manifest)
+	encodeErr := enc.Encode(manifest)
+	closeErr := f.Close()
+	if encodeErr != nil || closeErr != nil {
+		_ = os.Remove(path)
+	}
+	return errors.Join(encodeErr, closeErr)
 }
 
 func uniqueBackupPath(backupDir string, t time.Time) string {
@@ -297,7 +329,11 @@ func copyFileWithMode(ctx context.Context, src, dst string, mode fs.FileMode) er
 	_, copyErr := io.Copy(out, in)
 	closeErr := out.Close()
 	if copyErr != nil {
-		return copyErr
+		_ = os.Remove(dst)
+		return errors.Join(copyErr, closeErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(dst)
 	}
 	return closeErr
 }
@@ -315,8 +351,7 @@ func replacePath(target, replacement, stamp string) (string, error) {
 		return "", err
 	}
 	if err := os.Rename(replacement, target); err != nil {
-		_ = rollbackReplace(target, oldPath)
-		return oldPath, err
+		return oldPath, errors.Join(err, rollbackReplace(target, oldPath))
 	}
 	return oldPath, nil
 }
@@ -325,7 +360,9 @@ func rollbackReplace(target, oldPath string) error {
 	if oldPath == "" {
 		return nil
 	}
-	_ = os.RemoveAll(target)
+	if err := os.RemoveAll(target); err != nil {
+		return err
+	}
 	if _, err := os.Stat(oldPath); err == nil {
 		return os.Rename(oldPath, target)
 	}
