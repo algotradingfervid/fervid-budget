@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // The seeded categories must reproduce the Phase-2 recoverableCategoryRules map
@@ -508,5 +510,279 @@ func TestHistoricalPaymentsStillCountAsActuals(t *testing.T) {
 	}
 	if grid.Total.Actual != 450000 {
 		t.Fatalf("grid actual = %d, want 450000 (request_id IS NULL still counts)", grid.Total.Actual)
+	}
+}
+
+func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.T) { // V3, V6
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	if err := s.SetBudget(ctx, actor, headID, "2026-09", 1000000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-09-03", Amount: 250000, VendorPayee: "Budget Vendor"}); err != nil {
+		t.Fatal(err)
+	}
+	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000009", "2026-09-04", 800000)
+
+	grid, err := s.Grid(ctx, "2026-09", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grid.Total.Actual != 250000 {
+		t.Fatalf("grid actual = %d, want 250000 (recoverable excluded)", grid.Total.Actual)
+	}
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-09", To: "2026-09"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec) != 1 {
+		t.Fatalf("recoverable report rows = %d, want 1", len(rec))
+	}
+	if rec[0].Amount != 800000 || rec[0].Category != "Security deposit" || rec[0].Counterparty != "Acme Landlord" || rec[0].Status != "completed" {
+		t.Fatalf("recoverable row = %+v", rec[0])
+	}
+}
+
+func TestRecoverableReportShowsLinkedProject(t *testing.T) { // V8
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	var projectID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	seedRecoverablePayment(t, s, ctx, actor, headID, projectID, "PR-2026-000021", "2026-10-01", 500000)
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-10", To: "2026-10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec) != 1 || rec[0].Project == "" {
+		t.Fatalf("recoverable row missing linked project: %+v", rec)
+	}
+}
+
+func TestRecoverableAgeingLabels(t *testing.T) {
+	cases := []struct {
+		name                string
+		paidOn, expected    string
+		onHold              bool
+		days                int
+		wantLabel, wantTone string
+		wantOverdue         bool
+	}{
+		{"on_hold_wins", "2026-02-12", "2026-06-30", true, -25, "On hold", "hold", false},
+		{"unpaid", "", "2026-11-30", false, 128, "Awaiting payment", "approved", false},
+		{"no_fixed_date", "2026-01-30", "", false, 0, "No fixed date", "neutral", false},
+		{"overdue", "2026-02-12", "2026-06-30", false, -25, "25 days overdue", "bad", true},
+		{"due_today", "2026-02-12", "2026-07-25", false, 0, "Due today", "neutral", false},
+		{"future", "2026-04-03", "2027-01-15", false, 174, "174 days to go", "neutral", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			label, tone, overdue := recoverableAgeing(c.paidOn, c.expected, c.onHold, c.days)
+			if label != c.wantLabel || tone != c.wantTone || overdue != c.wantOverdue {
+				t.Fatalf("recoverableAgeing = (%q,%q,%v), want (%q,%q,%v)", label, tone, overdue, c.wantLabel, c.wantTone, c.wantOverdue)
+			}
+		})
+	}
+}
+
+func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { // G18
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000200", "2026-05-10", 400000)
+	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000201", "approved", "emd", "Ridge Metro tender authority", "2026-11-30", 200000, false)
+	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000202", "rejected", "emd", "Nobody", "2026-11-30", 999999, false)
+	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000203", "cancelled", "icd", "Nobody", "2026-11-30", 999999, false)
+
+	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("register rows = %d, want 2 (paid + unpaid; rejected and cancelled excluded)", len(rows))
+	}
+	byNumber := map[string]RecoverableRow{}
+	for _, r := range rows {
+		byNumber[r.Number] = r
+	}
+	unpaid, ok := byNumber["PR-2026-000201"]
+	if !ok {
+		t.Fatalf("unpaid recoverable missing from the register: %+v", rows)
+	}
+	if unpaid.PaidOn != "" || unpaid.Amount != 200000 || unpaid.AgeingTone != "approved" {
+		t.Fatalf("unpaid row = %+v, want empty PaidOn, approved amount, approved tone", unpaid)
+	}
+	if unpaid.RequestID == 0 {
+		t.Fatal("RecoverableRow.RequestID must be populated so the list can link to the detail screen")
+	}
+	// A date range still scopes to paid rows only.
+	scoped, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-05", To: "2026-05", AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped) != 1 || scoped[0].Number != "PR-2026-000200" {
+		t.Fatalf("range-scoped rows = %+v, want only the May payment", scoped)
+	}
+}
+
+func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	// Each row is paid: money that never left cannot be overdue, so an unpaid
+	// row ages as "Awaiting payment" no matter how old its return date is.
+	r1 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000301", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false) // 25 days overdue
+	payRecoverable(t, s, ctx, actor, headID, r1, "2026-02-12", 200000)
+	r2 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000302", "completed", "pbg", "Ridge Metro", "2026-08-10", 300000, false) // due in 16 days
+	payRecoverable(t, s, ctx, actor, headID, r2, "2026-03-01", 300000)
+	r3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000303", "completed", "icd", "Harith Infra", "2027-01-15", 100000, false) // later
+	payRecoverable(t, s, ctx, actor, headID, r3, "2026-04-03", 100000)
+	r4 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000304", "completed", "security_deposit", "Whitefield", "", 65000, false) // no fixed date
+	payRecoverable(t, s, ctx, actor, headID, r4, "2026-01-30", 65000)
+
+	all, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("rows = %d, want 4", len(all))
+	}
+	if all[0].Number != "PR-2026-000301" || !all[0].Overdue || all[0].DaysToReturn != -25 {
+		t.Fatalf("default order must put the overdue row first with DaysToReturn -25: %+v", all[0])
+	}
+	if all[1].Number != "PR-2026-000302" || all[3].Number != "PR-2026-000304" {
+		t.Fatalf("default order = %s,%s,%s,%s; want soonest expected return first and no-date last",
+			all[0].Number, all[1].Number, all[2].Number, all[3].Number)
+	}
+
+	overdue, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "overdue", AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overdue) != 1 || overdue[0].Number != "PR-2026-000301" {
+		t.Fatalf("ageing=overdue rows = %+v, want only PR-2026-000301", overdue)
+	}
+	due30, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "due30", AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due30) != 1 || due30[0].Number != "PR-2026-000302" {
+		t.Fatalf("ageing=due30 rows = %+v, want only PR-2026-000302", due30)
+	}
+	later, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "later", AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(later) != 2 {
+		t.Fatalf("ageing=later rows = %d, want 2 (the 2027 date and the undated one)", len(later))
+	}
+
+	byAmount, err := s.RecoverableReport(ctx, RecoverableReportOptions{Order: "amount", AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byAmount[0].Number != "PR-2026-000302" || byAmount[0].Amount != 300000 {
+		t.Fatalf("order=amount first row = %+v, want the largest row", byAmount[0])
+	}
+	byCounterparty, err := s.RecoverableReport(ctx, RecoverableReportOptions{Counterparty: "Harith Infra", AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byCounterparty) != 1 || byCounterparty[0].Number != "PR-2026-000303" {
+		t.Fatalf("counterparty filter = %+v, want only PR-2026-000303", byCounterparty)
+	}
+}
+
+func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+
+	// Paid this month, due far out.
+	req1 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000401", "completed", "pbg", "Ridge Metro", "2027-01-15", 300000, false)
+	payRecoverable(t, s, ctx, actor, headID, req1, "2026-07-05", 300000)
+	// Paid earlier, now overdue.
+	req2 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000402", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
+	payRecoverable(t, s, ctx, actor, headID, req2, "2026-02-12", 200000)
+	// Paid earlier, due inside 30 days.
+	req3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000403", "completed", "icd", "Harith Infra", "2026-08-10", 100000, false)
+	payRecoverable(t, s, ctx, actor, headID, req3, "2026-03-01", 100000)
+	// Approved, unpaid: outstanding but nothing paid out.
+	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000404", "approved", "emd", "Ridge Metro", "2026-11-30", 50000, false)
+	// Rejected: invisible everywhere.
+	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000405", "rejected", "emd", "Nobody", "2026-01-01", 999999, false)
+
+	m, err := s.RecoverableMetrics(ctx, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.OutstandingAmount != 650000 || m.OutstandingCount != 4 {
+		t.Fatalf("outstanding = %d over %d rows, want 650000 over 4", m.OutstandingAmount, m.OutstandingCount)
+	}
+	if m.OverdueAmount != 200000 || m.OverdueCount != 1 {
+		t.Fatalf("past expected return = %d over %d, want 200000 over 1", m.OverdueAmount, m.OverdueCount)
+	}
+	if m.DueIn30Amount != 100000 || m.DueIn30Count != 1 {
+		t.Fatalf("due in 30 days = %d over %d, want 100000 over 1", m.DueIn30Amount, m.DueIn30Count)
+	}
+	if m.PaidThisMonthAmount != 300000 || m.PaidThisMonthCount != 1 {
+		t.Fatalf("paid out this month = %d over %d, want 300000 over 1", m.PaidThisMonthAmount, m.PaidThisMonthCount)
+	}
+}
+
+func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	req1 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000501", "completed", "emd", "Ridge Metro", "2026-06-30", 200000, false)
+	payRecoverable(t, s, ctx, actor, headID, req1, "2026-02-12", 200000)
+	req2 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000502", "completed", "emd", "Coastal Power", "2026-12-31", 400000, false)
+	payRecoverable(t, s, ctx, actor, headID, req2, "2026-04-03", 400000)
+	req3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000503", "completed", "pbg", "Ridge Metro", "2026-11-30", 300000, false)
+	payRecoverable(t, s, ctx, actor, headID, req3, "2026-05-20", 300000)
+
+	cats, err := s.RecoverableRollups(ctx, "category", asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cats) != 2 {
+		t.Fatalf("category rollups = %d, want 2 (EMD, PBG)", len(cats))
+	}
+	if cats[0].Label != "EMD" || cats[0].Count != 2 || cats[0].Outstanding != 600000 {
+		t.Fatalf("EMD rollup = %+v, want 2 items totalling 600000, largest first", cats[0])
+	}
+	if cats[0].Overdue != 200000 {
+		t.Fatalf("EMD overdue = %d, want 200000", cats[0].Overdue)
+	}
+	if cats[0].Oldest != "2026-02-12" {
+		t.Fatalf("EMD oldest paid_on = %q, want 2026-02-12", cats[0].Oldest)
+	}
+
+	cps, err := s.RecoverableRollups(ctx, "counterparty", asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cps) != 2 {
+		t.Fatalf("counterparty rollups = %d, want 2", len(cps))
+	}
+	if cps[0].Label != "Ridge Metro" || cps[0].Count != 2 || cps[0].Outstanding != 500000 {
+		t.Fatalf("Ridge Metro rollup = %+v, want 2 items totalling 500000", cps[0])
+	}
+	if !strings.Contains(cps[0].Detail, "EMD") || !strings.Contains(cps[0].Detail, "PBG") {
+		t.Fatalf("counterparty Detail = %q, want the distinct categories", cps[0].Detail)
+	}
+	if cps[0].ExpectedBack != "2026-06-30" {
+		t.Fatalf("Ridge Metro expected back = %q, want the earliest date 2026-06-30", cps[0].ExpectedBack)
+	}
+
+	if _, err := s.RecoverableRollups(ctx, "project", asOf); !errors.Is(err, ErrValidation) {
+		t.Fatalf("unknown rollup dimension = %v, want ErrValidation", err)
 	}
 }

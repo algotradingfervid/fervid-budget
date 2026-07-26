@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // recoverableCategorySeed is the six default categories.
@@ -242,6 +243,212 @@ func (s *Store) ListRecoverableCategoriesWithUsage(ctx context.Context) ([]Recov
 		}
 		u.RequiresProject, u.RequiresCounterparty, u.Active = rp == 1, rc == 1, active == 1
 		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// recoverableBaseWhere is the single definition of "a live recoverable", shared
+// by RecoverableReport, RecoverableMetrics and RecoverableRollups so the
+// dashboard totals can never drift from the list underneath them. A request
+// that died before any money left never held money, so it is not outstanding.
+const recoverableBaseWhere = `pr.treatment='recoverable' AND pr.status NOT IN ('rejected','cancelled','withdrawn')`
+
+// recoverableAmount is the money considered at risk: what actually left when the
+// payment exists, otherwise what was approved, otherwise what was asked for.
+const recoverableAmount = `COALESCE(py.amount, COALESCE(pr.approved_amount, pr.amount))`
+
+// recoverableAgeing turns a row's payment state and its distance from the
+// expected return date into the pill text and pill modifier the register
+// renders. days is whole calendar days from "now" to the expected return date
+// (negative = overdue).
+func recoverableAgeing(paidOn, expectedReturn string, onHold bool, days int) (label, tone string, overdue bool) {
+	switch {
+	case onHold:
+		return "On hold", "hold", false
+	case paidOn == "":
+		return "Awaiting payment", "approved", false
+	case expectedReturn == "":
+		return "No fixed date", "neutral", false
+	case days < 0:
+		return fmt.Sprintf("%d days overdue", -days), "bad", true
+	case days == 0:
+		return "Due today", "neutral", false
+	default:
+		return fmt.Sprintf("%d days to go", days), "neutral", false
+	}
+}
+
+func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOptions) ([]RecoverableRow, error) {
+	asOf := opts.AsOf
+	if asOf.IsZero() {
+		asOf = time.Now().UTC()
+	}
+	today := asOf.UTC().Format("2006-01-02")
+
+	q := `SELECT pr.id, pr.number, COALESCE(rc.name,''), COALESCE(pr.counterparty,''), COALESCE(p.name,''),
+		` + recoverableAmount + ` AS amt,
+		COALESCE(py.paid_on,''), COALESCE(pr.expected_return_date,''), COALESCE(pr.repayment_notes,''),
+		pr.status, COALESCE(u.name,''), COALESCE(pr.on_hold,0),
+		CAST(julianday(COALESCE(NULLIF(pr.expected_return_date,''),?)) - julianday(?) AS INTEGER) AS days
+		FROM payment_requests pr
+		LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
+		LEFT JOIN recoverable_categories rc ON rc.id=pr.recoverable_category_id
+		LEFT JOIN projects p ON p.id=pr.project_id
+		LEFT JOIN users u ON u.id=pr.requester_id
+		WHERE ` + recoverableBaseWhere
+	args := []any{today, today}
+
+	if validMonth(opts.From) || validMonth(opts.To) {
+		from, to := opts.From, opts.To
+		if !validMonth(from) {
+			from = to
+		}
+		if !validMonth(to) {
+			to = from
+		}
+		if to < from {
+			from, to = to, from
+		}
+		q += ` AND substr(COALESCE(py.paid_on,''),1,7) BETWEEN ? AND ?`
+		args = append(args, from, to)
+	}
+	if opts.CategoryID > 0 {
+		q += ` AND pr.recoverable_category_id=?`
+		args = append(args, opts.CategoryID)
+	}
+	if cp := strings.TrimSpace(opts.Counterparty); cp != "" {
+		q += ` AND lower(COALESCE(pr.counterparty,''))=lower(?)`
+		args = append(args, cp)
+	}
+	switch opts.Ageing {
+	case "overdue":
+		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?`
+		args = append(args, today)
+	case "due30":
+		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date >= ?
+			AND julianday(pr.expected_return_date) - julianday(?) <= 30`
+		args = append(args, today, today)
+	case "later":
+		q += ` AND (COALESCE(pr.expected_return_date,'') = '' OR julianday(pr.expected_return_date) - julianday(?) > 30)`
+		args = append(args, today)
+	case "unpaid":
+		q += ` AND py.id IS NULL`
+	}
+	if search := strings.ToLower(strings.TrimSpace(opts.Query)); search != "" {
+		q += ` AND (lower(pr.number) LIKE ? ESCAPE '\' OR lower(COALESCE(pr.counterparty,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(u.name,'')) LIKE ? ESCAPE '\')`
+		search = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
+		needle := "%" + search + "%"
+		args = append(args, needle, needle, needle, needle)
+	}
+	switch opts.Order {
+	case "amount":
+		q += ` ORDER BY amt DESC, pr.number`
+	case "paid_on":
+		q += ` ORDER BY COALESCE(py.paid_on,'') DESC, pr.number`
+	case "number":
+		q += ` ORDER BY pr.number`
+	default:
+		// Overdue first, then the soonest expected return; undated rows sort last.
+		q += ` ORDER BY CASE WHEN COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ? THEN 0 ELSE 1 END,
+			COALESCE(NULLIF(pr.expected_return_date,''),'9999-12-31'), pr.number`
+		args = append(args, today)
+	}
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RecoverableRow
+	for rows.Next() {
+		var r RecoverableRow
+		var onHold int
+		if err := rows.Scan(&r.RequestID, &r.Number, &r.Category, &r.Counterparty, &r.Project, &r.Amount,
+			&r.PaidOn, &r.ExpectedReturnDate, &r.RepaymentNotes, &r.Status, &r.Requester, &onHold, &r.DaysToReturn); err != nil {
+			return nil, err
+		}
+		r.OnHold = onHold == 1
+		r.HasReturnDate = r.ExpectedReturnDate != ""
+		if !r.HasReturnDate {
+			// The days expression substitutes today for an undated row so
+			// julianday never scans NULL into an int; the label says
+			// "No fixed date" rather than "Due today".
+			r.DaysToReturn = 0
+		}
+		r.AgeingLabel, r.AgeingTone, r.Overdue = recoverableAgeing(r.PaidOn, r.ExpectedReturnDate, r.OnHold, r.DaysToReturn)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time) (RecoverableMetrics, error) {
+	if asOf.IsZero() {
+		asOf = time.Now().UTC()
+	}
+	today := asOf.UTC().Format("2006-01-02")
+	month := asOf.UTC().Format("2006-01")
+	var m RecoverableMetrics
+	err := s.db.QueryRowContext(ctx, `SELECT
+		COALESCE(SUM(amt),0), COUNT(*),
+		COALESCE(SUM(CASE WHEN exp <> '' AND exp < ? THEN amt ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN exp <> '' AND exp < ? THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN exp <> '' AND exp >= ? AND julianday(exp)-julianday(?) <= 30 THEN amt ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN exp <> '' AND exp >= ? AND julianday(exp)-julianday(?) <= 30 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN substr(paid,1,7)=? THEN amt ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN substr(paid,1,7)=? THEN 1 ELSE 0 END),0)
+		FROM (SELECT `+recoverableAmount+` AS amt,
+			COALESCE(pr.expected_return_date,'') AS exp, COALESCE(py.paid_on,'') AS paid
+			FROM payment_requests pr
+			LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
+			WHERE `+recoverableBaseWhere+`)`,
+		today, today, today, today, today, today, month, month).
+		Scan(&m.OutstandingAmount, &m.OutstandingCount, &m.OverdueAmount, &m.OverdueCount,
+			&m.DueIn30Amount, &m.DueIn30Count, &m.PaidThisMonthAmount, &m.PaidThisMonthCount)
+	if err != nil {
+		return RecoverableMetrics{}, err
+	}
+	return m, nil
+}
+
+func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Time) ([]RecoverableRollup, error) {
+	if asOf.IsZero() {
+		asOf = time.Now().UTC()
+	}
+	today := asOf.UTC().Format("2006-01-02")
+	var label, detail string
+	switch by {
+	case "category":
+		label = `COALESCE(NULLIF(rc.name,''),'Uncategorised')`
+		detail = `''`
+	case "counterparty":
+		label = `COALESCE(NULLIF(pr.counterparty,''),'Not recorded')`
+		detail = `COALESCE(GROUP_CONCAT(DISTINCT rc.name),'')`
+	default:
+		return nil, fmt.Errorf("%w: unknown recoverable rollup dimension %q", ErrValidation, by)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+label+` AS grp, `+detail+`,
+		COUNT(*), COALESCE(SUM(`+recoverableAmount+`),0),
+		COALESCE(SUM(CASE WHEN COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?
+			THEN `+recoverableAmount+` ELSE 0 END),0),
+		COALESCE(MIN(NULLIF(COALESCE(py.paid_on,''),'')),''),
+		COALESCE(MIN(NULLIF(COALESCE(pr.expected_return_date,''),'')),'')
+		FROM payment_requests pr
+		LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
+		LEFT JOIN recoverable_categories rc ON rc.id=pr.recoverable_category_id
+		WHERE `+recoverableBaseWhere+`
+		GROUP BY grp
+		ORDER BY 4 DESC, grp`, today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RecoverableRollup
+	for rows.Next() {
+		var r RecoverableRollup
+		if err := rows.Scan(&r.Label, &r.Detail, &r.Count, &r.Outstanding, &r.Overdue, &r.Oldest, &r.ExpectedBack); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

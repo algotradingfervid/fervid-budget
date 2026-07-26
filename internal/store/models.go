@@ -229,6 +229,68 @@ type ReportRow struct {
 	VariancePercent string
 }
 
+// RecoverableRow is one line of the outstanding-recoverables register. Ageing
+// fields are computed against RecoverableReportOptions.AsOf, never time.Now(),
+// so both the screens and their tests are deterministic.
+type RecoverableRow struct {
+	RequestID          int64
+	Number             string
+	Category           string
+	Counterparty       string
+	Project            string
+	Amount             int64
+	PaidOn             string // "" when approved but not yet paid
+	ExpectedReturnDate string
+	RepaymentNotes     string
+	Status             string
+	Requester          string
+	OnHold             bool
+	HasReturnDate      bool
+	Overdue            bool
+	DaysToReturn       int    // whole calendar days from AsOf; negative when overdue
+	AgeingLabel        string // "25 days overdue", "174 days to go", "Awaiting payment", …
+	AgeingTone         string // pill modifier: "bad" | "neutral" | "approved" | "hold"
+}
+
+type RecoverableReportOptions struct {
+	From         string // optional YYYY-MM; filters on paid_on
+	To           string // optional YYYY-MM
+	CategoryID   int64
+	Counterparty string
+	Query        string
+	Ageing       string    // "" | "overdue" | "due30" | "later" | "unpaid"
+	Order        string    // "" (overdue first, then soonest return) | "amount" | "paid_on" | "number"
+	AsOf         time.Time // zero → time.Now().UTC() at normalisation
+}
+
+// RecoverableMetrics is the four-number strip on the recoverables dashboard.
+// Outstanding counts every live recoverable, paid or not; PaidThisMonth counts
+// only money that actually left in the calendar month containing asOf.
+type RecoverableMetrics struct {
+	OutstandingAmount   int64
+	OutstandingCount    int
+	OverdueAmount       int64
+	OverdueCount        int
+	DueIn30Amount       int64
+	DueIn30Count        int
+	PaidThisMonthAmount int64
+	PaidThisMonthCount  int
+}
+
+// RecoverableRollup is one grouped row of the dashboard's by-category or
+// by-counterparty table. Detail is empty for category rows and lists the
+// distinct categories for counterparty rows — the replacement for the mockup's
+// unmodelled "Type" column.
+type RecoverableRollup struct {
+	Label        string
+	Detail       string
+	Count        int
+	Outstanding  int64
+	Overdue      int64
+	Oldest       string // earliest paid_on in the group; "" when nothing is paid yet
+	ExpectedBack string // earliest expected_return_date in the group
+}
+
 type PaymentInput struct {
 	HeadID      int64
 	PaidOn      string
