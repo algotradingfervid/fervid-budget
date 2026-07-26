@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"fervidbudget/internal/auth"
+	"fervidbudget/internal/money"
 	"fervidbudget/internal/store"
 )
 
@@ -267,12 +268,95 @@ func (a *App) paymentPickerOptions(w http.ResponseWriter, r *http.Request) {
 	a.renderPartial(w, r, "payment_pick_options", data)
 }
 
+// settlementPreview is pure (D8). No BeginTx, no attachment staging, no writes
+// of any kind: it re-checks the reservation, computes approved-against-paid and
+// renders the sheet. The payment genuinely does not exist while the sheet is on
+// screen, which is what lets it say "Not saved yet" honestly. The only writer in
+// this flow is POST /payments.
+func (a *App) settlementPreview(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	id := pathID(r)
+	req, err := a.st.Request(r.Context(), id)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	// Losing the reservation between entry and confirmation is a screen, not an
+	// error page (G15) — the accountant needs to know who holds it now.
+	if !heldByCaller(req, u.ID) {
+		a.reservationConflict(w, r, req, nil)
+		return
+	}
+	paid, perr := money.ParsePaise(r.FormValue("amount"))
+	if perr != nil {
+		a.settlementError(w, r, id, store.PaymentInput{}, r.FormValue("amount"), "", "",
+			fmt.Errorf("%w: enter a valid amount", store.ErrValidation))
+		return
+	}
+	approved := approvedOf(req)
+	a.renderSettlement(w, r, http.StatusOK, req, SettlementPreview{
+		Approved:   approved,
+		Paid:       paid,
+		Difference: approved - paid,
+		Match:      approved == paid,
+		Settlement: "settled",
+		Fields:     settlementFields(r),
+	}, "")
+}
+
+// settlementFields snapshots the entry form so the confirmation can post every
+// value in one request. The file input is deliberately absent — it lives in the
+// live form on the htmx path, and is re-offered on the no-JS confirmation.
+func settlementFields(r *http.Request) map[string]string {
+	out := map[string]string{}
+	for _, k := range []string{"amount", "paid_on", "payment_mode", "reference_no", "invoice_no", "remarks", "vendor_payee", "head_id"} {
+		if v := r.FormValue(k); v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// renderSettlement is the one place the sheet is delivered, so the htmx fragment
+// and the no-JS page can never disagree about what the confirmation says. Same
+// markup, two wrappers.
+func (a *App) renderSettlement(w http.ResponseWriter, r *http.Request, status int, req store.Request, p SettlementPreview, errMsg string) {
+	name := "settlement_confirm"
+	if isFragmentRequest(r) {
+		name = "settlement_sheet"
+	}
+	a.renderStatus(w, r, status, name, PageData{
+		Title: "Confirm the payment", Request2: a.withHolderName(r, req), Settlement: p, Error: errMsg,
+	})
+}
+
 // settlementError re-renders the confirmation sheet with the message in place,
 // so a rejected settlement never throws the accountant onto an error page and
-// never loses the figures they typed. Task 15 owns the sheet; until then this is
-// the plain error path.
+// never loses the figures they typed. Server faults still take the error page —
+// re-rendering a sheet over a broken database would be a lie.
 func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID int64, in store.PaymentInput, rawAmount, settlement, partialReason string, cause error) {
-	a.respondStoreError(w, r, cause)
+	status := storeErrorStatus(cause)
+	if status >= http.StatusInternalServerError {
+		a.respondStoreError(w, r, cause)
+		return
+	}
+	req, rerr := a.st.Request(r.Context(), linkedID)
+	if rerr != nil {
+		a.respondStoreError(w, r, rerr)
+		return
+	}
+	approved := approvedOf(req)
+	// The typed amount is echoed back even when it is what was rejected: a
+	// malformed figure parses to zero here and the field below still shows the
+	// characters the accountant actually entered.
+	paid, _ := money.ParsePaise(rawAmount)
+	if in.Amount != 0 {
+		paid = in.Amount
+	}
+	a.renderSettlement(w, r, status, req, SettlementPreview{
+		Approved: approved, Paid: paid, Difference: approved - paid, Match: approved == paid,
+		Settlement: settlement, PartialReason: partialReason, Fields: settlementFields(r),
+	}, friendly(cause))
 }
 
 // ---------------------------------------------------------------------------

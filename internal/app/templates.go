@@ -309,6 +309,106 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The settlement confirmation — mockups/screens/payment-settlement-confirm.html.
+
+     One markup source, two deliveries (D8). On the htmx path the sheet is swapped
+     into #settle-mount inside the live entry form, so its own file input posts
+     with the confirmation and the advice is uploaded exactly once. Without JS the
+     same sheet is wrapped in a full page that re-offers the upload and carries
+     every typed field forward as hidden inputs.
+
+     Nothing on this screen has been written. The .pill.neutral.no-dot says so,
+     and it is true: settlementPreview holds no transaction. */}}
+{{define "settlement_sheet"}}
+<div class="overlay" id="settle-sheet">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settle-title">
+    <div class="sh-head">
+      <div><h2 id="settle-title">Confirm the payment</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.VendorPayee}}</p></div>
+      <a class="sh-close" href="/payments/new?request={{.Request2.ID}}" aria-label="Close">✕</a>
+    </div>
+    <div class="sh-body stack-12">
+      {{if .Error}}<div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">✕</span><div><b>{{.Error}}</b><p>Nothing has been saved. Correct it and confirm again.</p></div></div>{{end}}
+      <div class="compare">
+        <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money .Settlement.Approved}}</span></div>
+        <div class="cmp-row"><span class="l">Actually paid</span><span class="v">{{money .Settlement.Paid}}</span></div>
+        {{if .Settlement.Match}}
+        <div class="cmp-row match"><span class="l">Difference</span><span class="v">{{money 0}}</span></div>
+        {{else}}
+        <div class="cmp-row diff"><span class="l">Difference</span><span class="v">{{money .Settlement.Difference}} lower ⚠</span></div>
+        {{end}}
+      </div>
+
+      <div>
+        <span class="flabel" style="margin-bottom:6px">{{if .Settlement.Match}}This matches the approved amount. Confirm to close the request.{{else}}You paid less than was approved. Which is it?{{end}}</span>
+        <div class="choice">
+          <label>
+            <input type="radio" name="settlement" value="settled" {{if ne .Settlement.Settlement "partial"}}checked{{end}}>
+            <span><b>Fully settled</b><small>The obligation is discharged. Deductions such as TDS or retention were handled outside this system.</small></span>
+            <span class="outcome good">Completed</span>
+          </label>
+          <label>
+            <input type="radio" name="settlement" value="partial" {{if eq .Settlement.Settlement "partial"}}checked{{end}}>
+            <span><b>Partial payment</b><small>A balance is genuinely still owed to the payee.</small></span>
+            <span class="outcome warn">Manager review</span>
+          </label>
+        </div>
+      </div>
+
+      {{/* aria-required, not required: a hidden required control makes the form
+           unsubmittable in Chrome. The store re-enforces this server-side. */}}
+      <div class="field" data-when="settlement:partial" {{if ne .Settlement.Settlement "partial"}}hidden{{end}}>
+        <label for="partial_reason">Why only part was paid <span class="req" aria-hidden="true">*</span></label>
+        <textarea id="partial_reason" name="partial_reason" aria-required="true" placeholder="{{.Request2.ManagerName}} reads this when deciding whether to close it.">{{.Settlement.PartialReason}}</textarea>
+      </div>
+
+      <div class="banner info" style="margin:0">
+        <span class="b-ico" aria-hidden="true">i</span>
+        <div>
+          <b>Confirming saves the payment</b>
+          <p>It cannot be edited or cancelled afterwards. The request accepts no further payment — any balance needs a fresh request.</p>
+        </div>
+      </div>
+    </div>
+    <div class="sh-foot">
+      <a class="btn outline" href="/payments/new?request={{.Request2.ID}}">Go back</a>
+      <span class="row-end"></span>
+      <button class="btn primary" type="submit" formaction="/payments" formmethod="post">Confirm and save payment</button>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "settlement_confirm"}}
+{{template "top" .}}
+<div class="reserve-bar">
+  <span class="rb-dot" aria-hidden="true"></span>
+  <b>Reserved by you</b>
+  <span class="rb-meta">since {{hhmm .Request2.ProcessingAt}}</span>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Payment about to be saved</h2><span class="pill neutral no-dot">Not saved yet</span></div>
+  <dl class="dl">
+    <div><dt>Paid on</dt><dd>{{index .Settlement.Fields "paid_on"}}</dd></div>
+    <div><dt>Mode</dt><dd>{{paymentMode (index .Settlement.Fields "payment_mode")}}</dd></div>
+    <div><dt>Reference</dt><dd class="num">{{index .Settlement.Fields "reference_no"}}</dd></div>
+    <div style="grid-column:1/-1"><dt>Processing note</dt><dd>{{index .Settlement.Fields "remarks"}}</dd></div>
+  </dl>
+</div>
+
+<form method="post" action="/payments" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="request_id" value="{{.Request2.ID}}">
+  {{range $k, $v := .Settlement.Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
+  <div class="field">
+    <span class="flabel">Payment advice or proof <span class="opt">optional</span></span>
+    <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Attach the bank advice</b><small>Attach it here — it is uploaded once, when you confirm.</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+  </div>
+  {{template "settlement_sheet" .}}
+</form>
+{{template "bottom" .}}
+{{end}}
+
 {{/* The request picker — mockups/screens/payment-request-picker.html.
 
      Three deliberate points. A takeable .co is a submit button inside a POST

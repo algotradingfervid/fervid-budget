@@ -359,6 +359,9 @@ func (a *App) routes(mux *http.ServeMux) {
 	// (spec D2) precisely so "may take work" and "may take work off somebody
 	// else" stop being the same grant.
 	mux.Handle("POST /requests/{id}/record-payment", a.auth.RequirePermission("reservation", "reserve", http.HandlerFunc(a.withCSRF(a.requestRecordPayment))))
+	// The settlement preview is a POST because it carries the form, not because
+	// it changes anything: it is pure and writes nothing (D8).
+	mux.Handle("POST /requests/{id}/settlement-preview", a.auth.RequirePermission("payment", "settle", http.HandlerFunc(a.withCSRF(a.settlementPreview))))
 	mux.Handle("GET /accounts-queue", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.accountsQueue)))
 	// One detail screen for every audience: the action bar changes on
 	// permission, the page does not. Each decision posts to its own route so

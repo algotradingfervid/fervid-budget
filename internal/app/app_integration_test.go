@@ -300,8 +300,20 @@ func TestPaymentErrorRetainsInputAndUsesHumanModes(t *testing.T) {
 	if got := requestStatusApp(t, s, reqID); got != "processing" {
 		t.Fatalf("status after a rejected settlement = %q, want processing", got)
 	}
-	// Task 15 re-renders the confirmation sheet here, and the retention
-	// assertions move back in with it.
+	// Task 15 re-renders the confirmation sheet rather than an error page, so
+	// every typed value comes back. The mode is spelled for a person in the
+	// summary and kept verbatim in the field that reposts it — the old
+	// `value="bank_transfer" selected` assertion belonged to the free-entry
+	// <select>, which this phase retired.
+	for _, expected := range []string{
+		"not-money", "Aster Stores", "INV-42", "REF-42", "retain this note",
+		`value="bank_transfer"`, ">Bank transfer<",
+		`class="overlay"`, `class="sheet"`, "Nothing has been saved",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("the settlement sheet did not retain/display %q:\n%s", expected, body)
+		}
+	}
 }
 
 func TestLockedPaymentsAreReadOnlyAndRejectAttachmentUpload(t *testing.T) {

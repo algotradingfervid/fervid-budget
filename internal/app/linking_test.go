@@ -421,3 +421,106 @@ func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
 		t.Fatalf("request-less/unreserved payment wrote %d rows (X5 broken)", n)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 15 — the settlement preview. D8/G16: it renders the decision and writes
+// nothing. The only writer in the whole flow is POST /payments.
+// ---------------------------------------------------------------------------
+
+func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Preview")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	form := url.Values{"amount": {"98000.00"}, "paid_on": {"2026-07-25"}, "payment_mode": {"bank_transfer"}, "reference_no": {"N221260725004417"}}
+	resp := s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), form)
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+	for _, want := range []string{
+		`class="overlay"`, `class="sheet"`, `class="sh-head"`, `class="sh-body`, `class="sh-foot"`,
+		`class="compare"`, `class="cmp-row"`, `class="cmp-row diff"`,
+		"1,00,000.00", "98,000.00", "2,000.00",
+		`class="choice"`,
+		`class="outcome good"`, "Completed",
+		`class="outcome warn"`, "Manager review",
+		`data-when="settlement:partial"`,
+		`class="banner info"`, "cannot be edited or cancelled",
+		`value="settled"`, `value="partial"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("settlement sheet missing %q:\n%s", want, body)
+		}
+	}
+	// D8/G16: nothing was persisted, and the request is still merely reserved.
+	var payments int
+	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&payments); err != nil {
+		t.Fatal(err)
+	}
+	if payments != 0 {
+		t.Fatalf("the preview wrote %d payment rows (D8 broken)", payments)
+	}
+	if got := requestStatusApp(t, s, reqID); got != "processing" {
+		t.Fatalf("status after preview = %q, want processing", got)
+	}
+	// The plan names this table "attachments"; the schema calls it
+	// payment_attachments. Same assertion, real table.
+	var atts int
+	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payment_attachments`).Scan(&atts); err != nil {
+		t.Fatal(err)
+	}
+	if atts != 0 {
+		t.Fatalf("the preview staged %d attachments (D8 broken)", atts)
+	}
+}
+
+func TestSettlementPreviewMatchesRowAndNoJSFullPage(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("PreviewExact")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"amount": {"5000.00"}, "paid_on": {"2026-07-25"}, "payment_mode": {"bank_transfer"}, "reference_no": {"N1"}}
+
+	// No-JS: a whole page, shell and all, wrapping the same sheet.
+	page := responseBody(t, s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), form))
+	if !strings.Contains(page, `class="cmp-row match"`) || strings.Contains(page, `class="cmp-row diff"`) {
+		t.Fatalf("equal amounts must render .match, not .diff:\n%s", page)
+	}
+	if !strings.Contains(page, "<aside") {
+		t.Fatalf("the no-JS path must render the full page:\n%s", page)
+	}
+	// The no-JS confirmation carries every field forward so the confirm posts once.
+	for _, want := range []string{`name="amount"`, `name="paid_on"`, `name="payment_mode"`, `name="reference_no"`, `name="request_id"`, `enctype="multipart/form-data"`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("no-JS confirmation missing %q:\n%s", want, page)
+		}
+	}
+
+	// htmx: the fragment only.
+	frag := responseBody(t, s.postFormHX(strconvPath("/requests/%d/settlement-preview", reqID), form))
+	if !strings.Contains(frag, `class="overlay"`) {
+		t.Fatalf("htmx fragment missing the sheet:\n%s", frag)
+	}
+	if strings.Contains(frag, "<aside") || strings.Contains(frag, "<!doctype") {
+		t.Fatalf("htmx fragment rendered the shell:\n%s", frag)
+	}
+}
+
+func TestSettlementPreviewRefusesWhenTheReservationIsGone(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("PreviewLost")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	// An authorised colleague takes it away mid-flow.
+	if err := s.st.ReleaseRequest(s.ctx, admin, reqID, "needed elsewhere", true, true); err != nil {
+		t.Fatal(err)
+	}
+	resp := s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), url.Values{"amount": {"5000.00"}, "paid_on": {"2026-07-25"}})
+	requireStatus(t, resp, http.StatusConflict)
+	if body := responseBody(t, resp); !strings.Contains(body, `class="a-list"`) {
+		t.Fatalf("a lost reservation must land on the conflict screen:\n%s", body)
+	}
+}
