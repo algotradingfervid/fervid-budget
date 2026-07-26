@@ -160,6 +160,10 @@ test.describe('documented issue regression guards', () => {
     await adminPage.getByLabel('Lock reason').fill('Regression close');
     adminPage.once('dialog', dialog => dialog.accept());
     await adminPage.getByRole('button', { name: 'Lock Month' }).click();
+    // lockMonth redirects to /?month=... (app.go:971), which is the dashboard and
+    // shows nothing about the month. The lock notice lives on the grid, so read
+    // it there rather than wherever the redirect happens to land.
+    await adminPage.goto(`/grid?month=${month}`);
     await expect(adminPage.locator('.locked')).toContainText(`Month ${month} is locked`);
 
     // Detail side, unchanged in spirit: nothing that would alter the payment.
@@ -539,7 +543,11 @@ test.describe('documented issue regression guards', () => {
       reference: `REF-${runId}`
     });
     await adminPage.goto(`/payments?month=${month}&q=%25_`);
-    await expect(adminPage.locator(`a[href="${markedPath}"]`)).toBeVisible();
+    // A ledger row links to its payment twice — the Project / Head cell and the
+    // View button (templates.go:190) — so assert on the row, not on the href.
+    const markedRow = adminPage.locator('tr').filter({ has: adminPage.locator(`a[href="${markedPath}"]`) });
+    await expect(markedRow).toHaveCount(1);
+    await expect(markedRow).toBeVisible();
     await expect(adminPage.getByText(literal).first()).toBeVisible();
     // The row without the literal is what proves the escaping: unescaped, "%_"
     // is a wildcard that matches every payment in the month, including this one.
