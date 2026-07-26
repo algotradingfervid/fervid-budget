@@ -9,7 +9,8 @@ import { expect, test } from './fixtures';
  */
 
 const ROUTES = [
-  '/', '/dashboard', '/requests', '/requests/new', '/approvals', '/payments', '/payments/new',
+  '/', '/dashboard', '/requests', '/requests/new', '/approvals', '/accounts-queue',
+  '/payments', '/payments/new',
   '/budgets', '/months', '/reports/monthly', '/projects', '/heads', '/vendors', '/vendors/new',
   '/users', '/roles', '/configuration', '/audit', '/backups',
 ];
