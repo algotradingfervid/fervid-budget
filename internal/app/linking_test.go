@@ -317,6 +317,85 @@ func TestPaymentPickerListsOnlyYourOwnRecentPayments(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Task 14 — the payment entry screen
+// ---------------------------------------------------------------------------
+
+func TestPaymentEntryScreenShowsReservationApprovalAndRule(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Entry")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	body := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, ""))
+	for _, want := range []string{
+		`class="reserve-bar"`,
+		"Reserved by you",
+		`class="rb-actions"`,
+		"What was approved",
+		`class="dl"`,
+		"A payment can never exceed this",
+		`class="field span-6 money-field"`,
+		`class="in-words"`,
+		`id="diff-banner"`,
+		`class="uploader"`,
+		`class="action-bar"`,
+		"Nothing is saved until you confirm",
+		`name="request_id" value="`,
+		"1,00,000.00",
+		// S14: the request's own figures arrive prefilled.
+		"Acme Landlord",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("payment entry missing %q:\n%s", want, body)
+		}
+	}
+	// A <details> is not an acceptable settlement control (design system rule).
+	if strings.Contains(body, "<details") {
+		t.Fatalf("payment entry still uses a <details> disclosure:\n%s", body)
+	}
+	// The form uploads once, on the final POST.
+	if !strings.Contains(body, `enctype="multipart/form-data"`) || !strings.Contains(body, `action="/payments"`) {
+		t.Fatalf("payment form is not the single multipart POST to /payments:\n%s", body)
+	}
+}
+
+func TestPaymentEntryRefusesSomeoneElsesReservation(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("NotMine")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	deepak := s.seedColleague("deepak@example.test", "Deepak Menon", "DeepakPass1234")
+	if err := s.st.ReserveRequest(s.ctx, deepak, reqID); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp := s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, "")
+	requireStatus(t, resp, http.StatusConflict)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "Deepak Menon took this request") || !strings.Contains(body, `class="a-list"`) {
+		t.Fatalf("opening someone else's reservation must land on the conflict screen (G15):\n%s", body)
+	}
+}
+
+// Historical, request-less payments stay editable (X6) — the linked entry
+// screen replaced the create form, not the ledger's edit screen.
+func TestHistoricalPaymentEditFormStillRenders(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Historical")
+	payID, err := s.st.CreatePayment(s.ctx, admin, store.PaymentInput{HeadID: headID, PaidOn: "2026-04-12", Amount: 12345, VendorPayee: "Legacy Vendor", PaymentMode: "cash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/%d/edit", payID), nil, ""))
+	for _, want := range []string{"Legacy Vendor", `name="head_id"`, "Save Payment"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("historical payment edit form missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("X5")

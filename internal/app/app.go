@@ -541,24 +541,6 @@ func (a *App) paymentForm(w http.ResponseWriter, r *http.Request) {
 	a.paymentEntry(w, r, linkedID)
 }
 
-// paymentEntryLegacy is the pre-Phase-3 free-entry form, kept only as the shape
-// the edit screen still renders from. Task 14 replaces the entry branch.
-func (a *App) paymentEntryLegacy(w http.ResponseWriter, r *http.Request) {
-	heads, err := a.st.ListHeads(r.Context(), true)
-	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	selectedHeadID := parseID(r.URL.Query().Get("head_id"))
-	paidOn := time.Now().Format("2006-01-02")
-	if date := r.URL.Query().Get("date"); validDateInput(date) {
-		paidOn = date
-	} else if month := r.URL.Query().Get("month"); validMonthInput(month) {
-		paidOn = month + "-01"
-	}
-	locked := a.st.IsLocked(r.Context(), paidOn[:7])
-	a.render(w, r, "payment_form", PageData{Title: "Add Payment", Heads: heads, SelectedHeadID: selectedHeadID, Payment: store.Payment{HeadID: selectedHeadID, PaidOn: paidOn}, Locked: locked})
-}
 
 func (a *App) payments(w http.ResponseWriter, r *http.Request) {
 	month := validMonthOrCurrent(r.URL.Query().Get("month"))
@@ -645,7 +627,7 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.render(w, r, "payment_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads, Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7]) || p.VoidedAt != nil})
+	a.render(w, r, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads, Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7]) || p.VoidedAt != nil})
 }
 
 func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
@@ -674,7 +656,7 @@ func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
 		p := paymentFromInput(in)
 		p.ID = id
 		locked := validDateInput(in.PaidOn) && a.st.IsLocked(r.Context(), in.PaidOn[:7])
-		a.renderStatus(w, r, status, "payment_form", PageData{Title: "Edit Payment", Payment: p, PaymentAmount: r.FormValue("amount"), Heads: heads, Locked: locked, Error: friendly(err)})
+		a.renderStatus(w, r, status, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, PaymentAmount: r.FormValue("amount"), Heads: heads, Locked: locked, Error: friendly(err)})
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)

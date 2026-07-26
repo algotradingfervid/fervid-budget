@@ -148,7 +148,11 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
-{{define "payment_form"}}
+{{/* The historical payment's edit screen. Phase 3 retired free-standing
+     creation, but a payment recorded before this module has no request behind
+     it and stays editable (X6); this is the form that edits it, unchanged from
+     the pre-Phase-3 markup. Phase 6 redraws the ledger. */}}
+{{define "payment_edit_form"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Daily entry</div><h1>{{.Title}}</h1><p class="sub muted">Record the head, date, amount, reference details, and proof in one pass.</p></div><a class="btn outline" href="/">Back to grid</a></section>
 {{if .Locked}}<div class="locked" role="status">This payment belongs to a locked or voided period and is read-only.</div>{{end}}
@@ -194,6 +198,114 @@ const templates = `
 <dl class="details detail-grid"><div><dt>Project / Head</dt><dd>{{.Payment.Project}} / {{.Payment.Head}}</dd></div><div><dt>Date</dt><dd>{{.Payment.PaidOn}}</dd></div><div><dt>Amount</dt><dd>{{money .Payment.Amount}}</dd></div><div><dt>Payee</dt><dd>{{.Payment.VendorPayee}}</dd></div><div><dt>Mode</dt><dd>{{paymentMode .Payment.PaymentMode}}</dd></div><div><dt>Invoice</dt><dd>{{.Payment.InvoiceNo}}</dd></div><div><dt>Reference</dt><dd>{{.Payment.ReferenceNo}}</dd></div><div><dt>Entered by</dt><dd>{{.Payment.EnteredByName}} at {{date .Payment.CreatedAt}}</dd></div><div><dt>Remarks</dt><dd>{{.Payment.Remarks}}</dd></div></dl>
 <section class="split"><div><h2>Attachments</h2>{{if and (not .Locked) (not (voided .Payment))}}<form class="cluster" method="post" enctype="multipart/form-data" action="/payments/{{.Payment.ID}}/attachments"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="file" name="attachment" aria-label="Attachment" required><button>Upload</button></form>{{end}}<ul class="file-list">{{range .Attachments}}<li><a href="/attachments/{{.ID}}">{{.OriginalName}}</a><small>{{fileSize .SizeBytes}}</small></li>{{else}}<li class="muted">No attachments.</li>{{end}}</ul></div>{{if and (.Perms.Can "payment" "void") (not .Locked) (not (voided .Payment))}}<div class="danger-zone"><h2>Void Payment</h2><p class="muted">Voiding keeps the audit trail but excludes this payment from actual totals.</p><form method="post" action="/payments/{{.Payment.ID}}/void" onsubmit="return confirm('Void payment #{{.Payment.ID}}? This cannot be undone without a new correction.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Reason<input name="reason" required></label><button class="danger">Void</button></form></div>{{end}}</section>
 <h2>Transaction Audit Trail</h2><ol class="timeline">{{range .Audit}}<li class="timeline-item {{actionClass .Action}}"><div class="audit-meta"><strong>{{actionText .Action}}</strong><span>{{date .CreatedAt}}</span><span>{{.ActorName}}</span></div><p>{{.Summary}}</p>{{if or (hasText .BeforeJSON) (hasText .AfterJSON)}}<details><summary>Before / after</summary>{{if hasText .BeforeJSON}}<pre>{{jsonPretty .BeforeJSON}}</pre>{{end}}{{if hasText .AfterJSON}}<pre>{{jsonPretty .AfterJSON}}</pre>{{end}}</details>{{end}}</li>{{else}}<li class="muted">No audit entries.</li>{{end}}</ol>
+{{template "bottom" .}}
+{{end}}
+
+{{/* The payment entry screen — mockups/screens/payment-entry.html.
+
+     Nothing here writes. The primary button posts to the settlement preview,
+     which is pure (D8), and only the confirmation inside that sheet posts to
+     /payments. formenctype on the preview button keeps that honest without
+     JavaScript: the preview is URL-encoded, so it cannot receive the file
+     bytes, and hx-include names the same text fields for the htmx path. Either
+     way the file is transmitted exactly once, by the final multipart POST.
+
+     The ₹ lives in the .money-field's .cur prefix, so the input carries
+     amountValue and never money — money.FormatPaise already has one. */}}
+{{define "payment_form"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Accounts · payment entry</div>
+    <h1>Record the payment</h1>
+    <p class="sub">{{.Request2.Number}} · {{.Request2.VendorPayee}} · one request, one payment</p>
+  </div>
+</section>
+
+<div class="reserve-bar">
+  <span class="rb-dot" aria-hidden="true"></span>
+  <b>Reserved by you</b>
+  <span class="rb-meta">since {{hhmm .Request2.ProcessingAt}} · nobody else can process this request</span>
+  {{if .Perms.Can "reservation" "release"}}<span class="rb-actions"><a class="btn small outline" href="/requests/{{.Request2.ID}}/reservation">Release</a></span>{{end}}
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-head"><h2>What was approved</h2><a class="small" href="/requests/{{.Request2.ID}}">Open the request →</a></div>
+  <dl class="dl">
+    <div><dt>Approved amount</dt><dd class="big">{{money (approvedOf .Request2)}}</dd></div>
+    <div><dt>Approved by</dt><dd>{{.Request2.ApprovedByName}}{{if .Request2.ApprovedAt}} · {{datep .Request2.ApprovedAt}}{{end}}</dd></div>
+    <div><dt>Payee</dt><dd>{{.Request2.VendorPayee}}</dd></div>
+    <div><dt>Charge to</dt><dd>{{.Request2.Project}} / {{.Request2.Head}}</dd></div>
+    <div style="grid-column:1/-1"><dt>Purpose</dt><dd>{{.Request2.Purpose}}</dd></div>
+  </dl>
+</div>
+
+<form method="post" action="/payments" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="request_id" value="{{.Request2.ID}}">
+  <input type="hidden" name="head_id" value="{{.SelectedHeadID}}">
+  <input type="hidden" name="vendor_payee" value="{{.Request2.VendorPayee}}">
+  <input type="hidden" name="invoice_no" value="{{.Request2.InvoiceNo}}">
+  <fieldset>
+    <legend>Payment</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="approved">Approved amount</label>
+        <input id="approved" value="{{money (approvedOf .Request2)}}" readonly
+               data-approved="{{approvedOf .Request2}}">
+        <span class="hint">A payment can never exceed this. Overpayment means cancelling and raising a new request.</span>
+      </div>
+      <div class="field span-6 money-field">
+        <label for="amount">Amount actually paid <span class="req" aria-hidden="true">*</span></label>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{if .PaymentAmount}}{{.PaymentAmount}}{{else}}{{amountValue .Payment.Amount}}{{end}}" required></span>
+        <span class="in-words">{{inWords .Payment.Amount}}</span>
+      </div>
+      <div class="field span-12">
+        <div class="banner good" id="diff-banner" style="margin:0">
+          <span class="b-ico" aria-hidden="true">✓</span>
+          <div><b id="diff-text">Matches the approved amount exactly</b>
+            <p>You will be asked whether this settles the obligation in full or leaves a balance due.</p></div>
+        </div>
+      </div>
+      <div class="field span-4 m-half"><label for="paid_on">Paid on <span class="req" aria-hidden="true">*</span></label><input id="paid_on" name="paid_on" type="date" value="{{.Payment.PaidOn}}" required></div>
+      <div class="field span-4 m-half"><label for="payment_mode">Payment mode <span class="req" aria-hidden="true">*</span></label>
+        <select id="payment_mode" name="payment_mode" required>
+          <option value="">Choose…</option>
+          {{range paymentModes}}<option value="{{.}}" {{select . $.Payment.PaymentMode}}>{{paymentMode .}}</option>{{end}}
+        </select>
+      </div>
+      <div class="field span-4"><label for="reference_no">Transaction / UTR reference <span class="req" aria-hidden="true">*</span></label><input id="reference_no" name="reference_no" class="num" value="{{.Payment.ReferenceNo}}" required></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Proof and notes</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <span class="flabel">Payment advice or proof</span>
+        <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Add the bank advice</b><small>PDF, JPG or PNG up to 10 MB</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+      </div>
+      <div class="field span-12">
+        <label for="remarks">Processing note <span class="opt">optional</span></label>
+        <textarea id="remarks" name="remarks">{{.Payment.Remarks}}</textarea>
+        <span class="hint">This system does no tax arithmetic. Record what you did so the trail explains the difference.</span>
+      </div>
+    </div>
+  </fieldset>
+
+  <div id="settle-mount"></div>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Nothing is saved until you confirm on the next step.</span>
+    <span class="row-end"></span>
+    {{if .Perms.Can "reservation" "release"}}<a class="btn outline" href="/requests/{{.Request2.ID}}/reservation">Cancel and release</a>{{end}}
+    <button class="btn primary" type="submit"
+            formaction="/requests/{{.Request2.ID}}/settlement-preview" formmethod="post" formenctype="application/x-www-form-urlencoded"
+            hx-post="/requests/{{.Request2.ID}}/settlement-preview"
+            hx-include="#amount, #paid_on, #payment_mode, #reference_no, #remarks, [name=csrf], [name=head_id], [name=vendor_payee], [name=invoice_no]"
+            hx-target="#settle-mount" hx-swap="innerHTML">Payment settled →</button>
+  </div>
+</form>
 {{template "bottom" .}}
 {{end}}
 

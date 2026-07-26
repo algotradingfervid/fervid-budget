@@ -223,10 +223,39 @@ func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]Pa
 	return out, nil
 }
 
-// paymentEntry is the with-request branch of GET /payments/new. Task 14 builds
-// the screen; until then it falls through to the legacy form.
+// paymentEntry is the with-request branch of GET /payments/new: the reserve
+// bar, what was approved, and the one money field the accountant fills in.
+// Nothing on this screen writes — the primary button opens the settlement step.
+// Opening somebody else's reservation is the conflict screen, not a 403: the
+// reader needs to know who has it and what they can do instead (G15).
 func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int64) {
-	a.paymentEntryLegacy(w, r)
+	u := auth.CurrentUser(r)
+	req, err := a.st.Request(r.Context(), linkedID)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	if !heldByCaller(req, u.ID) {
+		a.reservationConflict(w, r, req, nil)
+		return
+	}
+	headID := int64(0)
+	if req.HeadID != nil {
+		headID = *req.HeadID
+	}
+	a.render(w, r, "payment_form", PageData{
+		Title:          "Record payment",
+		Request2:       req,
+		SelectedHeadID: headID,
+		ReserveMine:    true,
+		Payment: store.Payment{
+			HeadID:      headID,
+			PaidOn:      time.Now().Format("2006-01-02"),
+			Amount:      approvedOf(req),
+			VendorPayee: req.VendorPayee,
+			InvoiceNo:   req.InvoiceNo,
+		},
+	})
 }
 
 func (a *App) paymentPickerOptions(w http.ResponseWriter, r *http.Request) {

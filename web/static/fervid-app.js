@@ -488,6 +488,45 @@
   }
 
   /* ---------------------------------------------------------------- */
+  /* Live difference against the approved ceiling                      */
+  /* ---------------------------------------------------------------- */
+
+  /* Display only. The store enforces "paid may never exceed approved" (G13);
+     this just lets the accountant see the refusal coming instead of meeting it
+     after they press confirm. Reuses the money field's own grouping so there is
+     one formatter on the page, not two. */
+  function initDifferenceBanner(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("[data-approved]"), function (source) {
+      if (source.getAttribute("data-diff-bound") === "1") return;
+      var approved = Math.round(parseFloat(rawAmount(source.getAttribute("data-approved")) || "0"));
+      var paid = document.getElementById("amount");
+      var banner = document.getElementById("diff-banner");
+      var text = document.getElementById("diff-text");
+      if (!paid || !banner || !text) return;
+      source.setAttribute("data-diff-bound", "1");
+
+      function sync() {
+        var entered = parseFloat(rawAmount(paid.value));
+        var paise = isNaN(entered) ? 0 : Math.round(entered * 100);
+        var diff = approved - paise;
+        banner.className = "banner " + (diff === 0 ? "good" : diff > 0 ? "warn" : "bad");
+        if (diff === 0) {
+          text.textContent = "Matches the approved amount exactly";
+        } else {
+          var rupees = indianGroup((Math.abs(diff) / 100).toFixed(2));
+          text.textContent = diff > 0
+            ? "₹" + rupees + " less than approved"
+            : "₹" + rupees + " more than approved — not allowed";
+        }
+      }
+
+      paid.addEventListener("input", sync);
+      paid.addEventListener("blur", sync);
+      sync();
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Boot, and re-boot after every htmx swap                           */
   /* ---------------------------------------------------------------- */
 
@@ -495,6 +534,7 @@
     initAccordions(document);
     syncConditionals(document);
     initMoneyFields(document);
+    initDifferenceBanner(document);
     initRoleMatrix(document);
   }
 
