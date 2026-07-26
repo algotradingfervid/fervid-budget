@@ -1,0 +1,283 @@
+package app
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+	"unicode"
+
+	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
+)
+
+// Payment linking, reservation and settlement (Phase 3).
+//
+// Three rules shape this file.
+//
+// S1/S2 — a payment is only ever created by linking it to one approved request
+// the actor holds. Reservation is atomic in the store; the screens here never
+// offer a control the store would refuse.
+//
+// G15 — losing the reservation race is not an error, it is a screen. Every path
+// that discovers somebody else holds the request funnels into
+// reservationConflict, so the queue, the picker and the entry form all say the
+// same thing in the same words.
+//
+// D8 — the settlement preview is pure. It re-checks the reservation, computes
+// the comparison and renders the sheet. Only POST /payments writes.
+
+// ---------------------------------------------------------------------------
+// Shared plumbing
+// ---------------------------------------------------------------------------
+
+// withHolderName fills in ProcessingByName. store.Request does not join the
+// reserver's user row — only LinkablePaymentRequests does — so every screen that
+// names the holder resolves it here rather than growing its own join.
+func (a *App) withHolderName(r *http.Request, req store.Request) store.Request {
+	if req.ProcessingBy == nil || req.ProcessingByName != "" {
+		return req
+	}
+	holder, err := a.st.UserByID(r.Context(), *req.ProcessingBy)
+	if err != nil {
+		a.log.WarnContext(r.Context(), "reservation holder could not be named",
+			"request_id", requestID(r), "request", req.ID, "error", err)
+		return req
+	}
+	req.ProcessingByName = holder.Name
+	return req
+}
+
+// reservationConflict renders G15: the losing accountant gets a screen naming
+// the winner, not an error page. It is the single place a lost race is
+// presented, so the queue, the picker and the payment form all agree.
+func (a *App) reservationConflict(w http.ResponseWriter, r *http.Request, req store.Request, cause error) {
+	req = a.withHolderName(r, req)
+	holder := req.ProcessingByName
+	if holder == "" {
+		holder = "Someone else"
+	}
+	a.log.WarnContext(r.Context(), "reservation conflict",
+		"request_id", requestID(r), "request", req.ID, "holder", holder, "error", cause)
+	a.renderStatus(w, r, http.StatusConflict, "reservation_conflict", PageData{
+		Title:    "Already taken",
+		Request2: req,
+		Holder:   holder,
+	})
+}
+
+// heldByCaller answers the one question every settlement screen asks first:
+// is this request reserved, right now, by the person looking at it?
+func heldByCaller(req store.Request, userID int64) bool {
+	return req.Status == "processing" && req.ProcessingBy != nil && *req.ProcessingBy == userID
+}
+
+// requestRecordPayment is the reservation entry point. It is gated on
+// reservation:reserve rather than payment:create because taking work out of the
+// queue is a different act from recording money leaving the bank.
+func (a *App) requestRecordPayment(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	u := auth.CurrentUser(r)
+	if err := a.st.ReserveRequest(r.Context(), u, id); err != nil {
+		if errors.Is(err, store.ErrForbidden) {
+			req, rerr := a.st.Request(r.Context(), id)
+			if rerr != nil {
+				a.respondStoreError(w, r, rerr)
+				return
+			}
+			a.reservationConflict(w, r, req, err)
+			return
+		}
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/payments/new?request=%d", id), http.StatusSeeOther)
+}
+
+// queueTab is one `.segmented` tab on the accounts queue. Its Key is the store's
+// LinkableOptions.Status, so a tab can never ask for a set the store does not
+// know how to build.
+type queueTab struct{ Key, Label string }
+
+var queueTabs = []queueTab{
+	{"approved", "Approved"}, {"processing", "Processing"}, {"hold", "On hold"},
+	{"partial_review", "Partial review"}, {"paid", "Paid"},
+}
+
+// SettlementPreview is a view model only. It is computed, rendered and thrown
+// away; nothing here is persisted (D8).
+type SettlementPreview struct {
+	Approved      int64
+	Paid          int64
+	Difference    int64 // approved - paid; > 0 means under-paid
+	Match         bool
+	Settlement    string
+	PartialReason string
+	Fields        map[string]string // every entry-form field, carried to the confirm POST
+}
+
+// PaidRequestRow is one line of "Recently paid by you": enough to render the row
+// and link to the payment. It lives here rather than in the store because the
+// store layer is closed for this phase's UI work; it is assembled from
+// ListPayments plus the request each payment points at.
+type PaidRequestRow struct {
+	PaymentID  int64
+	RequestID  int64
+	Number     string
+	Payee      string
+	Amount     int64
+	PaidOn     string
+	Settlement string
+	Status     string // the request's status: completed | completed_partial | partial_review
+}
+
+// settlementError re-renders the confirmation sheet with the message in place,
+// so a rejected settlement never throws the accountant onto an error page and
+// never loses the figures they typed. Task 15 owns the sheet; until then this is
+// the plain error path.
+func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID int64, in store.PaymentInput, rawAmount, settlement, partialReason string, cause error) {
+	a.respondStoreError(w, r, cause)
+}
+
+// ---------------------------------------------------------------------------
+// Display helpers. Registered in the FuncMap, so a time or an amount is spelled
+// for a person in exactly one place.
+// ---------------------------------------------------------------------------
+
+func hhmm(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Local().Format("15:04")
+}
+
+func since(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	d := time.Since(*t)
+	if d < time.Hour {
+		if m := int(d.Minutes()); m > 0 {
+			return fmt.Sprintf("%d m", m)
+		}
+		return "just now"
+	}
+	return fmt.Sprintf("%d h", int(d.Hours()))
+}
+
+// reservedLabel is the clock time while the reservation is same-day and the
+// elapsed time once it is older. "· 14:02" answers "when did I start?"; "· 26 h"
+// answers "how long has this been sitting?".
+func reservedLabel(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	if time.Since(*t) < store.StaleReservation {
+		return hhmm(t)
+	}
+	return since(t)
+}
+
+func subPaise(a, b int64) int64 { return a - b }
+
+// approvedOf is the ceiling a payment is measured against: what the approver
+// signed off, falling back to what was asked when nothing was recorded.
+func approvedOf(req store.Request) int64 {
+	if req.ApprovedAmount != nil {
+		return *req.ApprovedAmount
+	}
+	return req.Amount
+}
+
+// auditTone and auditGlyph decorate one `.tl-dot` of a trail built from audit
+// rows. They are deliberately not threadDot/threadGlyph: those two take a
+// store.ThreadEntry and belong to the request conversation, and one name meaning
+// two things is how they drift.
+func auditTone(action string) string {
+	switch action {
+	case "submit", "reraise", "process", "reassign":
+		return "brand"
+	case "approve", "settle", "accept_partial":
+		return "ok"
+	case "hold", "mark_partial", "release", "concern", "return":
+		return "warn"
+	case "reject", "cancel", "withdraw":
+		return "bad"
+	default:
+		return ""
+	}
+}
+
+func auditGlyph(action string) string {
+	switch action {
+	case "submit", "reraise", "create":
+		return "＋"
+	case "approve", "settle", "accept_partial":
+		return "✓"
+	case "process", "reassign", "unhold":
+		return "◷"
+	case "hold":
+		return "⏸"
+	case "mark_partial", "concern":
+		return "₹"
+	case "release", "return":
+		return "↩"
+	case "reject", "cancel", "withdraw":
+		return "✕"
+	case "update":
+		return "✎"
+	default:
+		return "·"
+	}
+}
+
+// initials is the two-letter avatar a comment's `.tl-dot` shows.
+func initials(name string) string {
+	out := make([]rune, 0, 2)
+	for _, word := range strings.Fields(name) {
+		for _, letter := range word {
+			out = append(out, unicode.ToUpper(letter))
+			break
+		}
+		if len(out) == 2 {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return "··"
+	}
+	return string(out)
+}
+
+// paymentModes is the stored vocabulary of payment modes, in the order the form
+// offers them. paymentMode() spells each one for a person.
+func paymentModes() []string {
+	return []string{"bank_transfer", "cheque", "upi", "cash", "card", "other"}
+}
+
+// mergedTrail is the request-to-payment history the settlement screens render.
+// There is no store method spanning two entity types, so the two audit reads are
+// merged here and ordered oldest-first — a trail is a story, and a story is told
+// forwards.
+func (a *App) mergedTrail(r *http.Request, requestID int64, paymentID int64) ([]store.AuditEntry, error) {
+	entries, err := a.st.Audit(r.Context(), "payment_request", requestID, 200)
+	if err != nil {
+		return nil, err
+	}
+	if paymentID > 0 {
+		pay, perr := a.st.Audit(r.Context(), "payment", paymentID, 200)
+		if perr != nil {
+			return nil, perr
+		}
+		entries = append(entries, pay...)
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].CreatedAt.Equal(entries[j].CreatedAt) {
+			return entries[i].ID < entries[j].ID
+		}
+		return entries[i].CreatedAt.Before(entries[j].CreatedAt)
+	})
+	return entries, nil
+}

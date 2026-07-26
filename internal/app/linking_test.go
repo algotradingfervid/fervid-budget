@@ -1,0 +1,163 @@
+package app
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+
+	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
+)
+
+// Phase 3 — payment linking, reservation and settlement, at the HTTP layer.
+//
+// Every test here drives the product the way an accountant does: take a request
+// out of the queue, record what left the bank, say whether that settles it. The
+// store already refuses the illegal moves; these prove the screens never offer
+// them, and that the one endpoint which must not write, does not write.
+
+// seedApprovedRequest inserts an approved, unclaimed request directly. Going
+// through the UI would need a second user for the approval (G8) on every single
+// fixture, and none of these tests are about how a request gets approved.
+func (s *appTestServer) seedApprovedRequest(seq int, requesterID, managerID, headID, amount int64) int64 {
+	s.t.Helper()
+	var projectID int64
+	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		s.t.Fatal(err)
+	}
+	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,project_id,head_id,amount,purpose,short_title,vendor_payee,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
+		VALUES(?,'approved','budget','vendor_invoice',?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		fmt.Sprintf("PR-2026-%06d", seq), projectID, headID, amount, "Office rent", "Office rent", "Acme Landlord",
+		requesterID, managerID, amount, managerID)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+// strconvPath keeps the id-in-a-path formatting in one place, so the older test
+// file does not have to grow an "fmt" import for it.
+func strconvPath(format string, id int64) string { return fmt.Sprintf(format, id) }
+
+func requestStatusApp(t *testing.T, s *appTestServer, id int64) string {
+	t.Helper()
+	var status string
+	if err := s.st.DB().QueryRow(`SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	return status
+}
+
+// seedColleague creates a second signed-in-able user so a reservation can be
+// held by somebody other than the caller.
+func (s *appTestServer) seedColleague(email, name, password string) store.User {
+	s.t.Helper()
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	id, err := s.st.CreateUser(s.ctx, email, name, hash, "admin", true)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	u, err := s.st.UserByID(s.ctx, id)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return u
+}
+
+// ---------------------------------------------------------------------------
+// Task 11 — reservation entry point, permission verbs, conflict screen
+// ---------------------------------------------------------------------------
+
+func TestReservationEntryPointReservesAndRedirects(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Reserve")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	resp := s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{})
+	requireStatus(t, resp, http.StatusSeeOther)
+	if loc := resp.Header.Get("Location"); loc != fmt.Sprintf("/payments/new?request=%d", reqID) {
+		t.Fatalf("reserve redirect = %q", loc)
+	}
+	_ = responseBody(t, resp)
+	if got := requestStatusApp(t, s, reqID); got != "processing" {
+		t.Fatalf("status after reserve = %q, want processing", got)
+	}
+}
+
+// TestReservationConflictRendersScreenNotErrorPage is the G15 proof.
+func TestReservationConflictRendersScreenNotErrorPage(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Taken")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 3350000)
+	// Someone already reserved it.
+	if err := s.st.ReserveRequest(s.ctx, admin, reqID); err != nil {
+		t.Fatal(err)
+	}
+	// A second accountant tries via the button.
+	s.seedColleague("second@example.test", "Second Acct", "SecondPass1234")
+	s.login("second@example.test", "SecondPass1234")
+	resp := s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{})
+	requireStatus(t, resp, http.StatusConflict)
+	body := responseBody(t, resp)
+
+	// It is a screen, not the generic error page.
+	if strings.Contains(body, `class="error-state"`) || strings.Contains(body, "Request ID:") {
+		t.Fatalf("conflict rendered the generic error page: %s", body)
+	}
+	for _, want := range []string{
+		`class="banner bad"`,               // names the winner, says nothing was saved
+		"Test Admin took this request",     // who won
+		"Nothing you typed has been saved", // and that no payment was created
+		`class="req-head"`,                 // the request in context
+		`class="pill processing"`,          // its state
+		`class="waiting"`,                  // reserved-at line
+		`class="a-list"`,                   // what you can do next
+		"Go back to the queue",
+		"Ask for it to be reassigned",
+		"Open the request read-only",
+		`class="action-bar"`,
+		"PR-2026-000001",
+		"33,500.00",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("conflict screen missing %q:\n%s", want, body)
+		}
+	}
+	// The reservation is untouched by the loser.
+	if got := requestStatusApp(t, s, reqID); got != "processing" {
+		t.Fatalf("status = %q, want processing", got)
+	}
+}
+
+func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("X5")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	// No request_id at all → refused.
+	form := url.Values{"head_id": {strconvFormat(headID)}, "paid_on": {"2026-06-15"}, "amount": {"100.00"}, "settlement": {"settled"}}
+	resp := s.postForm("/payments", form)
+	requireStatus(t, resp, http.StatusBadRequest)
+	_ = responseBody(t, resp)
+	// A request the caller has NOT reserved → refused.
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	form.Set("request_id", strconvFormat(reqID))
+	resp = s.postForm("/payments", form)
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("unreserved link accepted: %d", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
+	var n int
+	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("request-less/unreserved payment wrote %d rows (X5 broken)", n)
+	}
+}

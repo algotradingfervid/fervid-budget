@@ -127,6 +127,17 @@ type PageData struct {
 	RequestAtts []store.RequestAttachment
 	// Areas are the dashboard's work areas, in the order they are shown.
 	Areas []WorkArea
+
+	// Payment linking, reservation and settlement (Phase 3). Linkable is the
+	// queue and picker data; Tab is the queue's `.segmented` selection;
+	// Settlement is the view model the confirmation sheet renders and nothing
+	// persists; Holder names whoever holds a reservation the reader lost.
+	Linkable    store.LinkableSet
+	Tab         string
+	RecentPaid  []PaidRequestRow
+	Settlement  SettlementPreview
+	ReserveMine bool
+	Holder      string
 	// Config is the Configuration screen's values. It is deliberately not
 	// Settings: Settings is what a *form* consults about the rules it must
 	// follow, Config is what the screen that edits those rules renders from.
@@ -224,6 +235,18 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"threadValue":  threadValue,
 		"threadField":  threadField,
 		"fileKind":     fileKind,
+		// Payment linking and settlement (Phase 3). Display only: every rule
+		// these read from is enforced in the store.
+		"hhmm":          hhmm,
+		"since":         since,
+		"reservedLabel": reservedLabel,
+		"sub":           subPaise,
+		"approvedOf":    approvedOf,
+		"auditTone":     auditTone,
+		"auditGlyph":    auditGlyph,
+		"initials":      initials,
+		"paymentModes":  paymentModes,
+		"queueTabs":     func() []queueTab { return queueTabs },
 		// Configuration. The screen is a rendering of this table, so a later
 		// phase adds a section by appending to it and nothing else.
 		"configSections": func() []ConfigSection { return configSections },
@@ -331,6 +354,10 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /requests/duplicate-check", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestDuplicateCheck))))
 	mux.Handle("POST /requests", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestCreate))))
 	mux.Handle("GET /requests/{id}/submitted", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestSubmitted)))
+	// Payment linking and settlement (Phase 3). Reservation has its own verbs
+	// (spec D2) precisely so "may take work" and "may take work off somebody
+	// else" stop being the same grant.
+	mux.Handle("POST /requests/{id}/record-payment", a.auth.RequirePermission("reservation", "reserve", http.HandlerFunc(a.withCSRF(a.requestRecordPayment))))
 	// One detail screen for every audience: the action bar changes on
 	// permission, the page does not. Each decision posts to its own route so
 	// the gate is the verb the decision needs, not the one that opened the page.
@@ -529,38 +556,40 @@ func (a *App) payments(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "payments", PageData{Title: "Payments", Month: month, Status: status, Query: q, Payments: payments, PaymentTotal: total, Locked: a.st.IsLocked(r.Context(), month)})
 }
 
+// paymentCreate is the only user-reachable way a payment is created, and it
+// creates nothing that is not linked to a request the caller holds (X5). The
+// free-standing create survives in the store as a seed/import helper only.
 func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	linkedID := parseID(r.FormValue("request_id"))
+	if linkedID == 0 {
+		a.respondError(w, r, http.StatusBadRequest, "Payments must be linked to an approved request.", nil)
+		return
+	}
 	in, err := paymentInput(r)
+	settlement := r.FormValue("settlement")
+	partialReason := r.FormValue("partial_reason")
 	var attachment *store.AttachmentInput
 	var attachmentPath string
 	if err == nil {
 		attachment, attachmentPath, err = a.stageUploadedAttachment(r)
 	}
+	var payID int64
 	if err == nil {
-		_, err = a.st.CreatePaymentWithAttachment(r.Context(), auth.CurrentUser(r), in, attachment)
+		payID, err = a.st.RecordPaymentForRequest(r.Context(), u, linkedID, in, settlement, partialReason, attachment)
 	}
 	if err != nil {
 		removeStagedAttachment(a.log, r, attachmentPath)
-		status := storeErrorStatus(err)
-		if status >= http.StatusInternalServerError {
-			a.respondStoreError(w, r, err)
+		// A double-confirm (back button, double tap) must not look like a
+		// failure: the payment this request needed already exists, so go to it.
+		if pay, perr := a.st.PaymentForRequest(r.Context(), linkedID); perr == nil {
+			http.Redirect(w, r, fmt.Sprintf("/payments/%d", pay.ID), http.StatusSeeOther)
 			return
 		}
-		heads, headsErr := a.st.ListHeads(r.Context(), true)
-		if headsErr != nil {
-			a.respondStoreError(w, r, headsErr)
-			return
-		}
-		paidOn := in.PaidOn
-		locked := validDateInput(paidOn) && a.st.IsLocked(r.Context(), paidOn[:7])
-		a.renderStatus(w, r, status, "payment_form", PageData{Title: "Add Payment", Heads: heads, SelectedHeadID: in.HeadID, Payment: paymentFromInput(in), PaymentAmount: r.FormValue("amount"), Locked: locked, Error: friendly(err)})
+		a.settlementError(w, r, linkedID, in, r.FormValue("amount"), settlement, partialReason, err)
 		return
 	}
-	if r.FormValue("submit_action") == "add_another" {
-		http.Redirect(w, r, fmt.Sprintf("/payments/new?date=%s&head_id=%d", in.PaidOn, in.HeadID), http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, "/?month="+in.PaidOn[:7], http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/payments/%d", payID), http.StatusSeeOther)
 }
 
 func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {

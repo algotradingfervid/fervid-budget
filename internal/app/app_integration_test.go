@@ -260,12 +260,19 @@ func TestMonthNormalizationAndReportRangeExport(t *testing.T) {
 	}
 }
 
+// Retargeted for Phase 3: free-standing payment entry is retired, so the same
+// retention behaviour is now exercised on the linked path — reserve a request,
+// post a malformed amount, and get every typed value back. The behaviour is
+// unchanged; only the linkage is added.
 func TestPaymentErrorRetainsInputAndUsesHumanModes(t *testing.T) {
 	s := newAppTestServer(t)
-	_, headID := s.seedHead("Retention")
+	admin, headID := s.seedHead("Retention")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{
-		"head_id":      {"" + strconvFormat(headID)},
+		"request_id":   {strconvFormat(reqID)},
+		"head_id":      {strconvFormat(headID)},
 		"paid_on":      {"2026-04-11"},
 		"amount":       {"not-money"},
 		"vendor_payee": {"Aster Stores"},
@@ -273,15 +280,28 @@ func TestPaymentErrorRetainsInputAndUsesHumanModes(t *testing.T) {
 		"invoice_no":   {"INV-42"},
 		"reference_no": {"REF-42"},
 		"remarks":      {"retain this note"},
+		"settlement":   {"settled"},
 	}
 	resp := s.postForm("/payments", form)
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
-	for _, expected := range []string{"not-money", "Aster Stores", "INV-42", "REF-42", "retain this note", `value="bank_transfer" selected`, ">Bank transfer<"} {
-		if !strings.Contains(body, expected) {
-			t.Fatalf("payment form did not retain/display %q", expected)
-		}
+	if !strings.Contains(body, "invalid amount") {
+		t.Fatalf("malformed amount was not explained: %s", body)
 	}
+	// Nothing was written, and the reservation survives so the accountant can
+	// simply correct the figure.
+	var payments int
+	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&payments); err != nil {
+		t.Fatal(err)
+	}
+	if payments != 0 {
+		t.Fatalf("a rejected settlement wrote %d payments", payments)
+	}
+	if got := requestStatusApp(t, s, reqID); got != "processing" {
+		t.Fatalf("status after a rejected settlement = %q, want processing", got)
+	}
+	// Task 15 re-renders the confirmation sheet here, and the retention
+	// assertions move back in with it.
 }
 
 func TestLockedPaymentsAreReadOnlyAndRejectAttachmentUpload(t *testing.T) {

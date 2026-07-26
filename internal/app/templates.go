@@ -197,6 +197,51 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* G15 — losing the reservation race is a screen, not an error page.
+     mockups/screens/accounts-reservation-conflict.html: name the winner, say in
+     as many words that nothing was saved, show the request in context, and
+     offer the three things the loser may actually do.
+
+     The mockup lists "Ask for it to be reassigned" unconditionally with the
+     note "Needs reassign permission". Offering a control the reader cannot use
+     leaks it, so the entry is gated and the note moves into the sub-line. */}}
+{{define "reservation_conflict"}}
+{{template "top" .}}
+<div class="banner bad">
+  <span class="b-ico" aria-hidden="true">✕</span>
+  <div>
+    <b>{{.Holder}} took this request before you</b>
+    <p>{{.Request2.Number}} is now reserved by {{.Holder}}. Nothing you typed has been saved, and no payment was created.</p>
+  </div>
+</div>
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money (approvedOf .Request2)}}</span></div>
+  <h1>{{.Request2.VendorPayee}}{{if .Request2.ShortTitle}} — {{.Request2.ShortTitle}}{{end}}</h1>
+  <p class="rh-meta">{{.Request2.Project}} / {{.Request2.Head}}{{if .Request2.ApprovedAt}} · approved {{datep .Request2.ApprovedAt}}{{end}}</p>
+  <div class="rh-status">
+    <span class="pill processing">Processing — {{.Holder}}</span>
+    <span class="waiting">Reserved {{datep .Request2.ProcessingAt}}</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>What you can do</h2></div>
+  <div class="a-list">
+    <a href="/accounts-queue"><span class="al-main"><b>Go back to the queue</b><small>Other approved requests are unclaimed</small></span><span class="al-amt" aria-hidden="true">→</span></a>
+    {{if .Perms.Can "reservation" "reassign"}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Ask for it to be reassigned</b><small>{{.Holder}} is told and must confirm no payment was started</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
+    <a href="/requests/{{.Request2.ID}}"><span class="al-main"><b>Open the request read-only</b><small>You can see it and comment, but not pay it</small></span><span class="al-amt" aria-hidden="true">→</span></a>
+  </div>
+</div>
+
+<div class="action-bar">
+  <span class="row-end"></span>
+  <a class="btn outline" href="/payments/new">Pick another request</a>
+  <a class="btn primary" href="/accounts-queue">Back to queue</a>
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{define "months"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Month control</div><h1>Monthly Plans</h1><p class="sub muted">Create each month, review prior months, and open locked history whenever needed.</p></div><a class="btn outline" href="/reports/monthly">Reports</a></section>
