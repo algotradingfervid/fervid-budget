@@ -604,6 +604,11 @@ func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id 
 	if err != nil {
 		return err
 	}
+	// S12: a payment that settles a request is the request's outcome. Editing it
+	// would silently rewrite what the requester and approver were told was paid.
+	if before.RequestID != nil {
+		return fmt.Errorf("%w: a payment linked to a request cannot be edited", ErrValidation)
+	}
 	if before.VoidedAt != nil {
 		return fmt.Errorf("%w: cannot edit voided payment", ErrValidation)
 	}
@@ -639,6 +644,10 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 	before, err := paymentInTx(ctx, tx, id)
 	if err != nil {
 		return err
+	}
+	// S12: voiding would leave the request 'completed' with nothing paid.
+	if before.RequestID != nil {
+		return fmt.Errorf("%w: a payment linked to a request cannot be voided", ErrValidation)
 	}
 	if before.VoidedAt != nil {
 		return nil

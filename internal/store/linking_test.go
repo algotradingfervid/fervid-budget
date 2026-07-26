@@ -519,3 +519,27 @@ func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 		t.Fatalf("status = %q, want completed", got)
 	}
 }
+
+func TestLinkedPaymentIsImmutable(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}, "settled", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdatePayment(ctx, acc, payID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 111, VendorPayee: "Changed"}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("edit linked payment = %v, want ErrValidation", err)
+	}
+	if err := s.VoidPayment(ctx, acc, payID, "oops"); !errors.Is(err, ErrValidation) {
+		t.Fatalf("void linked payment = %v, want ErrValidation", err)
+	}
+	p, err := s.Payment(ctx, payID)
+	if err != nil || p.Amount != 500000 || p.VoidedAt != nil {
+		t.Fatalf("linked payment mutated: %+v, %v", p, err)
+	}
+}
