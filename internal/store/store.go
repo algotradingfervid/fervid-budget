@@ -956,6 +956,68 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	return id, nil
 }
 
+// AcceptPartial closes a 'partial_review' request as 'completed_partial' — a
+// terminal state distinct from a clean 'completed' (S11, G14). The difference is
+// permanent and visible: the ledger renders .pill.completed-partial, and anyone
+// reading the request later can see that a balance was written off rather than
+// paid. note is optional and joins the trail the requester reads.
+func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note string) error {
+	note = strings.TrimSpace(note)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='completed_partial', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='partial_review'`, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("%w: only a partial-review request can be accepted", ErrForbidden)
+	}
+	summary := "Accepted partial settlement — completed, partial accepted"
+	if note != "" {
+		summary += ": " + note
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "accept_partial", EntityType: "payment_request", EntityID: &id, Summary: summary, After: map[string]any{"status": "completed_partial"}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RaiseConcern keeps a 'partial_review' request in review and appends a
+// conversation comment (S11). comment is required.
+func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment string) error {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return fmt.Errorf("%w: a concern comment is required", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if status != "partial_review" {
+		return fmt.Errorf("%w: only a partial-review request can receive a concern", ErrForbidden)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO request_comments(request_id,author_id,body) VALUES(?,?,?)`, id, actor.ID, comment); err != nil {
+		return classify(err)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "concern", EntityType: "payment_request", EntityID: &id, Summary: "Raised concern: " + comment}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),

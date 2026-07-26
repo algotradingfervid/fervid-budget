@@ -95,6 +95,9 @@ var legalTransitions = map[string]map[string]bool{
 	// the requester (cancellation_requested) or cancelled outright by a manager.
 	"approved":               {"cancellation_requested": true, "cancelled": true},
 	"cancellation_requested": {"cancelled": true, "approved": true},
+	// Phase 3 (G14): a manager-accepted partial closes distinctly from a clean pay.
+	// "completed_partial" has no outgoing edges — terminal, like "completed".
+	"partial_review": {"completed": true, "completed_partial": true},
 }
 
 func canTransition(from, to string) bool {

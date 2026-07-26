@@ -543,3 +543,71 @@ func TestLinkedPaymentIsImmutable(t *testing.T) {
 		t.Fatalf("linked payment mutated: %+v, %v", p, err)
 	}
 }
+
+func TestAcceptPartialAndRaiseConcern(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	// Two requests, both taken to partial_review.
+	settleToReview := func(seq int) int64 {
+		id := seedApprovedRequest(t, s, ctx, seq, req.ID, mgrID, headID, 500000, 500000)
+		if err := s.ReserveRequest(ctx, acc, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mgr, _ := s.UserByID(ctx, mgrID)
+	accepted := settleToReview(1)
+	if err := s.AcceptPartial(ctx, mgr, accepted, "Balance will be invoiced separately."); err != nil {
+		t.Fatalf("accept partial: %v", err)
+	}
+	// G14: a distinguishable terminal state, not plain 'completed'. The ledger and
+	// the .pill.completed-partial both depend on being able to tell them apart.
+	if got := requestStatus(t, s, ctx, accepted); got != "completed_partial" {
+		t.Fatalf("accepted status = %q, want completed_partial (G14)", got)
+	}
+	// Accepting a non-partial_review request is rejected (L11).
+	if err := s.AcceptPartial(ctx, mgr, accepted, ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("accept completed_partial = %v, want ErrForbidden", err)
+	}
+	// The optional note reaches the trail the manager and Accounts both read.
+	var noted int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE entity_type='payment_request' AND entity_id=? AND action='accept_partial' AND summary LIKE ?`, accepted, "%invoiced separately%").Scan(&noted); err != nil {
+		t.Fatal(err)
+	}
+	if noted != 1 {
+		t.Fatalf("accept note not in the audit trail: %d matching entries", noted)
+	}
+	// A clean settlement stays plain 'completed' — the two states never merge.
+	clean := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, clean); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordPaymentForRequest(ctx, acc, clean, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme"}, "settled", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := requestStatus(t, s, ctx, clean); got != "completed" {
+		t.Fatalf("clean settlement status = %q, want completed", got)
+	}
+
+	concerned := settleToReview(2)
+	if err := s.RaiseConcern(ctx, mgr, concerned, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("empty concern = %v, want ErrValidation", err)
+	}
+	if err := s.RaiseConcern(ctx, mgr, concerned, "Please confirm the balance timeline"); err != nil {
+		t.Fatalf("raise concern: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, concerned); got != "partial_review" {
+		t.Fatalf("concerned status = %q, want partial_review", got)
+	}
+	var comments int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM request_comments WHERE request_id=? AND body=?`, concerned, "Please confirm the balance timeline").Scan(&comments); err != nil {
+		t.Fatal(err)
+	}
+	if comments != 1 {
+		t.Fatalf("concern comment not persisted: %d", comments)
+	}
+}
