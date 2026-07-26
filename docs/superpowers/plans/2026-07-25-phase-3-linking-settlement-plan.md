@@ -3121,10 +3121,18 @@ git commit -m "feat(app): payment entry screen with reserve bar, approved card a
 
 ### Task 15: Settlement preview — a pure endpoint that persists nothing (**D8**, **G16**)
 
-> **Status: NOT STARTED.** Tasks 15–19 are untouched. Two notes for whoever resumes:
+> **Status: DONE** — shipped as commit `c9cc62a`.
 >
-> - `internal/app/linking.go` already carries a **stub `settlementError`** that just calls `respondStoreError`. Task 15 replaces it with the sheet re-render, and `TestPaymentErrorRetainsInputAndUsesHumanModes` gets its field-retention assertions back at the same time.
-> - **`Store.AuditFor` does not exist.** Tasks 16–19 call for it; `internal/app/linking.go` already provides `mergedTrail`, which reads `Store.Audit` once per entity type and merges oldest-first. `threadTone`/`threadGlyph` in those task bodies also clash with the existing `threadDot`/`threadGlyph`, which take a `store.ThreadEntry`; the audit-action equivalents are registered as **`auditTone`/`auditGlyph`**.
+> **Corrections that applied to the whole 15–21 range** (each was verified against the code, and every task below was implemented against these, not against the plan text):
+>
+> - **`Store.AuditFor` does not exist.** `internal/app/linking.go` provides `mergedTrail(r, requestID, paymentID)`, which reads `Store.Audit` once per entity type and merges oldest-first; it skips the payment read when `paymentID <= 0`.
+> - **`threadTone`/`threadGlyph` in Tasks 16–19 clash with the real helpers.** `threadDot`/`threadGlyph` take a `store.ThreadEntry`; the audit-action equivalents are **`auditTone`/`auditGlyph`**.
+> - **`/requests/to-pay` is not a route.** The queue shipped as `GET /accounts-queue` with `?tab=` and `?q=`. Tasks 18, 19 and 20 all name the old path.
+> - **`ListUsers` takes only a context** — Task 18's `ListUsers(ctx, true)` does not compile.
+> - **The "Files:" lists are stale.** Phase 3 handlers live in `internal/app/linking.go` and Phase 3 HTTP tests in `internal/app/linking_test.go`; only route registration belongs in `app.go`.
+> - **The attachments table is `payment_attachments`.**
+>
+> **Task 15 itself:** `settlementError` stopped being a stub, so a rejected settlement re-renders the sheet with the message in place and `TestPaymentErrorRetainsInputAndUsesHumanModes` regained its retention assertions. Its old `value="bank_transfer" selected` assertion belonged to the free-entry `<select>` this phase retired; the sheet spells the mode for a person in a `<dd>` and keeps it verbatim in the field that reposts it. `postFormWithHeader` was not added — `postFormHX` already does exactly that job.
 
 **New task (D8).** Today one click posts and writes. The approved flow has a confirmation step in between, and the whole point of `payment-settlement-confirm.html` is that the payment does not exist while it is on screen (`.pill.neutral.no-dot` reads "Not saved yet"). So `POST /requests/{id}/settlement-preview` is **pure**: no `BeginTx`, no attachment staging, no writes of any kind. It re-checks that the caller still holds the reservation, computes approved / paid / difference, and renders the `.overlay > .sheet`.
 
@@ -3460,6 +3468,13 @@ git commit -m "feat(app): pure settlement preview endpoint rendering the confirm
 
 ### Task 16: Settlement submit, payment detail screen and the full trail (S10, S11, S12, S13, Q4)
 
+> **Status: DONE** — shipped as commit `3c30370`.
+>
+> - **`ListPayments` did not select the linkage columns**, so `Payment.RequestID` off the ledger was always nil and the S12 immutability gate could never fire on a ledger row. It now selects `request_id`, `settlement` and `partial_reason`, matching what `Store.Payment` already read.
+> - **The seeded Accounts role could not reserve.** `seedSystemRoles` runs only inside migration v1, so an already-migrated database would upgrade into Phase 3 with Accounts locked out of the entire flow. Migration **v5 `accounts_reservation_grants`** adds the two grants with `INSERT OR IGNORE` — deliberately not a re-seed, which would reset an administrator's own edits to a system role. **This takes the v5 slot: Phase 4 is now v6 and Phase 5 is v7.**
+> - The historical, request-less payment markup moved verbatim into `payment_detail_historical` behind an `{{else}}`, so those rows stay editable (X6).
+> - **Not shipped:** the mockup's `Bank` row (`HDFC ····4471 · IFSC …`). It needs `vendor_bank`-restricted data on a screen no spec authorises for it, plus an account-masking helper with no precedent in the design system. The plan's own Step-3 markup omits it too. Recorded as a product decision, not an implementation gap.
+
 **Amended (was Task 11).** The settlement POST now lands on the payment, not back on the request, because `payment-detail.html` is the approved destination: a `.banner.good` confirming the save and the notifications, a `.req-head` reading "PAY-… · from PR-…" with `.pill.completed`, a `.compare` block whose third row is `.match` "Difference · confirmed settled by Accounts", a read-only `.card` + `.dl`, the `.file-row` proof list, and an `ol.thread` carrying the whole trail from submission to settlement. The request-detail outcome block stays, retargeted to `.compare` and linking to the payment.
 
 **Files:**
@@ -3730,6 +3745,11 @@ git commit -m "feat(app): settlement submit, payment detail screen and the full 
 
 ### Task 17: Partial review screen — two `.overlay > .sheet` confirmations (S11, **G14**)
 
+> **Status: DONE** — shipped as commit `6a0b15e`.
+>
+> - The decision belongs to **the request's own manager**, not to anyone holding `approval:accept_partial`. The sheets gate on `eq .User.ID .Request2.ManagerID` as well as the permission, and the server enforces the same rule — an admin holds every grant but is not the manager.
+> - **`.btn.approve` has no rule in `web/static/fervid-ds.css`** (the plan records this at line 2243). The dead `approve` token was dropped rather than inventing CSS, so the green/neutral distinction the mockup draws between the two terminal answers is not yet available. Phase 6 owns it.
+
 **New task** (routes were part of old Task 12). Builds `mockups/screens/payment-partial-review.html`: `.req-head` with `.pill.partial` and a `.waiting.you`; the `.compare` block ending in "Still owed to the vendor"; the accountant's reason in a `.banner.warn`; the immutable payment `.card` with `.pill.neutral.no-dot` "Cannot be edited"; the `ol.thread`; the `.comment-box`; an `.action-bar` for the manager only; and **two sheets** — "Accept ₹X and close?" (its own `.compare`, the "closes as Completed — partial accepted" hint and an optional note) and "Raise a concern" (required reason plus the "This does not reverse anything" `.banner.warn`).
 
 **Files:**
@@ -3970,6 +3990,13 @@ git commit -m "feat(app): partial review screen with accept and concern sheets"
 ---
 
 ### Task 18: Release / reassign screen (S6, S7, **G11**, **G12**)
+
+> **Status: DONE** — shipped as commit `3ebb8dd`.
+>
+> - **The GET is `RequireLogin`, not `RequirePermission("reservation","release")` as the plan says.** The queue and the conflict screen both link here gated on `reservation:reassign`, so a release-only gate 403s exactly the reader those links are for. `reservationForm` instead loads through `loadViewableRequest` (data scope) and refuses unless the caller either holds it and may release, or may reassign — which is stricter than the plan's gate, because it also checks ownership. Both POSTs keep their own `RequirePermission`.
+> - The reassign target list is filtered to people who can actually work the queue (`payment:process`), and the target is re-checked server-side — `hidden` is not validation.
+> - `date`/`datep` were not localised while `hhmm` was, so one screen printed two different clock times for one event. Both now localise.
+> - `store.ReassignRequest` (the approval swap) and `store.ReassignReservation` both wrote audit action `reassign` on `payment_request`; the approval writer now records `approval_reassign`.
 
 **New task.** Builds `mockups/screens/accounts-release-reassign.html` as one screen with one `.choice`: release, or reassign to a named colleague. The `.reserve-bar` states who holds it and for how long; the `.banner.bad` demands confirmation that no payment has started; the reassign target `<select>` is revealed by `data-when="action:reassign"` **and re-enforced server-side**; the reason is required for both branches; the confirmation checkbox maps to `confirmed`; and a `.thread` shows the reservation history.
 
@@ -4228,6 +4255,13 @@ git commit -m "feat(app): release and reassign reservation screen with required 
 
 ### Task 19: Hold, unhold, and the stale-reservation screen (L7, Q6)
 
+> **Status: DONE** — shipped as commit `3daa98d`.
+>
+> - Introduced the invariant **`on_hold=1` implies `status='approved'`**, enforced at every exit from approved, because a hold surviving a cancellation left the pill, the waiting line and the release control disagreeing with each other.
+> - Consequence recorded: a hold placed before a cancellation is dropped when the requester asks for cancellation, so a manager who *declines* that cancellation returns the request to approved with no hold. The hold event and its reason survive in the audit trail.
+> - The stale screen is reachable from the queue's per-row Resume action. The banner's "Review" still leads to the processing tab, because `Counts.StaleReservations` is an aggregate that cannot name a request.
+> - The mockup's "Stale reservation reminder sent" trail line has no writer — no reminder is actually sent until the notifications phase.
+
 **New task** (routes were part of old Task 12). Two screens. `request-on-hold.html` is a state of the Phase-2 request detail: `.pill.hold`, the accountant's question in a `.banner.warn`, a `.comment-box` for the requester's answer, and an Accounts-only `.action-bar` with "Keep on hold" / "Release hold". `accounts-stale-processing.html` is the 26-hour nudge: a `.banner.warn`, the `.req-head`, an `.a-list` of four choices, a "Who has been told" `.thread`, and an admin-only reassign `.action-bar`.
 
 **Files:**
@@ -4444,6 +4478,15 @@ git commit -m "feat(app): hold, unhold and the stale reservation screen"
 
 ### Task 20: e2e — the accounts journey on a 390 px viewport (S1, S2, S10, S11, S12, D8)
 
+> **Status: DONE** — fixtures `5f06f52`, journey spec `7bdeaa3`, repairs `3596e2f` / `a02045d` / `980f3ba`.
+>
+> - `createPayment` was **replaced**, not kept: a fixture driving a retired route is how a suite rots. `createApprovedRequest` + `settlePayment` drive the real screens, and a `secondPage` fixture gives a second authenticated context so a genuine reservation race runs through the browser.
+> - **The plan's test 1 would have hung on the confirm.** It fills only the amount, but `payment_mode` and `reference_no` are `required` and live in the same form as the confirm button, so HTML5 validation refuses the submit.
+> - **ISS-030 was re-scoped, not deleted.** It guards "Save and add another", a control this phase retires by design — one request, one payment. It is now a proof-of-absence naming the constraint that removed it.
+> - **ISS-004 was split.** The store does refuse a locked month (`validatePayment` → `ErrLockedMonth`), but the entry screen cannot show a load-time lock banner because the accountant picks `paid_on` on the form. The read-only assertion moved to `/payments/{id}/edit`, where that behaviour lives.
+> - **ISS-006's assertion list shrank** to the still-editable fields. Project/Head, Payee and Invoice are now derived from the request, so asserting they "survive" would assert nothing.
+> - The uploader's file input is `hidden` and has no accessible name, so the locator is `input[name="attachment"]`, never `getByLabel`.
+
 **Amended.** The original spec drove the retired markup ("Linked to request", a `Payment settled` button that posted directly, a redirect back to the request). It is retargeted at the approved screens and, per spec §6, walks the journey on a **390 px** viewport so the mobile chrome, the restacked `t-cards` and the sheets are all exercised.
 
 **Files:**
@@ -4563,6 +4606,8 @@ git commit -m "test(e2e): accounts reserve-settle journey and conflict screen at
 ---
 
 ### Task 21: Proof-of-absence — no refund / return-of-money path (X3)
+
+> **Status: DONE** — shipped as commit `6aadbb2`. The guard was proved to bite: a dummy refund route was added locally, the test failed, and it was removed again.
 
 **Files:**
 - Modify: `internal/app/app_integration_test.go` (add `TestNoRefundRoute`; add `"reflect"` to its imports)
