@@ -848,6 +848,105 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 	return tx.Commit()
 }
 
+// RecordPaymentForRequest writes the single linked payment for a request the
+// actor currently holds in 'processing', then transitions it in the same
+// transaction: "settled" → 'completed' (even if paid < approved, S10); "partial"
+// → 'partial_review' (partialReason required, L9). Paid may never exceed the
+// approved amount (G13). The payment and the request move together or not at all
+// (S13); a re-record is refused by the status guard and idx_payments_request (S9).
+func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, requestID int64, in PaymentInput, settlement, partialReason string, attachment *AttachmentInput) (int64, error) {
+	settlement = strings.TrimSpace(settlement)
+	partialReason = strings.TrimSpace(partialReason)
+	if settlement != "settled" && settlement != "partial" {
+		return 0, fmt.Errorf("%w: choose payment settled or partial settlement", ErrValidation)
+	}
+	if settlement == "partial" && partialReason == "" {
+		return 0, fmt.Errorf("%w: a reason is required for a partial settlement", ErrValidation)
+	}
+	if err := s.validatePayment(ctx, in); err != nil {
+		return 0, err
+	}
+	if attachment != nil {
+		if err := validateAttachment(*attachment); err != nil {
+			return 0, err
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var status string
+	var processingBy sql.NullInt64
+	var requested int64
+	var approved sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT status, processing_by, amount, approved_amount FROM payment_requests WHERE id=?`, requestID).Scan(&status, &processingBy, &requested, &approved); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	if status != "processing" || !processingBy.Valid || processingBy.Int64 != actor.ID {
+		return 0, fmt.Errorf("%w: reserve this request before recording its payment", ErrForbidden)
+	}
+	// G13: the approved amount is a hard ceiling. Paying more is not a settlement
+	// decision, it is a different obligation — cancel and raise a new request.
+	ceiling := requested
+	if approved.Valid {
+		ceiling = approved.Int64
+	}
+	if in.Amount > ceiling {
+		return 0, fmt.Errorf("%w: %s is more than the approved %s — to pay more, cancel this request and raise a new one",
+			ErrValidation, money.FormatPaise(in.Amount), money.FormatPaise(ceiling))
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by,request_id,settlement,partial_reason)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		in.HeadID, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, requestID, settlement, partialReason)
+	if err != nil {
+		return 0, classify(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	newStatus := "completed"
+	if settlement == "partial" {
+		newStatus = "partial_review"
+	}
+	upd, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing' AND processing_by=?`, newStatus, requestID, actor.ID)
+	if err != nil {
+		return 0, err
+	}
+	if n, err := upd.RowsAffected(); err != nil {
+		return 0, err
+	} else if n == 0 {
+		return 0, fmt.Errorf("%w: reservation was lost before settlement", ErrForbidden)
+	}
+	after := paymentFromInput(id, actor, in)
+	after.RequestID = &requestID
+	after.Settlement = settlement
+	after.PartialReason = partialReason
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment", EntityID: &id, Summary: "Recorded payment " + money.FormatPaise(in.Amount), After: after}); err != nil {
+		return 0, err
+	}
+	reqAction, reqSummary := "settle", "Settled request as completed"
+	if settlement == "partial" {
+		reqAction, reqSummary = "mark_partial", "Partial settlement: "+partialReason
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: reqAction, EntityType: "payment_request", EntityID: &requestID, Summary: reqSummary, After: map[string]any{"status": newStatus, "payment_id": id}}); err != nil {
+		return 0, err
+	}
+	if attachment != nil {
+		if _, err := addAttachmentTx(ctx, tx, actor, id, *attachment); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),

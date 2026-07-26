@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -394,5 +395,127 @@ func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T
 	other := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 100000, 100000)
 	if err := s.ReassignReservation(ctx, acc, other, deepakID, reason, true); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("reassign of an unreserved request = %v, want ErrForbidden", err)
+	}
+}
+
+func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 400000, VendorPayee: "Acme Landlord"}, "settled", "", nil)
+	if err != nil {
+		t.Fatalf("record settled: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "completed" {
+		t.Fatalf("status = %q, want completed (S10)", got)
+	}
+	p, err := s.PaymentForRequest(ctx, reqID)
+	if err != nil || p.ID != payID || p.RequestID == nil || *p.RequestID != reqID || p.Settlement != "settled" {
+		t.Fatalf("linked payment = %+v, err=%v", p, err)
+	}
+	// One payment per request: a second settlement is refused (S9).
+	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-16", Amount: 100000, VendorPayee: "Acme"}, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("second settlement = %v, want ErrForbidden", err)
+	}
+}
+
+func TestRecordPaymentPartialNeedsReasonAndRoutesToReview(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme Landlord"}
+	// Partial without reason → validation; nothing written; still processing (S13).
+	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, in, "partial", "", nil); !errors.Is(err, ErrValidation) {
+		t.Fatalf("partial without reason = %v, want ErrValidation", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+		t.Fatalf("status after rejected partial = %q, want processing", got)
+	}
+	if _, err := s.PaymentForRequest(ctx, reqID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("payment written despite rejected settlement: %v", err)
+	}
+	// Partial with reason → partial_review (L9).
+	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, in, "partial", "Balance pending vendor confirmation", nil); err != nil {
+		t.Fatalf("record partial: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "partial_review" {
+		t.Fatalf("status = %q, want partial_review", got)
+	}
+	p, err := s.PaymentForRequest(ctx, reqID)
+	if err != nil || p.Settlement != "partial" || p.PartialReason != "Balance pending vendor confirmation" {
+		t.Fatalf("linked partial payment = %+v, err=%v", p, err)
+	}
+}
+
+func TestRecordPaymentRequiresActorReservation(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	otherID, err := s.CreateUser(ctx, "other@example.com", "Other", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.UserByID(ctx, otherID)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}
+	// Not reserved at all → forbidden, no payment (store-level X5).
+	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("record without reservation = %v, want ErrForbidden", err)
+	}
+	if got := paymentCount(t, s); got != 0 {
+		t.Fatalf("payment written without reservation: %d", got)
+	}
+	// Reserved by acc; a different accountant may not record it.
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordPaymentForRequest(ctx, other, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("record by non-assignee = %v, want ErrForbidden", err)
+	}
+}
+
+// TestRecordPaymentRejectsOverpayment is the G13 proof: the mockup's read-only
+// approved field and .banner.bad both promise that paid can never exceed
+// approved. Rejection must leave the request reserved and no payment written, so
+// the accountant can correct the figure without re-reserving.
+func TestRecordPaymentRejectsOverpayment(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 480000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	over := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 480001, VendorPayee: "Acme Landlord"}
+	for _, settlement := range []string{"settled", "partial"} {
+		_, err := s.RecordPaymentForRequest(ctx, acc, reqID, over, settlement, "reason", nil)
+		if !errors.Is(err, ErrValidation) {
+			t.Fatalf("overpayment (%s) = %v, want ErrValidation", settlement, err)
+		}
+		if !strings.Contains(err.Error(), "cancel") {
+			t.Fatalf("overpayment error must name the remedy (cancel and raise a new request), got %q", err)
+		}
+	}
+	if got := paymentCount(t, s); got != 0 {
+		t.Fatalf("overpayment wrote %d payment rows (G13 broken)", got)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+		t.Fatalf("status after refused overpayment = %q, want processing (reservation must survive)", got)
+	}
+	// The approved amount itself is allowed; it is > that is refused.
+	exact := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 480000, VendorPayee: "Acme Landlord"}
+	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, exact, "settled", "", nil); err != nil {
+		t.Fatalf("payment of exactly the approved amount: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "completed" {
+		t.Fatalf("status = %q, want completed", got)
 	}
 }
