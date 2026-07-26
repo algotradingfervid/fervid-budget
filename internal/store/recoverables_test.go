@@ -1,6 +1,9 @@
 package store
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -116,7 +119,7 @@ func TestMigrationV6IsIdempotent(t *testing.T) {
 // id, so an installed database full of Phase-2 requests must be back-filled or
 // the whole register renders a blank category for real rows.
 func TestBackfillLinksExistingRequestsToCategories(t *testing.T) {
-	ctx := t.Context()
+	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s, ctx)
 
@@ -150,5 +153,138 @@ func TestBackfillLinksExistingRequestsToCategories(t *testing.T) {
 	}
 	if gotName != "EMD" {
 		t.Fatalf("linked category = %q, want EMD", gotName)
+	}
+}
+
+func TestRecoverableCategoryCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, _ := seedActorAndHead(t, s, ctx)
+
+	id, err := s.UpsertRecoverableCategory(ctx, actor, 0, "Retention money", true, false, true, 7)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected a new category id")
+	}
+	cats, err := s.ListRecoverableCategories(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *RecoverableCategory
+	for i := range cats {
+		if cats[i].ID == id {
+			found = &cats[i]
+		}
+	}
+	if found == nil || !found.RequiresProject || found.RequiresCounterparty || !found.Active {
+		t.Fatalf("stored category = %+v", found)
+	}
+	// An admin-added category still needs a code: it is the identity the request
+	// validator resolves rules by, so a category with no code could never be used.
+	if found.Code != "retention_money" {
+		t.Fatalf("derived code = %q, want retention_money", found.Code)
+	}
+	if _, err := s.UpsertRecoverableCategory(ctx, actor, 0, "retention money", false, false, true, 8); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("duplicate name = %v, want %v", err, ErrDuplicate)
+	}
+	if _, err := s.UpsertRecoverableCategory(ctx, actor, id, "Retention money", true, false, false, 7); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	active, err := s.ListRecoverableCategories(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range active {
+		if c.ID == id {
+			t.Fatal("deactivated category still listed as active")
+		}
+	}
+	if _, err := s.UpsertRecoverableCategory(ctx, actor, 0, "  ", false, false, true, 9); !errors.Is(err, ErrValidation) {
+		t.Fatalf("blank name = %v, want %v", err, ErrValidation)
+	}
+	// Renaming must not change the code: existing requests point at it.
+	if _, err := s.UpsertRecoverableCategory(ctx, actor, id, "Retention deposit", true, false, true, 7); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	after, err := s.ListRecoverableCategories(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range after {
+		if c.ID == id && c.Code != "retention_money" {
+			t.Fatalf("rename changed the code to %q; existing requests would be orphaned", c.Code)
+		}
+	}
+}
+
+func TestRecoverableCategoryRequiresLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		cat  RecoverableCategory
+		want string
+	}{
+		{"neither", RecoverableCategory{Name: "Other"}, "Nothing extra"},
+		{"project", RecoverableCategory{Name: "EMD", RequiresProject: true}, "Related project"},
+		{"counterparty", RecoverableCategory{Name: "ICD", RequiresCounterparty: true}, "Counterparty company"},
+		{"both", RecoverableCategory{Name: "Retention", RequiresProject: true, RequiresCounterparty: true}, "Related project and counterparty company"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.cat.Requires(); got != c.want {
+				t.Fatalf("Requires() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestListRecoverableCategoriesWithUsageCountsRequests(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	var emdID, icdID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='emd'`).Scan(&emdID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&icdID); err != nil {
+		t.Fatal(err)
+	}
+	for i, cat := range []struct {
+		id   int64
+		code string
+	}{{emdID, "emd"}, {emdID, "emd"}, {icdID, "icd"}} {
+		if _, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
+			(number,status,treatment,type,recoverable_category,recoverable_category_id,head_id,amount,purpose,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,submitted_at)
+			VALUES(?, 'pending','recoverable','recoverable',?,?,?,?, 'Deposit','Counterparty','2027-03-31','Refund later',?,?,CURRENT_TIMESTAMP)`,
+			fmt.Sprintf("PR-2026-%06d", 300+i), cat.code, cat.id, headID, int64(100000), actor.ID, actor.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usage, err := s.ListRecoverableCategoriesWithUsage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage) != 6 {
+		t.Fatalf("categories = %d, want the 6 seeded", len(usage))
+	}
+	counts := map[string]int{}
+	for _, u := range usage {
+		counts[u.Name] = u.InUse
+	}
+	if counts["EMD"] != 2 {
+		t.Fatalf("EMD in use = %d, want 2", counts["EMD"])
+	}
+	if counts["ICD"] != 1 {
+		t.Fatalf("ICD in use = %d, want 1", counts["ICD"])
+	}
+	if counts["Other"] != 0 {
+		t.Fatalf("Other in use = %d, want 0", counts["Other"])
+	}
+	if usage[0].Name != "Employee advance" {
+		t.Fatalf("first row = %q, want the lowest sort_order (Employee advance)", usage[0].Name)
+	}
+	if usage[1].Requires() != "Related project" {
+		t.Fatalf("EMD Requires() = %q, want Related project", usage[1].Requires())
 	}
 }

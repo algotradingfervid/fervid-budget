@@ -48,6 +48,31 @@ type Head struct {
 	CreatedAt time.Time
 }
 
+// RecoverableCategory is one admin-configurable kind of recoverable payment.
+//
+// Code is the stable identity and never changes once created: Phase 2 stores it
+// in payment_requests.recoverable_category and the request validator resolves
+// the field rules by it, so renaming a category must not orphan its requests.
+// Name is the display label an admin is free to edit.
+type RecoverableCategory struct {
+	ID                   int64
+	Code                 string
+	Name                 string
+	RequiresProject      bool
+	RequiresCounterparty bool
+	Active               bool
+	SortOrder            int
+	CreatedAt            time.Time
+}
+
+// RecoverableCategoryUsage is a category plus the number of payment requests
+// that reference it. The Configuration screen's "In use" column shows it so an
+// admin can see what deactivating a category would strand.
+type RecoverableCategoryUsage struct {
+	RecoverableCategory
+	InUse int
+}
+
 type Budget struct {
 	ID        int64
 	HeadID    int64
