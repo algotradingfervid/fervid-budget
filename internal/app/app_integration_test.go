@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -1528,5 +1529,37 @@ func TestVendorSearchFragmentFeedsTheCombobox(t *testing.T) {
 	empty := responseBody(t, s.htmxGet("/vendors/search?q="))
 	if strings.Contains(empty, "Sundaram") {
 		t.Fatalf("a blank query listed vendors: %s", empty)
+	}
+}
+
+func TestNoRefundRoute(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	// X3: money leaves only through reserve → record-payment, and a recorded
+	// payment is immutable (S12). There is deliberately no refund / return-of-money
+	// endpoint, so both plausible refund routes must be unrouted.
+	//
+	// 404 *or* 405 is the correct expectation, exactly as in the sibling guard
+	// TestNoBulkApproveOrCopyEndpointExists (A6/D5): routes() registers a
+	// catch-all "GET /" for the not-found page, so an unrouted POST matches that
+	// pattern on path but not on method, and net/http's ServeMux answers 405
+	// rather than 404. Both mean "no such endpoint"; if a refund route were ever
+	// registered the status would become a 2xx/3xx/4xx from the handler and this
+	// bites. Do not narrow this to 404 — the router cannot produce it here.
+	for _, path := range []string{"/payments/1/refund", "/requests/1/refund"} {
+		resp := s.postForm(path, url.Values{})
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("POST %s = %d, want 404/405 (no refund route may exist, X3)", path, resp.StatusCode)
+		}
+		_ = responseBody(t, resp)
+	}
+	// And no refund method may exist on the store either. s.st is declared as
+	// *store.Store, so reflect.TypeOf sees the pointer type and enumerates the
+	// pointer-receiver methods — which is every method the store has.
+	st := reflect.TypeOf(s.st)
+	for i := 0; i < st.NumMethod(); i++ {
+		if name := st.Method(i).Name; strings.Contains(strings.ToLower(name), "refund") {
+			t.Fatalf("unexpected refund store method %q (X3): payments are immutable; refunds are out of scope", name)
+		}
 	}
 }
