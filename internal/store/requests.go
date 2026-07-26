@@ -764,7 +764,11 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 		return err
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
-		Action: "reassign", EntityType: "payment_request", EntityID: &id,
+		// Not "reassign": reservation reassignment writes that action on this
+		// same entity type, and one name for two different events makes an
+		// approver swap read as somebody taking over the payment in every
+		// trail that filters on it.
+		Action: "approval_reassign", EntityType: "payment_request", EntityID: &id,
 		Summary: actor.Name + " reassigned request " + before.Number + " to " + after.ManagerName + ": " + reason,
 		Before:  before, After: after}); err != nil {
 		return err

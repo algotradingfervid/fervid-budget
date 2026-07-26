@@ -825,7 +825,10 @@ func TestReassignAndReraise(t *testing.T) {
 	audit, _ := s.Audit(ctx, "payment_request", id, 10)
 	var reassigned bool
 	for _, a := range audit {
-		reassigned = reassigned || a.Action == "reassign"
+		// Not "reassign": that action belongs to reservation reassignment, and
+		// both write payment_request rows, so a shared name makes an approver
+		// swap read as somebody taking over the payment.
+		reassigned = reassigned || a.Action == "approval_reassign"
 	}
 	if !reassigned {
 		t.Fatal("reassign not recorded in history")

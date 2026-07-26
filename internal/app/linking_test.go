@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
@@ -1010,4 +1011,339 @@ func TestPartialReviewThreadIsOneChronologicalStream(t *testing.T) {
 		t.Fatalf("reply from the partial review redirected to %q, want %q", loc, path)
 	}
 	_ = responseBody(t, reply)
+}
+
+// ---------------------------------------------------------------------------
+// Task 18 — the release / reassign screen (S6, S7, G11, G12)
+// ---------------------------------------------------------------------------
+
+func TestReservationScreenReleaseAndReassign(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Release")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
+	hash, _ := auth.HashPassword("DeepakPass1234")
+	deepakID, err := s.st.CreateUser(s.ctx, "deepak@example.test", "Deepak Menon", hash, "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""))
+	for _, want := range []string{
+		`class="reserve-bar"`, "Reserved by you",
+		`class="banner bad"`, "Confirm no payment has been started",
+		`class="choice"`, `value="release"`, `value="reassign"`,
+		`data-when="action:reassign"`, "Deepak Menon",
+		`name="reason"`, `class="checkline"`,
+		`class="action-bar"`, `<ol class="thread">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("reservation screen missing %q:\n%s", want, body)
+		}
+	}
+
+	// G12: release without a reason is refused and the reservation survives.
+	resp := s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{"action": {"release"}, "confirm": {"on"}})
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("release without a reason accepted: %d", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
+	// S7: confirmation is still required.
+	resp = s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{"action": {"release"}, "reason": {"Bank details unconfirmed"}})
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("release without confirmation accepted: %d", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
+	if got := requestStatusApp(t, s, reqID); got != "processing" {
+		t.Fatalf("status after refused releases = %q, want processing", got)
+	}
+
+	// G11: reassign keeps it in processing and moves the holder.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{
+		"action": {"reassign"}, "to_user_id": {strconvFormat(deepakID)}, "reason": {"Going on leave"}, "confirm": {"on"},
+	}), http.StatusSeeOther)
+	if got := requestStatusApp(t, s, reqID); got != "processing" {
+		t.Fatalf("status after reassign = %q, want processing", got)
+	}
+	var holder int64
+	if err := s.st.DB().QueryRow(`SELECT processing_by FROM payment_requests WHERE id=?`, reqID).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	if holder != deepakID {
+		t.Fatalf("processing_by = %d, want %d", holder, deepakID)
+	}
+}
+
+// The reassign target is revealed by data-when; hidden is not validation.
+func TestReassignRefusesWithoutATargetServerSide(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("ReassignGuard")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	resp := s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{"action": {"reassign"}, "reason": {"someone else"}, "confirm": {"on"}})
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("reassign with no target accepted: %d", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
+	if got := requestStatusApp(t, s, reqID); got != "processing" {
+		t.Fatalf("status = %q, want processing", got)
+	}
+}
+
+// S6 — the plan's tests prove every way a release is refused; this proves the
+// one way it is granted. A release that carries a reason and the confirmation
+// puts the request back in the open queue, drops the holder, and lands the
+// accountant on the queue rather than on a request they no longer hold.
+func TestReleaseReturnsTheRequestToTheQueue(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Released")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 4200000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	resp := s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{
+		"action": {"release"}, "reason": {"Vendor bank details need confirming"}, "confirm": {"on"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	if loc := resp.Header.Get("Location"); loc != "/accounts-queue" {
+		t.Fatalf("release redirect = %q, want /accounts-queue", loc)
+	}
+	_ = responseBody(t, resp)
+	if got := requestStatusApp(t, s, reqID); got != "approved" {
+		t.Fatalf("status after release = %q, want approved", got)
+	}
+	var holder *int64
+	if err := s.st.DB().QueryRow(`SELECT processing_by FROM payment_requests WHERE id=?`, reqID).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	if holder != nil {
+		t.Fatalf("processing_by = %d after release, want NULL", *holder)
+	}
+	// The reason is in the history, so the requester and the approver can read
+	// why their money stopped moving.
+	if got := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, "")); !strings.Contains(got, "Vendor bank details need confirming") {
+		t.Fatalf("the release reason is not in the request history:\n%s", got)
+	}
+	// And the screen is gone with the reservation: there is nothing to release.
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""), http.StatusConflict)
+}
+
+// seedProbeUser creates an active user whose single role carries exactly the
+// grants and scopes given. The seeded roles are bundles; proving that one cell
+// of the permission matrix is enough — or not enough — needs a user holding
+// that cell and nothing next to it.
+func (s *appTestServer) seedProbeUser(email, name, password, roleName string, grants []store.Grant, scopes []store.ScopeGrant) store.User {
+	s.t.Helper()
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	uid, err := s.st.CreateUser(s.ctx, email, name, hash, "data_entry", true)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	roleID, err := s.st.CreateRole(s.ctx, admin, roleName, "")
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if err := s.st.UpdateRolePermissions(s.ctx, admin, roleID, grants, scopes); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := s.st.SetUserRoles(s.ctx, admin, uid, []int64{roleID}); err != nil {
+		s.t.Fatal(err)
+	}
+	u, err := s.st.UserByID(s.ctx, uid)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return u
+}
+
+func reservationHolder(t *testing.T, s *appTestServer, reqID int64) int64 {
+	t.Helper()
+	var holder int64
+	if err := s.st.DB().QueryRow(`SELECT COALESCE(processing_by,0) FROM payment_requests WHERE id=?`, reqID).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	return holder
+}
+
+// The accounts queue and the reservation-conflict screen both link here behind
+// reservation:reassign alone, and reassign and release are two independent cells
+// of the permission matrix. A route gated on release answered 403 to exactly the
+// reader those two links were written for.
+func TestReservationScreenOpensForAReassignOnlyRole(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("ReassignOnly")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 900000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	s.seedProbeUser("reassign-only@example.test", "Reassign Only", "ReassignPass1234", "Reassign only",
+		[]store.Grant{
+			{Resource: "request", Action: "view"},
+			{Resource: "payment", Action: "view"},
+			{Resource: "payment", Action: "process"},
+			{Resource: "reservation", Action: "reassign"},
+		},
+		[]store.ScopeGrant{{Resource: "request", Scope: "all"}})
+	s.login("reassign-only@example.test", "ReassignPass1234")
+
+	link := fmt.Sprintf("/requests/%d/reservation", reqID)
+	queue := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=processing", nil, ""))
+	if !strings.Contains(queue, link) {
+		t.Fatalf("the queue does not offer the reassign link this test is about:\n%s", queue)
+	}
+	resp := s.request(http.MethodGet, link, nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+
+	// Letting them in must not offer them the other half of the screen: every
+	// release control would answer 403, and the form's own action must be the
+	// verb they hold, so pressing Enter posts something they may actually do.
+	if !strings.Contains(body, `value="reassign"`) {
+		t.Fatalf("the reassign branch is missing from the screen:\n%s", body)
+	}
+	for _, leak := range []string{`value="release"`, ">Release reservation</button>", fmt.Sprintf(`action="/requests/%d/release"`, reqID)} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("a reader who cannot release is offered %q:\n%s", leak, body)
+		}
+	}
+}
+
+// Holding a reservation verb somewhere is not permission to read this request
+// (Q5/R6). The screen and both of its POSTs answer to the same data scope the
+// request's own detail page does.
+func TestReservationScreenRefusesARequestTheCallerMayNotRead(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Scoped")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 700000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	deepak := s.seedColleague("deepak@example.test", "Deepak Menon", "DeepakPass1234")
+
+	s.seedProbeUser("outsider@example.test", "Outsider Rao", "OutsiderPass1234", "Reservation outsider",
+		[]store.Grant{
+			{Resource: "request", Action: "view"},
+			{Resource: "payment", Action: "process"},
+			{Resource: "reservation", Action: "release"},
+			{Resource: "reservation", Action: "reassign"},
+		},
+		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
+	s.login("outsider@example.test", "OutsiderPass1234")
+
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""), http.StatusForbidden)
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""), http.StatusForbidden)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{
+		"action": {"reassign"}, "to_user_id": {strconvFormat(deepak.ID)}, "reason": {"I want it"}, "confirm": {"on"},
+	}), http.StatusForbidden)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{
+		"action": {"release"}, "reason": {"Not mine to hold"}, "confirm": {"on"},
+	}), http.StatusForbidden)
+
+	if got := reservationHolder(t, s, reqID); got != admin.ID {
+		t.Fatalf("processing_by = %d after four refusals, want %d", got, admin.ID)
+	}
+}
+
+// A reservation handed to somebody who cannot open the Accounts queue is a
+// request nobody can move: the new holder gets 403 on the queue and on this very
+// screen, and anybody else re-reserving gets 409.
+func TestReassignOffersOnlyPeopleWhoCanWorkTheAccountsQueue(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Candidates")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 600000)
+	bystander := s.seedRequester("bystander@example.test", "Bystander Bhat", "BystanderPass1234")
+	colleague := s.seedColleague("deepak@example.test", "Deepak Menon", "DeepakPass1234")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""))
+	if !strings.Contains(body, colleague.Name) {
+		t.Fatalf("the reassign select does not offer anyone who can work the queue:\n%s", body)
+	}
+	if strings.Contains(body, bystander.Name) {
+		t.Fatalf("the reassign select offers %q, who cannot open the Accounts queue:\n%s", bystander.Name, body)
+	}
+
+	resp := s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{
+		"action": {"reassign"}, "to_user_id": {strconvFormat(bystander.ID)}, "reason": {"Passing it on"}, "confirm": {"on"},
+	})
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("reassign to somebody who cannot work the queue accepted: %d", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
+	if got := reservationHolder(t, s, reqID); got != admin.ID {
+		t.Fatalf("processing_by = %d after a refused reassign, want %d", got, admin.ID)
+	}
+}
+
+// HTML makes the first submit button in tree order the form's default button,
+// and hidden — unlike disabled — does not exempt it. With Reassign first,
+// pressing Enter on the checked "Release it" radio posted to /reassign with no
+// target and lost the typed reason on a 400.
+func TestReleaseIsTheReservationFormsDefaultButton(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("DefaultButton")
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 300000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+
+	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""))
+	release := strings.Index(body, fmt.Sprintf(`formaction="/requests/%d/release"`, reqID))
+	reassign := strings.Index(body, fmt.Sprintf(`formaction="/requests/%d/reassign"`, reqID))
+	if release < 0 || reassign < 0 {
+		t.Fatalf("both submit buttons must carry a formaction:\n%s", body)
+	}
+	if release > reassign {
+		t.Fatalf("the reassign button precedes the release button, making it the form's default")
+	}
+}
+
+// The reserve bar localises its clock and the trail underneath it did not, so
+// one screen printed two times five and a half hours apart for one event.
+func TestTrailTimestampsAgreeWithTheReserveBar(t *testing.T) {
+	when := time.Date(2026, 7, 26, 16, 44, 0, 0, time.UTC)
+	if got, want := dateText(when), when.Local().Format("2006-01-02 15:04"); got != want {
+		t.Fatalf("dateText = %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(dateText(when), hhmm(&when)) {
+		t.Fatalf("the trail says %q while the reserve bar says %q", dateText(when), hhmm(&when))
+	}
+	if got := datepText(&when); got != dateText(when) {
+		t.Fatalf("datepText = %q, dateText = %q: one screen, two clocks", got, dateText(when))
+	}
+	if got := datepText(nil); got != "" {
+		t.Fatalf("datepText(nil) = %q, want the empty string", got)
+	}
+}
+
+// Approval reassignment (swapping the approver of a pending request) and
+// reservation reassignment (moving who is paying it) wrote the same audit action
+// on the same entity, so an approver swap would have read as "X reassigned the
+// reservation" in this screen's history.
+func TestApprovalReassignmentIsNotAReservationEvent(t *testing.T) {
+	kept := reservationTrail([]store.AuditEntry{
+		{Action: "process"}, {Action: "approve"}, {Action: "approval_reassign"},
+		{Action: "release"}, {Action: "reassign"},
+	})
+	var actions []string
+	for _, e := range kept {
+		actions = append(actions, e.Action)
+	}
+	if got, want := strings.Join(actions, ","), "process,release,reassign"; got != want {
+		t.Fatalf("reservationTrail kept %q, want %q", got, want)
+	}
+	if got, want := auditPhrase("approval_reassign"), "reassigned the approval"; got != want {
+		t.Fatalf("auditPhrase(approval_reassign) = %q, want %q", got, want)
+	}
+	if auditPhrase("approval_reassign") == auditPhrase("reassign") {
+		t.Fatalf("both reassignments read %q; the trail cannot tell them apart", auditPhrase("reassign"))
+	}
 }

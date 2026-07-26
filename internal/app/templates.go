@@ -908,6 +908,126 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* Release or reassign a reservation — mockups/screens/accounts-release-reassign.html.
+
+     One screen, one .choice, two POSTs. The radio picks which formaction the
+     submit carries, and the same [data-when] contract that reveals the target
+     select swaps the buttons underneath it. None of that is a rule: both
+     handlers re-validate everything the reveal implies, so a hand-rolled POST
+     can no more reassign without a target than release without a reason.
+
+     Three departures from the mockup. Its .page-banner carries .d-only, which
+     would leave a phone with no visible h1 at all, so the banner is
+     unconditional here exactly as it is on the queue. Its second choice is
+     offered to everyone with the note "Needs reassign permission"; a control the
+     reader cannot use is gated off instead, the rule the conflict screen already
+     applies. And its history reads newest-first, while every other .thread in
+     the product tells the story forwards — one product, one direction. */}}
+{{define "reservation_form"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Accounts · reservation</div>
+    <h1>Release or reassign this request</h1>
+    <p class="sub">{{.Request2.Number}} · {{.Request2.VendorPayee}} · {{money (approvedOf .Request2)}}</p>
+  </div>
+</section>
+
+<div class="reserve-bar">
+  <span class="rb-dot" aria-hidden="true"></span>
+  <b>{{if .ReserveMine}}Reserved by you{{else}}Reserved by {{.Request2.ProcessingByName}}{{end}}</b>
+  <span class="rb-meta">since {{hhmm .Request2.ProcessingAt}} · {{since .Request2.ProcessingAt}}</span>
+</div>
+
+<div class="banner bad">
+  <span class="b-ico" aria-hidden="true">!</span>
+  <div>
+    <b>Confirm no payment has been started</b>
+    <p>Releasing puts the request back in the open queue and anyone in Accounts can take it. If you have already initiated a transfer in the bank portal, do not release — finish recording it.</p>
+  </div>
+</div>
+
+{{/* The form's own action is the branch the reader may actually take, so
+     implicit submission never posts a verb that answers 403. The screen is
+     reachable on either grant, and the two are independent cells of the
+     matrix. */}}
+<form id="reservation-form" method="post" action="/requests/{{.Request2.ID}}/{{if .Perms.Can "reservation" "release"}}release{{else}}reassign{{end}}">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <fieldset>
+    <legend>What do you want to do</legend>
+    <div class="choice">
+      {{if .Perms.Can "reservation" "release"}}
+      <label>
+        <input type="radio" name="action" value="release" checked>
+        <span><b>Release it</b><small>Back to Approved — awaiting payment. Anyone in Accounts can pick it up.</small></span>
+      </label>
+      {{end}}
+      {{if .Perms.Can "reservation" "reassign"}}
+      <label>
+        <input type="radio" name="action" value="reassign"{{if not (.Perms.Can "reservation" "release")}} checked{{end}}>
+        <span><b>Reassign to someone else</b><small>Stays in Processing, assigned to the person you choose.</small></span>
+      </label>
+      {{end}}
+    </div>
+
+    <div class="form-grid" style="margin-top:13px">
+      {{if .Perms.Can "reservation" "reassign"}}
+      {{/* hidden only while there is another branch to be on. A reader who can
+           only reassign has the reassign radio checked, so the reveal would
+           unhide it the moment the script boots — and without the script they
+           would face a form whose only field was invisible. */}}
+      <div class="field span-6" data-when="action:reassign"{{if .Perms.Can "reservation" "release"}} hidden{{end}}>
+        <label for="to_user_id">Reassign to <span class="req" aria-hidden="true">*</span></label>
+        {{/* aria-required, not required: a required control inside a hidden
+             field makes the whole form unsubmittable in Chrome. requestReassign
+             is the enforcement, and it refuses an empty target outright. */}}
+        <select id="to_user_id" name="to_user_id" aria-required="true">
+          <option value="">Choose…</option>
+          {{range .Users}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        </select>
+      </div>
+      {{end}}
+      <div class="field span-12">
+        <label for="reason">Reason <span class="req" aria-hidden="true">*</span></label>
+        <textarea id="reason" name="reason" required placeholder="Recorded in the history and visible to everyone who can see this request."></textarea>
+      </div>
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" name="confirm" value="on" required> I confirm no payment has been initiated for this request</label>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="action-bar">
+    <span class="ab-note d-only">The requester and the approver are both notified.</span>
+    <span class="row-end"></span>
+    {{if and .ReserveMine (.Perms.Can "payment" "create")}}<a class="btn outline" href="/payments/new?request={{.Request2.ID}}">Keep working on it</a>{{else}}<a class="btn outline" href="/accounts-queue">Back to the queue</a>{{end}}
+    {{/* Release is first in the DOM and last on the screen. HTML makes the
+         first submit button in tree order the form's default button, and
+         hidden — unlike disabled — does not exempt it: with Reassign first,
+         pressing Enter on the checked "Release it" radio submitted through the
+         hidden button, posted to /reassign with no target, and lost the typed
+         reason on a 400. .action-bar is a flex row, so order: 2 puts the
+         danger button back on the right where the mockup has it. */}}
+    {{if .Perms.Can "reservation" "release"}}<button class="btn danger" type="submit" data-when="action:release" style="order:2" formaction="/requests/{{.Request2.ID}}/release">Release reservation</button>{{end}}
+    {{if .Perms.Can "reservation" "reassign"}}<button class="btn outline" type="submit" data-when="action:reassign"{{if .Perms.Can "reservation" "release"}} hidden{{end}} formaction="/requests/{{.Request2.ID}}/reassign">Reassign</button>{{end}}
+  </div>
+</form>
+
+<div class="section-head"><h2>Reservation history</h2></div>
+<ol class="thread">
+  {{range .Audit}}
+  <li>
+    <span class="tl-dot {{auditTone .Action}}" aria-hidden="true">{{auditGlyph .Action}}</span>
+    <div class="tl-head"><b>{{.ActorName}} {{auditPhrase .Action}}</b><time>{{date .CreatedAt}}</time></div>
+    <div class="tl-body">{{trailBody .}}</div>
+  </li>
+  {{else}}
+  <li><div class="tl-body muted">No reservation history yet.</div></li>
+  {{end}}
+</ol>
+{{template "bottom" .}}
+{{end}}
+
 {{define "months"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Month control</div><h1>Monthly Plans</h1><p class="sub muted">Create each month, review prior months, and open locked history whenever needed.</p></div><a class="btn outline" href="/reports/monthly">Reports</a></section>

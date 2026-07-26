@@ -174,13 +174,8 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 	a.tpl = template.Must(template.New("base").Funcs(template.FuncMap{
 		"money": money.FormatPaise,
 		"short": money.FormatShort,
-		"date":  func(t time.Time) string { return t.Format("2006-01-02 15:04") },
-		"datep": func(t *time.Time) string {
-			if t == nil {
-				return ""
-			}
-			return t.Format("2006-01-02 15:04")
-		},
+		"date":  dateText,
+		"datep": datepText,
 		"select": func(a, b string) template.HTMLAttr {
 			if a == b {
 				return "selected"
@@ -288,6 +283,20 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 	}, nil
 }
 
+// dateText and datepText are the FuncMap's "date" and "datep". Every timestamp
+// the store writes is CURRENT_TIMESTAMP, which SQLite records in UTC, so a
+// stamp printed as it comes back is five and a half hours behind the person
+// reading it. hhmm has localised since Task 14; these two did not, and the
+// reservation screen is the first that prints both for the same event.
+func dateText(t time.Time) string { return t.Local().Format("2006-01-02 15:04") }
+
+func datepText(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return dateText(*t)
+}
+
 func contextWithTimeout() struct {
 	ctx    context.Context
 	cancel func()
@@ -370,6 +379,18 @@ func (a *App) routes(mux *http.ServeMux) {
 	// The settlement preview is a POST because it carries the form, not because
 	// it changes anything: it is pure and writes nothing (D8).
 	mux.Handle("POST /requests/{id}/settlement-preview", a.auth.RequirePermission("payment", "settle", http.HandlerFunc(a.withCSRF(a.settlementPreview))))
+	// Giving a reservation up and taking one off somebody else are one screen
+	// and two verbs, and either one is a reason to open it: the holder arrives
+	// to release, an administrator arrives to reassign. release and reassign are
+	// independent cells of the permission matrix, so gating the route on one of
+	// them answered 403 to the reader the accounts queue and the conflict screen
+	// both link here. The route therefore asks only for a session, and
+	// reservationForm asks for the verb that matches the caller's standing —
+	// each POST still carries its own gate, so reading the page never confers
+	// the power to move somebody else's work.
+	mux.Handle("GET /requests/{id}/reservation", a.auth.RequireLogin(http.HandlerFunc(a.reservationForm)))
+	mux.Handle("POST /requests/{id}/release", a.auth.RequirePermission("reservation", "release", http.HandlerFunc(a.withCSRF(a.requestRelease))))
+	mux.Handle("POST /requests/{id}/reassign", a.auth.RequirePermission("reservation", "reassign", http.HandlerFunc(a.withCSRF(a.requestReassign))))
 	mux.Handle("GET /accounts-queue", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.accountsQueue)))
 	// A partial settlement is the one outcome Accounts cannot close on its own,
 	// so the manager gets a screen of their own (S11). Reading it needs only

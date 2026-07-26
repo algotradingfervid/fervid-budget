@@ -491,6 +491,186 @@ func (a *App) requestRaiseConcern(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// Giving a reservation up (S6, S7, G11, G12). One screen, one choice, two
+// POSTs: release it back to the queue, or hand it to a named colleague. Both
+// demand a reason, because the requester and the approver are told why their
+// money stopped moving, and both demand the same confirmation, because the one
+// thing a reservation protects against is two people paying the same invoice.
+//
+// The browser reveals the reassign target with [data-when]; nothing about that
+// is a rule. Every field the reveal implies is re-checked here, so a hand-rolled
+// POST cannot reassign without a target any more than it can release without a
+// reason.
+// ---------------------------------------------------------------------------
+
+// reservationForm renders the screen. It is deliberately not gated on holding
+// the reservation — the conflict screen sends the loser here to ask for it to be
+// reassigned — but it is gated on being able to do one of the two things it
+// offers, so nobody is shown a page whose every button would answer 403. The
+// route itself only requires a session: release and reassign are independent
+// grants, and a middleware gate can ask for one verb, not for either.
+//
+// The request is loaded through loadViewableRequest rather than the store
+// directly, because holding a reservation verb somewhere is not permission to
+// read this request (Q5/R6) — and the screen prints its number, its payee and
+// its whole history.
+func (a *App) reservationForm(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	if req.Status != "processing" || req.ProcessingBy == nil {
+		a.respondError(w, r, http.StatusConflict, "This request is not reserved by anyone.", nil)
+		return
+	}
+	mine := heldByCaller(req, u.ID)
+	mayRelease := a.auth.Can(u, "reservation", "release")
+	mayReassign := a.auth.Can(u, "reservation", "reassign")
+	if !(mine && mayRelease) && !mayReassign {
+		a.respondError(w, r, http.StatusForbidden,
+			"Only the person holding this reservation can release it.", nil)
+		return
+	}
+	var users []store.User
+	if mayReassign {
+		all, uerr := a.st.ListUsers(r.Context())
+		if uerr != nil {
+			a.respondStoreError(w, r, uerr)
+			return
+		}
+		users = a.reassignCandidates(all, *req.ProcessingBy)
+	}
+	trail, terr := a.mergedTrail(r, req.ID, 0)
+	if terr != nil {
+		a.respondStoreError(w, r, terr)
+		return
+	}
+	// The tab names the decision this reader can actually take: somebody who
+	// only holds reassign is not here to release anything.
+	title := "Release reservation"
+	if !mayRelease {
+		title = "Reassign reservation"
+	}
+	a.render(w, r, "reservation_form", PageData{
+		Title:       title,
+		Request2:    a.withHolderName(r, req),
+		Users:       users,
+		Audit:       reservationTrail(trail),
+		ReserveMine: mine,
+	})
+}
+
+// reassignCandidates is who a reservation may be handed to: the active users,
+// other than whoever holds it now, who can actually work the Accounts queue.
+// The first two rules are the store's — it refuses a deactivated target, and it
+// refuses handing a reservation to the person already holding it — so the select
+// never offers a name the POST would bounce. The exclusion is the holder rather
+// than the caller, because an administrator clearing somebody else's stale
+// reservation may legitimately take it over.
+//
+// canWorkTheQueue is this layer's own rule, and it is not cosmetic. A
+// reservation parked on somebody without payment:process is a request nobody can
+// move: the new holder gets 403 on /accounts-queue and on this screen, and
+// anybody else re-reserving gets 409. Only a second reassignment recovers it.
+func (a *App) reassignCandidates(users []store.User, holderID int64) []store.User {
+	out := make([]store.User, 0, len(users))
+	for _, u := range users {
+		if !u.Active || u.ID == holderID || !canWorkTheQueue(a.auth, u) {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
+// canWorkTheQueue is the gate on /accounts-queue, asked about somebody else.
+// payment:process is the grant that puts a person in front of the reserved rows,
+// which is the one thing a new holder must be able to reach.
+func canWorkTheQueue(am *auth.Manager, u store.User) bool {
+	return u.Active && am.Can(u, "payment", "process")
+}
+
+// reservationTrail keeps the three actions this screen is a history of. The
+// filter lives here rather than in the template because {{range}}…{{else}} fires
+// on an empty slice, not on a filter that matched nothing: filtering inline
+// would mean "No reservation history yet." never printed, because every request
+// that reaches this screen already carries a submit and an approval.
+func reservationTrail(entries []store.AuditEntry) []store.AuditEntry {
+	out := make([]store.AuditEntry, 0, len(entries))
+	for _, e := range entries {
+		switch e.Action {
+		case "process", "release", "reassign":
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// requestRelease puts the request back in the open queue. Both refusals it can
+// meet — no reason (G12) and no confirmation (S7) — are the store's, so the same
+// rule holds whether the release arrives from this screen or from a script.
+// authorized is reservation:reassign, because releasing work that is not yours
+// is taking it off somebody, which is the verb that grants exactly that.
+//
+// The request is resolved through loadViewableRequest for the same reason the
+// screen is: a data scope that does not reach a request is not widened by
+// holding a reservation verb.
+func (a *App) requestRelease(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	u := auth.CurrentUser(r)
+	if err := a.st.ReleaseRequest(r.Context(), u, req.ID, r.FormValue("reason"),
+		r.FormValue("confirm") == "on", a.auth.Can(u, "reservation", "reassign")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/accounts-queue", http.StatusSeeOther)
+}
+
+// requestReassign hands the reservation to somebody else. The target select is
+// revealed by data-when; this handler is what enforces it, and the confirmation
+// is demanded here rather than in the store because ReassignReservation has no
+// confirmed parameter — the screen asks the same question for both branches, so
+// the same answer is required for both.
+func (a *App) requestReassign(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	u := auth.CurrentUser(r)
+	to := parseID(r.FormValue("to_user_id"))
+	if to == 0 {
+		a.respondError(w, r, http.StatusBadRequest, "Choose who should take this reservation.", nil)
+		return
+	}
+	if r.FormValue("confirm") != "on" {
+		a.respondError(w, r, http.StatusBadRequest, "Confirm that no payment has been initiated.", nil)
+		return
+	}
+	// The select only offers people who can work the queue; this is what makes
+	// that a rule. Handing a reservation to somebody who cannot open the
+	// Accounts queue strands the request in processing with no in-app way out.
+	target, terr := a.st.UserByID(r.Context(), to)
+	if terr != nil {
+		a.respondStoreError(w, r, terr)
+		return
+	}
+	if !canWorkTheQueue(a.auth, target) {
+		a.respondError(w, r, http.StatusBadRequest, "That person cannot work the Accounts queue.", nil)
+		return
+	}
+	if err := a.st.ReassignReservation(r.Context(), u, req.ID, to, r.FormValue("reason"),
+		a.auth.Can(u, "reservation", "reassign")); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+}
+
+// ---------------------------------------------------------------------------
 // Display helpers. Registered in the FuncMap, so a time or an amount is spelled
 // for a person in exactly one place.
 // ---------------------------------------------------------------------------
@@ -567,7 +747,7 @@ func trailAction(e store.AuditEntry) string {
 // two things is how they drift.
 func auditTone(action string) string {
 	switch action {
-	case "submit", "reraise", "process", "reassign":
+	case "submit", "reraise", "process", "reassign", "approval_reassign":
 		return "brand"
 	case "approve", "settle", "accept_partial", "record_payment":
 		return "ok"
@@ -596,7 +776,7 @@ func auditGlyph(action string) string {
 		return "↩"
 	case "reject", "cancel", "withdraw", "void":
 		return "✕"
-	case "update", "amend_payment":
+	case "update", "amend_payment", "approval_reassign":
 		return "✎"
 	case "attach", "attach_payment":
 		// The thread's own upload glyph. Every dot in a `.thread` is a
@@ -642,6 +822,8 @@ func auditPhrase(action string) string {
 		return "released the reservation"
 	case "reassign":
 		return "reassigned the reservation"
+	case "approval_reassign":
+		return "reassigned the approval"
 	case "hold":
 		return "put the request on hold"
 	case "unhold":
