@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { test, expect, capturePageErrors, createDataEntryUser, createPayment, login } from './fixtures';
+import { test, expect, capturePageErrors, createApprovedRequest, createDataEntryUser, login, settlePayment } from './fixtures';
 
 test.describe('authentication, permissions, and navigation', () => {
   test('admin can log in, traverse primary navigation, and log out without browser errors', async ({ adminPage }) => {
@@ -69,35 +69,163 @@ test.describe('authentication, permissions, and navigation', () => {
 });
 
 test.describe('payments, budgets, locks, exports, and accessibility', () => {
-  test('admin can create, filter, view, edit, void, and export a payment', async ({ adminPage, runId }) => {
+  /**
+   * Re-scoped, not shrunk. This test used to read "create, filter, view, edit,
+   * void, and export", and all six were one screen's worth of work because a
+   * payment was a free-standing row anybody could type in and change again.
+   *
+   * Phase 3 split those six in half. A payment now exists only as the end of an
+   * approved request, and a linked payment is immutable (S12): the store refuses
+   * to edit or void one, the ledger row offers nothing but View, and
+   * /payments/{id}/edit redirects back to the payment rather than serving a form
+   * whose Save can only fail. Edit and Void survive solely for HISTORICAL,
+   * request-less rows (X6) — and the shipped UI can no longer create one
+   * (CreatePayment is off every HTTP route) and the e2e seed contains none, so
+   * there is nothing in this environment to drive them against. Their Go twins
+   * own that branch.
+   *
+   * So the honest subject of this test is the LEDGER: that the journey puts a
+   * row there, that the filters find it, that it opens, and that it exports.
+   * Edit and void stay in the title's place as a proof-of-absence — the thing
+   * this file used to assert worked is now asserted to be gone, on purpose,
+   * rather than quietly dropped.
+   */
+  test('admin can record, filter, view and export a payment — and cannot edit or void it', async ({ adminPage, runId }) => {
     const errors = capturePageErrors(adminPage);
-    await createPayment(adminPage, runId);
+    const request = await createApprovedRequest(adminPage, runId, { amount: '4200.00' });
+    // The processing note is the search term. The payee column is fed from the
+    // request's vendor_payee snapshot, which a vendor request leaves empty (see
+    // the KNOWN GAP on createApprovedRequest), and the ledger's search covers
+    // project, head, payee, invoice, reference and remarks — so the remarks are
+    // the one run-unique value this row is guaranteed to carry.
+    const payment = await settlePayment(adminPage, request.id, {
+      amount: '4200.00',
+      paidOn: '2026-06-15',
+      mode: 'upi',
+      reference: `UTR-${runId}`,
+      remarks: `Settled by e2e ${runId}`
+    });
+
     await adminPage.goto('/payments?month=2026-06');
-    await adminPage.getByLabel('Search').fill(`Vendor ${runId}`);
+    await adminPage.getByLabel('Search').fill(runId);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
-    await expect(adminPage.getByText(`Vendor ${runId}`)).toBeVisible();
-    await adminPage.getByRole('link', { name: 'View' }).click();
-    await expect(adminPage.getByRole('heading', { name: /Payment #/ })).toBeVisible();
-    await adminPage.getByRole('link', { name: 'Edit' }).click();
-    await adminPage.getByLabel('Remarks').fill(`edited ${runId}`);
-    await adminPage.getByRole('button', { name: 'Save Payment' }).click();
-    await expect(adminPage.locator('dd', { hasText: `edited ${runId}` })).toBeVisible();
+    // Both halves matter: the filter narrowed the ledger to a single row, and
+    // that row is this payment. Either assertion alone would pass on an empty
+    // result, because the "No payments match these filters" state is a <tr> too.
+    const row = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${payment}"]`) });
+    await expect(adminPage.locator('tbody tr')).toHaveCount(1);
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('4,200.00');
+
+    // S12 from the ledger's side: View is the only action a linked row offers.
+    // The Edit link and the Remove disclosure are gated on `not .RequestID`.
+    const actions = row.locator('.actions-cell a');
+    await expect(actions).toHaveCount(1);
+    await expect(actions).toHaveText('View');
+    await expect(row.locator('details.inline-danger')).toHaveCount(0);
+
+    await row.getByRole('link', { name: 'View' }).click();
+    await expect(adminPage).toHaveURL(new RegExp(`${payment}$`));
+    // The linked detail's h1 is the payee, which is blank today, so the number
+    // line is what identifies the row: "PAY-{id} · from PR-YYYY-NNNNNN".
+    await expect(adminPage.locator('.rh-no')).toContainText(request.number);
+    await expect(adminPage.locator('.rh-amt')).toContainText('4,200.00');
+    await expect(adminPage.locator('.compare .cmp-row.match')).toBeVisible();
+    await expect(adminPage.getByRole('link', { name: /Edit/ })).toHaveCount(0);
+    await expect(adminPage.getByRole('button', { name: /Void/ })).toHaveCount(0);
+
+    // And the URL itself is closed, not merely unlinked: a 303 back to the
+    // payment, so no edit form is ever served for a settled payment.
+    await adminPage.goto(`${payment}/edit`);
+    await expect(adminPage).toHaveURL(new RegExp(`${payment}$`));
+    await expect(adminPage.getByRole('button', { name: 'Save Payment' })).toHaveCount(0);
+
     const download = adminPage.waitForEvent('download');
     await adminPage.goto('/grid?month=2026-06');
     await adminPage.getByRole('link', { name: /Export/ }).click();
-    await expect(await download).toBeTruthy();
+    expect(await download).toBeTruthy();
     expect(errors).toEqual([]);
   });
 
-  test('payment validation preserves user input after malformed amount', async ({ adminPage, runId }) => {
-    await adminPage.goto('/payments/new?month=2026-06');
-    await adminPage.getByLabel('Project / Head').selectOption({ index: 1 });
+  /**
+   * Retargeted at the reserved entry screen, where payment entry now lives.
+   *
+   * The old test typed "not-money" into a plain text Amount on the free-entry
+   * form and read the refusal off a role="alert". Two things changed underneath
+   * it, and the first is the reason this test cannot simply be pointed at the
+   * new URL:
+   *
+   *  1. "Amount actually paid" is a `.money-field`. fervid-app.js binds every
+   *     one of them and rewrites the value on each keystroke, keeping only
+   *     digits and a decimal point — so a browser with JavaScript can no longer
+   *     put "not-money" into the field at all, let alone post it. The first leg
+   *     below pins that guard, because it is what retired the old premise.
+   *  2. The rejection this test is really about — "nothing you typed is lost" —
+   *     therefore has to come from the server. The refusal that a person can
+   *     actually reach is G13: the approved amount is a hard ceiling, and paying
+   *     over it is not a settlement decision but a different obligation. The
+   *     preview is pure (D8) and enforces nothing, so the store meets it at the
+   *     confirm — which is an ordinary form POST, so its 400 is a rendered
+   *     confirmation page carrying every figure back.
+   *
+   * The store's own "invalid amount" is exercised by its Go twin,
+   * TestPaymentErrorRetainsInputAndUsesHumanModes, which posts past the field.
+   */
+  test('a settlement the store refuses comes back with every typed value intact', async ({ adminPage, runId }) => {
+    const request = await createApprovedRequest(adminPage, runId, { amount: '5000.00' });
+    await adminPage.goto('/accounts-queue');
+    await adminPage.locator('tr', { hasText: request.number })
+      .getByRole('button', { name: 'Take for processing' }).click();
+    await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
+
+    // initMoneyFields stamps data-money-bound on each field it takes over.
+    // Waiting for it is waiting for the guard to be live: filling before the
+    // boot would land in an unguarded input and prove nothing.
+    const amount = adminPage.getByLabel('Amount actually paid');
+    await expect(amount).toHaveAttribute('data-money-bound', '1');
+    await amount.fill('not-money');
+    await expect(amount).toHaveValue('');
+
+    // A figure over the approved 5,000.00. The field accepts it and groups it;
+    // the banner says the refusal is coming, which is all the client does.
+    await amount.fill('6000.00');
+    await expect(amount).toHaveValue('6,000.00');
+    await expect(adminPage.locator('#diff-banner')).toHaveClass(/bad/);
+    await expect(adminPage.locator('#diff-text')).toContainText('more than approved');
+
     await adminPage.getByLabel('Paid on').fill('2026-06-15');
-    await adminPage.getByLabel('Amount').fill('not-money');
-    await adminPage.getByLabel('Vendor / Payee').fill(`Invalid ${runId}`);
-    await adminPage.getByRole('button', { name: 'Save Payment' }).click();
-    await expect(adminPage.getByRole('alert')).toContainText(/invalid amount/i);
-    await expect(adminPage.getByLabel('Vendor / Payee')).toHaveValue(`Invalid ${runId}`);
+    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-${runId}`);
+    await adminPage.getByLabel('Processing note').fill(`Retain this note ${runId}`);
+
+    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+    await expect(adminPage.locator('.overlay .sheet')).toBeVisible();
+    await adminPage.locator('.overlay .sheet')
+      .getByRole('button', { name: 'Confirm and save payment' }).click();
+
+    // No payment was created, so the URL is the collection and not /payments/{id}.
+    await expect(adminPage).toHaveURL(/\/payments$/);
+    const sheet = adminPage.locator('.overlay .sheet');
+    await expect(sheet.locator('.banner.bad')).toContainText('more than the approved');
+    await expect(sheet.locator('.banner.bad')).toContainText('Nothing has been saved');
+
+    // Every typed value is posted back, so confirming again costs one correction
+    // rather than a retyped form. The money field strips its own grouping on
+    // submit, which is why the amount returns as plain digits.
+    await expect(adminPage.locator('input[name="amount"]')).toHaveValue('6000.00');
+    await expect(adminPage.locator('input[name="paid_on"]')).toHaveValue('2026-06-15');
+    await expect(adminPage.locator('input[name="payment_mode"]')).toHaveValue('bank_transfer');
+    await expect(adminPage.locator('input[name="reference_no"]')).toHaveValue(`UTR-${runId}`);
+    await expect(adminPage.locator('input[name="remarks"]')).toHaveValue(`Retain this note ${runId}`);
+    // And the ones a person reads are on the page, spelled for a person.
+    await expect(adminPage.locator('.card .dl')).toContainText('Bank transfer');
+    await expect(adminPage.locator('.card .dl')).toContainText(`Retain this note ${runId}`);
+
+    // The reservation survived the refusal, so correcting the figure is one
+    // click away — the accountant never has to fight for the request again.
+    await sheet.getByRole('link', { name: 'Go back' }).click();
+    await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
+    await expect(adminPage.locator('.reserve-bar')).toContainText('Reserved by you');
   });
 
   test('the primary grid is keyboard reachable and has no detectable axe violations', async ({ adminPage }) => {
