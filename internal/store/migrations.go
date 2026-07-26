@@ -21,8 +21,13 @@ type migration struct {
 //	v2 — vendors
 //	v3 — requests
 //	v4 — payments linking + settlement
-//	v5 — recoverable categories
-//	v6 — notification settings
+//	v5 — accounts reservation grants (Phase 3)
+//	v6 — recoverable categories (Phase 4)
+//	v7 — notification settings (Phase 5)
+//
+// Phase 3 consumed v5 for a grant back-fill, so every phase plan written before
+// it is off by one from here on. Migrations are append-only and are never
+// renumbered: this list is the authority, not the plan text.
 //
 // Phase 1 owns exactly one migration, v1: it creates all four permission
 // tables (overview §3 P1), seeds the four system roles and back-fills
@@ -304,6 +309,14 @@ ON CONFLICT(key) DO NOTHING;
 			}
 			return nil
 		},
+	},
+	// Phase 4. Creates the table payment_requests.recoverable_category_id was
+	// declared against (deliberately without a REFERENCES clause — see the v3
+	// schema comment) and links the requests Phase 2 already wrote.
+	{
+		Version: 6,
+		Name:    "recoverable_categories",
+		Up:      upRecoverableCategories,
 	},
 }
 
