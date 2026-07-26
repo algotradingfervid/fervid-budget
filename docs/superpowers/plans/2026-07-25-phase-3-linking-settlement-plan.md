@@ -1926,6 +1926,17 @@ git commit -m "feat(store): LinkablePaymentRequests with tab filter, counts and 
 
 ### Task 11: HTTP — reservation entry points, permission verbs, and the **reservation-conflict screen** (S1, S2, S14, S15/X5, **G11**, **G15**)
 
+> **Status: DONE** — shipped as commit `19a71c5`.
+>
+> Handlers live in a new `internal/app/linking.go` rather than swelling `app.go`; only `PageData`, the `FuncMap` and `routes` were touched in `app.go`. Tests are in a new `internal/app/linking_test.go`.
+>
+> Three corrections to the task as written:
+> - **`store.Request` does not populate `ProcessingByName`.** Only `LinkablePaymentRequests` joins the reserver's user row, so the conflict screen would have named nobody. `withHolderName` resolves it via `UserByID`, and the template reads a new `PageData.Holder` instead of `.Request2.ProcessingByName`.
+> - **The generic error page's class is `.error-state`, not `.error-page`.** The plan's negative assertion would have passed vacuously; the test asserts against the real class.
+> - The conflict screen's links point at **`/accounts-queue`**, not the plan's `/requests/to-pay` — that is the route `nav.go` has always declared and the mockups use.
+>
+> `TestPaymentErrorRetainsInputAndUsesHumanModes` was retargeted here rather than in Task 14: `POST /payments` stops accepting request-less payments in *this* task, so that is where the old test broke. Its field-retention assertions are parked until Task 15 gives `settlementError` a sheet to re-render; it currently proves the 400, the message, and that nothing was written.
+
 **Amended.** Two changes to the original task. First, reservation moves onto its own permission verbs: spec D2 adds `reservation`{`reserve`,`release`,`reassign`} to the canonical vocabulary precisely so that "may take work" and "may take work off someone else" stop being the same grant. Second, **G15**: losing the race is not an error, it is a screen. `accounts-reservation-conflict.html` names the winner, states in as many words that nothing was saved, shows the request with `.pill.processing` and a `.waiting` timestamp, offers an `.a-list` of three next actions and closes with an `.action-bar`. `respondError(409, …)` renders none of that, so this task adds a `reservation_conflict` template rendered through `renderStatus(409, …)`.
 
 The picker, queue and entry screens are Tasks 12–14; this task lands the routes and the conflict screen they all funnel into.
@@ -2223,6 +2234,17 @@ git commit -m "feat(app): reservation entry point on the reservation verb and th
 
 ### Task 12: Accounts queue screen — metrics, `.segmented` tabs and `t-cards` rows
 
+> **Status: DONE** — shipped as commit `ef8b9cd`.
+>
+> Built at **`/accounts-queue`**, not the plan's `/requests/to-pay`. `nav.go` has always pointed the "Accounts queue" item there, and the mockups agree; `/requests/to-pay` exists nowhere outside this plan's prose. `/accounts-queue` left `unbuiltPrefixes` in the same commit, which is what makes the sidebar link it and the tab bar reach it.
+>
+> Three departures from the task text:
+> - **`.page-banner` ships without `.d-only`.** The mockup's `d-only` would leave a phone with no visible `h1` at all, which `tests/e2e/ux.spec.ts` fails on. The banner and its heading are unconditional.
+> - **`.metric.warn` has no rule in `web/static/fervid-ds.css`.** The "Reserved by you" tile is a plain `.metric` until Phase 0 grows one. (`.btn.approve` and `.metric.good` are missing too — see Task 17/19 when they are reached.)
+> - The mockup's "Take for processing" is an `<a>`; reserving is a mutation, so it is a submit button inside a POST form, gated on `reservation:reserve`.
+>
+> Three existing tests moved an entry from the coming-soon count into the built list, as their own comments instruct: `TestBuildShellFiltersNavByPermission`, `TestBuildShellKeepsComingSoonAndDropsEmptyGroups` (6 → 5) and `TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach`.
+
 **New task.** Rebuilds `/requests/to-pay` against `mockups/screens/accounts-queue.html`: a `.page-banner`, a four-metric `.metric-strip`, a five-tab `.segmented` bar with counts, the `.m-filters` search row, the stale-reservation `.banner.brand`, and `table.t-cards` rows whose action changes with state — "Take for processing" when takeable, "Resume" when yours, "Reassign" when someone else's, "Read reply" when held, "View" in partial review.
 
 **Files:**
@@ -2509,6 +2531,12 @@ git commit -m "feat(app): accounts payment queue with metrics, tabs and card tab
 ---
 
 ### Task 13: Request picker — `.combo` + `.combo-list` with taken rows
+
+> **Status: DONE** — shipped as commit `68cf8bf`.
+>
+> **The store additions in this task were not made.** The store layer is closed for this phase's UI work, so `store.PaidRequestRow` and `Store.RecentPaymentsByActor` do not exist. "Recently paid by you" is assembled in `internal/app/linking.go` (`recentPaidByActor`) from `ListPayments` plus the request each payment settled, into an app-level `PaidRequestRow`. Same rows, no new schema surface — and a note for whoever revisits it: **`ListPayments` does not select `request_id`, `settlement` or `partial_reason`**, so its `Payment.RequestID` is always nil and the linkage has to be re-read per candidate via `Store.Payment`.
+>
+> The banner ships **without** the mockup's closing sentence about re-enabling direct entry in Configuration, per the amendment log's contradiction 2. A test asserts the sentence is absent.
 
 **New task.** Rebuilds the no-request branch of `GET /payments/new` against `mockups/screens/payment-request-picker.html`: the "Free payment entry has been removed" `.banner.info`, a `.combo` search field, a `.combo-list` of `.co` rows (payee, requester, project/head, invoice, needed-by, amount), `.co.is-taken` rows for requests reserved by someone else, and a "Recently paid by you" `t-cards` table. The list is delivered by htmx as the accountant types and re-rendered on plain form submit for the no-JS path.
 
@@ -2817,6 +2845,16 @@ git commit -m "feat(app): request picker as a combobox with taken rows and recen
 
 ### Task 14: Payment entry screen — reserve bar, approved card, money field, live difference
 
+> **Status: DONE** — shipped as commit `4b9a6a8`.
+>
+> **The task omits that `payment_form` is shared with the edit screen.** `paymentEditForm` and `paymentEdit` render it too, and a historical, request-less payment stays editable (X6). The pre-Phase-3 markup therefore moved to a new `payment_edit_form` template that those two handlers now name, and `payment_form` became the linked entry screen. `TestHistoricalPaymentEditFormStillRenders` guards the split.
+>
+> Two smaller corrections:
+> - **`paymentModes` did not exist**; the legacy form hard-coded its `<option>` list. Added as a `FuncMap` helper over the stored vocabulary, rendered through the existing `paymentMode` label helper.
+> - **The amount input uses `amountValue`, not `money`.** `money.FormatPaise` already carries a `₹` and the `.money-field` draws its own in the `.cur` prefix.
+>
+> **`fervidMoney` does not exist in `web/static/fervid-app.js`.** The difference banner's JS was added inside the existing IIFE as `initDifferenceBanner`, reusing the money field's own `rawAmount`/`indianGroup`, and is booted from `init()` so it survives htmx swaps. It is display only; G13 stays enforced in the store.
+
 **New task.** Rebuilds the with-request branch of `GET /payments/new` against `mockups/screens/payment-entry.html`: the `.reserve-bar` ("Reserved by you · since 14:02 · nobody else can process this request" with a Release action), the "What was approved" `.card` + `.dl`, a read-only approved-amount field carrying the G13 rule in its `.hint`, the `.money-field` with `.in-words`, the live difference `.banner` that switches `good`/`warn`/`bad`, the `.uploader`, and an `.action-bar` whose primary button opens the settlement step. Nothing on this screen writes.
 
 **Files:**
@@ -3082,6 +3120,11 @@ git commit -m "feat(app): payment entry screen with reserve bar, approved card a
 ---
 
 ### Task 15: Settlement preview — a pure endpoint that persists nothing (**D8**, **G16**)
+
+> **Status: NOT STARTED.** Tasks 15–19 are untouched. Two notes for whoever resumes:
+>
+> - `internal/app/linking.go` already carries a **stub `settlementError`** that just calls `respondStoreError`. Task 15 replaces it with the sheet re-render, and `TestPaymentErrorRetainsInputAndUsesHumanModes` gets its field-retention assertions back at the same time.
+> - **`Store.AuditFor` does not exist.** Tasks 16–19 call for it; `internal/app/linking.go` already provides `mergedTrail`, which reads `Store.Audit` once per entity type and merges oldest-first. `threadTone`/`threadGlyph` in those task bodies also clash with the existing `threadDot`/`threadGlyph`, which take a `store.ThreadEntry`; the audit-action equivalents are registered as **`auditTone`/`auditGlyph`**.
 
 **New task (D8).** Today one click posts and writes. The approved flow has a confirmation step in between, and the whole point of `payment-settlement-confirm.html` is that the payment does not exist while it is on screen (`.pill.neutral.no-dot` reads "Not saved yet"). So `POST /requests/{id}/settlement-preview` is **pure**: no `BeginTx`, no attachment staging, no writes of any kind. It re-checks that the caller still holds the reservation, computes approved / paid / difference, and renders the `.overlay > .sheet`.
 
