@@ -785,6 +785,69 @@ func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason
 	return tx.Commit()
 }
 
+// ReassignReservation hands a reservation to another user without ever returning
+// the request to the open queue (G11): status stays 'processing' and only
+// processing_by moves, so no third party can slip in between. authorized is the
+// handler-resolved reservation:reassign grant; the store fails closed without it.
+// reason is required and is what the reservation .thread renders.
+func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserID int64, reason string, authorized bool) error {
+	if !authorized {
+		return fmt.Errorf("%w: reassigning someone else's reservation needs the reassign permission", ErrForbidden)
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("%w: a reason is required when a reservation changes hands", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	var processingBy sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT status, processing_by FROM payment_requests WHERE id=?`, id).Scan(&status, &processingBy); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if status != "processing" || !processingBy.Valid {
+		return fmt.Errorf("%w: only a reserved request can be reassigned", ErrForbidden)
+	}
+	if processingBy.Int64 == toUserID {
+		return fmt.Errorf("%w: that person already holds this reservation", ErrValidation)
+	}
+	var toName string
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT name, active FROM users WHERE id=?`, toUserID).Scan(&toName, &active); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if active == 0 {
+		return fmt.Errorf("%w: that user is deactivated", ErrValidation)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests
+		SET processing_by=?, processing_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND status='processing' AND processing_by=?`, toUserID, id, processingBy.Int64)
+	if err != nil {
+		return classify(err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("%w: the reservation changed while you were deciding", ErrForbidden)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "reassign", EntityType: "payment_request", EntityID: &id,
+		Summary: "Reassigned reservation to " + toName + ": " + reason,
+		Before:  map[string]any{"processing_by": processingBy.Int64},
+		After:   map[string]any{"processing_by": toUserID}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),

@@ -340,3 +340,59 @@ func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 		t.Fatalf("status after authorized release = %q, want approved", got)
 	}
 }
+
+func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	deepakID, err := s.CreateUser(ctx, "deepak@example.com", "Deepak Menon", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	const reason = "Going on leave, Deepak picks it up."
+	// Without the reassign permission → forbidden, reservation untouched.
+	if err := s.ReassignReservation(ctx, acc, reqID, deepakID, reason, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unauthorized reassign = %v, want ErrForbidden", err)
+	}
+	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != acc.ID {
+		t.Fatalf("processing_by moved without permission: %v", pb)
+	}
+	// Reason is required (same rule as release).
+	if err := s.ReassignReservation(ctx, acc, reqID, deepakID, "  ", true); !errors.Is(err, ErrValidation) {
+		t.Fatalf("reassign without reason = %v, want ErrValidation", err)
+	}
+	// Reassigning to the current holder is a no-op the user should not be offered.
+	if err := s.ReassignReservation(ctx, acc, reqID, acc.ID, reason, true); !errors.Is(err, ErrValidation) {
+		t.Fatalf("reassign to self = %v, want ErrValidation", err)
+	}
+	// Unknown target user → not found, nothing changed.
+	if err := s.ReassignReservation(ctx, acc, reqID, 987654, reason, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reassign to unknown user = %v, want ErrNotFound", err)
+	}
+	// Authorized, with a reason, to a real colleague → still processing, new holder.
+	if err := s.ReassignReservation(ctx, acc, reqID, deepakID, reason, true); err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+		t.Fatalf("status after reassign = %q, want processing (it never returns to the open queue)", got)
+	}
+	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != deepakID {
+		t.Fatalf("processing_by = %v, want %d", pb, deepakID)
+	}
+	var trail int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE entity_type='payment_request' AND entity_id=? AND action='reassign' AND summary LIKE ?`, reqID, "%"+reason+"%").Scan(&trail); err != nil {
+		t.Fatal(err)
+	}
+	if trail != 1 {
+		t.Fatalf("reassign reason not in the audit trail: %d matching entries", trail)
+	}
+	// An approved (unreserved) request cannot be reassigned — there is nothing to move.
+	other := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 100000, 100000)
+	if err := s.ReassignReservation(ctx, acc, other, deepakID, reason, true); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reassign of an unreserved request = %v, want ErrForbidden", err)
+	}
+}
