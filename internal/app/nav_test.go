@@ -99,7 +99,7 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 		{
 			name:  "data entry sees only its own screens",
 			perms: dataEntryPerms(),
-			want:  []string{"Accounts queue", "Home", "My requests", "Payments ledger", "Reports", "Variance grid"},
+			want:  []string{"Accounts queue", "Home", "My requests", "Payments ledger", "Recoverables", "Reports", "Variance grid"},
 		},
 		{
 			name:  "no grants leaves only ungated items",
@@ -129,12 +129,12 @@ func TestBuildShellKeepsComingSoonAndDropsEmptyGroups(t *testing.T) {
 			t.Fatalf("data_entry sees the %q group, which should be dropped when empty", title)
 		}
 	}
-	// Four future products (Invoices, Payments received, Inventory, Purchase
-	// orders) plus the one permitted-but-unbuilt queue, Recoverables. "My
-	// requests" left this count when Phase 2 built /requests; "Accounts queue"
-	// left it when Phase 3 built /accounts-queue. A Soon item may carry the href
-	// its screen will occupy; the template renders it without one, so it cannot
-	// become a clickable dead end.
+	// The four future products: Invoices, Payments received, Inventory and
+	// Purchase orders. "My requests" left this count when Phase 2 built
+	// /requests, "Accounts queue" when Phase 3 built /accounts-queue, and
+	// "Recoverables" when Phase 4 built /recoverables. A Soon item may carry
+	// the href its screen will occupy; the template renders it without one, so
+	// it cannot become a clickable dead end.
 	soon := 0
 	for _, group := range entryGroups {
 		for _, item := range group.Items {
@@ -143,8 +143,8 @@ func TestBuildShellKeepsComingSoonAndDropsEmptyGroups(t *testing.T) {
 			}
 		}
 	}
-	if soon != 5 {
-		t.Fatalf("coming-soon items visible to data_entry = %d, want 5", soon)
+	if soon != 4 {
+		t.Fatalf("coming-soon items visible to data_entry = %d, want 4", soon)
 	}
 }
 

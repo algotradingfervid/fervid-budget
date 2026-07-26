@@ -147,6 +147,23 @@ type PageData struct {
 	// Settings: Settings is what a *form* consults about the rules it must
 	// follow, Config is what the screen that edits those rules renders from.
 	Config map[string]string
+
+	// Recoverables (Phase 4). RecMetrics and the two rollups drive the
+	// dashboard; Recoverables is the register list; Recoverable is the single
+	// row the detail screen ages, read from the same query as the list so the
+	// two can never disagree.
+	RecMetrics       store.RecoverableMetrics
+	ByCategory       []store.RecoverableRollup
+	ByCounterparty   []store.RecoverableRollup
+	Recoverables     []store.RecoverableRow
+	RecoverableTotal int64
+	Categories       []store.RecoverableCategory
+	CategoryUsage    []store.RecoverableCategoryUsage
+	CategoryID       int64
+	Ageing           string
+	Recoverable      store.RecoverableRow
+	RecPayment       store.Payment
+	HasPayment       bool
 }
 
 type ReportSummary struct {
@@ -347,6 +364,14 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /reports/projects", a.auth.RequirePermission("report", "view", http.HandlerFunc(a.report)))
 	mux.Handle("GET /reports/heads", a.auth.RequirePermission("report", "view", http.HandlerFunc(a.report)))
 	mux.Handle("GET /reports/ytd.csv", a.auth.RequirePermission("report", "export", http.HandlerFunc(a.exportYTD)))
+
+	// Recoverables (Phase 4). /recoverables/list.csv is a literal final segment
+	// and Go 1.22+ ServeMux gives it precedence over the {id} wildcard, so the
+	// export never reaches the detail handler.
+	mux.Handle("GET /recoverables", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverablesDashboard)))
+	mux.Handle("GET /recoverables/list", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverablesList)))
+	mux.Handle("GET /recoverables/list.csv", a.auth.RequirePermission("recoverable_report", "export", http.HandlerFunc(a.exportRecoverable)))
+	mux.Handle("GET /recoverables/{id}", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverableDetail)))
 	mux.Handle("GET /budgets", a.auth.RequirePermission("budget", "view", http.HandlerFunc(a.budgets)))
 	mux.Handle("POST /budgets", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.withCSRF(a.budgetSave))))
 	mux.Handle("POST /months/{month}/lock", a.auth.RequirePermission("month", "lock", http.HandlerFunc(a.withCSRF(a.lockMonth))))
