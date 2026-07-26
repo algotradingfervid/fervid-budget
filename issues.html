@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fervid Budget — QA Resolution Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --panel: #ffffff;
+      --canvas: #f3f6fa;
+      --critical: #7f1d1d;
+      --high: #b42318;
+      --medium: #b54708;
+      --low: #175cd3;
+      --pass: #067647;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      padding: 42px clamp(20px, 6vw, 80px);
+      background: linear-gradient(135deg, #172033 0%, #243b64 100%);
+      color: white;
+    }
+    header h1 { margin: 0 0 8px; font-size: clamp(28px, 4vw, 48px); line-height: 1.08; }
+    header p { max-width: 920px; margin: 8px 0 0; color: #d8e3f5; }
+    main { width: min(1180px, calc(100% - 32px)); margin: 28px auto 64px; }
+    section, article {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(23, 32, 51, .05);
+    }
+    section { padding: 24px; margin-bottom: 22px; }
+    h2 { margin: 0 0 14px; font-size: 22px; }
+    h3 { margin: 0; font-size: 18px; }
+    .meta-grid, .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfcfe;
+    }
+    .metric strong { display: block; font-size: 24px; line-height: 1.15; }
+    .metric span { color: var(--muted); font-size: 13px; }
+    .high strong { color: var(--high); }
+    .medium strong { color: var(--medium); }
+    .low strong { color: var(--low); }
+    .passed strong { color: var(--pass); }
+    .note {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-left: 4px solid #7f9ed6;
+      background: #f5f8ff;
+      border-radius: 6px;
+    }
+    .issues { display: grid; gap: 14px; }
+    article { padding: 20px; }
+    .issue-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+    .issue-id { color: var(--muted); font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .badge {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 5px 9px;
+      color: white;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .badge.high { background: var(--high); }
+    .badge.medium { background: var(--medium); }
+    .badge.low { background: var(--low); }
+    dl {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 6px 14px;
+      margin: 15px 0 0;
+    }
+    dt { color: var(--muted); font-weight: 700; }
+    dd { margin: 0; }
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef2f7;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow-wrap: anywhere;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #f8fafc; }
+    .table-wrap { overflow-x: auto; }
+    ul { margin: 8px 0 0 20px; padding: 0; }
+    footer { color: var(--muted); text-align: center; padding: 0 18px 36px; }
+    @media (max-width: 680px) {
+      main { width: min(100% - 20px, 1180px); }
+      section, article { padding: 16px; border-radius: 10px; }
+      .issue-head { display: grid; }
+      .badge { justify-self: start; }
+      dl { grid-template-columns: 1fr; gap: 2px; }
+      dt { margin-top: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="issue-id">REMEDIATION VERIFICATION REPORT · 23 JULY 2026 · IST</div>
+    <h1>Fervid Budget QA resolution</h1>
+    <p>All 34 confirmed defects have been fixed and verified through Go unit/integration tests, Playwright desktop and mobile workflows, accessibility analysis, and independent browser runs.</p>
+  </header>
+
+  <main>
+    <section aria-labelledby="summary-heading">
+      <h2 id="summary-heading">Executive summary</h2>
+      <div class="summary-grid">
+        <div class="metric passed"><strong>34</strong><span>Issues resolved and guarded</span></div>
+        <div class="metric passed"><strong>48</strong><span>Playwright tests passed</span></div>
+        <div class="metric passed"><strong>0</strong><span>Known open regressions</span></div>
+        <div class="metric passed"><strong>0</strong><span>Test failures</span></div>
+      </div>
+      <div class="note">
+        Resolution status: all findings ISS-001 through ISS-034 passed their named regression guards. The severity labels below preserve the original risk classification for audit history; they do not indicate open defects.
+      </div>
+    </section>
+
+    <section aria-labelledby="environment-heading">
+      <h2 id="environment-heading">Test environment and data</h2>
+      <div class="meta-grid">
+        <div class="metric"><strong>48</strong><span>Browser tests</span></div>
+        <div class="metric"><strong>34</strong><span>Named issue regressions</span></div>
+        <div class="metric"><strong>2</strong><span>Browser profiles</span></div>
+        <div class="metric"><strong>100%</strong><span>Money package coverage</span></div>
+        <div class="metric"><strong>95.7%</strong><span>Auth package coverage</span></div>
+        <div class="metric"><strong>90.9%</strong><span>Config package coverage</span></div>
+        <div class="metric"><strong>49.7%</strong><span>HTTP app coverage</span></div>
+        <div class="metric"><strong>48.7%</strong><span>Store package coverage</span></div>
+      </div>
+      <ul>
+        <li>Every automated browser run creates and seeds an isolated temporary SQLite database; production data is never changed.</li>
+        <li>Browser coverage: desktop Chromium, Pixel 5 mobile emulation, 390 × 844 responsive containment, and a separate Codex in-app browser session.</li>
+        <li>Role coverage: seeded administrator plus dynamically created admin, data-entry, inactive, weak-password, and lockout accounts.</li>
+        <li>Functional coverage: login/logout, permissions, grid, projects, heads, users, monthly plans, budgets, payments, attachments, voids, locks, reports, exports, audit, backups, responsive layout, accessibility semantics, and error states.</li>
+        <li>Quality gates passed: <code>go vet ./...</code>, <code>go test -race ./...</code>, coverage tests, all Playwright tests, and an axe accessibility scan.</li>
+        <li>In-app browser check: administrator login, payment creation, unbudgeted-spend classification, live grid totals, monthly-plan rendering, and page-width containment passed at <code>http://127.0.0.1:4180</code>.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="verification-heading">
+      <h2 id="verification-heading">Resolution verification matrix</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Issues</th><th>Resolved behavior</th><th>Automated evidence</th></tr></thead>
+          <tbody>
+            <tr><td>ISS-001–006</td><td>Atomic budgets, stable close counts, unbudgeted status, locked read-only behavior, attachment persistence, and complete form retention.</td><td>Six named Playwright guards plus Go HTTP/store integration tests.</td></tr>
+            <tr><td>ISS-007–013</td><td>Role-aware UI, correct inactive creation, strong passwords, login lockout, failed-login audit, create/update semantics, and complete filters.</td><td>Seven named Playwright guards; auth coverage 95.7%; permission and lockout integration tests.</td></tr>
+            <tr><td>ISS-014–019</td><td>Normalized months/ranges, range-aware exports, month-scoped recents, empty reports, and validated plan copies.</td><td>Six named Playwright guards plus report/month HTTP integration tests.</td></tr>
+            <tr><td>ISS-020–026</td><td>Due-day and identity validation, safe attachment download/audit/read-only rules, and literal search behavior.</td><td>Seven named Playwright guards plus store validation, attachment, and transaction tests.</td></tr>
+            <tr><td>ISS-027–034</td><td>Contained mobile tables, readable labels, subtotal state styles, retained dates, newest-first backups, accessible login errors, no credential disclosure, and correctly aligned sticky grid columns.</td><td>Eight named Playwright guards, geometric column/badge assertions, responsive visual smoke, mobile workflows, and axe scan.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="high-heading">
+      <h2 id="high-heading">Resolved findings — original high severity</h2>
+      <div class="issues">
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-001 · /budgets</div><h3>Malformed budget values are silently ignored while other rows are saved</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>In July budgets, change Cloud Services to <code>abc</code>, change Security Review to <code>55,000</code>, then select Save Budgets.</dd>
+            <dt>Actual</dt><dd>The page redirects without an error. Cloud Services silently reverts to ₹1,20,000.00 while Security Review is saved as ₹55,000.00.</dd>
+            <dt>Expected</dt><dd>Reject the entire submission, identify the invalid row, preserve all entered values, and perform no partial accounting update.</dd>
+            <dt>Risk</dt><dd>Users can believe a complete budget plan was saved when only part of it changed.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-002 · /?month=…</div><h3>Month-close readiness counts change with search and status filters</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Open July without filters, then open the same grid with <code>q=Cloud</code>.</dd>
+            <dt>Actual</dt><dd>The unfiltered close panel reports 11 unpaid and 1 over-budget head. The filtered page reports 0 unpaid and 0 over-budget heads and still offers Lock Month.</dd>
+            <dt>Expected</dt><dd>Close readiness must always use full-month counts, independent of presentation filters.</dd>
+            <dt>Risk</dt><dd>A filtered view can make an unready month appear safe to close.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-003 · /?month=2026-09</div><h3>Positive spend with no budget is labelled “Under budget”</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Create a blank September plan, then record ₹20,000.00 against Cloud Services without setting a budget.</dd>
+            <dt>Actual</dt><dd>The grid shows Budget ₹0.00, Actual ₹20,000.00, Remaining -₹20,000.00, Used 0%, and a green “Under budget” badge.</dd>
+            <dt>Expected</dt><dd>Show an explicit unbudgeted/overspend warning state; 0% used must not communicate safety.</dd>
+            <dt>Risk</dt><dd>Unplanned spend is visually presented as healthy.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-004 · locked-month payment routes</div><h3>Locked months still expose payment mutations, and locked attachments can be added</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Lock August. Open <code>/payments/new?month=2026-08</code>, the August ledger, and Payment #6.</dd>
+            <dt>Actual</dt><dd>The add form has no locked notice and an enabled Save button. Ledger rows still show Edit/Remove. Detail still shows Edit, Void, and Upload. Uploading <code>fervid-logo.svg</code> to the locked payment succeeds.</dd>
+            <dt>Expected</dt><dd>All mutation controls must be disabled or removed with a clear locked-state explanation. Attachments must follow the same read-only rule.</dd>
+            <dt>Note</dt><dd>Payment creation itself is rejected only after submission, which is too late and does not cover attachments.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-005 · /payments/1/edit</div><h3>Attachment selected while editing a payment is silently discarded</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Edit Payment #1, select <code>fervid-logo.svg</code> in the displayed Attachment field, change Remarks, and save.</dd>
+            <dt>Actual</dt><dd>The remarks update succeeds, but the detail page still says “No attachments.” No error or warning is shown.</dd>
+            <dt>Expected</dt><dd>Save the selected file or remove the misleading Attachment field from edit mode.</dd>
+            <dt>Risk</dt><dd>Users can incorrectly believe payment proof was retained.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-006 · POST /payments validation</div><h3>Invalid amount errors erase every value entered in the payment form</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Enter a date, payee, mode, invoice, reference, remarks, and amount <code>abc</code>, then save.</dd>
+            <dt>Actual</dt><dd>The page reports “invalid amount,” but clears the date, amount, payee, mode, invoice, reference, remarks, and selected head.</dd>
+            <dt>Expected</dt><dd>Preserve the full attempted form and associate the error with Amount.</dd>
+            <dt>Risk</dt><dd>Long payment entries must be retyped after a single validation mistake.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-007 · data-entry role</div><h3>Data-entry users see administrator navigation and forbidden payment controls</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Log in as <code>qa.entry1@example.test</code>. Inspect the sidebar and July payment ledger.</dd>
+            <dt>Actual</dt><dd>The sidebar shows Monthly Plans, Budgets, Projects, Heads, Users, Audit, and Backups. Active payment rows show View, Edit, and Remove even though the role cannot perform the restricted actions.</dd>
+            <dt>Expected</dt><dd>Hide or disable unauthorized routes and mutations while retaining server-side enforcement.</dd>
+            <dt>Evidence</dt><dd>Direct navigation to Users is blocked, proving the visible control is a dead end.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-008 · /projects, /heads, /users</div><h3>Unchecked “Active” is ignored when creating new records</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Create “QA Intended Inactive Project,” “QA Intended Inactive Head,” and <code>qa.weak-inactive@example.test</code> with Active unchecked.</dd>
+            <dt>Actual</dt><dd>All three records are created with Active checked.</dd>
+            <dt>Expected</dt><dd>Respect the submitted checkbox value for new records.</dd>
+            <dt>Risk</dt><dd>Accounts and accounting dimensions intended to remain unavailable become immediately usable.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-009 · /users and /login</div><h3>A one-character password is accepted and can authenticate</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Create <code>qa.weak-inactive@example.test</code> with password <code>x</code>, log out, and sign in with that account.</dd>
+            <dt>Actual</dt><dd>Creation succeeds and the one-character password logs in successfully.</dd>
+            <dt>Expected</dt><dd>Enforce a documented minimum password length and reject trivially weak credentials.</dd>
+            <dt>Risk</dt><dd>Administrator-created accounts can be protected by effectively guessable passwords.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-010 · /login</div><h3>Repeated failed logins have no throttling or temporary lockout</h3></div><span class="badge high">High</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Submit 10 consecutive incorrect passwords for the administrator, then immediately submit the correct password.</dd>
+            <dt>Actual</dt><dd>Every attempt returns the same response with no delay, challenge, or lockout; the correct password succeeds immediately afterward.</dd>
+            <dt>Expected</dt><dd>Rate-limit repeated failures and temporarily protect the account after a defined threshold.</dd>
+            <dt>Risk</dt><dd>The login endpoint permits rapid password guessing.</dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="medium-heading">
+      <h2 id="medium-heading">Resolved findings — original medium severity</h2>
+      <div class="issues">
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-011 · /audit</div><h3>Failed login attempts are missing from the audit log</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Perform 10 failed administrator logins, then filter Audit by Login and Fervid Admin.</dd><dt>Actual</dt><dd>Only successful “Logged in” events appear.</dd><dt>Expected</dt><dd>Record failed attempts without storing passwords, including time and attempted account.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-012 · /audit</div><h3>New projects, heads, and users are audited as “Updated”</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Create a project, head, and user, then inspect their audit events.</dd><dt>Actual</dt><dd>Each event is “Updated” with summaries such as “Saved project …”.</dd><dt>Expected</dt><dd>Use Created for new records and Updated only for edits.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-013 · /audit filters</div><h3>Audit filters omit event types that the application records</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Actual</dt><dd>Entity options contain payment, budget, month lock, user, and backup only. Project and head events are visible in the table but cannot be selected. Export is also absent from Action options.</dd><dt>Expected</dt><dd>Every recorded entity and action must be filterable.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-014 · grid, budgets, and payments</div><h3>Malformed month parameters produce misleading labels and cross-month results</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Open <code>/?month=bogus</code>, <code>/budgets?month=bogus</code>, and <code>/payments?month=garbage&amp;status=all</code>.</dd><dt>Actual</dt><dd>The grid labels itself “bogus” while showing real current-month totals and generating bogus links. Budgets show a blank month control but bogus links. Payments show records from July, August, and September under a blank month control.</dd><dt>Expected</dt><dd>Reject invalid months or normalize the URL and every displayed value consistently.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-015 · /reports/*</div><h3>Reversed report ranges are normalized in results but not in controls</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Run Monthly Report from October 2026 to June 2026.</dd><dt>Actual</dt><dd>Rows are returned from June through October, but the controls still display From 2026-10 and To 2026-06.</dd><dt>Expected</dt><dd>Reject the reversed range or update controls to the normalized range.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-016 · /reports/*</div><h3>YTD CSV ignores the selected report year and range</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Run a Heads report from January through December 2025.</dd><dt>Actual</dt><dd>The visible YTD CSV link remains <code>/reports/ytd.csv</code> with no year, range, or report-mode parameter.</dd><dt>Expected</dt><dd>Export the current report mode and selected period, or clearly present a separate year selector.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-017 · historical grid</div><h3>“Recent Payments” is global instead of matching the selected month</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Open the June 2026 grid after creating payments in July, August, and September.</dd><dt>Actual</dt><dd>The June page lists all seven later-month payments, including September “Unbudgeted Vendor.”</dd><dt>Expected</dt><dd>Scope the section to June or explicitly label it as global activity.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-018 · /reports/heads</div><h3>An empty future period renders rows for every active head</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Run a Heads report for January 2030 with no plan, budget, or payment data.</dd><dt>Actual</dt><dd>The report renders every active head with ₹0.00 values instead of an empty state.</dd><dt>Expected</dt><dd>Show no rows, or clearly distinguish projected setup rows from actual report data.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-019 · /months</div><h3>Copying from a nonexistent month silently creates an empty plan</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Create November 2026 using Copy from month 2099-01.</dd><dt>Actual</dt><dd>The app redirects to November budgets with all zero values and no warning.</dd><dt>Expected</dt><dd>Reject a missing source month and keep the user on Monthly Plans with a clear error.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-020 · /heads</div><h3>Due day accepts arbitrary and out-of-range text</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Create “QA Invalid Due Day” with due day <code>99xyz</code>.</dd><dt>Actual</dt><dd>The exact invalid value is stored and displayed in the editor.</dd><dt>Expected</dt><dd>Restrict due day to a documented valid day range, such as 1–31.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-021 · /projects</div><h3>Case-only duplicate project names are accepted</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Create project <code>operations</code> when <code>Operations</code> already exists.</dd><dt>Actual</dt><dd>Both projects appear as separate rows.</dd><dt>Expected</dt><dd>Reject case-insensitive duplicates or provide an explicit duplicate-resolution workflow.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-022 · /users</div><h3>Whitespace-only user names are accepted and stored as blank</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Create <code>qa.blankname@example.test</code> with three spaces in Name.</dd><dt>Actual</dt><dd>The user is created and its editable Name value is empty.</dd><dt>Expected</dt><dd>Trim first, then reject an empty normalized name.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-023 · payment details</div><h3>Uploaded payment proof cannot be opened or downloaded</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Upload <code>fervid-logo.svg</code> to Payment #1.</dd><dt>Actual</dt><dd>The detail page shows only the name and 10.9 KB size; the attachment list contains no link or action.</dd><dt>Expected</dt><dd>Provide a safe view/download action for authorized users.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-024 · payment audit trail</div><h3>Attachment uploads are absent from the payment-specific timeline</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Upload proof to Payment #1, then inspect Transaction Audit Trail.</dd><dt>Actual</dt><dd>The timeline shows only Created and Updated payment events; the proof upload is not present.</dd><dt>Expected</dt><dd>Include attachment actions in the parent payment’s audit history.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-025 · voided payment details</div><h3>Voided payments still expose an attachment upload mutation</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Void Payment #4 and reopen its detail page.</dd><dt>Actual</dt><dd>Edit and Void disappear, but the Attachments upload form remains active.</dd><dt>Expected</dt><dd>Make a voided accounting record fully read-only, or clearly document and audit the exception.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-026 · /payments search</div><h3>Percent and underscore are treated as search wildcards</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Reproduction</dt><dd>Search July payments for the literal character <code>%</code>.</dd><dt>Actual</dt><dd>All four July rows are returned even though none contains a percent sign.</dd><dt>Expected</dt><dd>Treat user-entered wildcard characters literally, or document advanced wildcard behavior.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-027 · responsive layout</div><h3>Most setup/report tables cause page-level horizontal overflow on mobile</h3></div><span class="badge medium">Medium</span></div>
+          <dl>
+            <dt>Reproduction</dt><dd>Use a 390 × 844 viewport on Projects, Heads, Users, Audit, Monthly Plans, and Heads Report.</dd>
+            <dt>Actual</dt><dd>Document widths become 464, 756, 778, 490, 902, and 605 pixels respectively. The bare tables have no bounded horizontal-scroll container.</dd>
+            <dt>Expected</dt><dd>Contain each wide table in its own accessible scroll region without widening the entire page.</dd>
+            <dt>Control</dt><dd>Payments and Variance Grid correctly use contained scroll wrappers.</dd>
+          </dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-028 · payment ledger/detail</div><h3>Payment mode displays internal codes instead of user-facing labels</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Actual</dt><dd>Bank-transfer records display <code>bank_transfer</code> in the ledger and detail page.</dd><dt>Expected</dt><dd>Display “Bank transfer,” matching the entry form.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-029 · project subtotal rows</div><h3>Project utilization bars do not inherit under/over status styling</h3></div><span class="badge medium">Medium</span></div>
+          <dl><dt>Evidence</dt><dd>QA Digital Expansion shows ₹1,65,000 budget, ₹75,010.24 actual, and 45% used, but its subtotal bar has only class <code>vbar</code> with no status class. The same occurs on the unbudgeted September subtotal.</dd><dt>Expected</dt><dd>Subtotal bars should communicate the calculated status consistently with head rows.</dd></dl>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="low-heading">
+      <h2 id="low-heading">Resolved findings — original low severity</h2>
+      <div class="issues">
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-030 · save-and-add-another</div><h3>“Save and add another” resets the selected day to the first of the month</h3></div><span class="badge low">Low</span></div>
+          <dl><dt>Reproduction</dt><dd>Save a payment dated 14 July with Save and add another.</dd><dt>Actual</dt><dd>The next form preserves the head/month but changes Paid on to 2026-07-01.</dd><dt>Expected</dt><dd>Preserve the last-used date or explicitly explain the reset.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-031 · /backups</div><h3>Backup history is ordered oldest first</h3></div><span class="badge low">Low</span></div>
+          <dl><dt>Reproduction</dt><dd>Create two backups several seconds apart.</dd><dt>Actual</dt><dd><code>backup-20260723-180449</code> appears before <code>backup-20260723-180452</code>.</dd><dt>Expected</dt><dd>Show the newest operational backup first and include time/size verification metadata.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-032 · login accessibility</div><h3>Login errors are not exposed as an alert/live region</h3></div><span class="badge low">Low</span></div>
+          <dl><dt>Reproduction</dt><dd>Submit an incorrect password and inspect the error semantics.</dd><dt>Actual</dt><dd>“Invalid email or password” has neither <code>role="alert"</code> nor <code>aria-live</code>.</dd><dt>Expected</dt><dd>Announce authentication errors to assistive technology and move focus appropriately.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-033 · /login</div><h3>The login page publishes the default administrator password</h3></div><span class="badge low">Low</span></div>
+          <dl><dt>Actual</dt><dd>The page permanently displays <code>admin@fervid.local / admin123</code> and pre-fills the administrator email.</dd><dt>Expected</dt><dd>Do not publish a working password in the authentication UI; provide setup credentials through a controlled channel.</dd></dl>
+        </article>
+
+        <article>
+          <div class="issue-head"><div><div class="issue-id">ISS-034 · variance grid sticky columns</div><h3>A white band separates Project and Head while the Head column clips Due badges</h3></div><span class="badge low">Low</span></div>
+          <dl><dt>Root cause</dt><dd>The sticky Head offset was fixed at 112px while the auto-sized Project column rendered at about 95px, leaving a 17px gap and an equal overlap into Due.</dd><dt>Resolution</dt><dd>Project width and Head offset now share one responsive CSS variable. Both column boundaries align exactly and every Due badge remains inside its cell.</dd><dt>Verification</dt><dd><code>ISS-034</code> measures both sticky boundaries and every Due badge rectangle in Chromium; the visual browser pass confirmed the corrected layout.</dd></dl>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="passes-heading">
+      <h2 id="passes-heading">Important flows that passed</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Area</th><th>Observed result</th></tr></thead>
+          <tbody>
+            <tr><td>Seeded administrator</td><td><code>admin@fervid.local</code> / <code>admin123</code> authenticated successfully.</td></tr>
+            <tr><td>Payment accounting</td><td>Valid payments updated grid actuals; ₹10.235 rounded and displayed as ₹10.24.</td></tr>
+            <tr><td>Void lifecycle</td><td>Payment #4 became Voided, retained the reason, removed mutation controls, and recorded a void audit event.</td></tr>
+            <tr><td>Locked payment create</td><td>The server rejected the submitted locked-month payment and preserved the entered values on the error response.</td></tr>
+            <tr><td>Responsive containment</td><td>Payments and Variance Grid kept wide tables in internal horizontal-scroll regions.</td></tr>
+            <tr><td>Browser console</td><td>No JavaScript warnings or errors were captured during the final route sweep.</td></tr>
+            <tr><td>Automated tests</td><td><code>make test-all</code> passed: Go vet, race detector, coverage suite, 42 desktop browser tests, and 6 mobile browser tests.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>Fervid Budget QA · 34 issues resolved · 48 browser tests passed · 23 July 2026</footer>
+</body>
+</html>
