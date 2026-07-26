@@ -413,3 +413,100 @@ func TestDeactivatedCategoryIsRejectedOnNewRequests(t *testing.T) {
 		t.Fatalf("deactivated category accepted: %v", err)
 	}
 }
+
+// seedRecoverablePayment inserts a completed recoverable request and its single
+// linked (settled, non-voided) payment, exercising the Grid/Report and
+// RecoverableReport joins. It sets both the category code and the category id,
+// the shape CreateRequest actually writes. projectID of 0 leaves the
+// recoverable unlinked from any project.
+func seedRecoverablePayment(t *testing.T, s *Store, ctx context.Context, actor User, headID, projectID int64, number, paidOn string, amount int64) (int64, int64) {
+	t.Helper()
+	reqID := seedRecoverableRequestOnly(t, s, ctx, actor, headID, projectID, number, "completed", "security_deposit", "Acme Landlord", "2027-12-31", amount, false)
+	payID := payRecoverable(t, s, ctx, actor, headID, reqID, paidOn, amount)
+	return reqID, payID
+}
+
+// seedRecoverableRequestOnly inserts a recoverable request with no linked
+// payment, so the register can be tested for rows approved but not yet paid.
+func seedRecoverableRequestOnly(t *testing.T, s *Store, ctx context.Context, actor User, headID, projectID int64, number, status, code, counterparty, expectedReturn string, amount int64, onHold bool) int64 {
+	t.Helper()
+	var catID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&catID); err != nil {
+		t.Fatalf("lookup category %q: %v", code, err)
+	}
+	var proj, expReturn any
+	if projectID != 0 {
+		proj = projectID
+	}
+	if expectedReturn != "" {
+		expReturn = expectedReturn
+	}
+	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
+		(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,head_id,amount,approved_amount,
+		 purpose,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,on_hold,submitted_at)
+		VALUES(?,?, 'recoverable','recoverable',?,?,?,?,?,?, 'Deposit',?,?, 'Refund on close',?,?,?,CURRENT_TIMESTAMP)`,
+		number, status, code, catID, proj, headID, amount, amount, counterparty, expReturn, actor.ID, actor.ID, boolInt(onHold))
+	if err != nil {
+		t.Fatalf("insert recoverable request %s: %v", number, err)
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+// payRecoverable links a settled, non-voided payment to a recoverable request.
+func payRecoverable(t *testing.T, s *Store, ctx context.Context, actor User, headID, requestID int64, paidOn string, amount int64) int64 {
+	t.Helper()
+	res, err := s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(?,?,?,?,?,?, 'settled')`,
+		headID, paidOn, amount, "Acme Landlord", actor.ID, requestID)
+	if err != nil {
+		t.Fatalf("insert payment for request %d: %v", requestID, err)
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+func TestGridAndReportExcludeRecoverablePayments(t *testing.T) { // V2
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	if err := s.SetBudget(ctx, actor, headID, "2026-08", 1000000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-08-05", Amount: 300000, VendorPayee: "Budget Vendor"}); err != nil {
+		t.Fatal(err)
+	}
+	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000001", "2026-08-06", 700000)
+
+	grid, err := s.Grid(ctx, "2026-08", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grid.Total.Actual != 300000 {
+		t.Fatalf("grid actual = %d, want 300000 (recoverable excluded)", grid.Total.Actual)
+	}
+	rows, err := s.Report(ctx, "2026-08", "2026-08", "heads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Actual != 300000 {
+		t.Fatalf("report rows = %+v, want single row with actual 300000", rows)
+	}
+}
+
+// A payment with no linked request is historical data from before the request
+// module existed. It is a real budget expense and must keep counting.
+func TestHistoricalPaymentsStillCountAsActuals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-08-05", Amount: 450000, VendorPayee: "Legacy Vendor"}); err != nil {
+		t.Fatal(err)
+	}
+	grid, err := s.Grid(ctx, "2026-08", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grid.Total.Actual != 450000 {
+		t.Fatalf("grid actual = %d, want 450000 (request_id IS NULL still counts)", grid.Total.Actual)
+	}
+}

@@ -1381,14 +1381,21 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 	if !validMonth(month) {
 		month = time.Now().Format("2006-01")
 	}
+	// A recoverable payment is a deposit, not an expense: it never counts as
+	// budget actuals (V2). The COALESCE keeps historical payments — the ones
+	// with no linked request at all — counting exactly as they always have.
 	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,h.id,h.name,h.active,p.active,COALESCE(h.due_day,''),COALESCE(b.amount,0),
-		COALESCE(SUM(CASE WHEN py.voided_at IS NULL THEN py.amount ELSE 0 END),0)
+		COALESCE(SUM(CASE WHEN py.voided_at IS NULL AND COALESCE(pr.treatment,'') <> 'recoverable' THEN py.amount ELSE 0 END),0)
 		FROM heads h JOIN projects p ON p.id=h.project_id
 		LEFT JOIN budgets b ON b.head_id=h.id AND b.month=?
 		LEFT JOIN payments py ON py.head_id=h.id AND substr(py.paid_on,1,7)=?
+		LEFT JOIN payment_requests pr ON pr.id=py.request_id
 		WHERE (h.active=1 AND p.active=1)
 			OR b.id IS NOT NULL
-			OR EXISTS(SELECT 1 FROM payments px WHERE px.head_id=h.id AND substr(px.paid_on,1,7)=?)
+			OR EXISTS(SELECT 1 FROM payments px
+				LEFT JOIN payment_requests pxr ON pxr.id=px.request_id
+				WHERE px.head_id=h.id AND substr(px.paid_on,1,7)=?
+					AND COALESCE(pxr.treatment,'') <> 'recoverable')
 		GROUP BY p.id,p.name,h.id,h.name,h.active,p.active,h.due_day,b.amount
 		ORDER BY p.sort_order,p.name,h.sort_order,h.name`, month, month, month)
 	if err != nil {
