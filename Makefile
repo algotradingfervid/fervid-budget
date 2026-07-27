@@ -1,7 +1,7 @@
 APP_NAME := fervid-budget
 GO ?= go
 
-.PHONY: help fmt vet test test-race test-cover typecheck test-e2e test-all run seed backup
+.PHONY: help fmt vet test test-race test-cover typecheck test-e2e test-audit test-all run seed backup
 
 help:
 	@echo "$(APP_NAME) targets:"
@@ -12,6 +12,7 @@ help:
 	@echo "  make test-cover - run Go tests with coverage"
 	@echo "  make typecheck - strictly type-check Playwright tests"
 	@echo "  make test-e2e - run Playwright browser tests"
+	@echo "  make test-audit - run the QA audit suite, one server per area"
 	@echo "  make test-all - run Go and Playwright tests"
 	@echo "  make run   - start the local server"
 	@echo "  make seed  - create admin/sample data if empty"
@@ -37,6 +38,12 @@ typecheck:
 
 test-e2e:
 	npm run test:e2e
+
+# The audit suite is not part of test-e2e. It builds a world to interrogate —
+# custom roles, dozens of users, 214 requests — so it needs a database per area
+# rather than the one shared server test-e2e uses. See docs/qa/README.md.
+test-audit:
+	scripts/run-audit.sh
 
 test-all: vet test-race test-cover typecheck test-e2e
 

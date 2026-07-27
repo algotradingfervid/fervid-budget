@@ -10,6 +10,20 @@ const runtime = `output/playwright/runtime/run-${process.pid}`;
 
 export default defineConfig({
   testDir: './tests/e2e',
+  // The QA audit suite is deliberately NOT part of this run — see
+  // playwright.audit.config.ts and `make test-audit`.
+  //
+  // It cannot share a database with these specs. The audit builds a world in
+  // order to interrogate it: custom roles, dozens of users, and (for the
+  // pagination case) 214 requests. The shipped specs assume something close to a
+  // freshly seeded database, so running both against one server breaks them for
+  // reasons that have nothing to do with the code under test. The first symptom
+  // is ux.spec.ts reporting "/roles: scrolls sideways by 806px", because the
+  // roles matrix grows a column per role.
+  //
+  // Each audit area therefore gets its own server and its own database, which is
+  // also the only way its numbers were ever verified.
+  testIgnore: /audit-.*\.spec\.ts/,
   outputDir: `output/playwright/test-results${slot}`,
   fullyParallel: false,
   workers: 1,
@@ -27,8 +41,11 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     {
+      // A project-level testIgnore REPLACES the top-level one rather than adding
+      // to it, so the audit pattern has to be repeated here or this project
+      // collects the audit specs the top level just excluded.
       name: 'mobile-chrome',
-      testIgnore: /regression-issues\.spec\.ts/,
+      testIgnore: [/regression-issues\.spec\.ts/, /audit-.*\.spec\.ts/],
       use: { ...devices['Pixel 5'] }
     }
   ],
