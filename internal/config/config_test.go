@@ -68,3 +68,14 @@ func TestEnvironmentHelpers(t *testing.T) {
 		t.Fatalf("empty env = %q, want fallback", got)
 	}
 }
+
+func TestSMTPPasswordLoadsFromEnvOnly(t *testing.T) {
+	t.Setenv("FERVID_SMTP_PASSWORD", "")
+	if got := Load().SMTPPassword; got != "" {
+		t.Fatalf("default SMTPPassword = %q, want empty", got)
+	}
+	t.Setenv("FERVID_SMTP_PASSWORD", "env-secret-123")
+	if got := Load().SMTPPassword; got != "env-secret-123" {
+		t.Fatalf("SMTPPassword = %q, want env-secret-123", got)
+	}
+}

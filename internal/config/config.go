@@ -19,6 +19,10 @@ type Config struct {
 	AdminPassword  string
 	AdminName      string
 	BackupKeepDays int
+	// SMTPPassword comes only from FERVID_SMTP_PASSWORD. It is never stored in
+	// app_settings and never logged: the rest of the SMTP configuration is
+	// admin-editable data, but the secret is not.
+	SMTPPassword string
 }
 
 func Load() Config {
@@ -33,6 +37,7 @@ func Load() Config {
 		AdminPassword:  env("FERVID_ADMIN_PASSWORD", "admin123"),
 		AdminName:      env("FERVID_ADMIN_NAME", "Fervid Admin"),
 		BackupKeepDays: envInt("FERVID_BACKUP_KEEP_DAYS", 30),
+		SMTPPassword:   env("FERVID_SMTP_PASSWORD", ""),
 	}
 }
 
