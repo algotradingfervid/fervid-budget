@@ -26,7 +26,18 @@ func ParsePaise(input string) (int64, error) {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, fmt.Errorf("invalid amount")
 	}
-	paise := int64(math.Round(f * 100))
+	// Guard before the int64 conversion: Go's float→int conversion saturates,
+	// so an amount whose paise exceed int64 would silently become MaxInt64 —
+	// a different number from the one submitted — and the <= 0 guard below
+	// would never fire (F-B-01). float64(math.MaxInt64) is exactly 2^63, and
+	// every representable float below it converts to a valid int64, so >= is
+	// the precise boundary. Too-negative values saturate to MinInt64 and are
+	// caught by the positivity check.
+	rounded := math.Round(f * 100)
+	if rounded >= float64(math.MaxInt64) {
+		return 0, fmt.Errorf("amount is too large")
+	}
+	paise := int64(rounded)
 	if paise <= 0 {
 		return 0, fmt.Errorf("amount must be positive")
 	}

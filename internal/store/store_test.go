@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -611,6 +613,438 @@ func TestRecordAuditCreatesQueryableEntry(t *testing.T) {
 	}
 	if !strings.Contains(a.AfterJSON, `"name":"Operations"`) || a.IP != "127.0.0.1" {
 		t.Fatalf("audit payload = %+v", a)
+	}
+}
+
+// TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest is the F-D-01 proof:
+// a manager approves an amount against a project and head, and the entry
+// screen offers no control to change the head, the payee or the invoice — so
+// the store derives all three from the request row and ignores the form's
+// copies. Before the fix a forged head_id charged an approved payment to a
+// head nobody approved, with the audit blob recording the forgery as truth.
+func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	otherProjectID, err := s.UpsertProject(ctx, 0, "People", true, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherHeadID, err := s.UpsertHead(ctx, 0, otherProjectID, "Payroll", "1", true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 440000, 440000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{
+		HeadID:      otherHeadID, // forged: another project's head
+		PaidOn:      "2026-06-15",
+		Amount:      440000,
+		VendorPayee: "NOT THE APPROVED PAYEE",
+		InvoiceNo:   "FORGED-INV-1",
+	}, "settled", "", nil)
+	if err != nil {
+		t.Fatalf("record with forged snapshot fields: %v", err)
+	}
+	p, err := s.Payment(ctx, payID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HeadID != headID || p.Project != "Operations" || p.Head != "Rent" {
+		t.Fatalf("payment charged to %d (%s / %s), want the request's head %d (Operations / Rent)", p.HeadID, p.Project, p.Head, headID)
+	}
+	if p.VendorPayee != "Acme Landlord" {
+		t.Fatalf("payee = %q, want the request's payee Acme Landlord", p.VendorPayee)
+	}
+	if p.InvoiceNo != "" {
+		t.Fatalf("invoice = %q, want the request's (empty) invoice", p.InvoiceNo)
+	}
+	// The audit's after blob records what was written, not what was posted.
+	audits, err := s.Audit(ctx, "payment", payID, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range audits {
+		if strings.Contains(a.AfterJSON, "NOT THE APPROVED PAYEE") || strings.Contains(a.AfterJSON, "FORGED-INV-1") {
+			t.Fatalf("audit blob carries the forged values: %s", a.AfterJSON)
+		}
+	}
+}
+
+// TestRecoverableSettlementNeedsNoHead is the F-D-11 / F-E-01 / F-G-001 proof,
+// through the real write path end to end: CreateRequest (the shape the form
+// produces — no head for a recoverable), ApproveRequest, ReserveRequest, then
+// RecordPaymentForRequest posting head_id=0 exactly as the entry screen's
+// hidden input does. Before v8 this died on payments.head_id NOT NULL for
+// every one of the six categories.
+func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx) // budget head for the grid contrast
+	mgrRow, err := s.CreateUser(ctx, "approver@example.com", "Approver", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, _ := s.UserByID(ctx, mgrRow)
+	reqID, err := s.CreateRequest(ctx, actor, RequestInput{
+		Treatment:           "recoverable",
+		Type:                "employee_advance",
+		RecoverableCategory: "employee_advance",
+		ShortTitle:          "Site travel advance",
+		Amount:              500000,
+		Purpose:             "Advance for site travel",
+		AdvanceReason:       "Travel to the Pune site",
+		ExpectedReturnDate:  "2027-03-31",
+		RepaymentNotes:      "Deducted from salary",
+		ManagerID:           mgr.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest through the real path: %v", err)
+	}
+	if err := s.ApproveRequest(ctx, mgr, reqID, 500000, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := s.ReserveRequest(ctx, mgr, reqID); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	// A budget payment in the same month, so the grid assertion below has a
+	// number to keep.
+	if err := s.SetBudget(ctx, actor, headID, "2026-07", 1000000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-07-10", Amount: 100000, VendorPayee: "Budget Vendor"}); err != nil {
+		t.Fatal(err)
+	}
+	// head_id=0 is exactly what the entry screen's hidden input posts.
+	payID, err := s.RecordPaymentForRequest(ctx, mgr, reqID, PaymentInput{
+		HeadID: 0, PaidOn: "2026-07-20", Amount: 500000, VendorPayee: "whatever the form carried",
+	}, "settled", "", nil)
+	if err != nil {
+		t.Fatalf("settling a recoverable must not need a head: %v", err)
+	}
+	// The row stores NULL, not 0 — heads has no row 0 and the FK survives v8.
+	var storedHead sql.NullInt64
+	if err := s.DB().QueryRowContext(ctx, `SELECT head_id FROM payments WHERE id=?`, payID).Scan(&storedHead); err != nil {
+		t.Fatal(err)
+	}
+	if storedHead.Valid {
+		t.Fatalf("recoverable payment stored head_id=%d, want NULL", storedHead.Int64)
+	}
+	// Every reader still resolves the row.
+	p, err := s.Payment(ctx, payID)
+	if err != nil {
+		t.Fatalf("Payment() must resolve a NULL-head row: %v", err)
+	}
+	if p.HeadID != 0 || p.Project != "" || p.Head != "" {
+		t.Fatalf("NULL-head payment read back as %+v", p)
+	}
+	// An employee advance pays the requester (forcesRequesterPayee), and the
+	// derived payee proves the form's value was ignored here too.
+	if p.VendorPayee != actor.Name {
+		t.Fatalf("payee = %q, want the requester %q", p.VendorPayee, actor.Name)
+	}
+	if _, err := s.PaymentForRequest(ctx, reqID); err != nil {
+		t.Fatalf("PaymentForRequest() must resolve a NULL-head row: %v", err)
+	}
+	list, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-07"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed bool
+	for _, row := range list {
+		listed = listed || row.ID == payID
+	}
+	if !listed {
+		t.Fatalf("NULL-head payment missing from the ledger: %+v", list)
+	}
+	recent, err := s.RecentPayments(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inRecent bool
+	for _, row := range recent {
+		inRecent = inRecent || row.ID == payID
+	}
+	if !inRecent {
+		t.Fatalf("NULL-head payment missing from recent payments")
+	}
+	// The request closed and kept its classification.
+	var status, treatment string
+	if err := s.DB().QueryRowContext(ctx, `SELECT status, treatment FROM payment_requests WHERE id=?`, reqID).Scan(&status, &treatment); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" || treatment != "recoverable" {
+		t.Fatalf("request after settle = %s/%s, want completed/recoverable", status, treatment)
+	}
+	// And the grid and monthly report never see it: a NULL head matches no
+	// head row, so only the budget payment counts.
+	grid, err := s.Grid(ctx, "2026-07", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grid.Total.Actual != 100000 {
+		t.Fatalf("grid actual = %d, want 100000 (recoverable with NULL head excluded)", grid.Total.Actual)
+	}
+	rows, err := s.Report(ctx, "2026-07", "2026-07", "heads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Actual != 100000 {
+		t.Fatalf("report rows = %+v, want one row with actual 100000", rows)
+	}
+}
+
+// TestReserveRequestNamesEachRefusalCause is the F-D-02 store half: the three
+// reasons a reservation can be refused arrive as three distinct sentinels, each
+// still an ErrForbidden so every existing handler branch keeps working.
+func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	otherID, err := s.CreateUser(ctx, "other-acc@example.com", "Other Accountant", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.UserByID(ctx, otherID)
+
+	held := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 100000, 100000)
+	if err := s.HoldRequest(ctx, acc, held, "waiting on the requester"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, held); !errors.Is(err, ErrRequestOnHold) || !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reserve held = %v, want ErrRequestOnHold (wrapping ErrForbidden)", err)
+	}
+
+	taken := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 200000, 200000)
+	if err := s.ReserveRequest(ctx, other, taken); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, taken); !errors.Is(err, ErrAlreadyReserved) || !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reserve taken = %v, want ErrAlreadyReserved (wrapping ErrForbidden)", err)
+	}
+
+	done := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 300000, 300000)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET status='completed' WHERE id=?`, done); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, done); !errors.Is(err, ErrRequestNotApproved) || !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reserve completed = %v, want ErrRequestNotApproved (wrapping ErrForbidden)", err)
+	}
+
+	if err := s.ReserveRequest(ctx, acc, 999999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reserve missing = %v, want ErrNotFound", err)
+	}
+}
+
+// TestClassifyTurnsForeignKeyViolationsIntoValidation covers F-B-06 / F-G-027:
+// a forged foreign id is a client error that must surface as a 400 keeping the
+// typed form, not a 500 losing it — and the driver text never travels.
+func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	raw := fmt.Errorf("constraint failed: FOREIGN KEY constraint failed (787)")
+	got := classify(raw)
+	if !errors.Is(got, ErrValidation) {
+		t.Fatalf("classify(FK) = %v, want ErrValidation", got)
+	}
+	if strings.Contains(got.Error(), "787") || strings.Contains(got.Error(), "constraint failed") {
+		t.Fatalf("classify(FK) echoes driver text: %q", got.Error())
+	}
+
+	// And through a real write: a request naming a vendor that does not exist.
+	actor, headID := seedActorAndHead(t, s, ctx)
+	mgrRow, err := s.CreateUser(ctx, "fk-approver@example.com", "FK Approver", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projectID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.CreateRequest(ctx, actor, RequestInput{
+		Treatment: "budget", Type: "vendor_invoice", ProjectID: projectID, HeadID: headID,
+		VendorID: 999999, ShortTitle: "Forged vendor", Amount: 5000, Purpose: "probe",
+		InvoiceNo: "INV-9", InvoiceDate: "2026-07-01", ManagerID: mgrRow,
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("forged vendor_id = %v, want ErrValidation", err)
+	}
+}
+
+// TestListPaymentsScopeNarrowsToEnteredBy is the F-A-04 / F-G-003 store half:
+// the `payment` data scope finally reads. "own" (and "assigned", which has no
+// routed-to meaning on the ledger) narrow to rows the viewer entered; "" and
+// "all" stay unrestricted like requestWhere.
+func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	otherID, err := s.CreateUser(ctx, "second-entry@example.com", "Second Entry", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.UserByID(ctx, otherID)
+	mine, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-05", Amount: 1100, VendorPayee: "Mine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := s.CreatePayment(ctx, other, PaymentInput{HeadID: headID, PaidOn: "2026-05-06", Amount: 2200, VendorPayee: "Theirs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := func(rows []Payment) map[int64]bool {
+		out := map[int64]bool{}
+		for _, p := range rows {
+			out[p.ID] = true
+		}
+		return out
+	}
+	for _, scope := range []string{"own", "assigned"} {
+		rows, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-05", Scope: scope, ViewerID: actor.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ids(rows)
+		if !got[mine] || got[theirs] || len(rows) != 1 {
+			t.Fatalf("scope %q for actor = %+v, want only their own payment", scope, got)
+		}
+	}
+	for _, scope := range []string{"", "all"} {
+		rows, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-05", Scope: scope, ViewerID: actor.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ids(rows)
+		if !got[mine] || !got[theirs] {
+			t.Fatalf("scope %q = %+v, want both payments", scope, got)
+		}
+	}
+}
+
+// TestValidatePaymentRefusesFutureDateAgainstInjectedClock is the F-D-06 store
+// half. The rule reads the injected clock on the input, never time.Now(); a
+// zero clock leaves the check dormant, which is what keeps today's handlers —
+// and the shipped fixtures that date payments into future months — unchanged
+// until the wiring wave supplies the clock deliberately.
+func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	clock := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
+
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-07-28", Amount: 1000, Now: clock}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("tomorrow's payment = %v, want ErrValidation", err)
+	}
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2029-12-31", Amount: 1000, Now: clock}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("far-future payment = %v, want ErrValidation", err)
+	}
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-07-27", Amount: 1000, Now: clock}); err != nil {
+		t.Fatalf("today's payment: %v", err)
+	}
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-07-26", Amount: 1000, Now: clock}); err != nil {
+		t.Fatalf("yesterday's payment: %v", err)
+	}
+	// The settlement path enforces the same rule and leaves the reservation
+	// standing so the accountant can correct the date.
+	mgrID, err := s.CreateUser(ctx, "clock-mgr@example.com", "Clock Manager", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqRow, err := s.CreateUser(ctx, "clock-req@example.com", "Clock Requester", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID := seedApprovedRequest(t, s, ctx, 41, reqRow, mgrID, headID, 5000, 5000)
+	if err := s.ReserveRequest(ctx, actor, reqID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordPaymentForRequest(ctx, actor, reqID, PaymentInput{HeadID: headID, PaidOn: "2027-01-01", Amount: 5000, Now: clock}, "settled", "", nil); !errors.Is(err, ErrValidation) {
+		t.Fatalf("future-dated settlement = %v, want ErrValidation", err)
+	}
+	// Dormant without a clock: this pins the deliberate default so wiring the
+	// handler is a visible decision, not an accident.
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2027-06-01", Amount: 1000}); err != nil {
+		t.Fatalf("clockless future payment = %v; the check must stay dormant until the handler supplies the clock", err)
+	}
+}
+
+// TestAddAttachmentRefusesLinkedPayment closes F-D-08: a linked payment is the
+// request's outcome and the screen calls it read-only; edit and void already
+// refuse it, and a new document now gets the same answer.
+func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000}, "settled", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.AddAttachment(ctx, acc, payID, "late-advice.pdf", "/tmp/late-advice.pdf", "application/pdf", 9)
+	if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "linked") {
+		t.Fatalf("attachment on linked payment = %v, want ErrValidation naming the linkage", err)
+	}
+	atts, err := s.Attachments(ctx, payID)
+	if err != nil || len(atts) != 0 {
+		t.Fatalf("attachment written despite refusal: %+v, %v", atts, err)
+	}
+}
+
+// TestRequestAttachmentByIDAndAttachmentWithPayment pins the store surface
+// Wave 3 builds the F-A-01 / F-A-05 ownership checks on: request documents
+// resolve from their own table, and a payment attachment resolves to its
+// payment (and through Payment.RequestID to its request) in one call.
+func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+
+	docID, err := s.AddRequestAttachment(ctx, req, reqID, AttachmentInput{OriginalName: "invoice-mine.txt", StoredPath: "/tmp/invoice-mine.txt", MimeType: "text/plain", SizeBytes: 12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := s.RequestAttachmentByID(ctx, docID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.ID != docID || doc.RequestID != reqID || doc.OriginalName != "invoice-mine.txt" || doc.StoredPath != "/tmp/invoice-mine.txt" {
+		t.Fatalf("request attachment = %+v", doc)
+	}
+	if _, err := s.RequestAttachmentByID(ctx, 999999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing request attachment = %v, want ErrNotFound", err)
+	}
+
+	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
+		t.Fatal(err)
+	}
+	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000},
+		"settled", "", &AttachmentInput{OriginalName: "advice.pdf", StoredPath: "/tmp/advice.pdf", MimeType: "application/pdf", SizeBytes: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	atts, err := s.Attachments(ctx, payID)
+	if err != nil || len(atts) != 1 {
+		t.Fatalf("attachments = %+v, %v", atts, err)
+	}
+	att, pay, err := s.AttachmentWithPayment(ctx, atts[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if att.ID != atts[0].ID || att.PaymentID != payID || pay.ID != payID {
+		t.Fatalf("AttachmentWithPayment = %+v / %+v", att, pay)
+	}
+	if pay.RequestID == nil || *pay.RequestID != reqID {
+		t.Fatalf("payment behind the attachment lost its request: %+v", pay)
+	}
+	if _, _, err := s.AttachmentWithPayment(ctx, 999999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing payment attachment = %v, want ErrNotFound", err)
 	}
 }
 

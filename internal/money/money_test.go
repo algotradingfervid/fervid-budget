@@ -23,6 +23,14 @@ func TestParsePaise(t *testing.T) {
 		{name: "negative", input: "-1", wantErr: true},
 		{name: "infinity", input: "Inf", wantErr: true},
 		{name: "not a number", input: "NaN", wantErr: true},
+		// F-B-01: an amount whose paise overflow int64 must be refused, never
+		// silently saturated to MaxInt64 (₹92,23,37,20,36,85,47,758.07).
+		{name: "overflow scientific 1e300", input: "1e300", wantErr: true},
+		{name: "overflow 9e18 rupees", input: "9e18", wantErr: true},
+		{name: "overflow 1e19 rupees", input: "1e19", wantErr: true},
+		{name: "overflow plain digits", input: "100000000000000000", wantErr: true},
+		{name: "overflow just past the paise boundary", input: "92233720368547758.07", wantErr: true},
+		{name: "very large but representable", input: "10000000000000000", want: 1000000000000000000},
 	}
 
 	for _, tt := range tests {

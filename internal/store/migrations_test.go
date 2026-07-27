@@ -188,6 +188,160 @@ func hasGrant(grants []Grant, want Grant) bool {
 	return false
 }
 
+// TestMigrationV8RebuildsPaymentsPreservingRowsIndexesAndForeignKeys simulates
+// an installed v7 database — payments with head_id NOT NULL, real historical
+// rows (request_id NULL), a linked settlement, and a child payment_attachments
+// row — and proves the v8 rebuild: head_id loses NOT NULL, every row survives
+// with its id, the attachment still resolves, the partial unique index still
+// enforces one-payment-per-request, every index is recreated, and both foreign
+// keys still bite. The child row is the important part: PRAGMA foreign_keys
+// rides on the DSN and cannot change inside the migration's transaction, so v8
+// leans on PRAGMA defer_foreign_keys — this test fails if that mechanism ever
+// stops carrying the child rows across the DROP/RENAME.
+func TestMigrationV8RebuildsPaymentsPreservingRowsIndexesAndForeignKeys(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+
+	// Reconstruct the exact pre-v8 shape: schemaSQL's table plus the three v4
+	// columns and all four indexes. payment_attachments is empty at this
+	// point, so the DROP is legal even with foreign keys enforced.
+	if _, err := s.DB().Exec(`
+DROP TABLE payments;
+CREATE TABLE payments (
+  id INTEGER PRIMARY KEY,
+  head_id INTEGER NOT NULL REFERENCES heads(id),
+  paid_on TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  vendor_payee TEXT,
+  payment_mode TEXT,
+  invoice_no TEXT,
+  reference_no TEXT,
+  remarks TEXT,
+  entered_by INTEGER NOT NULL REFERENCES users(id),
+  updated_by INTEGER REFERENCES users(id),
+  voided_by INTEGER REFERENCES users(id),
+  void_reason TEXT,
+  voided_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  request_id INTEGER REFERENCES payment_requests(id),
+  settlement TEXT NOT NULL DEFAULT '',
+  partial_reason TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_payments_head ON payments(head_id);
+CREATE INDEX idx_payments_paid_on ON payments(paid_on);
+CREATE INDEX idx_payments_voided ON payments(voided_at);
+CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_id IS NOT NULL;
+`); err != nil {
+		t.Fatalf("reconstruct pre-v8 payments: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO payments(id,head_id,paid_on,amount,vendor_payee,entered_by) VALUES(1,?,?,?,?,?)`,
+		headID, "2025-05-10", 7777, "Historical Vendor", acc.ID); err != nil {
+		t.Fatalf("seed historical payment: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO payments(id,head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(2,?,?,?,?,?,?, 'settled')`,
+		headID, "2026-06-15", 500000, "Acme Landlord", acc.ID, reqID); err != nil {
+		t.Fatalf("seed linked payment: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO payment_attachments(payment_id,original_name,stored_path,size_bytes,uploaded_by) VALUES(2,'advice.pdf','/tmp/advice.pdf',9,?)`, acc.ID); err != nil {
+		t.Fatalf("seed child attachment: %v", err)
+	}
+	if _, err := s.DB().Exec(`PRAGMA user_version = 7`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("v8 rebuild: %v", err)
+	}
+
+	// head_id is nullable now.
+	var notnull int
+	if err := s.DB().QueryRow(`SELECT "notnull" FROM pragma_table_info('payments') WHERE name='head_id'`).Scan(&notnull); err != nil {
+		t.Fatal(err)
+	}
+	if notnull != 0 {
+		t.Fatalf("payments.head_id notnull = %d after v8, want 0", notnull)
+	}
+	// Every row survived with its id and its linkage.
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("payments rows after rebuild = %d, want 2", count)
+	}
+	var amount int64
+	var reqRef sql.NullInt64
+	var settlement string
+	if err := s.DB().QueryRow(`SELECT amount, request_id, settlement FROM payments WHERE id=1`).Scan(&amount, &reqRef, &settlement); err != nil {
+		t.Fatal(err)
+	}
+	if amount != 7777 || reqRef.Valid || settlement != "" {
+		t.Fatalf("historical payment changed by rebuild: amount=%d request_id=%v settlement=%q", amount, reqRef, settlement)
+	}
+	if err := s.DB().QueryRow(`SELECT amount, request_id, settlement FROM payments WHERE id=2`).Scan(&amount, &reqRef, &settlement); err != nil {
+		t.Fatal(err)
+	}
+	if amount != 500000 || !reqRef.Valid || reqRef.Int64 != reqID || settlement != "settled" {
+		t.Fatalf("linked payment changed by rebuild: amount=%d request_id=%v settlement=%q", amount, reqRef, settlement)
+	}
+	// The child row still resolves through its foreign key.
+	var joined int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM payment_attachments pa JOIN payments p ON p.id=pa.payment_id WHERE pa.payment_id=2`).Scan(&joined); err != nil {
+		t.Fatal(err)
+	}
+	if joined != 1 {
+		t.Fatalf("attachment orphaned by rebuild: joined=%d, want 1", joined)
+	}
+	// Every index was recreated.
+	for _, idx := range []string{"idx_payments_head", "idx_payments_paid_on", "idx_payments_voided", "idx_payments_request"} {
+		var n int
+		if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=? AND tbl_name='payments'`, idx).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("index %s missing after rebuild", idx)
+		}
+	}
+	// S9 still holds: a second payment on the same request is refused by the
+	// partial unique index …
+	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by,request_id,settlement) VALUES(?,?,?,?,?, 'settled')`,
+		headID, "2026-06-16", 1000, acc.ID, reqID); err == nil {
+		t.Fatal("second payment linked to the same request was allowed after rebuild (S9 broken)")
+	}
+	// … while NULL request_id historicals still multiply freely.
+	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by) VALUES(?,?,?,?)`, headID, "2026-06-17", 2000, acc.ID); err != nil {
+		t.Fatalf("historical NULL-request insert after rebuild: %v", err)
+	}
+	// The point of the rebuild: a NULL head is now representable …
+	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by) VALUES(NULL,?,?,?)`, "2026-06-18", 3000, acc.ID); err != nil {
+		t.Fatalf("NULL head_id insert after rebuild: %v", err)
+	}
+	// … and both foreign keys still bite on every pooled connection.
+	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by) VALUES(999999,?,?,?)`, "2026-06-19", 4000, acc.ID); err == nil {
+		t.Fatal("dangling head_id accepted after rebuild; the foreign key was lost")
+	}
+	if _, err := s.DB().Exec(`INSERT INTO payment_attachments(payment_id,original_name,stored_path,size_bytes,uploaded_by) VALUES(999999,'x','/tmp/x',1,?)`, acc.ID); err == nil {
+		t.Fatal("dangling payment_id accepted after rebuild; the child foreign key was lost")
+	}
+
+	// Idempotence: re-running v8 against the already-rebuilt table is a no-op.
+	if _, err := s.DB().Exec(`PRAGMA user_version = 7`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("re-running v8: %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 4 {
+		t.Fatalf("payments rows after idempotent re-run = %d, want 4", count)
+	}
+}
+
 func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) { // G19, G20
 	s := newTestStore(t)
 	// v7 creates notification_settings and notifications; app_settings is Phase 2's (v3).

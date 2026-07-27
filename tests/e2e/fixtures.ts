@@ -175,16 +175,27 @@ async function ensureVendor(page: Page, name: string) {
  * never be the approver, and the seeded database has exactly one user, so a
  * second signed-in person is not optional.
  *
- * KNOWN GAP — `payee` names the VENDOR on the request. It does not reach the
- * payment. A vendor request stores its payee in `vendor_id`, leaving the
- * `vendor_payee` snapshot column empty (only reimbursement and employee advance
- * fill it, with the requester's name), and every Phase-3 screen reads
- * `Request.VendorPayee` rather than `Request.Vendor`. So the queue's Payee
- * column, the entry screen's payee, the payment row's `vendor_payee` and the
- * payment detail's `<h1>` are all blank for a request raised through the real
- * form. The Go tests do not see it because `seedApprovedRequest` writes
- * `vendor_payee` directly and never sets `vendor_id`. Any spec that needs a
- * payee it can search for or assert on needs that fixed first.
+ * `payee` names the VENDOR on the request, and it DOES reach the payment.
+ *
+ * This paragraph used to carry a KNOWN GAP saying the opposite — that the queue's
+ * Payee column, the entry screen, the payment row and the payment detail `<h1>`
+ * were all blank for a request raised through the real form. That was true once
+ * and was fixed in commit `fca6939`: `store.Request.Vendor` resolves the display
+ * payee as `COALESCE(NULLIF(v.name,''), r.vendor_payee)`, and the settlement path
+ * copies it onto the payment (`internal/app/linking.go:260`).
+ *
+ * The 2026-07-27 QA audit walked all five hops and found the vendor's name at
+ * every one — see `docs/qa/results/findings-d-linking-settlement.md` F-D-09. The
+ * stale comment had already cost two agents a pass and had talked two shipped
+ * specs out of asserting on the payee at all, so a spec that wants to search for
+ * or assert on a payee should simply do it.
+ *
+ * The underlying asymmetry is still worth knowing: a `vendor_invoice` request
+ * names its payee with `vendor_id` and leaves the `vendor_payee` snapshot column
+ * empty, while reimbursement and employee advance fill the snapshot with the
+ * requester's name. Read `.Vendor`, never the raw snapshot. Go tests that seed a
+ * request must use `seedVendorRequest`, not `seedApprovedRequest`, to get the
+ * shape the real form produces.
  *
  * Returns the request number (PR-YYYY-NNNNNN) and its id.
  */

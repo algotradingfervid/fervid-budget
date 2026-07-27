@@ -510,6 +510,22 @@ textarea[disabled],
   border-radius: 7px;
 }
 
+/* A strip such as the roles switcher grows one item per row and has no upper
+   bound a template can enforce. Every other wide surface in this system
+   contains its own overflow rather than the page's -- .table-wrap,
+   .grid-wrap, .budget-grid and .data-table all set `overflow: auto` below.
+   .segmented matches that intent: past this width the strip scrolls in its
+   own box, and the page -- with the sidebar and the mobile tab bar it
+   carries along -- never does. The items keep their natural size (see
+   flex-shrink below) so the strip scrolls rather than squishing into
+   illegible tabs, and because they are <a>/<button> elements the scrollable
+   region already contains focusable content, so it is keyboard-reachable
+   without extra markup. */
+.segmented {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .segmented a,
 .segmented button,
 .tab {
@@ -520,6 +536,8 @@ textarea[disabled],
   background: transparent;
   color: var(--fb-muted);
   font-weight: 680;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .segmented [aria-selected="true"],
@@ -4374,10 +4392,13 @@ td .t-sub {
 
   /* Mobile chrome ------------------------------------------------------ */
 
-  /* Nothing may sit under the fixed tab bar. The bar is 96px plus whatever the
-     home indicator claims, so the page reserves the same. */
+  /* Nothing may sit under the fixed tab bar. The bar measures a hair over
+     96px once its own border/backdrop are laid out (96.2px observed), so a
+     reserve of exactly 96px left a sub-pixel gap that a sticky .action-bar
+     could round the wrong way into an overlap. 100px keeps a real margin
+     instead of a coin flip. */
   .page {
-    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+    padding-bottom: calc(100px + env(safe-area-inset-bottom));
   }
 
   /* Padding protects the *end* of the document. It does nothing for a control

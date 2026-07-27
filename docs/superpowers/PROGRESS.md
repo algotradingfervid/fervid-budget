@@ -225,9 +225,12 @@ These are learned, not theoretical. Each one has already cost a debugging pass.
   with no route yet. The sidebar renders them as Soon announcements and the tab
   bar skips them. A phase that builds a screen **deletes its line**;
   `TestEveryLinkedNavItemResolves` and `TestTabBarNeverLinksToAnUnbuiltRoute`
-  fail until it does. It now holds exactly one line, `/admin/notifications`
-  (Phase 5). Deleting it also flips three nav guard tests that assert the screen
-  is *not* linked — updating those is part of the same task, not a regression.
+  fail until it does. **It is now empty** (`internal/app/nav.go:250`) — every
+  screen the navigation knows about resolves to a real route. This paragraph used
+  to say it held one line for `/admin/notifications`; Phase 5 built that screen
+  and emptied it. Deleting a line also flips the nav guard tests that assert the
+  screen is *not* linked — updating those is part of the same task, not a
+  regression.
 - **Never `git add -A`.** Parallel agents share one index. Commit with pathspec
   form: `git commit -m "..." -- <explicit paths>`.
 - **The canonical permission vocabulary is 21 resources / 66 pairs**, declared
@@ -365,14 +368,20 @@ used to overwrite the very images it was being compared against, and
 
 ## Known gaps and open items
 
-- **Design system:** `.btn.approve`, `.metric.warn`, `.metric.good` and
-  **`.metric-foot`** appear in the mockups but have **no rule** in
-  `web/static/fervid-ds.css`. `.metric-foot` is the notable one: it is used by
-  the approved mockups *and* by shipped Phase-3 templates (the accounts queue
-  metric strip) and by Phase 4's dashboard, so today that third line in every
-  metric tile renders unstyled. Phase 4 did not invent the rule — the standing
-  rule is that a missing class is a Phase 0 defect to report. Fold all four into
-  Phase 6.
+> **A QA audit ran on 2026-07-27** against commit `30edd6a` and found 92 defects,
+> five of them critical. **`docs/qa/results/AUDIT-REPORT.md` supersedes this
+> section** for anything it covers, and `docs/qa/results/FIX-PLAN.md` tracks the
+> repair. The audit also corrected several claims made *in this file* — see its
+> "Documentation that is now wrong" table. Corrections applied below.
+
+- ~~**Design system:** `.btn.approve`, `.metric.warn`, `.metric.good` and
+  `.metric-foot` have no rule.~~ **Fixed in Phase 6** by commit `a80e18f`, which
+  this file's own Phase-6 detail table records. All four have rules today —
+  `web/static/fervid-ds.css:367`, `:378`, `:387`, `:397`. The 2026-07-27 QA audit
+  verified this by reading `getComputedStyle` on the live screen; see
+  `docs/qa/results/findings-e-recoverables.md` F-E-09 and
+  `findings-d-linking-settlement.md` F-D-13. Kept here struck through because two
+  independent agents wasted a pass on the stale claim.
 - **The payment-detail mockup's `Bank` row** (`HDFC ····4471 · IFSC …`) is not
   built. It needs `vendor_bank`-restricted data on a screen no spec authorises
   for it, plus an account-masking helper with no precedent. Needs a spec
@@ -394,5 +403,9 @@ used to overwrite the very images it was being compared against, and
   count; if the user table grows the fix is a batched permission read in the
   store, not a looser filter.
 - **Production has never run any of this.** It is still on the initial commit at
-  `user_version = 0`, so it will run v1→v5 in full on first deploy. Local
-  databases that ran a partial v1 need re-stamping or recreating.
+  `user_version = 0`, so it will run **the whole chain — v1 through the current
+  head — in full on first deploy**. Do not trust a hardcoded upper bound here: an
+  earlier version of this line said "v1→v5" while the chain had already reached
+  v7, and the QA audit's repair adds v8. The authority is the `migrations` slice
+  in `internal/store/migrations.go`. Local databases that ran a partial v1 need
+  re-stamping or recreating.

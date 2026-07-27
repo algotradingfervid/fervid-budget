@@ -24,6 +24,7 @@ type migration struct {
 //	v5 — accounts reservation grants (Phase 3)
 //	v6 — recoverable categories (Phase 4)
 //	v7 — notification settings (Phase 5)
+//	v8 — payments.head_id nullable (2026-07-27 audit, F-D-11/F-E-01/F-G-001)
 //
 // Phase 3 consumed v5 for a grant back-fill, so every phase plan written before
 // it is off by one from here on. Migrations are append-only and are never
@@ -325,6 +326,109 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "notifications",
 		Up:      upNotifications,
 	},
+	// 2026-07-27 audit, F-D-11 / F-E-01 / F-G-001: a recoverable request has no
+	// budget head — the recoverable fieldset never collects one — so the payment
+	// that settles it cannot carry a NOT NULL head_id. SQLite cannot drop a
+	// NOT NULL in place, so the table is rebuilt with head_id nullable.
+	{
+		Version: 8,
+		Name:    "payments_head_nullable",
+		Up:      upPaymentsHeadNullable,
+	},
+}
+
+// upPaymentsHeadNullable rebuilds payments so head_id is nullable, preserving
+// every row (production has real historical payments with request_id NULL),
+// every column v4 added, and every index — including the partial unique index
+// idx_payments_request, which is what enforces one-payment-per-request (S9).
+//
+// Three constraints shape it:
+//
+//   - PRAGMA foreign_keys rides on the DSN (store.Open) and cannot change
+//     inside a transaction, and the migration runner wraps each Up in one.
+//     payment_attachments.payment_id references payments, so the rebuild must
+//     happen with enforcement live. PRAGMA defer_foreign_keys CAN be set
+//     inside a transaction — it postpones any transient violation to COMMIT
+//     and resets itself there — and is kept on as the belt. It is not enough
+//     on its own, though: SQLite tracks deferred violations as a counter that
+//     only DML adjusts, so the violations counted when DROP TABLE implicitly
+//     deletes the referenced rows are never cancelled by the later RENAME
+//     (DDL), and COMMIT would still refuse. The braces are therefore to stash
+//     the payment_attachments rows, empty that table so the DROP sees no
+//     child reference and the counter never moves, and restore the rows —
+//     ids included — once the rebuilt table is back under its own name.
+//
+//   - The order is create-new → copy → drop-old → rename-new. Renaming the
+//     old table aside first would not work: ALTER TABLE RENAME rewrites the
+//     REFERENCES clauses in child tables (verified against this driver, which
+//     does so even under PRAGMA legacy_alter_table=ON), so
+//     payment_attachments would end up pointing at the temporary name.
+//
+//   - Columns are copied explicitly by name, never SELECT *, so the copy
+//     cannot silently reorder if the source schema drifts.
+//
+// Guarded by columnNotNull so a re-run against an already-rebuilt table is a
+// no-op, matching how v1/v3/v4 guard themselves.
+func upPaymentsHeadNullable(tx *sql.Tx) error {
+	notNull, err := columnNotNull(tx, "payments", "head_id")
+	if err != nil {
+		return err
+	}
+	if !notNull {
+		return nil // already rebuilt; re-running is a no-op
+	}
+	if _, err := tx.Exec(`PRAGMA defer_foreign_keys = ON`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+CREATE TABLE payment_attachments_v8_stash AS
+  SELECT id,payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by,created_at
+  FROM payment_attachments;
+DELETE FROM payment_attachments;
+CREATE TABLE payments_v8 (
+  id INTEGER PRIMARY KEY,
+  head_id INTEGER REFERENCES heads(id),
+  paid_on TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  vendor_payee TEXT,
+  payment_mode TEXT,
+  invoice_no TEXT,
+  reference_no TEXT,
+  remarks TEXT,
+  entered_by INTEGER NOT NULL REFERENCES users(id),
+  updated_by INTEGER REFERENCES users(id),
+  voided_by INTEGER REFERENCES users(id),
+  void_reason TEXT,
+  voided_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  request_id INTEGER REFERENCES payment_requests(id),
+  settlement TEXT NOT NULL DEFAULT '',
+  partial_reason TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO payments_v8
+  (id,head_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,
+   entered_by,updated_by,voided_by,void_reason,voided_at,created_at,updated_at,
+   request_id,settlement,partial_reason)
+  SELECT id,head_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,
+   entered_by,updated_by,voided_by,void_reason,voided_at,created_at,updated_at,
+   request_id,settlement,partial_reason
+  FROM payments;
+DROP TABLE payments;
+ALTER TABLE payments_v8 RENAME TO payments;
+INSERT INTO payment_attachments
+  (id,payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by,created_at)
+  SELECT id,payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by,created_at
+  FROM payment_attachments_v8_stash;
+DROP TABLE payment_attachments_v8_stash;
+CREATE INDEX IF NOT EXISTS idx_payments_head ON payments(head_id);
+CREATE INDEX IF NOT EXISTS idx_payments_paid_on ON payments(paid_on);
+CREATE INDEX IF NOT EXISTS idx_payments_voided ON payments(voided_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_request ON payments(request_id) WHERE request_id IS NOT NULL;
+`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // addDefaultApproverColumn is additive and guarded by columnExists, so
@@ -545,6 +649,34 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// columnNotNull reports whether table.col carries a NOT NULL constraint. It is
+// the re-run guard for rebuild migrations (v8): once the rebuild has happened
+// the constraint is gone and the migration is a no-op, so applying it twice is
+// safe even if user_version is out of sync with the physical schema.
+func columnNotNull(tx *sql.Tx, table, col string) (bool, error) {
+	rows, err := tx.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == col {
+			return notnull == 1, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, fmt.Errorf("column %s.%s not found", table, col)
 }
 
 // columnExists guards additive column migrations so a re-run is safe even if

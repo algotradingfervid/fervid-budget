@@ -544,7 +544,7 @@ func (s *Store) CreatePaymentWithAttachment(ctx context.Context, actor User, in 
 }
 
 func (s *Store) createPayment(ctx context.Context, actor User, in PaymentInput, attachment *AttachmentInput) (int64, error) {
-	if err := s.validatePayment(ctx, in); err != nil {
+	if err := s.validatePayment(ctx, in, false); err != nil {
 		return 0, err
 	}
 	if attachment != nil {
@@ -587,7 +587,7 @@ func (s *Store) UpdatePayment(ctx context.Context, actor User, id int64, in Paym
 // UpdatePaymentWithAttachment updates payment fields, optionally adds a file,
 // and records both audit events in one transaction.
 func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id int64, in PaymentInput, attachment *AttachmentInput) error {
-	if err := s.validatePayment(ctx, in); err != nil {
+	if err := s.validatePayment(ctx, in, false); err != nil {
 		return err
 	}
 	if attachment != nil {
@@ -672,12 +672,15 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 	return tx.Commit()
 }
 
+// Payment reads one ledger row. The heads/projects joins are LEFT joins with
+// COALESCE because a payment settling a recoverable request has head_id NULL
+// (v8): its detail screen must still resolve, with an empty project and head.
 func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
+	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
 		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py JOIN heads h ON h.id=py.head_id JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.id=?`, id)
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.id=?`, id)
 	var p Payment
 	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
 	if err == sql.ErrNoRows {
@@ -689,11 +692,11 @@ func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
 // PaymentForRequest returns the single payment linked to a request, or
 // ErrNotFound when none exists yet. It powers the requester's outcome view (Q4).
 func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
+	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
 		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py JOIN heads h ON h.id=py.head_id JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.request_id=?`, requestID)
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.request_id=?`, requestID)
 	var p Payment
 	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
 	if err == sql.ErrNoRows {
@@ -704,7 +707,7 @@ func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment
 
 func paymentInTx(ctx context.Context, tx *sql.Tx, id int64) (Payment, error) {
 	var p Payment
-	err := tx.QueryRowContext(ctx, `SELECT id,head_id,paid_on,amount,COALESCE(vendor_payee,''),COALESCE(payment_mode,''),COALESCE(invoice_no,''),COALESCE(reference_no,''),COALESCE(remarks,''),entered_by,updated_by,voided_by,COALESCE(void_reason,''),voided_at,created_at,updated_at,request_id,COALESCE(settlement,''),COALESCE(partial_reason,'') FROM payments WHERE id=?`, id).
+	err := tx.QueryRowContext(ctx, `SELECT id,COALESCE(head_id,0),paid_on,amount,COALESCE(vendor_payee,''),COALESCE(payment_mode,''),COALESCE(invoice_no,''),COALESCE(reference_no,''),COALESCE(remarks,''),entered_by,updated_by,voided_by,COALESCE(void_reason,''),voided_at,created_at,updated_at,request_id,COALESCE(settlement,''),COALESCE(partial_reason,'') FROM payments WHERE id=?`, id).
 		Scan(&p.ID, &p.HeadID, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
 	if err == sql.ErrNoRows {
 		return p, ErrNotFound
@@ -723,10 +726,28 @@ func recordAuditTx(ctx context.Context, tx *sql.Tx, in AuditInput) error {
 	return err
 }
 
+// ReserveRequest's three refusal causes, distinguished so the conflict screen
+// can tell the accountant what actually happened instead of "Someone else took
+// this request" for all three (F-D-02). Each wraps ErrForbidden, so every
+// existing errors.Is(err, ErrForbidden) branch — including the handler that
+// routes reservation refusals to the conflict screen — keeps working; a caller
+// that wants the real cause branches with errors.Is on the specific sentinel.
+var (
+	// ErrAlreadyReserved: the request is in 'processing', held by somebody.
+	ErrAlreadyReserved = fmt.Errorf("%w: someone else is already processing this request", ErrForbidden)
+	// ErrRequestOnHold: the request is approved but paused; the hold reason is
+	// on the request and only Accounts lifts it.
+	ErrRequestOnHold = fmt.Errorf("%w: this request is on hold", ErrForbidden)
+	// ErrRequestNotApproved: the request is in some other state — pending,
+	// completed, cancelled — that offers nothing to reserve.
+	ErrRequestNotApproved = fmt.Errorf("%w: only an approved request can be taken for processing", ErrForbidden)
+)
+
 // ReserveRequest atomically moves an approved, unclaimed, not-on-hold request to
 // 'processing' reserved by actor. The single conditional UPDATE is the
 // concurrency guarantee: only the first committer matches, so a losing caller
-// sees RowsAffected()==0 and is told the request is unavailable (S2, S5, L8).
+// sees RowsAffected()==0 (S2, S5, L8). Only then — the race is already lost —
+// is the row re-read to name which of the three causes refused it (F-D-02).
 func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -744,7 +765,25 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("%w: request is not available to process", ErrForbidden)
+		var status string
+		var processingBy sql.NullInt64
+		var onHold int
+		if err := tx.QueryRowContext(ctx, `SELECT status, processing_by, on_hold FROM payment_requests WHERE id=?`, id).Scan(&status, &processingBy, &onHold); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNotFound
+			}
+			return err
+		}
+		switch {
+		// on_hold=1 implies status='approved', so the order cannot misname a
+		// held request as taken or vice versa.
+		case onHold == 1:
+			return ErrRequestOnHold
+		case status == "processing" || processingBy.Valid:
+			return ErrAlreadyReserved
+		default:
+			return ErrRequestNotApproved
+		}
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "process", EntityType: "payment_request", EntityID: &id, Summary: "Reserved request for processing", After: map[string]any{"processing_by": actor.ID}}); err != nil {
 		return err
@@ -863,6 +902,14 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 // → 'partial_review' (partialReason required, L9). Paid may never exceed the
 // approved amount (G13). The payment and the request move together or not at all
 // (S13); a re-record is refused by the status guard and idx_payments_request (S9).
+//
+// F-D-01: the head, the payee and the invoice number are facts of the request —
+// a manager approved an amount against a project and head, and the entry screen
+// never offers a control to change any of them — so all three are derived from
+// the request row this transaction already holds open, and whatever the form
+// sent in those fields is ignored. A recoverable request has no head (F-D-11):
+// its payment is written with head_id NULL, which the grid and the monthly
+// report never match because they join payments on head_id.
 func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, requestID int64, in PaymentInput, settlement, partialReason string, attachment *AttachmentInput) (int64, error) {
 	settlement = strings.TrimSpace(settlement)
 	partialReason = strings.TrimSpace(partialReason)
@@ -871,9 +918,6 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	}
 	if settlement == "partial" && partialReason == "" {
 		return 0, fmt.Errorf("%w: a reason is required for a partial settlement", ErrValidation)
-	}
-	if err := s.validatePayment(ctx, in); err != nil {
-		return 0, err
 	}
 	if attachment != nil {
 		if err := validateAttachment(*attachment); err != nil {
@@ -885,11 +929,16 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 		return 0, err
 	}
 	defer tx.Rollback()
-	var status string
-	var processingBy sql.NullInt64
+	var status, treatment, displayPayee, invoiceNo string
+	var processingBy, headID sql.NullInt64
 	var requested int64
 	var approved sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT status, processing_by, amount, approved_amount FROM payment_requests WHERE id=?`, requestID).Scan(&status, &processingBy, &requested, &approved); err != nil {
+	// The display payee, exactly as Request() resolves it: a vendor_invoice
+	// names its payee with vendor_id and leaves the snapshot empty.
+	if err := tx.QueryRowContext(ctx, `SELECT r.status, r.processing_by, r.amount, r.approved_amount,
+		r.treatment, r.head_id, COALESCE(NULLIF(v.name,''), r.vendor_payee, ''), COALESCE(r.invoice_no,'')
+		FROM payment_requests r LEFT JOIN vendors v ON v.id=r.vendor_id
+		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &displayPayee, &invoiceNo); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, ErrNotFound
 		}
@@ -897,6 +946,14 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	}
 	if status != "processing" || !processingBy.Valid || processingBy.Int64 != actor.ID {
 		return 0, fmt.Errorf("%w: reserve this request before recording its payment", ErrForbidden)
+	}
+	// F-D-01: overwrite, never compare — the form's copies of these fields are
+	// display baggage from the entry screen, not input.
+	in.HeadID = headID.Int64 // 0 when the request has no head
+	in.VendorPayee = displayPayee
+	in.InvoiceNo = invoiceNo
+	if err := s.validatePayment(ctx, in, treatment == "recoverable"); err != nil {
+		return 0, err
 	}
 	// G13: the approved amount is a hard ceiling. Paying more is not a settlement
 	// decision, it is a different obligation — cancel and raise a new request.
@@ -908,9 +965,15 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 		return 0, fmt.Errorf("%w: %s is more than the approved %s — to pay more, cancel this request and raise a new one",
 			ErrValidation, money.FormatPaise(in.Amount), money.FormatPaise(ceiling))
 	}
+	// A zero head is stored as NULL, never 0 — heads(id) has no row 0, and the
+	// v8 schema keeps the foreign key.
+	var headArg any
+	if in.HeadID != 0 {
+		headArg = in.HeadID
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by,request_id,settlement,partial_reason)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		in.HeadID, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, requestID, settlement, partialReason)
+		headArg, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, requestID, settlement, partialReason)
 	if err != nil {
 		return 0, classify(err)
 	}
@@ -1232,10 +1295,10 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 }
 
 func (s *Store) RecentPayments(ctx context.Context, limit int) ([]Payment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
+	rows, err := s.db.QueryContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at
-		FROM payments py JOIN heads h ON h.id=py.head_id JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by
 		WHERE py.voided_at IS NULL
 		ORDER BY py.created_at DESC LIMIT ?`, limit)
 	if err != nil {
@@ -1257,13 +1320,24 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	if opts.Limit <= 0 {
 		opts.Limit = 300
 	}
-	q := `SELECT py.id,py.head_id,h.project_id,p.name,h.name,py.paid_on,py.amount,
+	q := `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
 		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py JOIN heads h ON h.id=py.head_id JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by`
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by`
 	var where []string
 	var args []any
+	// F-A-04 / F-G-003: the payment data scope. "own" narrows the ledger to
+	// rows the viewer entered; "assigned" has no routed-to meaning on payments
+	// and narrows the same way rather than silently widening to everything —
+	// an administrator who chose either narrowing gets a narrowing. "", "all"
+	// and anything else are unrestricted, exactly as requestWhere treats the
+	// request scope. The handler wires the caller's scope in a later wave.
+	switch opts.Scope {
+	case "own", "assigned":
+		where = append(where, `py.entered_by=?`)
+		args = append(args, opts.ViewerID)
+	}
 	if validMonth(opts.Month) {
 		where = append(where, `substr(py.paid_on,1,7)=?`)
 		args = append(args, opts.Month)
@@ -1321,6 +1395,14 @@ func (s *Store) AddAttachment(ctx context.Context, actor User, paymentID int64, 
 	if err != nil {
 		return err
 	}
+	// S12 / F-D-08: a payment that settles a request is the request's outcome
+	// and the screen calls it read-only. Edit and void already refuse a linked
+	// row; a new document is the same mutation of that record and gets the
+	// same answer. (The settlement's own proof travels inside
+	// RecordPaymentForRequest's transaction, which never passes through here.)
+	if p.RequestID != nil {
+		return fmt.Errorf("%w: a payment linked to a request cannot receive a new attachment", ErrValidation)
+	}
 	if p.VoidedAt != nil {
 		return fmt.Errorf("%w: cannot attach files to a voided payment", ErrValidation)
 	}
@@ -1354,6 +1436,38 @@ func (s *Store) AttachmentByID(ctx context.Context, id int64) (Attachment, error
 	var a Attachment
 	err := s.db.QueryRowContext(ctx, `SELECT id,payment_id,original_name,stored_path,COALESCE(mime_type,''),size_bytes,uploaded_by,created_at FROM payment_attachments WHERE id=?`, id).
 		Scan(&a.ID, &a.PaymentID, &a.OriginalName, &a.StoredPath, &a.MimeType, &a.SizeBytes, &a.UploadedBy, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return a, ErrNotFound
+	}
+	return a, err
+}
+
+// AttachmentWithPayment resolves a payment attachment to the payment it
+// belongs to, in one call, so a download or upload handler can walk from the
+// attachment to its payment and — through Payment.RequestID — to the request
+// whose data scope governs it (F-A-01/F-A-03). Authorization stays with the
+// app layer; this only supplies the ownership chain it needs.
+func (s *Store) AttachmentWithPayment(ctx context.Context, id int64) (Attachment, Payment, error) {
+	a, err := s.AttachmentByID(ctx, id)
+	if err != nil {
+		return Attachment{}, Payment{}, err
+	}
+	p, err := s.Payment(ctx, a.PaymentID)
+	if err != nil {
+		return Attachment{}, Payment{}, err
+	}
+	return a, p, nil
+}
+
+// RequestAttachmentByID resolves a request document from its own table.
+// Request documents live in request_attachments, not payment_attachments —
+// the two id spaces are unrelated (F-A-05) — so the request-document route
+// must resolve here and scope by the owning RequestID, never through
+// AttachmentByID. Authorization is intentionally left to the app layer.
+func (s *Store) RequestAttachmentByID(ctx context.Context, id int64) (RequestAttachment, error) {
+	var a RequestAttachment
+	err := s.db.QueryRowContext(ctx, `SELECT id,request_id,original_name,stored_path,COALESCE(mime_type,''),size_bytes,uploaded_by,created_at FROM request_attachments WHERE id=?`, id).
+		Scan(&a.ID, &a.RequestID, &a.OriginalName, &a.StoredPath, &a.MimeType, &a.SizeBytes, &a.UploadedBy, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return a, ErrNotFound
 	}
@@ -1617,12 +1731,30 @@ func (s *Store) Audit(ctx context.Context, entityType string, entityID int64, li
 	return out, rows.Err()
 }
 
-func (s *Store) validatePayment(ctx context.Context, in PaymentInput) error {
-	if in.Amount <= 0 || !validDate(in.PaidOn) || in.HeadID == 0 {
+// validatePayment checks a payment's own facts. headOptional is true only when
+// the payment settles a recoverable request (F-D-11/F-E-01): a deposit or
+// advance belongs to no budget head — the recoverable fieldset never collects
+// one — and the grid and monthly report already exclude recoverables by
+// treatment, so its head was never meaningful. Every other payment, including
+// one with no request at all, still needs a head.
+func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOptional bool) error {
+	if in.Amount <= 0 || !validDate(in.PaidOn) || (in.HeadID == 0 && !headOptional) {
 		return fmt.Errorf("%w: valid head, date, and positive amount are required", ErrValidation)
+	}
+	// F-D-06: paid_on records when money left the bank, so a date after today
+	// records something that has not happened. "Today" comes from the injected
+	// clock on the input, never time.Now() — a zero Now means the caller
+	// supplied no clock and the check is skipped (see PaymentInput.Now).
+	// paid_on and the formatted clock share the YYYY-MM-DD shape, so a plain
+	// string comparison is a correct date comparison.
+	if !in.Now.IsZero() && in.PaidOn > in.Now.Format("2006-01-02") {
+		return fmt.Errorf("%w: paid on cannot be a future date — money cannot have left the bank after today", ErrValidation)
 	}
 	if s.IsLocked(ctx, in.PaidOn[:7]) {
 		return ErrLockedMonth
+	}
+	if in.HeadID == 0 {
+		return nil
 	}
 	var active int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=? AND h.active=1 AND p.active=1`, in.HeadID).Scan(&active)
@@ -1715,6 +1847,14 @@ func classify(err error) error {
 	}
 	if strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("%w: %v", ErrDuplicate, err)
+	}
+	// F-B-06 / F-G-027: a FOREIGN KEY violation means a submitted id names a
+	// row that does not exist — a client error, not a server fault, so it must
+	// reach the user as a 400 that keeps their typed form, never a 500. The
+	// driver text is deliberately not echoed. SQLite's message is stable:
+	// "constraint failed: FOREIGN KEY constraint failed (787)".
+	if strings.Contains(err.Error(), "FOREIGN KEY") {
+		return fmt.Errorf("%w: a referenced record does not exist", ErrValidation)
 	}
 	return err
 }

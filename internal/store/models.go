@@ -300,6 +300,13 @@ type PaymentInput struct {
 	InvoiceNo   string
 	ReferenceNo string
 	Remarks     string
+	// Now is the injected clock validatePayment measures PaidOn against
+	// (F-D-06): a payment dated after Now's date is refused, because money
+	// cannot have left the bank in the future. Zero means "no clock supplied"
+	// and skips the future-date check — the wiring wave passes time.Now()
+	// from the handler once the shipped fixtures that date payments into
+	// future months are corrected. Mirrors LinkableOptions.Now.
+	Now time.Time
 }
 
 type PaymentListOptions struct {
@@ -307,6 +314,13 @@ type PaymentListOptions struct {
 	Query  string
 	Status string
 	Limit  int
+	// Scope + ViewerID enforce the `payment` data scope (F-A-04 / F-G-003),
+	// mirroring RequestListOptions: "own" (and "assigned", which has no
+	// routed-to meaning on the ledger and narrows the same way rather than
+	// silently widening) filter on entered_by = ViewerID; "", "all" and any
+	// other value leave the list unrestricted, exactly as requestWhere does.
+	Scope    string
+	ViewerID int64
 }
 
 type Request struct {
