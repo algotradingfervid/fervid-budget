@@ -149,15 +149,17 @@ const templates = `
      cannot restack into cards — a head means nothing without its project, its
      budget and its actual side by side. On a phone it becomes a project
      accordion instead, driven by exactly the same .Grid.Groups data as the
-     matrix above, so the two can never disagree. Details/summary gives the
-     open/close behaviour with no JavaScript. */}}
+     matrix above, so the two can never disagree. The open/closed truth ships
+     in the markup as .is-open, which is the contract fervid-app.js's accordion
+     already implements — it republishes that state through aria-expanded and
+     the body. */}}
 <div class="acc m-only">
   {{range .Grid.Groups}}
-  <details class="acc-item" open>
-    <summary class="acc-head"><span class="chev" aria-hidden="true">›</span>
+  <div class="acc-item is-open">
+    <button class="acc-head" type="button" aria-expanded="true"><span class="chev" aria-hidden="true">›</span>
       <span class="ah-main"><b>{{.Project}}</b><small>{{len .Rows}} {{plural (len .Rows) "head" "heads"}} · {{usedText .Total.Budget .Total.Actual}} used</small></span>
       <span class="ah-amt"><b>{{money .Total.Variance}}</b><small class="muted">remaining</small></span>
-    </summary>
+    </button>
     <div class="acc-body">
       {{range .Rows}}
       <div class="head-row">
@@ -171,7 +173,7 @@ const templates = `
       </div>
       {{end}}
     </div>
-  </details>
+  </div>
   {{else}}
   <div class="empty">No heads found. <a href="/heads">Add projects and heads</a> to begin.</div>
   {{end}}
