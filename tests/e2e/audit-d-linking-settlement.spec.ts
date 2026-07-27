@@ -15,12 +15,14 @@
  * see what the store actually guarantees. This file does all three, and it
  * modifies neither of them.
  *
- * READING THE ANNOTATIONS. Five tests call `test.fail()` as their first
- * statement. Each names the finding it pins in
+ * READING THE ANNOTATIONS. A handful of tests still call `test.fail()` as their
+ * first statement. Each names the finding it pins in
  * `docs/qa/results/findings-d-linking-settlement.md`. The assertion inside is
  * the assertion the product *should* pass — the day somebody fixes the defect
  * the test goes red with "passed unexpectedly", which is exactly the signal a
- * deleted assertion would have thrown away.
+ * deleted assertion would have thrown away. When that happens the annotation is
+ * removed and its comment rewritten to say what the case now protects; TC-D-058
+ * (F-D-01), TC-D-095 (F-D-08) and TC-D-096 (F-D-11) have already made that trip.
  *
  * THE SHARED CORPUS. Four approved requests, one of each shape the linkable set
  * has to distinguish (unclaimed · on hold · reserved by somebody else ·
@@ -1491,11 +1493,14 @@ test.describe('D · the entry screen and its prefill', () => {
     browser,
     runId
   }) => {
-    // FINDING F-D-01. paymentInput reads head_id and vendor_payee straight off
-    // the form, and RecordPaymentForRequest never compares them with the request
-    // it is settling. An accountant holding the reservation can charge the
-    // payment to any active head and write any payee on it.
-    test.fail();
+    // Regression guard for F-D-01. paymentInput still reads head_id, vendor_payee
+    // and invoice_no straight off the form — they are display baggage the entry
+    // screen echoes back — but RecordPaymentForRequest now overwrites all three
+    // from the request row it already holds open (internal/store/store.go:950-954)
+    // instead of trusting them. So a tampered snapshot is neither honoured nor
+    // refused: it is ignored, and the payment is booked exactly where the approval
+    // put it. This test protects that: an accountant holding the reservation
+    // cannot charge the payment to another head or write another payee on it.
     const c = await corpus(browser);
     const request = await createApprovedRequest(adminPage, runId, { amount: '4400.00' });
     await reserve(adminPage, request.id);
@@ -2035,11 +2040,15 @@ test.describe('D · one request, one payment, never edited', () => {
   });
 
   test('TC-D-095 — S12: a linked payment accepts no new attachment either', async ({ adminPage, runId }) => {
-    // FINDING F-D-08 (the sibling's SD-03, reproduced here because S12 is this
-    // audit's). POST /payments/{id}/attachments is gated only on
-    // attachment:create, and store.AddAttachment has no RequestID guard — unlike
-    // UpdatePaymentWithAttachment and VoidPayment, which both refuse a linked row.
-    test.fail();
+    // Regression guard for F-D-08 (the sibling's SD-03, reproduced here because
+    // S12 is this audit's). POST /payments/{id}/attachments is still gated only on
+    // attachment:create, but store.AddAttachment now refuses a payment whose
+    // request_id is set (internal/store/store.go:1403-1405), joining
+    // UpdatePaymentWithAttachment and VoidPayment. A linked payment is the
+    // request's outcome and a new document mutates that record like any other
+    // edit. The settlement's own proof travels inside RecordPaymentForRequest's
+    // transaction and never passes through here — see fixtures.settlePayment's
+    // `attachment` option.
     const request = await createApprovedRequest(adminPage, runId, { amount: '7400.00' });
     const payment = await settlePayment(adminPage, request.id, {
       amount: '7400.00',
@@ -2271,18 +2280,19 @@ test.describe('D · settlements the product cannot complete', () => {
     browser,
     runId
   }) => {
-    // FINDING F-D-11, and the most serious defect this audit found. A recoverable
-    // category that requires no project gives the request no project and
-    // therefore no head. paymentEntry then posts head_id=0
-    // (internal/app/linking.go:244-247, templates.go:389), payments.head_id is
-    // NOT NULL (internal/store/schema.go:60) and validatePayment refuses
-    // HeadID == 0 (internal/store/store.go:1621-1623). The entry screen offers no
-    // head selector, so there is nothing the accountant can do about it: the
-    // request is stranded in processing, holding its reservation, for ever.
+    // Regression guard for F-D-11, the most serious defect this audit found. A
+    // recoverable category that requires no project gives the request no project
+    // and therefore no head, and the entry screen still posts head_id=0 because
+    // there is nothing else it could post. What changed is the data model:
+    // migration v8 rebuilt `payments` with a NULLABLE head_id, `validatePayment`
+    // requires a head only for a budget-treatment payment
+    // (internal/store/store.go:1741) and RecordPaymentForRequest writes NULL
+    // rather than 0 (:968-973). A recoverable's head was never meaningful — the
+    // grid and the monthly report exclude recoverables by treatment — so the
+    // absence of one may not decide whether approved money can be paid at all.
     //
     // Every category is driven before the assertion, so one run reports all four
     // rather than stopping at the first.
-    test.fail();
     const categories = ['icd', 'security_deposit', 'employee_advance', 'other'] as const;
     const outcomes: Array<{ category: string; status: number; message: string; strandedAt: string }> = [];
 

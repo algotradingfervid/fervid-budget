@@ -1993,13 +1993,24 @@ test.describe('G · the same fact in several places', () => {
   });
 
   /**
-   * V2/IF12's decisive test — and the gap it exposes. A recoverable request
-   * raised through the real form carries no head, because the recoverable
-   * fieldset offers none (internal/app/templates.go:1730-1781), and
-   * `validatePayment` refuses `HeadID == 0` (internal/store/store.go:1621). So
-   * a recoverable can never be settled through the UI at all.
+   * V2/IF12's decisive test: a recoverable request walked from the form to a
+   * closed request, through the real screens, in one pass.
+   *
+   * It used to assert the OPPOSITE — "the settlement is refused… it sits in Not
+   * yet paid for ever" — which pinned F-G-001/F-E-01/F-D-11 as if the stranding
+   * were intended, without a `test.fail()` to say otherwise. That was the test's
+   * expectation being wrong, not the product's behaviour: a request an approver
+   * approved must be payable, and whether its category gives it a project could
+   * never be allowed to decide whether money can leave the bank.
+   *
+   * The recoverable fieldset still offers no head, because a recoverable has none
+   * to offer, and the entry screen therefore still posts `head_id=0`. Migration v8
+   * made `payments.head_id` nullable and `validatePayment` now requires a head
+   * only for a budget-treatment payment (internal/store/store.go:1741), so the
+   * settlement is written with head_id NULL. Both of those facts are asserted on
+   * the way past, because they are the shape of the fix.
    */
-  test('TC-G-038 — a recoverable raised through the form can never be paid, because the form offers no head', async ({
+  test('TC-G-038 — a recoverable raised through the form settles and closes, head or no head', async ({
     adminPage,
     browser,
     runId
@@ -2048,19 +2059,42 @@ test.describe('G · the same fact in several places', () => {
     await sheet.locator('input[name="settlement"][value="settled"]').check();
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
 
-    // F-G-001 — the whole recoverable workflow ends here.
-    await expect(adminPage, 'F-G-001: the settlement is refused, so no payment exists').toHaveURL(/\/payments$/);
+    // The settlement lands on the payment it wrote, and closes the request with it
+    // (S13: the payment and the transition move together or not at all).
+    await expect(adminPage, 'the headless settlement is written, not refused').toHaveURL(/\/payments\/\d+$/);
+    const payment = new URL(adminPage.url()).pathname;
     await expect(
-      adminPage.locator('.overlay .sheet .banner.bad'),
-      'F-G-001: a recoverable raised through the UI can never be settled — the store needs a head the form never asks for'
-    ).toContainText('valid head');
+      adminPage.locator('.banner'),
+      'and the screen says what happened to the request'
+    ).toContainText('completed');
+    await expectMoney(adminPage, '.rh-amt', '₹45,000.00', 'the paid amount on the payment screen');
+    await expect(
+      adminPage.locator('.rh-status .pill'),
+      'the request behind it reads Completed on the payment’s own head'
+    ).toHaveText('Completed');
 
-    // And the register still shows it as awaiting payment, for ever.
+    // Hop 2 — the request itself agrees, and points at the payment.
+    await adminPage.goto(`/requests/${id}`);
+    await expect(adminPage.locator('.rh-status .pill').first(), 'the request is closed').toHaveText('Completed');
+    await expect(
+      adminPage.locator(`a[href="${payment}"]`).first(),
+      'and the requester can open the payment that closed it'
+    ).toHaveCount(1);
+
+    // Hop 3 — the register moves the row out of "Not yet paid" and dates it.
     await adminPage.goto('/recoverables/list?ageing=unpaid');
     await expect(
       adminPage.locator('tbody tr', { hasText: number }),
-      'F-G-001: it sits in "Not yet paid" with no reachable way out'
-    ).toHaveCount(1);
+      'a paid recoverable is no longer awaiting payment'
+    ).toHaveCount(0);
+
+    await adminPage.goto(`/recoverables/list?q=${encodeURIComponent(number)}`);
+    const registerRow = adminPage.locator('tbody tr', { hasText: number });
+    await expect(registerRow, 'it is still outstanding money, so it stays on the register').toHaveCount(1);
+    await expect(
+      registerRow.locator('td[data-label="Paid on"]'),
+      'and the register carries the date the money left, not "Not yet paid"'
+    ).toHaveText('2027-07-20');
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -3705,17 +3739,15 @@ test.describe('G · referential integrity', () => {
    * request pointing at an id that does not exist cannot be written. It must be
    * refused with a sentence, and the refusal must be a 4xx.
    *
-   * F-G-027 — it is a 500. `classify` (internal/store/store.go:1712-1720) only
-   * recognises `UNIQUE`, so `FOREIGN KEY constraint failed` falls through
-   * unclassified and `storeErrorStatus` (internal/app/http_errors.go:199-212)
-   * returns 500. Reproduced a second way with curl against a scratch server:
-   * all four id combinations answer 500 and the log carries
-   * `constraint failed: FOREIGN KEY constraint failed (787)`.
-   *
-   * `test.fail()` keeps the assertion at full strength: the day the store
-   * classifies an FK violation this test goes red with "passed unexpectedly".
+   * Regression guard for F-G-027 (the same fix as F-B-06). `classify`
+   * (internal/store/store.go:1856-1858) now recognises `FOREIGN KEY` alongside
+   * `UNIQUE` and returns ErrValidation, so `storeErrorStatus`
+   * (internal/app/http_errors.go:199-212) answers 400 where it used to answer 500.
+   * Three properties are asserted together, because a coherent refusal is all
+   * three at once: the write does not happen, the driver text does not reach the
+   * page, and the status is one the requester can act on.
    */
-  test.fail(
+  test(
     'TC-G-084 — a request aimed at a nonexistent project, head or vendor must be refused coherently, not with a 500',
     async ({ adminPage, browser, runId }) => {
       const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgrfk-${runId}`);
@@ -3760,21 +3792,36 @@ test.describe('G · referential integrity', () => {
   );
 
   /**
-   * The same class of error on the PAYMENT path is handled properly, which is
-   * what makes F-G-027 a gap rather than a policy: `validatePayment` checks the
-   * head exists and is active before the transaction
-   * (internal/store/store.go:1632-1639) and returns `ErrInactiveHead`, so the
-   * caller gets a 400 with a sentence.
+   * The settlement path answers a forged `head_id` by never reading it.
+   *
+   * This case was written when `paymentInput` fed the form's head straight into
+   * `validatePayment`, so a nonexistent head produced `ErrInactiveHead` and the
+   * question was whether that refusal was coherent. F-D-01's fix — taken
+   * deliberately — removes the question: the head, the payee and the invoice
+   * number are facts of the REQUEST (a manager approved an amount against a
+   * project and head, and the entry screen offers no control to change any of
+   * them), so `RecordPaymentForRequest` overwrites all three from the request row
+   * it already holds open (internal/store/store.go:950-954). A forged head is not
+   * refused, it is ignored, and refusing it would be the wrong answer: the
+   * accountant would be blocked by a field they never filled in.
+   *
+   * So the information-flow property this case now protects is the one that
+   * actually matters here — **a payment is booked against its own request's head,
+   * whatever the form said** — asserted three ways: the redirect succeeds, the
+   * payment's own screen names the approved head, and the ledger row for the month
+   * carries that head and no other.
    */
-  test('TC-G-086 — a payment aimed at a nonexistent head is refused with a sentence and a 4xx', async ({
+  test('TC-G-086 — a payment is booked against its request’s own head, whatever head_id the form sent', async ({
     adminPage,
     runId
   }) => {
+    // createApprovedRequest approves against Operations / Office Rent.
+    const APPROVED_HEAD = 'Operations / Office Rent';
     const request = await createApprovedRequest(adminPage, runId, { amount: '1500.00' });
     const reserved = await probePost(adminPage, `/requests/${request.id}/record-payment`, {});
     expect(reserved.status, 'the request is reserved first').toBe(303);
 
-    const badHead = await probePost(adminPage, '/payments', {
+    const forgedHead = await probePost(adminPage, '/payments', {
       request_id: String(request.id),
       head_id: '99999999',
       amount: '1500.00',
@@ -3783,14 +3830,27 @@ test.describe('G · referential integrity', () => {
       reference_no: `UTR-FK-${runId}`,
       settlement: 'settled'
     });
-    expect(badHead.status, 'a payment at a nonexistent head must not 500').toBeLessThan(500);
-    expect(badHead.status, 'and must not succeed').not.toBe(303);
-    expect(badHead.body.includes('FOREIGN KEY'), 'and must not echo a driver message').toBe(false);
-    expect(badHead.body, 'the store names the real problem').toContain('inactive');
+    expect(
+      forgedHead.status,
+      `the form's head is display baggage, so the settlement proceeds — got ${forgedHead.outcome}`
+    ).toBe(303);
+    expect(forgedHead.body.includes('FOREIGN KEY'), 'and no driver message is ever echoed').toBe(false);
+    expect(forgedHead.location, 'and it lands on the payment it wrote').toMatch(/^\/payments\/\d+$/);
 
-    // And nothing was written.
+    // Hop 1 — the payment's own screen names the head the approval named.
+    await adminPage.goto(forgedHead.location!);
+    await expect(
+      adminPage.locator('.rh-meta'),
+      'the payment is charged to the request’s approved head, not the one the poster forged'
+    ).toContainText(APPROVED_HEAD);
+
+    // Hop 2 — and so does the ledger, which reads head_id back out of the row.
     await adminPage.goto('/payments?month=2028-01');
-    expect(await dataRows(adminPage), 'no payment row survives the refusal').toBe(0);
+    expect(await dataRows(adminPage), 'exactly the one payment lands in that month').toBe(1);
+    await expect(
+      adminPage.locator('tbody tr td[data-label="Project / Head"]'),
+      'the stored head_id is the approved one, so no head 99999999 was ever written'
+    ).toContainText(APPROVED_HEAD);
   });
 
   /**

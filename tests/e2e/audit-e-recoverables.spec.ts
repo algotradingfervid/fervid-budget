@@ -20,12 +20,14 @@ import { asRole, probeGet, probePost, probeAnonymous, expectOutcome } from './au
  * permission matrix (R6). Full reasoning and expected results are in
  * docs/qa/test-cases/TC-E-recoverables.md — this file is the executable half.
  *
- * F-E-01 (critical, see docs/qa/results/findings-e-recoverables.md): no
- * recoverable request raised through the real screens can ever be settled,
- * because the recoverable fieldset never collects a head and the payment
- * form's hidden head_id defaults to 0, which validatePayment refuses. TC-E-030
- * proves this with test.fail(); TC-E-031 and TC-E-042 are test.fixme() because
- * their precondition (a *paid* recoverable) cannot be reached while it stands.
+ * F-E-01 (critical, see docs/qa/results/findings-e-recoverables.md) is FIXED. It
+ * held that no recoverable request raised through the real screens could ever be
+ * settled: the recoverable fieldset collects no head, the payment form's hidden
+ * head_id therefore defaults to 0, and `validatePayment` refused it. Migration v8
+ * made `payments.head_id` nullable and `validatePayment` now demands a head only
+ * for a budget-treatment payment, so a recoverable settles with head_id NULL.
+ * TC-E-030 is the regression guard for that, and TC-E-031 / TC-E-042 — which were
+ * test.fixme() because a *paid* recoverable was unreachable — run again.
  */
 
 // ---------------------------------------------------------------------------
@@ -833,21 +835,21 @@ test.describe('TC-E — Recoverables', () => {
     });
   }
 
-  test('TC-E-030 — [F-E-01, critical] A recoverable request raised through the real screens can be reserved, paid and closed', async ({
+  test('TC-E-030 — A recoverable request raised through the real screens can be reserved, paid and closed, in every category', async ({
     adminPage,
     browser,
     runId
   }) => {
-    test.fail(
-      true,
-      'F-E-01: the recoverable fieldset never collects a head (templates.go:1731-1781) for ANY of its six ' +
-        'categories, so payments/new leaves the hidden head_id at 0 (linking.go:242-244) and validatePayment ' +
-        'refuses it (store.go:1620-1623) — every settlement of a real-UI recoverable request fails with 400 ' +
-        '"valid head, date, and positive amount are required", regardless of whether the category requires a ' +
-        'project (EMD/PBG), a counterparty (ICD/Security deposit) or neither (Employee advance/Other). ' +
-        'This assertion documents the CORRECT behaviour (every category settles like any other request) and is ' +
-        'expected to fail until F-E-01 is fixed.'
-    );
+    // Regression guard for F-E-01. The recoverable fieldset still collects no head
+    // — none of its categories has one to collect — so payments/new still leaves
+    // the hidden head_id at 0. The fix is in the data model: migration v8 made
+    // `payments.head_id` nullable and `validatePayment` now requires a head only
+    // for a budget-treatment payment (store.go:1741), so a headless recoverable
+    // settlement is written with head_id NULL instead of being refused. All five
+    // categories are driven — one that requires a project (EMD), two that require
+    // a counterparty (ICD, Security deposit) and two that require neither
+    // (Employee advance, Other) — because the whole finding was that the category
+    // decided whether approved money could be paid at all.
     const approver = await createApproverUser(adminPage, runId);
     const cases: Array<{ category: RecoverableFormOpts['category']; opts: Partial<RecoverableFormOpts> }> = [
       { category: 'emd', opts: { projectLabel: 'Operations' } },
@@ -877,14 +879,15 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test.fixme(
-    'TC-E-031 — [blocked by F-E-01] Grid/report stay unchanged after a genuinely paid recoverable',
+  test(
+    'TC-E-031 — Grid/report stay unchanged after a genuinely paid recoverable',
     async ({ adminPage, browser, runId }) => {
-      // Cannot run: F-E-01 means no recoverable request raised through the product can ever
-      // be settled, so there is no way to reach the "a recoverable payment exists" state this
-      // test needs. Store-level proof of the exclusion logic itself:
-      // internal/store/recoverables_test.go:470 TestGridAndReportExcludeRecoverablePayments,
-      // internal/store/recoverables_test.go:516 TestRecoverablePaymentExcludedFromActualsButInRecoverableReport.
+      // Was test.fixme() while F-E-01 stood: no recoverable request raised through
+      // the product could be settled, so the "a recoverable payment exists" state
+      // this test needs was unreachable. It is reachable now, so the exclusion is
+      // proved end to end rather than only at store level
+      // (internal/store/recoverables_test.go:470 TestGridAndReportExcludeRecoverablePayments,
+      // :516 TestRecoverablePaymentExcludedFromActualsButInRecoverableReport).
       const month = currentMonth();
       const before = await gridActualForHead(adminPage, month, HEAD);
       const approver = await createApproverUser(adminPage, runId);
@@ -1091,8 +1094,9 @@ test.describe('TC-E — Recoverables', () => {
   // Section 5 — Close on payment (V7)
   // -------------------------------------------------------------------------
 
-  test.fixme('TC-E-042 — [blocked by F-E-01] Category and expected-return survive settlement', async ({ adminPage, browser, runId }) => {
-    // Cannot run: settling any real-UI recoverable request fails (F-E-01). Store-level proof:
+  test('TC-E-042 — Category and expected-return survive settlement', async ({ adminPage, browser, runId }) => {
+    // Was test.fixme() while F-E-01 stood, because settling any real-UI recoverable
+    // request failed. Store-level proof of the same property:
     // internal/store/recoverables_test.go:793 TestRecoverableRequestClosesOnPaymentRetainingClassification.
     const approver = await createApproverUser(adminPage, runId);
     const { id } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {

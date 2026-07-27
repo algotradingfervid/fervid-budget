@@ -694,10 +694,15 @@ it.describe('B · the required, forced and optional matrix', () => {
     await expect(world.requester.page.locator('.rh-amt')).toHaveText('₹99,99,99,99,999.00');
   });
 
-  // F-B-01: on this platform the float-to-int64 conversion saturates instead of
-  // wrapping, so ParsePaise returns a positive int64 max and its own
-  // "non-positive amounts are rejected" guard never fires.
-  it.fail('TC-B-018 — an amount whose paise overflow int64 is refused', async ({ world }) => {
+  // Regression guard for F-B-01. Go's float-to-int64 conversion saturates rather
+  // than wrapping, so an amount whose paise exceed int64 used to arrive as a
+  // positive MaxInt64 — a different number from the one submitted — and
+  // ParsePaise's own "non-positive amounts are rejected" guard never fired.
+  // money.ParsePaise now checks the rounded paise against float64(MaxInt64)
+  // BEFORE the conversion (internal/money/money.go:36-39), so an overflowing
+  // amount is the requester's error, reported with a sentence, and never a
+  // silently substituted figure.
+  it('TC-B-018 — an amount whose paise overflow int64 is refused', async ({ world }) => {
     const probe = await raise(world.requester.page, validBody(world, 'vendor_invoice', { amount: '1e300' }));
     expectRefused(probe, 'enter the amount you are requesting', 'int64 overflow');
   });
@@ -1322,10 +1327,12 @@ it.describe('D · the vendor control', () => {
     await expect(world.requester.page.locator('.dl')).not.toContainText('Some Other Company');
   });
 
-  // F-B-06: needsVendor only checks VendorID > 0, so a forged id reaches the
-  // INSERT and the foreign-key error arrives at classify() (store.go:1712),
-  // which maps only UNIQUE — everything else falls through to a 500.
-  it.fail('TC-B-058 — a vendor_id naming no vendor is refused, not answered with a server error', async ({
+  // Regression guard for F-B-06. needsVendor only checks VendorID > 0, so a
+  // forged id still reaches the INSERT and `PRAGMA foreign_keys=ON` still refuses
+  // it — but `classify` (internal/store/store.go:1856) now recognises a FOREIGN
+  // KEY violation and returns ErrValidation, so the requester meets a 400 they
+  // can act on instead of a 500. The driver text stays out of the page.
+  it('TC-B-058 — a vendor_id naming no vendor is refused, not answered with a server error', async ({
     world
   }) => {
     const probe = await raise(
@@ -1431,9 +1438,12 @@ it.describe('D · the vendor control', () => {
     }
   });
 
-  // F-B-06, the other three columns: manager_id, project_id and head_id reach
-  // the INSERT unchecked exactly as vendor_id does (TC-B-058).
-  it.fail('TC-B-095 — a forged manager, project or head id is refused, not answered with a server error', async ({
+  // The same regression guard as TC-B-058, over the other three columns:
+  // manager_id, project_id and head_id reach the INSERT unchecked exactly as
+  // vendor_id does, so every one of them is a forgeable foreign key and every one
+  // of them must answer 400 rather than 500 now that `classify` maps a FOREIGN KEY
+  // violation to ErrValidation (F-B-06).
+  it('TC-B-095 — a forged manager, project or head id is refused, not answered with a server error', async ({
     world
   }) => {
     for (const field of ['manager_id', 'project_id', 'head_id'] as const) {
@@ -2084,17 +2094,32 @@ it.describe('I · documents', () => {
     let download = '';
     try {
       const { id } = await createApprovedRequest(adminPage, runId, { amount: '5000' });
-      const paymentPath = await settlePayment(accounts.page, id, { amount: '5000', paidOn: '2026-07-20' });
-      const token = await csrfToken(accounts.context);
-      const upload = await accounts.page.request.post(`${paymentPath}/attachments`, {
+      // The bank advice rides inside the settlement's own multipart POST.
+      // F-D-08's fix makes a post-hoc POST /payments/{id}/attachments a 400 on a
+      // linked payment (internal/store/store.go:1403-1405), so the only way a
+      // settled payment ever carries proof is `RecordPaymentForRequest`'s
+      // `attachment` part, written in the settlement's own transaction — the same
+      // mechanism `fixtures.settlePayment`'s `attachment` option drives through
+      // the screen. head_id is not sent: F-D-01 derives it from the request.
+      const reserved = await probePost(accounts.page, `/requests/${id}/record-payment`, {});
+      expect(reserved.status, 'the accountant takes the request out of the queue first').toBe(303);
+      const settled = await accounts.page.request.post('/payments', {
         multipart: {
-          csrf: token,
+          csrf: await csrfToken(accounts.context),
+          request_id: String(id),
+          amount: '5000',
+          paid_on: '2026-07-20',
+          payment_mode: 'bank_transfer',
+          reference_no: `UTR-B85-${runId}`,
+          settlement: 'settled',
           attachment: { name: 'bank-advice.pdf', mimeType: 'application/pdf', buffer: samplePdf.buffer }
         },
         maxRedirects: 0,
         failOnStatusCode: false
       });
-      expect(upload.status(), 'the fixture upload must land').toBeLessThan(400);
+      expect(settled.status(), 'the fixture settlement carrying its proof must land').toBe(303);
+      const paymentPath = settled.headers()['location'] ?? '';
+      expect(paymentPath, 'and it lands on the payment it wrote').toMatch(/^\/payments\/\d+$/);
 
       await accounts.page.goto(paymentPath);
       download =

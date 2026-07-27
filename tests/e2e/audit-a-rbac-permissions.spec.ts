@@ -1549,62 +1549,81 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     }
   });
 
-  test('TC-A-123 — a Requester can attach a file to a stranger’s payment', async () => {
-    // POST /payments/{id}/attachments checks attachment:create and nothing else
-    // (app.go:861-879); AddAttachment checks existence, not-voided and
-    // month-unlocked, never who is asking (store/store.go). A Requester holds
-    // attachment:create. F-A-03.
-    const req = W.callers['C-req'];
+  test('TC-A-123 — nobody may plant a file on a linked payment, whatever they hold', async () => {
+    // THIS CASE CHANGED SUBJECT, and the change is itself a finding.
+    //
+    // It was written for F-A-03: POST /payments/{id}/attachments checks
+    // attachment:create and nothing else (app.go:861-879), and a Requester holds
+    // attachment:create, so a stranger could append to the evidence on a payment
+    // whose request they cannot even read. `attachmentUpload` STILL asks nothing
+    // about ownership — F-A-03's own fix is not in yet — but F-D-08's fix took the
+    // route away from every payment this product can create. `store.AddAttachment`
+    // refuses a payment whose request_id is set (store/store.go:1403-1405), and
+    // `paymentCreate` refuses a payment without a request (app.go:690-694), so
+    // every payment is linked and this route is a 400 for all callers. The
+    // ownership hole is unreachable rather than closed: the day a free-standing
+    // payment becomes creatable again, F-A-03 comes back with it.
+    //
+    // What the case protects now: the refusal, from the whole range of callers,
+    // and the proof list staying exactly as the settlement left it.
     const before = await W.a2.page.request.get(new URL(`/payments/${W.payId}`, W.baseURL).toString());
-    const beforeCount = ((await before.text()).match(/href="\/attachments\/\d+"/g) ?? []).length;
+    const beforeBody = await before.text();
+    const beforeCount = (beforeBody.match(/href="\/attachments\/\d+"/g) ?? []).length;
+    expect(beforeCount, 'the settlement wrote its own bank advice and nothing else').toBe(1);
 
-    const token = await csrfToken(req.context);
-    const response = await req.page.request.post(
-      new URL(`/payments/${W.payId}/attachments`, W.baseURL).toString(),
-      {
-        multipart: {
-          csrf: token,
-          attachment: {
-            name: `planted-by-requester-${W.runId}.txt`,
-            mimeType: 'text/plain',
-            buffer: Buffer.from('a requester wrote this onto somebody else’s payment')
-          }
-        },
-        maxRedirects: 0,
-        failOnStatusCode: false
-      }
-    );
-    expect(
-      response.status(),
-      'observed: the upload is accepted on a payment for a request the caller cannot even read — F-A-03'
-    ).toBe(303);
+    // Three callers who all hold attachment:create: the stranger F-A-03 was about,
+    // the accountant who entered the payment, and an administrator. The gate opens
+    // for each of them and the store refuses each of them.
+    const planters: Array<[string, Session]> = [
+      ['a Requester who cannot even read the request', W.callers['C-req']],
+      ['the Accounts caller whose role entered it', W.a2],
+      ['an administrator holding every grant', W.callers['C-adm']]
+    ];
+    for (const [who, session] of planters) {
+      const token = await csrfToken(session.context);
+      const response = await session.page.request.post(
+        new URL(`/payments/${W.payId}/attachments`, W.baseURL).toString(),
+        {
+          multipart: {
+            csrf: token,
+            attachment: {
+              name: `planted-${W.runId}.txt`,
+              mimeType: 'text/plain',
+              buffer: Buffer.from('an attempt to append to a settled payment’s evidence')
+            }
+          },
+          maxRedirects: 0,
+          failOnStatusCode: false
+        }
+      );
+      expect(
+        response.status(),
+        `${who}: a linked payment is the request's outcome and takes no new document — got ${response.status()}`
+      ).toBe(400);
+      expect(
+        (await response.text()).includes('a payment linked to a request cannot receive a new attachment'),
+        `${who}: and the refusal names the rule rather than blaming the file`
+      ).toBe(true);
+    }
 
-    // Reproduced a second way: the file is really on the payment, visible to the
-    // accountant who owns it.
+    // Reproduced a second way: the evidence on the payment is untouched.
     await W.a2.page.goto(`/payments/${W.payId}`);
     await expect(
-      W.a2.page.getByText(`planted-by-requester-${W.runId}.txt`).first(),
-      'and the planted document is rendered as proof on that payment'
-    ).toBeVisible();
+      W.a2.page.getByText(`planted-${W.runId}.txt`),
+      'no attempt left a trace on the payment'
+    ).toHaveCount(0);
     const after = await W.a2.page.request.get(new URL(`/payments/${W.payId}`, W.baseURL).toString());
-    const afterBody = await after.text();
-    const afterCount = (afterBody.match(/href="\/attachments\/\d+"/g) ?? []).length;
-    expect(afterCount, 'the proof list grew by exactly the planted file').toBe(beforeCount + 1);
-    // The audit trail attributes it to the Requester, which is the whole problem:
-    // the proof on a payment is only as trustworthy as who may add to it.
-    expect(
-      afterBody.includes(req.subject.name),
-      'and the trail names the Requester as the person who added it'
-    ).toBe(true);
-    // And the payment it was written onto is the *immutable* kind: S12 means even
-    // the accountant who entered it cannot change it, yet a stranger may append
-    // to its evidence.
+    const afterCount = ((await after.text()).match(/href="\/attachments\/\d+"/g) ?? []).length;
+    expect(afterCount, 'the proof list is exactly as the settlement left it').toBe(beforeCount);
+
+    // And this is the same answer S12 already gave to an edit, which is the point:
+    // a payment the screen calls read-only refuses every kind of change alike.
     const edit = await probePost(W.callers['C-acc'].page, `/payments/${W.payId}/edit`, {
       amount: '1.00', paid_on: W.today, head_id: W.headId, payment_mode: 'bank_transfer'
     });
     expect(
       edit.status,
-      'a linked payment refuses an edit from the accountant who entered it (S12), while accepting a file from anyone'
+      'a linked payment refuses an edit exactly as firmly as it now refuses a new document (S12)'
     ).toBe(400);
   });
 
@@ -1779,21 +1798,34 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   for (const id of [world.tProc, world.tPaid, world.tPartial]) {
     await expectStatus(probePost(a2.page, `/requests/${id}/record-payment`, {}), 303, `reserving request ${id}`);
   }
-  const paid = await expectStatus(probePost(a2.page, '/payments', {
+  // The settled payment is born carrying its bank advice — the object F-A-01 is
+  // about. The document rides inside the settlement's own multipart POST, which
+  // `RecordPaymentForRequest` writes in the same transaction as the payment
+  // (internal/store/store.go:1011-1015).
+  //
+  // It cannot be added afterwards. This fixture used to POST
+  // /payments/{id}/attachments once the payment existed; F-D-08's fix makes that
+  // request a 400, because `store.AddAttachment` now refuses a payment whose
+  // request_id is set (:1403-1405), joining edit and void in treating a linked
+  // payment as the request's immutable outcome. That behaviour is correct — see
+  // TC-A-123 and audit-d's TC-D-095 — so the fixture changed, not the product.
+  // `fixtures.settlePayment` offers the same `attachment` option through the
+  // screen; this is that request hand-rolled, because the world is built over
+  // HTTP rather than through the UI.
+  const advice = `bank-advice-${runId}.txt`;
+  const paid = await expectStatus(settleWithAttachment(a2.page, {
     request_id: String(world.tPaid), amount: '104.00', paid_on: today, head_id: world.headId,
     payment_mode: 'bank_transfer', reference_no: `UTR-${runId}-paid`, settlement: 'settled'
-  }), 303, 'recording the settled payment');
+  }, advice), 303, 'recording the settled payment and its bank advice');
   world.payId = Number(/\/payments\/(\d+)/.exec(paid.location ?? '')?.[1] ?? 0);
   if (!world.payId) throw new Error(`could not read the payment id from ${paid.location}`);
+  world.payAttId = await paymentAttachmentId(a2.page, world.payId, advice);
 
   await expectStatus(probePost(a2.page, '/payments', {
     request_id: String(world.tPartial), amount: '50.00', paid_on: today, head_id: world.headId,
     payment_mode: 'bank_transfer', reference_no: `UTR-${runId}-part`, settlement: 'partial',
     partial_reason: 'Only half was released by the bank.'
   }), 303, 'recording the partial payment');
-
-  // The bank advice on that payment — the object F-A-01 is about.
-  world.payAttId = await uploadPaymentAttachment(a2.page, world.payId, `bank-advice-${runId}.txt`);
 
   // The two requests C-req owns, one of them carrying its own document.
   const cReqManagerId = await managerIdFor(callers['C-req'].page, m2.subject.name);
@@ -1911,24 +1943,51 @@ async function freshReservedRequest(tag: string): Promise<number> {
   return id;
 }
 
-/** Uploads a file onto a payment and returns the new payment_attachments id. */
-async function uploadPaymentAttachment(page: Page, paymentId: number, filename: string): Promise<number> {
-  const token = await csrfToken(page.context());
-  const response = await page.request.post(new URL(`/payments/${paymentId}/attachments`, W.baseURL).toString(), {
+/**
+ * POSTs a settlement as `multipart/form-data`, so the payment's proof is written
+ * by the settlement itself.
+ *
+ * `POST /payments` takes an `attachment` part and hands it to
+ * `RecordPaymentForRequest`, which inserts the `payment_attachments` row inside
+ * the settlement's transaction. Since F-D-08 that is the ONLY way a linked
+ * payment ever acquires a document, so it is the only way this world can plant
+ * the bank advice the F-A-01 probes read.
+ *
+ * `probePost` cannot do this — it sends a URL-encoded body, and
+ * `stageUploadedAttachment` reads a non-multipart request as "no file at all" —
+ * so the Probe is assembled here from the raw response, exactly as
+ * `audit-support.describe` would.
+ */
+async function settleWithAttachment(
+  page: Page,
+  form: Record<string, string>,
+  filename: string
+): Promise<Probe> {
+  const response = await page.request.post(new URL('/payments', W.baseURL).toString(), {
     multipart: {
-      csrf: token,
+      ...form,
+      csrf: await csrfToken(page.context()),
       attachment: { name: filename, mimeType: 'text/plain', buffer: Buffer.from(`advice body ${filename}`) }
     },
     maxRedirects: 0,
     failOnStatusCode: false
   });
-  if (response.status() !== 303) {
-    throw new Error(`uploading ${filename} to payment ${paymentId}: got ${response.status()}`);
-  }
+  const status = response.status();
+  const location = response.headers()['location'] ?? null;
+  const body = status >= 300 && status < 400 ? '' : await response.text().catch(() => '');
+  return { status, location, body, outcome: location ? `${status} → ${location}` : String(status) };
+}
+
+/** The `payment_attachments` id of a named document, read off the payment screen. */
+async function paymentAttachmentId(page: Page, paymentId: number, filename: string): Promise<number> {
   await page.goto(`/payments/${paymentId}`);
-  const href = await page.locator(`a[href^="/attachments/"]`).first().getAttribute('href');
+  const href = await page
+    .locator('.file-row', { hasText: filename })
+    .locator('a[href^="/attachments/"]')
+    .first()
+    .getAttribute('href');
   const id = Number(/\/attachments\/(\d+)/.exec(href ?? '')?.[1] ?? 0);
-  if (!id) throw new Error(`could not find the uploaded attachment on payment ${paymentId}`);
+  if (!id) throw new Error(`could not find ${filename} on payment ${paymentId}`);
   return id;
 }
 
