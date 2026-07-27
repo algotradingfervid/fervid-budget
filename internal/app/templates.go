@@ -3080,6 +3080,55 @@ const templates = `
     <button class="btn primary" type="submit">Save configuration</button>
   </div>
 </form>
+
+{{/* Recoverable categories (Phase 4, D6). This fieldset sits OUTSIDE the
+     settings form on purpose: its rows each need their own POST, and a <form>
+     nested inside another <form> is invalid HTML that the parser silently
+     drops — the row toggles would post nothing at all. A bare fieldset outside
+     a form is valid, and it reads as one more section of the same screen.
+
+     "Requires" is one derived descriptive column, never the two raw flags: an
+     admin should be told what a category asks for, not asked to reason about
+     two booleans. */}}
+<fieldset>
+  <legend>Recoverable categories</legend>
+  <div class="table-wrap" style="margin-bottom:10px"><table class="t-cards">
+    <thead><tr><th>Category</th><th>Requires</th><th class="c">Active</th><th class="c">In use</th></tr></thead>
+    <tbody>{{range .CategoryUsage}}<tr>
+      <td class="t-lead" data-label="Category">{{.Name}}</td>
+      <td data-label="Requires">{{.Requires}}</td>
+      <td class="c" data-label="Active">{{if $.Perms.Can "recoverable_category" "edit"}}
+        <form id="rc-{{.ID}}" method="post" action="/configuration/recoverable-categories">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <input type="hidden" name="name" value="{{.Name}}">
+          <input type="hidden" name="requires" value="{{requiresKey .RecoverableCategory}}">
+          <input type="hidden" name="sort_order" value="{{.SortOrder}}">
+          <label class="checkline"><input type="checkbox" name="active" {{check .Active}} onchange="this.form.submit()"> <span class="sr-only">Active</span></label>
+          <noscript><button class="btn small outline" type="submit">Save</button></noscript>
+        </form>
+      {{else}}{{if .Active}}<span class="pill good no-dot">On</span>{{else}}<span class="pill neutral no-dot">Off</span>{{end}}{{end}}</td>
+      <td class="c" data-label="In use">{{.InUse}}</td>
+    </tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No recoverable categories yet.</td></tr>{{end}}</tbody>
+  </table></div>
+  {{if .Perms.Can "recoverable_category" "edit"}}
+  <form method="post" action="/configuration/recoverable-categories">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="active" value="on">
+    <div class="form-grid">
+      <div class="field span-5"><label for="nc-name">New category</label><input id="nc-name" name="name" placeholder="e.g. Retention deposit" required></div>
+      <div class="field span-4 m-half"><label for="nc-req">Must also capture</label><select id="nc-req" name="requires">
+        <option value="none">Nothing extra</option>
+        <option value="project">Related project</option>
+        <option value="counterparty">Counterparty company</option>
+        <option value="both">Related project and counterparty company</option>
+      </select></div>
+      <div class="field span-3 m-half" style="align-self:end"><button class="btn" type="submit">Add category</button></div>
+    </div>
+  </form>
+  {{end}}
+  <p class="hint" style="margin:10px 0 0">All recoverables always capture the counterparty, the reason, an expected return date and the refund terms. These rules only add what the category needs on top. An employee advance fills the counterparty in from the requester automatically — that is a request-type rule, not a category setting.</p>
+</fieldset>
 {{template "bottom" .}}
 {{end}}
 

@@ -237,6 +237,20 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 			}
 			return *p
 		},
+		// requiresKey round-trips a category row through the hidden "requires"
+		// field, so the flags→key mapping is not re-derived in HTML.
+		"requiresKey": func(c store.RecoverableCategory) string {
+			switch {
+			case c.RequiresProject && c.RequiresCounterparty:
+				return "both"
+			case c.RequiresProject:
+				return "project"
+			case c.RequiresCounterparty:
+				return "counterparty"
+			default:
+				return "none"
+			}
+		},
 		"pillClass":    pillClass,
 		"reqStatus":    requestStatusText,
 		"typeLabel":    typeLabel,
@@ -469,6 +483,9 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /roles/{id}/delete", a.auth.RequirePermission("role", "delete", http.HandlerFunc(a.withCSRF(a.roleDelete))))
 	mux.Handle("GET /configuration", a.auth.RequirePermission("config", "view", http.HandlerFunc(a.configuration)))
 	mux.Handle("POST /configuration", a.auth.RequirePermission("config", "edit", http.HandlerFunc(a.withCSRF(a.configurationSave))))
+	// The screen is gated on config{view}; the category mutation keeps its own
+	// Phase-1 verb, which is what the store audits against.
+	mux.Handle("POST /configuration/recoverable-categories", a.auth.RequirePermission("recoverable_category", "edit", http.HandlerFunc(a.withCSRF(a.recoverableCategorySave))))
 	mux.Handle("GET /audit", a.auth.RequirePermission("audit", "view", http.HandlerFunc(a.auditLog)))
 	mux.Handle("GET /backups", a.auth.RequirePermission("backup", "view", http.HandlerFunc(a.backups)))
 	mux.Handle("POST /backups", a.auth.RequirePermission("backup", "create", http.HandlerFunc(a.withCSRF(a.backupCreate))))

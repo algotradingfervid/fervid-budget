@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"fervidbudget/internal/auth"
@@ -79,7 +80,47 @@ func (a *App) configuration(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.render(w, r, "configuration", PageData{Title: "Configuration", Config: settings})
+	// Recoverable categories are rows, not app_settings scalars, so they cannot
+	// be a ConfigSection. They are loaded alongside and rendered by their own
+	// fieldset with its own sub-form (D6).
+	catUsage, err := a.st.ListRecoverableCategoriesWithUsage(r.Context())
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "configuration", PageData{Title: "Configuration", Config: settings, CategoryUsage: catUsage})
+}
+
+// recoverableCategorySave persists one row of the Configuration screen's
+// Recoverable categories fieldset.
+//
+// It is a sub-form rather than part of the main Save because the main form
+// writes scalar app_settings: adding one category must not require re-posting
+// every other fieldset. The form carries a single "requires" select rather than
+// two raw booleans (D6), and this is the only place that mapping exists.
+func (a *App) recoverableCategorySave(w http.ResponseWriter, r *http.Request) {
+	var requiresProject, requiresCounterparty bool
+	switch r.FormValue("requires") {
+	case "project":
+		requiresProject = true
+	case "counterparty":
+		requiresCounterparty = true
+	case "both":
+		requiresProject, requiresCounterparty = true, true
+	case "none", "":
+		// nothing extra
+	default:
+		a.respondError(w, r, http.StatusBadRequest, "That category requirement is not recognised.", nil)
+		return
+	}
+	sortOrder, _ := strconv.Atoi(r.FormValue("sort_order"))
+	_, err := a.st.UpsertRecoverableCategory(r.Context(), auth.CurrentUser(r), parseID(r.FormValue("id")),
+		r.FormValue("name"), requiresProject, requiresCounterparty, r.FormValue("active") == "on", sortOrder)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/configuration", http.StatusSeeOther)
 }
 
 // configurationSave writes only the keys a registered ConfigField declares, so

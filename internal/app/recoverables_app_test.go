@@ -229,6 +229,85 @@ func TestRecoverableListCSVRouteBeatsDetailWildcard(t *testing.T) {
 	}
 }
 
+func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) { // D6, V4
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Recoverable")
+	seedRecoverable(t, s, headID, "PR-2026-000701", "emd", "Ridge Metro tender authority", "2026-11-30", "", 200000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	for _, want := range []string{"Recoverable categories", "EMD", "ICD", "Related project", "Counterparty company", "Nothing extra"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("configuration screen missing %q", want)
+		}
+	}
+	// One descriptive Requires column, never the raw flags.
+	for _, forbidden := range []string{`name="requires_project"`, `name="requires_counterparty"`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("configuration must not expose the raw flag input %s (D6)", forbidden)
+		}
+	}
+	// The "In use" count is rendered from the store, not guessed.
+	if !strings.Contains(body, `data-label="In use"`) {
+		t.Fatal("configuration fieldset must render an In use column")
+	}
+	if !strings.Contains(body, ">1<") {
+		t.Fatal("the seeded EMD recoverable should show an In use count of 1")
+	}
+	assertTCardsLabelled(t, body)
+
+	form := url.Values{"name": {"Retention money"}, "requires": {"project"}, "active": {"on"}, "sort_order": {"7"}}
+	resp := s.postForm("/configuration/recoverable-categories", form)
+	requireStatus(t, resp, http.StatusSeeOther)
+	if loc := resp.Header.Get("Location"); loc != "/configuration" {
+		t.Fatalf("save redirect = %q, want /configuration", loc)
+	}
+	_ = responseBody(t, resp)
+	cats, err := s.st.ListRecoverableCategories(s.ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, c := range cats {
+		if c.Name == "Retention money" && c.RequiresProject && !c.RequiresCounterparty {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("new recoverable category was not persisted with the flags implied by requires=project")
+	}
+}
+
+func TestStandaloneRecoverableCategoriesScreenIsGone(t *testing.T) { // D6 proof of absence
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp := s.request(http.MethodGet, "/recoverable-categories", nil, "")
+	requireStatus(t, resp, http.StatusNotFound)
+	_ = responseBody(t, resp)
+	// 404 or 405 — see the note in TestNoRecoverableRepaymentTracking.
+	post := s.postForm("/recoverable-categories", url.Values{"name": {"Nope"}})
+	if post.StatusCode != http.StatusNotFound && post.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /recoverable-categories = %d, want 404/405 (categories live on /configuration)", post.StatusCode)
+	}
+	_ = responseBody(t, post)
+}
+
+func TestRecoverableCategorySaveRequiresPermission(t *testing.T) {
+	s := newAppTestServer(t)
+	hash, err := auth.HashPassword("EntryPassword123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.CreateUser(s.ctx, "accounts2@example.test", "Accounts User", hash, "data_entry", true); err != nil {
+		t.Fatal(err)
+	}
+	s.login("accounts2@example.test", "EntryPassword123")
+	// Accounts holds no recoverable_category permission → 403 by URL
+	resp := s.postForm("/configuration/recoverable-categories", url.Values{"name": {"Nope"}})
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+}
+
 func TestNoRecoverableRepaymentTracking(t *testing.T) { // X2
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)

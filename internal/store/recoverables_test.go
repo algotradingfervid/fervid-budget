@@ -786,3 +786,59 @@ func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
 		t.Fatalf("unknown rollup dimension = %v, want ErrValidation", err)
 	}
 }
+
+// V7: settling a recoverable closes the request but must not quietly turn it
+// into an ordinary expense. The classification and the return information are
+// what keep it in the register after it closes.
+func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	var catID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='emd'`).Scan(&catID); err != nil {
+		t.Fatal(err)
+	}
+	// An approved + reserved (processing) recoverable request, ready to settle.
+	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
+		(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,head_id,amount,purpose,
+		 expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,processing_by,processing_at,submitted_at)
+		VALUES('PR-2026-000031','processing','recoverable','recoverable','emd',?,?,?,?, 'Tender EMD','2027-06-30','Refund on award',?,?,?,?,CURRENT_TIMESTAMP,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		catID, nil, headID, 500000, actor.ID, actor.ID, 500000, actor.ID, actor.ID)
+	if err != nil {
+		t.Fatalf("seed processing request: %v", err)
+	}
+	reqID, _ := res.LastInsertId()
+
+	if _, err := s.RecordPaymentForRequest(ctx, actor, reqID,
+		PaymentInput{HeadID: headID, PaidOn: "2026-08-20", Amount: 500000, VendorPayee: "State PWD"}, "settled", "", nil); err != nil {
+		t.Fatalf("RecordPaymentForRequest: %v", err)
+	}
+
+	var status, treatment, expReturn, notes string
+	var gotCat int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT status,treatment,COALESCE(expected_return_date,''),repayment_notes,recoverable_category_id FROM payment_requests WHERE id=?`, reqID).
+		Scan(&status, &treatment, &expReturn, &notes, &gotCat); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" {
+		t.Fatalf("status = %q, want completed", status)
+	}
+	if treatment != "recoverable" || gotCat != catID || expReturn != "2027-06-30" || notes != "Refund on award" {
+		t.Fatalf("recoverable classification not retained: treatment=%s cat=%d return=%s notes=%s", treatment, gotCat, expReturn, notes)
+	}
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-08", To: "2026-08"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec) != 1 || rec[0].Status != "completed" || rec[0].Amount != 500000 {
+		t.Fatalf("recoverable report after settle = %+v", rec)
+	}
+	// And the money it moved is still not budget spend.
+	grid, err := s.Grid(ctx, "2026-08", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grid.Total.Actual != 0 {
+		t.Fatalf("settled recoverable counted as actuals: %d", grid.Total.Actual)
+	}
+}
