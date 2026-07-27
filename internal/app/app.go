@@ -22,6 +22,7 @@ import (
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/config"
 	"fervidbudget/internal/money"
+	"fervidbudget/internal/notify"
 	"fervidbudget/internal/store"
 )
 
@@ -31,6 +32,11 @@ type App struct {
 	auth *auth.Manager
 	tpl  *template.Template
 	log  *slog.Logger
+	// notify turns workflow events into in-app rows and email; mailer is the
+	// transport it uses, kept separately so the rules screen can send a test
+	// message without inventing an event.
+	notify *notify.Service
+	mailer notify.Mailer
 }
 
 type PageData struct {
@@ -194,6 +200,8 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		return nil, err
 	}
 	a := &App{cfg: cfg, st: st, auth: am, log: slog.Default()}
+	a.mailer = notify.NewSMTPMailer(st, cfg.SMTPPassword)
+	a.notify = notify.NewService(st, a.mailer)
 	am.SetErrorHandler(func(w http.ResponseWriter, r *http.Request, status int, message string) {
 		a.respondError(w, r, status, message, nil)
 	})
@@ -403,6 +411,13 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /notifications", a.auth.RequireLogin(http.HandlerFunc(a.notificationCentre)))
 	mux.Handle("POST /notifications/read", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.notificationsMarkAllRead))))
 	mux.Handle("POST /notifications/{id}/read", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.notificationMarkRead))))
+
+	// The admin rule editor (D7). A different screen from the centre above, with
+	// a different audience, so it is the one behind a permission verb.
+	mux.Handle("GET /admin/notifications", a.auth.RequirePermission("notification", "view", http.HandlerFunc(a.adminNotifications)))
+	mux.Handle("POST /admin/notifications/smtp", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationsSMTP))))
+	mux.Handle("POST /admin/notifications/events/{event}", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationEventSave))))
+	mux.Handle("POST /admin/notifications/test", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationsTest))))
 	mux.Handle("GET /budgets", a.auth.RequirePermission("budget", "view", http.HandlerFunc(a.budgets)))
 	mux.Handle("POST /budgets", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.withCSRF(a.budgetSave))))
 	mux.Handle("POST /months/{month}/lock", a.auth.RequirePermission("month", "lock", http.HandlerFunc(a.withCSRF(a.lockMonth))))
@@ -701,6 +716,14 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		a.settlementError(w, r, linkedID, in, r.FormValue("amount"), settlement, partialReason, err)
 		return
+	}
+	// A settled payment closes the request; a partial one asks the approver to
+	// accept the shortfall. They are different events because they ask
+	// different people for different things.
+	if settlement == "settled" {
+		a.fire(r, notify.EventPaymentSettled, linkedID)
+	} else {
+		a.fire(r, notify.EventPaymentPartialReview, linkedID)
 	}
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", payID), http.StatusSeeOther)
 }

@@ -3246,6 +3246,101 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* Admin notification rules — mockups/screens/admin-notifications.html.
+
+     In-app delivery is a static "On" pill, not a control: it always fires, and
+     a switch that did nothing would be a lie. Email is the only inline toggle.
+     Everything else — the include flags, fixed To/CC, subject and message —
+     lives in a per-row .overlay > .sheet editor.
+
+     There is no password field anywhere on this screen by design; the SMTP
+     password comes from the environment and is never stored. */}}
+{{define "admin_notifications"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Administration</div>
+    <h1>Notification rules</h1>
+    <p class="sub">Who is told what, and how. In-app notifications always fire; email is opt-in per event.</p>
+  </div>
+</section>
+
+{{if .Error}}<div class="banner warn"><span class="b-ico" aria-hidden="true">⚠</span><div><b>That did not save</b><p>{{.Error}}</p></div></div>{{end}}
+{{if .Notice}}<div class="banner brand"><span class="b-ico" aria-hidden="true">✓</span><div><b>Done</b><p>{{.Notice}}</p></div></div>{{end}}
+
+<fieldset>
+  <legend>Email delivery</legend>
+  <form method="post" action="/admin/notifications/smtp">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="form-grid">
+      <div class="field span-6"><label for="smtp_host">SMTP host</label><input id="smtp_host" name="smtp_host" value="{{.MailCfg.SMTPHost}}" placeholder="smtp.example.com"></div>
+      <div class="field span-2 m-half"><label for="smtp_port">Port</label><input id="smtp_port" name="smtp_port" type="number" inputmode="numeric" value="{{.MailCfg.SMTPPort}}"></div>
+      <div class="field span-4 m-half"><label for="smtp_username">Username</label><input id="smtp_username" name="smtp_username" value="{{.MailCfg.SMTPUsername}}"></div>
+      <div class="field span-4 m-half"><label for="smtp_from_name">From name</label><input id="smtp_from_name" name="smtp_from_name" value="{{.MailCfg.SMTPFromName}}"></div>
+      <div class="field span-4 m-half"><label for="smtp_from_addr">From address</label><input id="smtp_from_addr" name="smtp_from_addr" value="{{.MailCfg.SMTPFromAddr}}"></div>
+      <div class="field span-4 m-half"><label for="base_url">Base URL for links</label><input id="base_url" name="base_url" value="{{.MailCfg.BaseURL}}" placeholder="https://budget.example.com"></div>
+      <div class="field span-12"><label for="management_recipients">Management copy list</label><input id="management_recipients" name="management_recipients" value="{{.MailCfg.ManagementRecipients}}" placeholder="one@example.com, two@example.com">
+        <span class="hint">Copied on approvals and on urgent requests once they are approved.</span></div>
+    </div>
+    <p class="hint" style="margin:10px 0 0">The SMTP password is read from the <b>FERVID_SMTP_PASSWORD</b> environment variable and is never stored in the database. There is deliberately no field for it here.</p>
+    <div class="row-end"></div>
+    <div class="stack-8" style="margin-top:10px"><button class="btn primary" type="submit">Save email settings</button></div>
+  </form>
+  <form method="post" action="/admin/notifications/test" style="margin-top:10px">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="form-grid">
+      <div class="field span-8"><label for="test_to">Send a test email to</label><input id="test_to" name="test_to" value="{{.User.Email}}"></div>
+      <div class="field span-4 m-half" style="align-self:end"><button class="btn outline" type="submit">Send a test email</button></div>
+    </div>
+  </form>
+</fieldset>
+
+<div class="table-wrap"><table class="t-cards">
+  <thead><tr><th>Event</th><th class="c">In-app</th><th class="c">Email</th><th>Goes to</th><th>Fixed To / CC</th><th class="c">Edit</th></tr></thead>
+  <tbody>{{range .NotifSettings}}<tr>
+    <td class="t-lead" data-label="Event">{{.Label}}<span class="t-sub">{{.Event}}</span></td>
+    <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+    <td class="c" data-label="Email">{{if .EmailEnabled}}<span class="pill good no-dot">On</span>{{else}}<span class="pill neutral no-dot">Off</span>{{end}}</td>
+    <td data-label="Goes to">{{.Audience}}</td>
+    <td data-label="Fixed To / CC">{{if or .ToRecipients .CcRecipients}}{{if .ToRecipients}}{{.ToRecipients}}{{end}}{{if .CcRecipients}} / {{.CcRecipients}}{{end}}{{else}}—{{end}}</td>
+    <td class="c" data-label="Edit">{{if $.Perms.Can "notification" "edit"}}<button class="btn small outline" data-open="ev-{{.Event}}">Edit</button>{{else}}—{{end}}</td>
+  </tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No notification events are configured.</td></tr>{{end}}</tbody>
+</table></div>
+
+{{if .Perms.Can "notification" "edit"}}
+{{range .NotifSettings}}
+<div class="overlay" id="ev-{{.Event}}">
+  <form class="sheet" method="post" action="/admin/notifications/events/{{.Event}}">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="sh-head">
+      <div><b>{{.Label}}</b><span class="sh-sub">{{.Audience}}</span></div>
+      <button class="sh-close" type="button" data-close="ev-{{.Event}}" aria-label="Close">✕</button>
+    </div>
+    <div class="sh-body stack-12">
+      <label class="checkline"><input type="checkbox" name="email_enabled" {{check .EmailEnabled}}> Also send an email for this event</label>
+      <div class="field"><span class="flabel">Who it goes to</span>
+        <label class="checkline"><input type="checkbox" name="include_requester" {{check .IncludeRequester}}> The requester</label>
+        <label class="checkline"><input type="checkbox" name="include_manager" {{check .IncludeManager}}> The approver</label>
+        <label class="checkline"><input type="checkbox" name="include_accounts" {{check .IncludeAccounts}}> The Accounts group</label>
+      </div>
+      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{.ToRecipients}}" placeholder="one@example.com, two@example.com"></div>
+      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{.CcRecipients}}"></div>
+      <div class="field"><label for="sub-{{.Event}}" class="flabel">Subject</label><input id="sub-{{.Event}}" name="subject_template" value="{{.SubjectTemplate}}"></div>
+      <div class="field"><label for="body-{{.Event}}" class="flabel">Message</label><textarea id="body-{{.Event}}" name="body_template" rows="6">{{.BodyTemplate}}</textarea></div>
+      <p class="hint">Available fields: {{range $i, $f := $.NotifFields}}{{if $i}}, {{end}}&#123;&#123;{{$f}}&#125;&#125;{{end}}. Anything else is rejected when you save, so a typo cannot reach an inbox.</p>
+    </div>
+    <div class="sh-foot">
+      <span class="row-end"></span>
+      <button class="btn outline" type="button" data-close="ev-{{.Event}}">Cancel</button>
+      <button class="btn primary" type="submit">Save rule</button>
+    </div>
+  </form>
+</div>
+{{end}}
+{{end}}
+{{template "bottom" .}}
+{{end}}
+
 {{/* The user's notification centre — mockups/screens/notifications.html.
 
      Every row here is already addressed to the signed-in user, so the screen

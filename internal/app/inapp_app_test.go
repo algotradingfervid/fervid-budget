@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
 )
 
 func seedNotification(t *testing.T, s *appTestServer, userID int64, event, kind, title, href string) int64 {
@@ -146,3 +148,168 @@ func TestNotificationCentreRequiresASession(t *testing.T) {
 }
 
 func itoa64(v int64) string { return strconv.FormatInt(v, 10) }
+
+func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D7, G20
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	body := responseBody(t, s.request(http.MethodGet, "/admin/notifications", nil, ""))
+	if !strings.Contains(body, "FERVID_SMTP_PASSWORD") {
+		t.Fatal("the rules screen must document the env-only SMTP password")
+	}
+	if strings.Contains(body, `type="password"`) {
+		t.Fatal("the rules screen must not render a password input")
+	}
+	for _, event := range []string{
+		"request_submitted", "request_edited", "request_returned", "request_rejected",
+		"request_approved", "request_urgent", "request_on_hold", "request_cancellation_requested",
+		"payment_settled", "payment_partial_review", "reminder_pending", "reminder_stale_reservation",
+	} {
+		if !strings.Contains(body, event) {
+			t.Fatalf("rules screen missing event %q", event)
+		}
+	}
+	for _, want := range []string{
+		`class="t-cards"`, `class="pill good no-dot"`, `data-label="In-app"`, `data-label="Goes to"`,
+		`data-label="Fixed To / CC"`, `class="overlay"`, `class="sheet"`, `class="sh-head"`,
+		`class="sh-body stack-12"`, `class="sh-foot"`, `class="checkline"`, `class="hint"`,
+		"Send a test email",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rules screen missing design-system markup %q", want)
+		}
+	}
+	if strings.Contains(body, `class="badge`) {
+		t.Fatal("templates must use .pill, never .badge (D5)")
+	}
+	// require_attachments and the reminder thresholds live on Configuration (D6).
+	for _, gone := range []string{`name="require_attachments"`, `name="reminder_pending_days"`} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("%s belongs to the Configuration screen, not the rules screen", gone)
+		}
+	}
+	assertTCardsLabelled(t, body)
+
+	// Saving a rule round-trips.
+	resp := s.postForm("/admin/notifications/events/request_approved", url.Values{
+		"email_enabled": {"on"}, "include_requester": {"on"}, "to_recipients": {"ops@example.test"},
+		"subject_template": {"{{number}} approved"}, "body_template": {"{{approved_amount}} to {{payee}}"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	got, err := s.st.NotificationSetting(s.ctx, "request_approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.EmailEnabled || !got.IncludeRequester || got.ToRecipients != "ops@example.test" {
+		t.Fatalf("saved rule = %#v", got)
+	}
+
+	// A typo in a template is refused at save time, not stored.
+	resp = s.postForm("/admin/notifications/events/request_approved", url.Values{
+		"subject_template": {"{{nope}}"}, "body_template": {"b"},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	_ = responseBody(t, resp)
+	after, err := s.st.NotificationSetting(s.ctx, "request_approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.SubjectTemplate != "{{number}} approved" {
+		t.Fatalf("a rejected template was stored anyway: %q", after.SubjectTemplate)
+	}
+
+	// SMTP settings save, and no password key is ever written.
+	resp = s.postForm("/admin/notifications/smtp", url.Values{
+		"smtp_host": {"smtp.example.test"}, "smtp_port": {"2525"}, "base_url": {"https://budget.example.test"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	mail, err := s.st.GetMailSettings(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mail.SMTPHost != "smtp.example.test" || mail.SMTPPort != 2525 {
+		t.Fatalf("smtp settings = %#v", mail)
+	}
+}
+
+func TestAdminNotificationsBlocksUnprivileged(t *testing.T) {
+	s := newAppTestServer(t)
+	hash, err := auth.HashPassword("EntryPassword123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.CreateUser(s.ctx, "noadmin@example.test", "No Admin", hash, "data_entry", true); err != nil {
+		t.Fatal(err)
+	}
+	s.login("noadmin@example.test", "EntryPassword123")
+	resp := s.request(http.MethodGet, "/admin/notifications", nil, "")
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+	post := s.postForm("/admin/notifications/events/request_approved", url.Values{"email_enabled": {"on"}})
+	requireStatus(t, post, http.StatusForbidden)
+	_ = responseBody(t, post)
+}
+
+// The hooks are the part most likely to rot: a handler can be refactored and
+// quietly stop notifying anyone. This drives the real approve route and asserts
+// the requester ends up with an in-app row.
+func TestApprovingARequestNotifiesTheRequester(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, headID := s.seedHead("Notify")
+	var projectID int64
+	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPassword("EntryPassword123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requesterID, err := s.st.CreateUser(s.ctx, "rq@example.test", "Rhea", hash, "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester, err := s.st.UserByID(s.ctx, requesterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{
+		Treatment: "budget", Type: "reimbursement", ShortTitle: "Team lunch",
+		ProjectID: projectID, HeadID: headID, Amount: 50000, Purpose: "team lunch",
+		ExpenseDate: "2026-07-21", ManagerID: admin.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The seeded rule addresses the requester; email stays off so this proves
+	// the in-app channel on its own.
+	if err := s.st.SetNotificationSetting(s.ctx, admin, store.NotificationSetting{
+		Event: "request_approved", IncludeRequester: true,
+		SubjectTemplate: "{{number}} approved", BodyTemplate: "{{approved_amount}}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp := s.postForm(fmt.Sprintf("/requests/%d/approve", reqID), url.Values{
+		"approved_amount": {"500.00"}, "note": {"ok"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	rows, err := s.st.ListNotifications(s.ctx, store.NotificationFilter{UserID: requesterID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("requester in-app rows after approval = %d, want 1 — the approve hook is not firing", len(rows))
+	}
+	if !strings.Contains(rows[0].Title, "approved") {
+		t.Fatalf("in-app title = %q", rows[0].Title)
+	}
+}

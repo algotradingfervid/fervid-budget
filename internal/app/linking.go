@@ -11,6 +11,7 @@ import (
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/money"
+	"fervidbudget/internal/notify"
 	"fervidbudget/internal/store"
 )
 
@@ -250,9 +251,9 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 		SelectedHeadID: headID,
 		ReserveMine:    true,
 		Payment: store.Payment{
-			HeadID:      headID,
-			PaidOn:      time.Now().Format("2006-01-02"),
-			Amount:      approvedOf(req),
+			HeadID: headID,
+			PaidOn: time.Now().Format("2006-01-02"),
+			Amount: approvedOf(req),
 			// The display payee, not the snapshot column: a vendor_invoice names
 			// its payee with vendor_id and leaves vendor_payee empty, so the
 			// snapshot would write a payment with nobody to pay.
@@ -699,6 +700,7 @@ func (a *App) requestHold(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	a.fire(r, notify.EventRequestOnHold, req.ID)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 

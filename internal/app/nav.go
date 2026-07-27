@@ -244,9 +244,10 @@ func can(perms store.PermissionSet, resource, action string) bool {
 // screen deletes one line here and the entry lights up in both places at once.
 // TestEveryLinkedNavItemResolves and TestTabBarNeverLinksToAnUnbuiltRoute fail
 // until the line goes, so it cannot be forgotten.
-var unbuiltPrefixes = []string{
-	"/admin/notifications", // Phase 5
-}
+// Every screen the navigation knows about is now built, so this list is empty.
+// It stays because it is the switch a future phase flips: add the prefix while
+// the nav entry exists but the route does not, and delete it when it does.
+var unbuiltPrefixes []string
 
 func routeBuilt(href string) bool {
 	if href == "" || strings.HasPrefix(href, "#") {

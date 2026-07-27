@@ -13,6 +13,7 @@ import (
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/money"
+	"fervidbudget/internal/notify"
 	"fervidbudget/internal/store"
 )
 
@@ -168,6 +169,7 @@ func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
 		a.renderRejectedRequestForm(w, r, status, in, friendly(err))
 		return
 	}
+	a.fire(r, notify.EventRequestSubmitted, id)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d/submitted", id), http.StatusSeeOther)
 }
 
@@ -671,6 +673,7 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 		a.renderRejectedEdit(w, r, req, in, status, friendly(err))
 		return
 	}
+	a.fire(r, notify.EventRequestEdited, req.ID)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
@@ -720,6 +723,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	a.fire(r, notify.EventRequestApproved, pathID(r))
 	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
 }
 
@@ -728,6 +732,7 @@ func (a *App) requestReturn(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	a.fire(r, notify.EventRequestReturned, pathID(r))
 	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
 }
 
@@ -736,6 +741,7 @@ func (a *App) requestReject(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	a.fire(r, notify.EventRequestRejected, pathID(r))
 	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
 }
 
@@ -815,6 +821,7 @@ func (a *App) requestCancelAsk(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	a.fire(r, notify.EventCancellationRequested, id)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
 }
 
