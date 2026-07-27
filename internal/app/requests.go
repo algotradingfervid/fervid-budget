@@ -768,23 +768,15 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		attachment, stagedPath, err = a.stageUploadedAttachment(r)
 	}
-	// Every precondition SubmitRequest will check, checked before UpdateRequest
-	// writes anything (F-G-035/F-C-04). The three calls below are three
-	// transactions, so a resubmit that failed on its own preconditions used to
-	// leave the edit committed *and audited as done* while the requester was shown
-	// a 400 — the history asserting a change the caller had been told did not
-	// happen. Nothing here writes, so a refusal now costs nothing.
-	if err == nil && resubmitting {
-		err = a.canResubmit(r, req, in, attachment != nil)
-	}
+	// One press, one transaction (F-G-035/F-C-04). This used to be three calls in a
+	// row — update, attach, submit — so a resubmit that failed its own preconditions
+	// left the edit committed *and audited as done* while the requester was shown a
+	// 400, the history asserting a change the caller had been told did not happen.
+	// store.EditRequest commits all three or none, and validates the submit against
+	// the edited row rather than the row as it was on entry.
 	if err == nil {
-		err = a.st.UpdateRequest(r.Context(), u, req.ID, in)
-	}
-	if err == nil && attachment != nil {
-		_, err = a.st.AddRequestAttachment(r.Context(), u, req.ID, *attachment)
-	}
-	if err == nil && resubmitting {
-		err = a.st.SubmitRequest(r.Context(), u, req.ID)
+		err = a.st.EditRequest(r.Context(), u, req.ID, store.RequestEdit{
+			Input: in, Attachment: attachment, Resubmit: resubmitting})
 	}
 	if err != nil {
 		removeStagedAttachment(a.log, r, stagedPath)
@@ -810,39 +802,6 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 		a.fire(r, notify.EventRequestEdited, req.ID)
 	}
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
-}
-
-// canResubmit answers "would SubmitRequest refuse this?" without writing.
-//
-// It mirrors store.SubmitRequest's own three checks in the same order and with
-// the same messages: the requester is the actor (loadEditableRequest has already
-// established that), the status has an edge to 'pending', and the attachment
-// policy holds. The attachment count includes the document this POST is carrying,
-// because SubmitRequest would see it too.
-func (a *App) canResubmit(r *http.Request, req store.Request, in store.RequestInput, addingAttachment bool) error {
-	// legalTransitions has no pending→pending edge, so only a returned request
-	// can be sent back. This is the reachable trigger the finding names.
-	if req.Status != "returned" {
-		return fmt.Errorf("%w: a %s request cannot be submitted", store.ErrValidation, req.Status)
-	}
-	required, err := a.st.AppSetting(r.Context(), "require_attachments")
-	if err != nil {
-		return err
-	}
-	if required != "1" {
-		return nil
-	}
-	atts, err := a.st.RequestAttachments(r.Context(), req.ID)
-	if err != nil {
-		return err
-	}
-	if len(atts) > 0 || addingAttachment {
-		return nil
-	}
-	if strings.TrimSpace(in.AttachmentExceptionReason) == "" {
-		return fmt.Errorf("%w: attach a supporting document, or say why you cannot", store.ErrValidation)
-	}
-	return nil
 }
 
 // renderRejectedEdit puts the correction screen back with the message and

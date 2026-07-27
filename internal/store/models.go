@@ -261,7 +261,36 @@ type RecoverableReportOptions struct {
 	Ageing       string    // "" | "overdue" | "due30" | "later" | "unpaid"
 	Order        string    // "" (overdue first, then soonest return) | "amount" | "paid_on" | "number"
 	AsOf         time.Time // zero → time.Now().UTC() at normalisation
+	Viewer       RecoverableViewer
 }
+
+// RecoverableViewer is the caller a recoverable read is answered for.
+//
+// It exists as a named type rather than two loose fields because every one of the
+// four readers over `payment_requests`-as-recoverables needs it and none of them
+// can be trusted to default: the register is a second view over the requests
+// table, so a read that forgets the viewer discloses every counterparty, amount
+// and repayment note in the company (F-G-016/F-E-03).
+//
+// **The zero value sees nothing.** That is deliberate and it is the whole point of
+// the type. `permissions.go` already documents an empty data scope as "no scope at
+// all", and `canViewRequest` returns false for it, so denying matches both. It
+// also fails in the safe direction: a caller who forgets to set Viewer gets an
+// empty screen, which someone reports, rather than a silent disclosure, which
+// nobody does.
+type RecoverableViewer struct {
+	// Scope is the caller's `request` data scope: ScopeAll, "assigned", "own", or
+	// "" for none. Narrower than the holder's real scope is allowed — that is how
+	// a URL filter works — but the caller must never widen it here.
+	Scope string
+	// ViewerID is the reader's user id, consulted for "own" and "assigned".
+	ViewerID int64
+}
+
+// RecoverableViewerAll reads as an administrator: every row, no filter. Named so
+// that a caller intending "all" says so, and so that grepping for it finds every
+// place the scope is deliberately bypassed.
+func RecoverableViewerAll() RecoverableViewer { return RecoverableViewer{Scope: ScopeAll} }
 
 // RecoverableMetrics is the four-number strip on the recoverables dashboard.
 // Outstanding counts every live recoverable, paid or not; PaidThisMonth counts

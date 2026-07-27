@@ -257,6 +257,31 @@ const recoverableBaseWhere = `pr.treatment='recoverable' AND pr.status NOT IN ('
 // payment exists, otherwise what was approved, otherwise what was asked for.
 const recoverableAmount = `COALESCE(py.amount, COALESCE(pr.approved_amount, pr.amount))`
 
+// recoverableScope is the row-visibility half of recoverableBaseWhere: the same
+// predicate the app's canViewRequest applies, expressed for the `pr` alias so
+// every recoverable read enforces it in SQL rather than after the fact.
+//
+// It mirrors canViewRequest and NOT requestWhere, deliberately. The two already
+// differ — requestWhere's "assigned" is `manager_id` alone, while canViewRequest
+// admits `manager_id OR requester_id` — and canViewRequest is the authority on
+// whether a caller may see a given row, because it is what /requests/{id} answers
+// with. A register that showed a row whose detail page 404s, or hid one whose
+// detail page opens, would be the same class of disagreement F-G-016 was.
+//
+// An unrecognised or empty scope returns `AND 0`: no rows. See RecoverableViewer.
+func recoverableScope(v RecoverableViewer) (string, []any) {
+	switch v.Scope {
+	case ScopeAll:
+		return "", nil
+	case "assigned":
+		return ` AND (pr.manager_id=? OR pr.requester_id=?)`, []any{v.ViewerID, v.ViewerID}
+	case "own":
+		return ` AND pr.requester_id=?`, []any{v.ViewerID}
+	default:
+		return ` AND 0`, nil
+	}
+}
+
 // recoverableAgeing turns a row's payment state and its distance from the
 // expected return date into the pill text and pill modifier the register
 // renders. days is whole calendar days from "now" to the expected return date
@@ -297,6 +322,10 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 		LEFT JOIN users u ON u.id=pr.requester_id
 		WHERE ` + recoverableBaseWhere
 	args := []any{today, today}
+
+	scopeClause, scopeArgs := recoverableScope(opts.Viewer)
+	q += scopeClause
+	args = append(args, scopeArgs...)
 
 	if validMonth(opts.From) || validMonth(opts.To) {
 		from, to := opts.From, opts.To
@@ -381,7 +410,7 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 	return out, rows.Err()
 }
 
-func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time) (RecoverableMetrics, error) {
+func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time, viewer RecoverableViewer) (RecoverableMetrics, error) {
 	if asOf.IsZero() {
 		asOf = time.Now().UTC()
 	}
@@ -398,6 +427,12 @@ func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time) (Recover
 	// Deliberately not applied to the due-in-30 pair: that tile is the calendar of
 	// expected returns coming up, and the register's own `due30` filter does not
 	// filter on payment either, so the two still describe the same population.
+	// The scope rides inside the subquery, so its placeholders bind after the outer
+	// SELECT's — which is why scopeArgs is appended last (F-G-016: the tiles and the
+	// counterparty rollup summarise the same rows the register lists, so if the
+	// register is scoped and these are not, the totals disclose what the list hides).
+	scopeClause, scopeArgs := recoverableScope(viewer)
+	args := append([]any{today, today, today, today, today, today, month, month}, scopeArgs...)
 	err := s.db.QueryRowContext(ctx, `SELECT
 		COALESCE(SUM(amt),0), COUNT(*),
 		COALESCE(SUM(CASE WHEN paid <> '' AND exp <> '' AND exp < ? THEN amt ELSE 0 END),0),
@@ -410,8 +445,7 @@ func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time) (Recover
 			COALESCE(pr.expected_return_date,'') AS exp, COALESCE(py.paid_on,'') AS paid
 			FROM payment_requests pr
 			LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
-			WHERE `+recoverableBaseWhere+`)`,
-		today, today, today, today, today, today, month, month).
+			WHERE `+recoverableBaseWhere+scopeClause+`)`, args...).
 		Scan(&m.OutstandingAmount, &m.OutstandingCount, &m.OverdueAmount, &m.OverdueCount,
 			&m.DueIn30Amount, &m.DueIn30Count, &m.PaidThisMonthAmount, &m.PaidThisMonthCount)
 	if err != nil {
@@ -420,7 +454,7 @@ func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time) (Recover
 	return m, nil
 }
 
-func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Time) ([]RecoverableRollup, error) {
+func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Time, viewer RecoverableViewer) ([]RecoverableRollup, error) {
 	if asOf.IsZero() {
 		asOf = time.Now().UTC()
 	}
@@ -436,6 +470,8 @@ func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Tim
 	default:
 		return nil, fmt.Errorf("%w: unknown recoverable rollup dimension %q", ErrValidation, by)
 	}
+	scopeClause, scopeArgs := recoverableScope(viewer)
+	args := append([]any{today}, scopeArgs...)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+label+` AS grp, `+detail+`,
 		COUNT(*), COALESCE(SUM(`+recoverableAmount+`),0),
 		COALESCE(SUM(CASE WHEN COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?
@@ -445,9 +481,9 @@ func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Tim
 		FROM payment_requests pr
 		LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
 		LEFT JOIN recoverable_categories rc ON rc.id=pr.recoverable_category_id
-		WHERE `+recoverableBaseWhere+`
+		WHERE `+recoverableBaseWhere+scopeClause+`
 		GROUP BY grp
-		ORDER BY 4 DESC, grp`, today)
+		ORDER BY 4 DESC, grp`, args...)
 	if err != nil {
 		return nil, err
 	}

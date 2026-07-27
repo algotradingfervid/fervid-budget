@@ -22,17 +22,24 @@ import (
 
 func (a *App) recoverablesDashboard(w http.ResponseWriter, r *http.Request) {
 	asOf := time.Now().UTC()
-	metrics, err := a.st.RecoverableMetrics(r.Context(), asOf)
+	// The summary is scoped for the same reason the register is (F-G-016/F-E-03).
+	// Wave 4 scoped the rows and left these three aggregates company-wide, which
+	// left the disclosure half-closed: the counterparty rollup names counterparties
+	// and the tiles total their money, so a reader restricted to their own rows
+	// still learned both from the screen the register's own tabs link to. Summaries
+	// over a scoped table need the scope too.
+	viewer := a.recoverableViewer(r)
+	metrics, err := a.st.RecoverableMetrics(r.Context(), asOf, viewer)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	byCat, err := a.st.RecoverableRollups(r.Context(), "category", asOf)
+	byCat, err := a.st.RecoverableRollups(r.Context(), "category", asOf, viewer)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	byCp, err := a.st.RecoverableRollups(r.Context(), "counterparty", asOf)
+	byCp, err := a.st.RecoverableRollups(r.Context(), "counterparty", asOf, viewer)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -85,42 +92,31 @@ func (a *App) recoverableListOptions(r *http.Request) store.RecoverableReportOpt
 		Ageing:       ageing,
 		Order:        order,
 		AsOf:         time.Now().UTC(),
+		// Set here, at the one place the list and its CSV both pass through, so the
+		// download cannot drift from the screen the way F-G-016 found it had.
+		Viewer: a.recoverableViewer(r),
 	}
 }
 
-// withinRequestScope applies the caller's `request` data scope to the register.
+// recoverableViewer names the caller every recoverable read is answered for.
 //
 // F-G-016/F-E-03: the register is a second view over `payment_requests` and it
 // never asked who was reading it. `recoverable_report:view` alone returned every
 // category, counterparty, project, amount, requester and repayment note in the
 // company — including rows the very same caller is refused on `/requests/{id}`.
-// R3 requires a data scope per resource and R6 requires it enforced server-side,
-// so the register answers the same question `canViewRequest` answers, and the two
-// views over one table cannot disagree about who may see a row.
+// R3 requires a data scope per resource and R6 requires it enforced server-side.
+//
+// This replaced a handler-side filter that re-read each row's request to ask
+// `canViewRequest`. The predicate now lives in the SQL (`recoverableScope`), for
+// two reasons beyond the N+1: the aggregates on the summary screen cannot be
+// filtered row-by-row after the fact at all, and a filter applied after the query
+// silently breaks any LIMIT the query grows later.
 //
 // Nothing is exposed under the shipped roles — Accounts and Admin both hold
-// `request=all`, which is exactly why this would have survived unnoticed — so the
-// fast path is "scope is all, nothing to do". Otherwise it is one memoised read
-// per distinct request id, the same trade auditWithinRequestScope makes. The
-// store's RecoverableReportOptions carries no viewer, so the filter lives here.
-func (a *App) withinRequestScope(r *http.Request, rows []store.RecoverableRow) []store.RecoverableRow {
+// `request=all`, which is exactly why this survived the original build unnoticed.
+func (a *App) recoverableViewer(r *http.Request) store.RecoverableViewer {
 	u := auth.CurrentUser(r)
-	scope := a.auth.Scope(u, "request")
-	if scope == store.ScopeAll {
-		return rows
-	}
-	visible := map[int64]bool{}
-	out := rows[:0]
-	for _, row := range rows {
-		if _, known := visible[row.RequestID]; !known {
-			req, err := a.st.Request(r.Context(), row.RequestID)
-			visible[row.RequestID] = err == nil && canViewRequest(scope, u, req)
-		}
-		if visible[row.RequestID] {
-			out = append(out, row)
-		}
-	}
-	return out
+	return store.RecoverableViewer{Scope: a.auth.Scope(u, "request"), ViewerID: u.ID}
 }
 
 func (a *App) recoverablesList(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +126,6 @@ func (a *App) recoverablesList(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	rows = a.withinRequestScope(r, rows)
 	cats, err := a.st.ListRecoverableCategories(r.Context(), false)
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -154,8 +149,8 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// The download obeys the same row scope the screen does (F-G-016/F-E-03).
-	rows = a.withinRequestScope(r, rows)
+	// The download obeys the same row scope the screen does, because both build
+	// their options through recoverableListOptions (F-G-016/F-E-03).
 	u := auth.CurrentUser(r)
 	scope := "all live recoverables"
 	if opts.From != "" || opts.To != "" {
@@ -204,7 +199,8 @@ func (a *App) recoverableDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reuse the register query so ageing here and in the list can never
 	// disagree; the number is unique, so it returns exactly this row.
-	rows, err := a.st.RecoverableReport(r.Context(), store.RecoverableReportOptions{Query: req.Number, AsOf: time.Now().UTC()})
+	rows, err := a.st.RecoverableReport(r.Context(), store.RecoverableReportOptions{
+		Query: req.Number, AsOf: time.Now().UTC(), Viewer: a.recoverableViewer(r)})
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return

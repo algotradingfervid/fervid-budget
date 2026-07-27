@@ -532,7 +532,7 @@ func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.
 	if grid.Total.Actual != 250000 {
 		t.Fatalf("grid actual = %d, want 250000 (recoverable excluded)", grid.Total.Actual)
 	}
-	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-09", To: "2026-09"})
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-09", To: "2026-09", Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +553,7 @@ func TestRecoverableReportShowsLinkedProject(t *testing.T) { // V8
 		t.Fatal(err)
 	}
 	seedRecoverablePayment(t, s, ctx, actor, headID, projectID, "PR-2026-000021", "2026-10-01", 500000)
-	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-10", To: "2026-10"})
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-10", To: "2026-10", Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +598,7 @@ func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { 
 	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000203", "cancelled", "icd", "Nobody", "2026-11-30", 999999, false)
 
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
-	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf})
+	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +620,7 @@ func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { 
 		t.Fatal("RecoverableRow.RequestID must be populated so the list can link to the detail screen")
 	}
 	// A date range still scopes to paid rows only.
-	scoped, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-05", To: "2026-05", AsOf: asOf})
+	scoped, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-05", To: "2026-05", AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,7 +645,7 @@ func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
 	r4 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000304", "completed", "security_deposit", "Whitefield", "", 65000, false) // no fixed date
 	payRecoverable(t, s, ctx, actor, headID, r4, "2026-01-30", 65000)
 
-	all, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf})
+	all, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,21 +660,21 @@ func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
 			all[0].Number, all[1].Number, all[2].Number, all[3].Number)
 	}
 
-	overdue, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "overdue", AsOf: asOf})
+	overdue, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "overdue", AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(overdue) != 1 || overdue[0].Number != "PR-2026-000301" {
 		t.Fatalf("ageing=overdue rows = %+v, want only PR-2026-000301", overdue)
 	}
-	due30, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "due30", AsOf: asOf})
+	due30, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "due30", AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(due30) != 1 || due30[0].Number != "PR-2026-000302" {
 		t.Fatalf("ageing=due30 rows = %+v, want only PR-2026-000302", due30)
 	}
-	later, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "later", AsOf: asOf})
+	later, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "later", AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,14 +682,14 @@ func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
 		t.Fatalf("ageing=later rows = %d, want 2 (the 2027 date and the undated one)", len(later))
 	}
 
-	byAmount, err := s.RecoverableReport(ctx, RecoverableReportOptions{Order: "amount", AsOf: asOf})
+	byAmount, err := s.RecoverableReport(ctx, RecoverableReportOptions{Order: "amount", AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if byAmount[0].Number != "PR-2026-000302" || byAmount[0].Amount != 300000 {
 		t.Fatalf("order=amount first row = %+v, want the largest row", byAmount[0])
 	}
-	byCounterparty, err := s.RecoverableReport(ctx, RecoverableReportOptions{Counterparty: "Harith Infra", AsOf: asOf})
+	byCounterparty, err := s.RecoverableReport(ctx, RecoverableReportOptions{Counterparty: "Harith Infra", AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
 	// Rejected: invisible everywhere.
 	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000405", "rejected", "emd", "Nobody", "2026-01-01", 999999, false)
 
-	m, err := s.RecoverableMetrics(ctx, asOf)
+	m, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -748,7 +748,7 @@ func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
 	req3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000503", "completed", "pbg", "Ridge Metro", "2026-11-30", 300000, false)
 	payRecoverable(t, s, ctx, actor, headID, req3, "2026-05-20", 300000)
 
-	cats, err := s.RecoverableRollups(ctx, "category", asOf)
+	cats, err := s.RecoverableRollups(ctx, "category", asOf, RecoverableViewerAll())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -765,7 +765,7 @@ func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
 		t.Fatalf("EMD oldest paid_on = %q, want 2026-02-12", cats[0].Oldest)
 	}
 
-	cps, err := s.RecoverableRollups(ctx, "counterparty", asOf)
+	cps, err := s.RecoverableRollups(ctx, "counterparty", asOf, RecoverableViewerAll())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -782,7 +782,7 @@ func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
 		t.Fatalf("Ridge Metro expected back = %q, want the earliest date 2026-06-30", cps[0].ExpectedBack)
 	}
 
-	if _, err := s.RecoverableRollups(ctx, "project", asOf); !errors.Is(err, ErrValidation) {
+	if _, err := s.RecoverableRollups(ctx, "project", asOf, RecoverableViewerAll()); !errors.Is(err, ErrValidation) {
 		t.Fatalf("unknown rollup dimension = %v, want ErrValidation", err)
 	}
 }
@@ -826,7 +826,7 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 	if treatment != "recoverable" || gotCat != catID || expReturn != "2027-06-30" || notes != "Refund on award" {
 		t.Fatalf("recoverable classification not retained: treatment=%s cat=%d return=%s notes=%s", treatment, gotCat, expReturn, notes)
 	}
-	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-08", To: "2026-08"})
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-08", To: "2026-08", Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -859,7 +859,7 @@ func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 	paid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000601", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
 	payRecoverable(t, s, ctx, actor, headID, paid, "2026-02-12", 200000)
 
-	before, err := s.RecoverableMetrics(ctx, asOf)
+	before, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,7 +870,7 @@ func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 	// Approved but never paid, with a return date years in the past.
 	unpaid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000602", "approved", "emd", "Ridge Metro", "2019-01-31", 777000, false)
 
-	after, err := s.RecoverableMetrics(ctx, asOf)
+	after, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -886,7 +886,7 @@ func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 
 	// And the register agrees, row for row: this is the rule the dashboard was
 	// diverging from.
-	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf})
+	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1940,3 +1940,94 @@ func TestColumnsAShapeDoesNotOwnAreCleared(t *testing.T) {
 			edited.InvoiceNo, edited.Counterparty)
 	}
 }
+
+// F-G-035/F-C-04: one press of the correction form is one transaction. The
+// handler used to call UpdateRequest, AddRequestAttachment and SubmitRequest in
+// sequence, so a resubmit refused on its own preconditions still left the edit
+// committed and audited as "edited and re-sent" while the request sat in
+// `returned` — the trail asserting a change the requester had just been told did
+// not happen.
+func TestEditRequestCommitsTheWholePressOrNoneOfIt(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Kaveri Logistics")
+	base := func() RequestInput {
+		return RequestInput{
+			Treatment: "budget", Type: "vendor_invoice", ShortTitle: "Freight",
+			ProjectID: 1, HeadID: headID, Amount: 64500, Purpose: "freight",
+			ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "KL/2026/0788", InvoiceDate: "2026-07-21",
+		}
+	}
+	id, err := s.CreateRequest(ctx, req, base())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='returned' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	// Attachments become compulsory, and this request has neither a file nor a
+	// written reason — so the submit half must refuse.
+	if err := s.SetAppSetting(ctx, mgr, "require_attachments", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Counted rather than assumed zero: CreateRequest writes its own row, so the
+	// question is whether the refused press adds any, not how many exist.
+	auditRows := func() int {
+		t.Helper()
+		var n int
+		if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log
+			WHERE entity_type='payment_request' AND entity_id=? AND action IN ('update','submit')`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := auditRows()
+
+	edited := base()
+	edited.Amount, edited.ShortTitle = 999900, "Freight — corrected"
+	err = s.EditRequest(ctx, req, id, RequestEdit{Input: edited, Resubmit: true})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("resubmit without a document or a reason = %v, want ErrValidation", err)
+	}
+
+	after, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Amount != 64500 || after.ShortTitle != "Freight" {
+		t.Fatalf("the refused press left the edit behind: amount=%d title=%q", after.Amount, after.ShortTitle)
+	}
+	if after.Status != "returned" {
+		t.Fatalf("status = %q, want returned", after.Status)
+	}
+	// And the trail must not claim it happened either.
+	if got := auditRows(); got != before {
+		t.Fatalf("the refused press wrote %d audit row(s); the history must not assert an edit the requester was told did not happen", got-before)
+	}
+
+	// The same press with the document attached goes through as one unit: the
+	// edit, the file and the transition all land, because the attachment is
+	// inserted before the policy counts it.
+	edited.Amount = 777700
+	err = s.EditRequest(ctx, req, id, RequestEdit{
+		Input:      edited,
+		Attachment: &AttachmentInput{OriginalName: "inv.pdf", StoredPath: "/tmp/inv.pdf", MimeType: "application/pdf", SizeBytes: 9},
+		Resubmit:   true,
+	})
+	if err != nil {
+		t.Fatalf("edit + attach + resubmit as one press: %v", err)
+	}
+	final, _ := s.Request(ctx, id)
+	if final.Amount != 777700 || final.Status != "pending" {
+		t.Fatalf("accepted press = amount %d status %q, want 777700 / pending", final.Amount, final.Status)
+	}
+	atts, err := s.RequestAttachments(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 {
+		t.Fatalf("attachments = %d, want the one this press carried", len(atts))
+	}
+}

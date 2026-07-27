@@ -640,6 +640,17 @@ func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.submitRequestTx(ctx, tx, actor, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// submitRequestTx is SubmitRequest's body without the transaction, so that
+// UpdateAndResubmit can run the edit and the submit as one unit (F-G-035). It
+// re-reads the row through tx, which is what makes composition safe: called after
+// updateRequestTx it validates the *edited* row, not the row as it was on entry.
+func (s *Store) submitRequestTx(ctx context.Context, tx *sql.Tx, actor User, id int64) error {
 	before, err := requestInTx(ctx, tx, id)
 	if err != nil {
 		return err
@@ -671,12 +682,9 @@ func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 	}
 	after := before
 	after.Status = "pending"
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+	return recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "submit", EntityType: "payment_request", EntityID: &id,
-		Summary: actor.Name + " resubmitted request " + before.Number, Before: before, After: after}); err != nil {
-		return err
-	}
-	return tx.Commit()
+		Summary: actor.Name + " resubmitted request " + before.Number, Before: before, After: after})
 }
 
 // urgencyMode returns the configured urgency policy: "reason" (default),
@@ -761,6 +769,84 @@ func (s *Store) ListApprovers(ctx context.Context, excludeUserID int64) ([]User,
 var editableStatuses = map[string]bool{"returned": true, "pending": true}
 
 func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in RequestInput) error {
+	in, categoryID, err := s.prepareRequestUpdate(ctx, actor, in)
+	if err != nil {
+		return err
+	}
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.updateRequestTx(ctx, tx, actor, id, in, categoryID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RequestEdit is everything one press of the correction form does: the edited
+// fields, an optional document that arrived with them, and whether the press was
+// "Save corrections" or "Save and resubmit".
+type RequestEdit struct {
+	Input      RequestInput
+	Attachment *AttachmentInput // nil when the form carried no file
+	Resubmit   bool
+}
+
+// EditRequest applies one press of the correction form as a single transaction
+// (F-G-035, F-C-04).
+//
+// The handler used to call UpdateRequest, then AddRequestAttachment, then
+// SubmitRequest — three transactions for one button. A resubmit that failed its
+// own preconditions therefore left the edit written *and audited as "edited and
+// re-sent"* while the request sat in `returned`: the history asserted a change the
+// requester had just been told did not happen. Wave 4 hoisted the submit
+// preconditions ahead of the write, which closed the observable defect but left a
+// window — the row can change between calls, and only one call held a transaction
+// at a time.
+//
+// Ordering matters and is the reason the attachment belongs in here rather than
+// around the outside: the attachment policy counts rows in `request_attachments`,
+// so the document must be inserted before the submit is validated, or a request
+// whose only document is the one being uploaded is refused. Every audit row — edit,
+// attach, submit — commits or rolls back together.
+func (s *Store) EditRequest(ctx context.Context, actor User, id int64, e RequestEdit) error {
+	in, categoryID, err := s.prepareRequestUpdate(ctx, actor, e.Input)
+	if err != nil {
+		return err
+	}
+	if e.Attachment != nil {
+		if err := validateAttachment(*e.Attachment); err != nil {
+			return err
+		}
+	}
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.updateRequestTx(ctx, tx, actor, id, in, categoryID); err != nil {
+		return err
+	}
+	if e.Attachment != nil {
+		if _, err := addRequestAttachmentTx(ctx, tx, actor, id, *e.Attachment); err != nil {
+			return err
+		}
+	}
+	if e.Resubmit {
+		// Reads the edited row, so the transition and the attachment policy are
+		// checked against what was just saved rather than what was there before.
+		if err := s.submitRequestTx(ctx, tx, actor, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// prepareRequestUpdate runs every check that needs no transaction and returns the
+// scrubbed input plus the resolved recoverable category id. Shared so the edit and
+// the edit-and-resubmit paths cannot validate differently.
+func (s *Store) prepareRequestUpdate(ctx context.Context, actor User, in RequestInput) (RequestInput, any, error) {
 	in.RequesterID = actor.ID
 	if forcesRequesterPayee(in.Type) {
 		in.VendorID = 0
@@ -769,32 +855,31 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 	in = scrubFieldsNotOwned(in)
 	rules, err := s.recoverableRules(ctx)
 	if err != nil {
-		return err
+		return in, 0, err
 	}
 	if err := validateRequestInput(in, rules); err != nil {
-		return err
+		return in, 0, err
 	}
 	// Same gate on the edit path: rerouting a request to a non-approver by
 	// editing it strands it exactly as raising it that way does (F-A-08).
 	if err := s.validateRequestRefs(ctx, in); err != nil {
-		return err
+		return in, 0, err
 	}
 	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
 	if err != nil {
-		return err
+		return in, 0, err
 	}
 	mode, err := s.urgencyMode(ctx)
 	if err != nil {
-		return err
+		return in, 0, err
 	}
 	if err := validateUrgency(in, mode); err != nil {
-		return err
+		return in, 0, err
 	}
-	tx, err := s.beginWriteTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	return in, categoryID, nil
+}
+
+func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id int64, in RequestInput, categoryID any) error {
 	before, err := requestInTx(ctx, tx, id)
 	if err != nil {
 		return err
@@ -831,12 +916,9 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 	if err != nil {
 		return err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+	return recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "update", EntityType: "payment_request", EntityID: &id,
-		Summary: actor.Name + " edited request " + before.Number, Before: before, After: after}); err != nil {
-		return err
-	}
-	return tx.Commit()
+		Summary: actor.Name + " edited request " + before.Number, Before: before, After: after})
 }
 
 func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error {
@@ -1342,6 +1424,19 @@ func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID 
 		return 0, err
 	}
 	defer tx.Rollback()
+	id, err := addRequestAttachmentTx(ctx, tx, actor, requestID, in)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// addRequestAttachmentTx is the write half, so EditRequest can put the document in
+// the same transaction as the corrections it arrived with.
+func addRequestAttachmentTx(ctx context.Context, tx *sql.Tx, actor User, requestID int64, in AttachmentInput) (int64, error) {
 	if _, err := requestInTx(ctx, tx, requestID); err != nil {
 		return 0, err
 	}
@@ -1356,9 +1451,6 @@ func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID 
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "attach", EntityType: "payment_request", EntityID: &requestID,
 		Summary: "Uploaded attachment " + in.OriginalName, After: map[string]any{"id": id, "name": in.OriginalName}}); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return id, nil
