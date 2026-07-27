@@ -113,7 +113,12 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 	// htmx asks for a fragment, not a page: skip the nav, the tab bar and the
 	// badge query entirely. The permission set still applies — a fragment gates
 	// its controls exactly as the full page would.
-	if isFragmentRequest(r) {
+	//
+	// The error page is chrome-less for a different reason: a sidebar invites
+	// the reader to click deeper into an app that has just failed, and the
+	// badge queries behind that sidebar are more work that could fail the same
+	// way. It offers its own two ways out instead.
+	if isFragmentRequest(r) || name == "error_page" {
 		data.Shell = Shell{Chrome: chromeNone}
 	} else {
 		data.Shell = a.buildPageShell(r, data.User, data.Perms, data.Title)

@@ -62,3 +62,41 @@ func TestVarianceGridHasAMobileAccordion(t *testing.T) {
 		t.Fatal("the grid must carry both the desktop matrix and the mobile accordion")
 	}
 }
+
+// An error page with a sidebar invites the reader to click deeper into an app
+// that just failed. It renders chrome-less, like login.
+func TestErrorPageRendersWithoutChrome(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp := s.request(http.MethodGet, "/definitely-not-a-route", nil, "")
+	requireStatus(t, resp, http.StatusNotFound)
+	body := responseBody(t, resp)
+	for _, forbidden := range []string{"<aside", `class="tabbar"`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("the error page renders %s; it must be chrome-less", forbidden)
+		}
+	}
+	if !strings.Contains(body, `class="error-state"`) {
+		t.Fatal("the error page does not use the design-system error state")
+	}
+}
+
+// An empty screen is an invitation to act, not a dead end. Every list screen
+// that can be empty offers the next step.
+func TestEmptyStatesOfferAnAction(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	for _, tc := range []struct{ route, want string }{
+		{"/payments?month=2099-01", "/payments/new"},
+		{"/reports/heads?from=2099-01&to=2099-01", "/budgets"},
+		{"/budgets?month=2099-01", "empty"},
+	} {
+		body := responseBody(t, s.request(http.MethodGet, tc.route, nil, ""))
+		if !strings.Contains(body, `class="empty"`) {
+			t.Fatalf("%s has no empty state at all", tc.route)
+		}
+		if !strings.Contains(body, tc.want) {
+			t.Fatalf("%s empty state offers no way forward (looked for %q)", tc.route, tc.want)
+		}
+	}
+}
