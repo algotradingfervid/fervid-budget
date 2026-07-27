@@ -1,6 +1,6 @@
 # Fervid Budget — build progress
 
-**Last updated:** 2026-07-27 (Phases 4 and 5 complete)
+**Last updated:** 2026-07-27 (Phases 4, 5 and 6 complete — all phases done)
 **Branch:** `main` (all work committed here; nothing pushed)
 
 Resume by reading this file, then the phase plan named under "Next up".
@@ -34,7 +34,7 @@ phases. The design system, specs and every phase plan are committed.
 | 3 | Linking + settlement | **Done** (21/21) |
 | 4 | Recoverables | **Done** (13/13) |
 | 5 | Notifications | **Done** (12/12) |
-| 6 | Redraw the 11 original screens | Not started (9 tasks) |
+| 6 | Redraw the 11 original screens | **Done** (9/9) |
 
 **Migration sequence** (one monotonic line, `PRAGMA user_version`):
 v1 permissions · v2 vendors · v3 requests · v4 payments-linking ·
@@ -53,14 +53,14 @@ v1 permissions · v2 vendors · v3 requests · v4 payments-linking ·
 ```
 go build ./... && go vet ./... && go test -count=1 ./...   # all five packages ok
 make test-race                                             # ok, no race reports
-make test-cover                                            # app 71.5%  auth 92.2%  notify 86.8%
+make test-cover                                            # app 72.5%  auth 92.2%  notify 86.8%
                                                            # config 90.9%  money 100%  store 74.1%
 npm run typecheck                                          # clean
-npx playwright test                                        # 153 passed, 39 skipped, 0 failed
+npx playwright test                                        # 163 passed, 49 skipped, 0 failed
 ```
 
-The 39 skips are structural and pre-existing, and the count breaks down exactly:
-`baseline` 22 + `components` 15 + `linking-settlement` 2. Each is the
+The 49 skips are structural, and the count breaks down exactly:
+`baseline` 32 + `components` 15 + `linking-settlement` 2. Each is the
 **mobile-chrome copy** of a chromium-only file, skipping itself via
 `test.skip(project.name !== 'chromium', …)`; nothing is skipped on desktop and
 nothing is skipped because it fails. `regression-issues.spec.ts` uses a
@@ -72,19 +72,51 @@ Six of the ten spec files run on **both** devices, including
 and `ux.spec.ts`. Mobile coverage of the real flows is therefore genuine; the
 three single-run files do work that is not device-dependent.
 
-Phases 4 and 5 added 8 Playwright tests between them: `/recoverables`,
-`/recoverables/list`, `/notifications` and `/admin/notifications` in
-`shell.spec.ts`, across both device projects.
+Phases 4 and 5 added 8 shell tests between them (`/recoverables`,
+`/recoverables/list`, `/notifications`, `/admin/notifications`, on both
+devices). Phase 6 added five capture routes to `baseline.spec.ts`, which is
+chromium-only — hence 10 more skipped mobile copies and the 39 → 49 move.
 
 ---
 
 ## Next up
 
-**Phase 6 — redraw the 11 original screens**,
-`docs/superpowers/plans/2026-07-25-phase-6-existing-screens-plan.md` (9 tasks).
-It adds no migration. Fold in the four missing CSS rules listed under Known
-gaps — `.metric-foot` is the urgent one, since shipped Phase-3, -4 and -5
-screens already use it.
+**Nothing. Every phase in the plan is complete.** `unbuiltPrefixes` is empty:
+every screen the navigation knows about resolves to a real route.
+
+The open items worth a future session are under "Known gaps" below. The largest
+is that **production has still never run any of this** — see
+`docs/superpowers/PROGRESS.md` → Known gaps and `deploy.sh`.
+
+### Where the Phase 6 plan was wrong
+
+Phase 6's own tasks were mostly already done — Phase 0 had performed the
+`.badge` → `.pill` rename and restyled login — so the real work was the nine
+tables and the grid accordion. Three defects surfaced that no plan step named:
+
+- **`baseline.spec.ts` had stopped capturing the variance grid.** Its route list
+  said `{slug: 'grid', path: '/'}`, which was correct until Phase 2 made `/` the
+  dashboard. For several phases `grid-*.png` has been a picture of the
+  dashboard, so the widest screen in the app had no visual record at all.
+- **The accordion contract is `.is-open` on a `<button class="acc-head">`,** not
+  `<details>/<summary>`. `fervid-app.js` already implements the toggle and
+  republishes the state through `aria-expanded`/`aria-controls`; built from
+  `<details>`, every project rendered permanently collapsed and the mobile grid
+  showed no heads. The mislabelled capture above is why that was invisible.
+- **A restacked `<td>` is a flex row of label and value.** A cell holding
+  several children spreads them as separate flex items which overlap and
+  swallow taps — Playwright caught it as "Reference intercepts pointer events"
+  on the payments View link. Multi-part cell values each need one wrapper.
+
+Phase 6 detail:
+
+| Task | Scope | Commit |
+|---|---|---|
+| — | The four missing CSS rules (Phase 0 defect) | `a80e18f` |
+| 1–2 | `.badge` → `.pill`, login | done in Phase 0 |
+| 3–7 | Nine tables restacked + grid accordion | `cd88c8d` |
+| 8 | Chrome-less error page, empty-state actions | `0a17fb1` |
+| 9 | Visual capture fixed; accordion on the JS contract | `278918b` |
 
 ### Where the Phase 5 plan was wrong
 
