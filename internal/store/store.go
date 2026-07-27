@@ -33,10 +33,25 @@ func Open(path string) (*Store, error) {
 	// modernc.org/sqlite applies every _pragma query parameter to each new
 	// connection; without a "file:" prefix it strips the query before opening,
 	// so a path containing spaces still opens correctly.
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	// journal_mode(WAL) is the third pragma for a reason of its own. In the
+	// default rollback-journal mode a COMMIT needs EXCLUSIVE, so it waits on
+	// every reader — and when it gives up with SQLITE_BUSY, SQLite leaves that
+	// transaction open. database/sql has already marked the Tx done by then, so
+	// `defer tx.Rollback()` returns ErrTxDone without rolling anything back, and
+	// the connection returns to the pool still holding the write lock: every
+	// later writer then failed with SQLITE_BUSY and every later BEGIN on that
+	// connection with "cannot start a transaction within a transaction", until
+	// the process was restarted. Two people recording payments at the same time
+	// was enough. Under WAL, readers and the writer no longer exclude each other,
+	// so the COMMIT that sprang the trap does not happen.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, err
 	}
+	// Defence in depth for the same trap: should a connection ever be poisoned
+	// this way again, retiring it bounds the damage to this lifetime rather than
+	// until the next restart. Closing the connection rolls its transaction back.
+	db.SetConnMaxLifetime(5 * time.Minute)
 	if _, err := db.Exec(schemaSQL); err != nil {
 		db.Close()
 		return nil, err
@@ -1078,7 +1093,12 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 			return 0, err
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	// beginWriteTx, not BeginTx: this reads the request and then writes it, the
+	// exact read-then-upgrade shape SQLite refuses to promote while another
+	// writer is active — and refuses without consulting the busy handler, so the
+	// loser of two simultaneous settlements failed instantly. Every writer in
+	// requests.go was converted for this reason; the payment writers were missed.
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -1112,7 +1132,10 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	in.HeadID = headID.Int64 // 0 when the request has no head
 	in.VendorPayee = displayPayee
 	in.InvoiceNo = invoiceNo
-	if err := s.validatePayment(ctx, in, treatment == "recoverable"); err != nil {
+	// Validated on this transaction: reading the month lock and the head on a
+	// second pooled connection while this one holds the write lock is how a
+	// single settlement came to stack four separate five-second busy waits.
+	if err := validatePaymentTx(ctx, tx, in, treatment == "recoverable"); err != nil {
 		return 0, err
 	}
 	// G13: the approved amount is a hard ceiling. Paying more is not a settlement
@@ -1192,7 +1215,9 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 // paid. note is optional and joins the trail the requester reads.
 func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note string) error {
 	note = strings.TrimSpace(note)
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Reads the request, then writes it — beginWriteTx for the same reason
+	// RecordPaymentForRequest needs it.
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -1235,7 +1260,8 @@ func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment 
 	if comment == "" {
 		return fmt.Errorf("%w: a concern comment is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Reads the request, then writes a comment — same shape, same fix.
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -1842,10 +1868,35 @@ func (s *Store) UnlockMonth(ctx context.Context, actor User, month, reason strin
 	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unlock", EntityType: "month_lock", Summary: "Unlocked " + month + ": " + reason, Before: before, After: map[string]string{"reason": reason}})
 }
 
-func (s *Store) IsLocked(ctx context.Context, month string) bool {
+// rowQuerier is the read surface *sql.DB and *sql.Tx have in common, so a
+// validation helper can run inside its caller's transaction instead of going out
+// to a second pooled connection. Reading on a second connection while the first
+// holds a write transaction is what turned one slow payment into four stacked
+// five-second busy waits.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// isLocked answers the month-lock question and reports why it could not. Every
+// write path must use this rather than IsLocked: a lock that fails to read is
+// not an unlocked month, and treating it as one lets a write into a closed
+// month.
+func isLocked(ctx context.Context, q rowQuerier, month string) (bool, error) {
 	var n int
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM month_locks WHERE month=?`, month).Scan(&n)
-	return n > 0
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM month_locks WHERE month=?`, month).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// IsLocked is the display-side answer, where there is nowhere to report an error
+// to and a wrong answer only mis-renders a badge. Writers use isLocked.
+func (s *Store) IsLocked(ctx context.Context, month string) bool {
+	locked, err := isLocked(ctx, s.db, month)
+	if err != nil {
+		return false
+	}
+	return locked
 }
 
 func (s *Store) MonthLock(ctx context.Context, month string) (MonthLock, error) {
@@ -1913,13 +1964,22 @@ func (s *Store) Audit(ctx context.Context, entityType string, entityID int64, li
 	return out, rows.Err()
 }
 
-// validatePayment checks a payment's own facts. headOptional is true only when
-// the payment settles a recoverable request (F-D-11/F-E-01): a deposit or
-// advance belongs to no budget head — the recoverable fieldset never collects
-// one — and the grid and monthly report already exclude recoverables by
-// treatment, so its head was never meaningful. Every other payment, including
-// one with no request at all, still needs a head.
+// validatePayment runs the check against the pool, for the callers that have not
+// opened a transaction yet.
 func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOptional bool) error {
+	return validatePaymentTx(ctx, s.db, in, headOptional)
+}
+
+// validatePaymentTx checks a payment's own facts on a caller-supplied querier, so
+// that a caller already holding a write transaction validates inside it rather
+// than from a second pooled connection.
+//
+// headOptional is true only when the payment settles a recoverable request
+// (F-D-11/F-E-01): a deposit or advance belongs to no budget head — the
+// recoverable fieldset never collects one — and the grid and monthly report
+// already exclude recoverables by treatment, so its head was never meaningful.
+// Every other payment, including one with no request at all, still needs a head.
+func validatePaymentTx(ctx context.Context, q rowQuerier, in PaymentInput, headOptional bool) error {
 	if in.Amount <= 0 || !validDate(in.PaidOn) || (in.HeadID == 0 && !headOptional) {
 		return fmt.Errorf("%w: valid head, date, and positive amount are required", ErrValidation)
 	}
@@ -1942,15 +2002,18 @@ func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOption
 	if in.PaidOn > now.Format("2006-01-02") {
 		return fmt.Errorf("%w: paid on cannot be a future date — money cannot have left the bank after today", ErrValidation)
 	}
-	if s.IsLocked(ctx, in.PaidOn[:7]) {
+	locked, err := isLocked(ctx, q, in.PaidOn[:7])
+	if err != nil {
+		return err
+	}
+	if locked {
 		return ErrLockedMonth
 	}
 	if in.HeadID == 0 {
 		return nil
 	}
 	var active int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=? AND h.active=1 AND p.active=1`, in.HeadID).Scan(&active)
-	if err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=? AND h.active=1 AND p.active=1`, in.HeadID).Scan(&active); err != nil {
 		return err
 	}
 	if active == 0 {
