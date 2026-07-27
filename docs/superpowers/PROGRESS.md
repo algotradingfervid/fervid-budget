@@ -1,6 +1,6 @@
 # Fervid Budget — build progress
 
-**Last updated:** 2026-07-27
+**Last updated:** 2026-07-27 (Phase 4 complete)
 **Branch:** `main` (all work committed here; nothing pushed)
 
 Resume by reading this file, then the phase plan named under "Next up".
@@ -32,7 +32,7 @@ phases. The design system, specs and every phase plan are committed.
 | 1V | Vendor master | **Done** (8/8) |
 | 2 | Request workflow + Configuration | **Done** (33/33) |
 | 3 | Linking + settlement | **Done** (21/21) |
-| 4 | Recoverables | Not started (13 tasks) |
+| 4 | Recoverables | **Done** (13/13) |
 | 5 | Notifications | Not started (12 tasks) |
 | 6 | Redraw the 11 original screens | Not started (9 tasks) |
 
@@ -41,8 +41,10 @@ v1 permissions · v2 vendors · v3 requests · v4 payments-linking ·
 **v5 accounts reservation grants** (Phase 3) ·
 **v6 recoverable categories** (Phase 4) · **v7 notification settings** (Phase 5).
 
-> ⚠ **Phase 3 took v5.** The plans for Phases 4 and 5 still say v5 and v6. They
-> mean "the next two"; migrations are append-only and are never renumbered.
+> ⚠ **Phase 3 took v5.** The Phase 5 plan still says v6; it means "the next
+> one", which is **v7**. Migrations are append-only and are never renumbered.
+> The authority is the `migrations` slice in `internal/store/migrations.go`,
+> whose header comment now carries this same map.
 
 ---
 
@@ -51,10 +53,10 @@ v1 permissions · v2 vendors · v3 requests · v4 payments-linking ·
 ```
 go build ./... && go vet ./... && go test -count=1 ./...   # all five packages ok
 make test-race                                             # ok, no race reports
-make test-cover                                            # app 72.1%  auth 92.2%
-                                                           # config 90.9%  money 100%  store 73.0%
+make test-cover                                            # app 72.0%  auth 92.2%
+                                                           # config 90.9%  money 100%  store 73.7%
 npm run typecheck                                          # clean
-npx playwright test                                        # 145 passed, 39 skipped, 0 failed
+npx playwright test                                        # 149 passed, 39 skipped, 0 failed
 ```
 
 The 39 skips are structural and pre-existing: the `mobile-chrome` copies of the
@@ -62,17 +64,59 @@ three chromium-only spec files (`baseline`, `components`, `linking-settlement`),
 skipped by their own guards. `regression-issues.spec.ts` is excluded from mobile
 by `playwright.config.ts` `testIgnore` and contributes no skips.
 
-The suite was 17 failed / 126 passed at the start of this session. Every failure
-had one cause — `fixtures.ts::createPayment` drove the free-entry payment form
-that Phase 3 retires by design — and all 17 are now repaired onto the real
-reserve → settle flow.
+Phase 4 added 4 Playwright tests: `/recoverables` and `/recoverables/list` in
+`shell.spec.ts`, across both device projects.
 
 ---
 
 ## Next up
 
-**Phase 4 — recoverables**, `docs/superpowers/plans/2026-07-25-phase-4-recoverables-plan.md`
-(13 tasks). Its migration is **v6**, not the v5 the plan text says.
+**Phase 5 — notifications**, `docs/superpowers/plans/2026-07-25-phase-5-notifications-plan.md`
+(12 tasks). Its migration is **v7**, not the v6 the plan text says. It owns the
+last line in `unbuiltPrefixes`, `/admin/notifications`.
+
+### Where the Phase 4 plan was wrong
+
+The plan was written before Phases 2 and 3 existed and its "Consumed contracts"
+section says to adapt at execution. Four things needed it, and the third was a
+real defect:
+
+- **`RequestInput` has no `RecoverableCategoryID`.** Phase 2 identifies a
+  category by a *code* (`emd`, `icd`, …) in `RecoverableCategory`. The category
+  table therefore carries a `code` column, which is the stable identity —
+  `UpsertRecoverableCategory` derives it on create and never rewrites it, so
+  renaming a category cannot orphan its requests.
+- **Phase 2 already enforced the per-category rules** through a hardcoded
+  `recoverableCategoryRules` map, and its own comment said Phase 4 would replace
+  it with table rows. `validateRequestInput` now takes the rule set as a
+  parameter and stays pure; the store supplies it from the active categories.
+- **`payment_requests.recoverable_category_id` was always NULL.** Phase 2
+  hardcodes it in the INSERT, and every Phase-4 register query joins on it, so
+  the register would have shown a blank category for every request the real form
+  has ever produced. The plan's tests could not catch it — they `INSERT` the id
+  directly, the one shape `CreateRequest` never wrote. v6 back-fills existing
+  rows and both write paths now populate it.
+- **Seed flags: `security_deposit` requires a counterparty.** The plan seeds it
+  requiring nothing, which would have silently weakened validation Phase 2 ships
+  and tests. `TestSeededCategoriesMatchPhase2Rules` now fails if the seed and
+  the built-in map ever drift.
+
+Two smaller corrections: the plan's ageing/ordering test seeded *unpaid* rows and
+asserted they read as overdue, contradicting the ageing spec its own label test
+pins (money that never left cannot be overdue); and its absence guards demanded
+404 on POST, which this router cannot produce — see `TestNoRefundRoute`.
+
+Phase 4 detail:
+
+| Task | Scope | Commit |
+|---|---|---|
+| 1 | Migration v6 + seed + back-fill | `09b7f3b` |
+| 2–3 | Category CRUD, usage counts, Requires label | `60b6392` |
+| 4 | Rules from the table; category id linked on write | `897da43` |
+| 5 | Recoverables excluded from grid/report actuals | `941d40e` |
+| 6–7 | Aged register, metrics, rollups | `45aa35b` |
+| 8–10 | Dashboard, list + CSV, detail | `7afb60f` |
+| 11–13 | Configuration fieldset, V7 guard, X2/X4 absence | `20160e4` |
 
 Phase 3 detail, for reference:
 
@@ -153,6 +197,17 @@ These are learned, not theoretical. Each one has already cost a debugging pass.
   sweep. Do not use it.
 - **Format helpers must agree about the clock.** `hhmm` localised while `date`
   and `datep` did not, so one screen printed two different times for one event.
+- **A `<form>` inside another `<form>` is invalid HTML** and the parser drops
+  the inner one silently — its controls post nothing. The Configuration screen
+  is one big settings form, so a section needing its own POST (Phase 4's
+  recoverable categories) goes *outside* it. A bare `<fieldset>` outside a form
+  is valid and reads as the same section.
+- **An unrouted POST answers 405, not 404.** `routes()` registers a catch-all
+  `GET /`, so the path matches and the method does not. Proof-of-absence tests
+  must accept either; `TestNoRefundRoute` documents this.
+- **Verify every class you add against the stylesheet.** Phase 4 caught two this
+  way: an invented `.dl-wide` (the convention is `style="grid-column:1/-1"`) and
+  `.vh` (the convention is `.sr-only`). Neither renders, and no test sees it.
 
 ---
 
@@ -227,11 +282,14 @@ used to overwrite the very images it was being compared against, and
 
 ## Known gaps and open items
 
-- **Design system:** `.btn.approve`, `.metric.warn` and `.metric.good` appear in
-  the mockups but have **no rule** in `web/static/fervid-ds.css`. No template
-  uses them today — Phase 3 dropped the dead `approve` token rather than
-  inventing CSS — so the green/neutral distinction the partial-review mockup
-  draws between the two terminal answers is not yet available. Fold into Phase 6.
+- **Design system:** `.btn.approve`, `.metric.warn`, `.metric.good` and
+  **`.metric-foot`** appear in the mockups but have **no rule** in
+  `web/static/fervid-ds.css`. `.metric-foot` is the notable one: it is used by
+  the approved mockups *and* by shipped Phase-3 templates (the accounts queue
+  metric strip) and by Phase 4's dashboard, so today that third line in every
+  metric tile renders unstyled. Phase 4 did not invent the rule — the standing
+  rule is that a missing class is a Phase 0 defect to report. Fold all four into
+  Phase 6.
 - **The payment-detail mockup's `Bank` row** (`HDFC ····4471 · IFSC …`) is not
   built. It needs `vendor_bank`-restricted data on a screen no spec authorises
   for it, plus an account-masking helper with no precedent. Needs a spec
