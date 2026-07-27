@@ -788,7 +788,10 @@ func (s *appTestServer) seedRecoverableRequest(seq int, requesterID, managerID i
 
 // currentMonthForTest is the month a settlement recorded now lands in, which is
 // the month the payment entry screen tests its lock against.
-func currentMonthForTest() string { return time.Now().Format("2006-01") }
+// UTC, because that is the clock validatePayment measures paid_on against. Local
+// time made these tests fail between 00:00 and 05:30 IST, when the local date has
+// rolled over and the UTC date has not, so "today" was refused as a future date.
+func currentMonthForTest() string { return time.Now().UTC().Format("2006-01") }
 
 // F-A-05 / F-B-09 — request documents were linked to /attachments/{id}, which
 // reads payment_attachments. The link 404ed, or served an unrelated payment's
@@ -1053,7 +1056,7 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	settle := url.Values{
 		"request_id": {itoa64(reqID)}, "head_id": {itoa64(headID)},
-		"paid_on": {time.Now().Format("2006-01-02")}, "amount": {"9100.00"},
+		"paid_on": {time.Now().UTC().Format("2006-01-02")}, "amount": {"9100.00"},
 		"settlement": {"settled"},
 	}
 	resp := s.postForm("/payments", settle)

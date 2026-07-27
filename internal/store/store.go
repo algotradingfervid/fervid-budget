@@ -507,7 +507,11 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		}
 		seen[input.HeadID] = struct{}{}
 	}
-	if s.IsLocked(ctx, month) {
+	locked, err := isLocked(ctx, s.db, month)
+	if err != nil {
+		return err
+	}
+	if locked {
 		return ErrLockedMonth
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -591,7 +595,11 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 	if sourceMonth != "" && !validMonth(sourceMonth) {
 		return fmt.Errorf("%w: source month is invalid", ErrValidation)
 	}
-	if s.IsLocked(ctx, targetMonth) {
+	locked, err := isLocked(ctx, s.db, targetMonth)
+	if err != nil {
+		return err
+	}
+	if locked {
 		return ErrLockedMonth
 	}
 
@@ -781,7 +789,13 @@ func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id 
 	if before.VoidedAt != nil {
 		return fmt.Errorf("%w: cannot edit voided payment", ErrValidation)
 	}
-	if s.IsLocked(ctx, before.PaidOn[:7]) {
+	// Read the lock on this transaction, not the pool: a second connection asking
+	// while this one holds the write lock is the shape that stacked busy waits.
+	locked, err := isLocked(ctx, tx, before.PaidOn[:7])
+	if err != nil {
+		return err
+	}
+	if locked {
 		return ErrLockedMonth
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE payments SET head_id=?, paid_on=?, amount=?, vendor_payee=?, payment_mode=?, invoice_no=?, reference_no=?, remarks=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
@@ -824,7 +838,11 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 	if reason == "" {
 		return fmt.Errorf("%w: void reason is required", ErrValidation)
 	}
-	if s.IsLocked(ctx, before.PaidOn[:7]) {
+	locked, err := isLocked(ctx, tx, before.PaidOn[:7])
+	if err != nil {
+		return err
+	}
+	if locked {
 		return ErrLockedMonth
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE payments SET voided_by=?, void_reason=?, voided_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`, actor.ID, reason, id)
@@ -1614,7 +1632,11 @@ func (s *Store) AddAttachment(ctx context.Context, actor User, paymentID int64, 
 	if p.VoidedAt != nil {
 		return fmt.Errorf("%w: cannot attach files to a voided payment", ErrValidation)
 	}
-	if s.IsLocked(ctx, p.PaidOn[:7]) {
+	locked, err := isLocked(ctx, tx, p.PaidOn[:7])
+	if err != nil {
+		return err
+	}
+	if locked {
 		return ErrLockedMonth
 	}
 	if _, err := addAttachmentTx(ctx, tx, actor, paymentID, attachment); err != nil {
@@ -1890,13 +1912,20 @@ func isLocked(ctx context.Context, q rowQuerier, month string) (bool, error) {
 }
 
 // IsLocked is the display-side answer, where there is nowhere to report an error
-// to and a wrong answer only mis-renders a badge. Writers use isLocked.
+// to and a wrong answer only mis-renders a badge. Anything gating a write uses
+// isLocked inside the package, or MonthIsLocked from outside it.
 func (s *Store) IsLocked(ctx context.Context, month string) bool {
 	locked, err := isLocked(ctx, s.db, month)
 	if err != nil {
 		return false
 	}
 	return locked
+}
+
+// MonthIsLocked is IsLocked for callers that gate a write on the answer and can
+// therefore not treat "I could not find out" as "open".
+func (s *Store) MonthIsLocked(ctx context.Context, month string) (bool, error) {
+	return isLocked(ctx, s.db, month)
 }
 
 func (s *Store) MonthLock(ctx context.Context, month string) (MonthLock, error) {

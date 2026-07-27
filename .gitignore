@@ -15,6 +15,9 @@ output/playwright/report/
 output/playwright/test-results/
 output/coverage.out
 output/manual-browser/
+# Artifacts of the synthetic dataset run (tests/dataset): the resolved id maps
+# and the request-key -> id map each phase writes for the next one to read.
+output/dataset/
 
 # macOS
 .DS_Store

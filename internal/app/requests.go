@@ -922,7 +922,14 @@ func (a *App) lockedApprovalMonth(r *http.Request) (string, error) {
 		return "", nil
 	}
 	month := req.NeededBy[:7]
-	if !a.st.IsLocked(r.Context(), month) {
+	// MonthIsLocked, not IsLocked: this gates the approval, so failing to read the
+	// lock must refuse rather than quietly answer "open" and let the approval
+	// manufacture the obligation this function exists to prevent.
+	locked, err := a.st.MonthIsLocked(r.Context(), month)
+	if err != nil {
+		return "", err
+	}
+	if !locked {
 		return "", nil
 	}
 	return month, nil

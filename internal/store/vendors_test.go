@@ -441,7 +441,11 @@ func TestListVendorsTotalsPaymentsRecordedAgainstTheVendorName(t *testing.T) {
 	// Every in-year payment is dated today. A literal month would make this test
 	// depend on when in the year it is run: F-D-06 refuses a future paid_on, so
 	// `year+"-04-15"` is a payment the store rejects outright every January.
-	today := time.Now().Format("2006-01-02")
+	//
+	// UTC, because that is the clock validatePayment measures against. Local time
+	// made this test fail every day between 00:00 and 05:30 IST, when the local
+	// date has rolled over and the UTC date has not, so "today" read as tomorrow.
+	today := time.Now().UTC().Format("2006-01-02")
 	pay("Sundaram Electricals Pvt Ltd", today, 500000)
 	pay("sundaram electricals pvt ltd", today, 250000)        // case-insensitive
 	pay("Sundaram Electricals", today, 999999)                // not the same payee

@@ -29,8 +29,12 @@ test.describe('audit harness', () => {
       const payments = await probeGet(requester.page, '/payments');
       expect(payments.status, 'payments needs payment:view').toBe(403);
 
+      // /grid is registered RequirePermission('grid','view') (app.go:439) and
+      // grid:view is not a seeded Requester grant, so the refusal is the correct
+      // answer. This previously expected 200 on the belief that /grid was
+      // RequireLogin only — which the comment above already contradicted.
       const grid = await probeGet(requester.page, '/grid');
-      expect(grid.status, 'grid is RequireLogin only, so a Requester reaches it').toBe(200);
+      expect(grid.status, 'grid needs grid:view, which Requester lacks').toBe(403);
 
       const users = await probeGet(requester.page, '/users');
       expect(users.status, 'admin screens need user:view').toBe(403);
