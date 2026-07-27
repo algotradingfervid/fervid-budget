@@ -1,4 +1,7 @@
-server
+# Anchored to the repository root: an unanchored "server" also matched the
+# cmd/server *directory*, which is why cmd/server/main.go was never committed
+# and a fresh clone could not build.
+/server
 data/*.db
 data/*.db-*
 data/attachments/*
