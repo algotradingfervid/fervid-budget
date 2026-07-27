@@ -318,6 +318,13 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "recoverable_categories",
 		Up:      upRecoverableCategories,
 	},
+	// Phase 5. notification_settings (the twelve admin-editable event rules) and
+	// the in-app notifications table behind the shell bell.
+	{
+		Version: 7,
+		Name:    "notifications",
+		Up:      upNotifications,
+	},
 }
 
 // addDefaultApproverColumn is additive and guarded by columnExists, so

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 )
 
@@ -185,4 +186,52 @@ func hasGrant(grants []Grant, want Grant) bool {
 		}
 	}
 	return false
+}
+
+func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) { // G19, G20
+	s := newTestStore(t)
+	// v7 creates notification_settings and notifications; app_settings is Phase 2's (v3).
+	for _, table := range []string{"notification_settings", "notifications"} {
+		var name string
+		if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
+			t.Fatalf("table %q missing: %v", table, err)
+		}
+	}
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM notification_settings`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 12 {
+		t.Fatalf("seeded events = %d, want 12", count)
+	}
+	want := []string{
+		"request_submitted", "request_edited", "request_returned", "request_rejected",
+		"request_approved", "request_urgent", "request_on_hold", "request_cancellation_requested",
+		"payment_settled", "payment_partial_review", "reminder_pending", "reminder_stale_reservation",
+	}
+	for _, event := range want {
+		var subject, body string
+		if err := s.DB().QueryRow(`SELECT subject_template,body_template FROM notification_settings WHERE event=?`, event).Scan(&subject, &body); err != nil {
+			t.Fatalf("event %q missing: %v", event, err)
+		}
+		if subject == "" || body == "" {
+			t.Fatalf("event %q seeded with an empty template", event)
+		}
+		// G20: the admin-facing vocabulary is {{token}}, never Go template syntax.
+		if strings.Contains(subject+body, "{{.") || strings.Contains(subject+body, "{{money") {
+			t.Fatalf("event %q still uses Go template syntax: %q / %q", event, subject, body)
+		}
+	}
+	// The unread-count index the shell bell depends on exists.
+	var idx string
+	if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_notifications_user_unread'`).Scan(&idx); err != nil {
+		t.Fatalf("unread index missing: %v", err)
+	}
+	var version int
+	if err := s.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version < 7 {
+		t.Fatalf("user_version = %d, want >= 7", version)
+	}
 }
