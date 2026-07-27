@@ -1,16 +1,21 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const port = 4173;
+// One runner per port. Several agents audit different domains at the same time
+// and each needs its own server and its own database, so the port, the runtime
+// directory and every output path are keyed off FERVID_E2E_PORT. Unset, this is
+// byte-for-byte the original single-runner configuration on 4173.
+const port = Number(process.env.FERVID_E2E_PORT ?? 4173);
+const slot = port === 4173 ? '' : `-${port}`;
 const runtime = `output/playwright/runtime/run-${process.pid}`;
 
 export default defineConfig({
   testDir: './tests/e2e',
-  outputDir: 'output/playwright/test-results',
+  outputDir: `output/playwright/test-results${slot}`,
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: [['list'], ['html', { outputFolder: 'output/playwright/report', open: 'never' }]],
+  reporter: [['list'], ['html', { outputFolder: `output/playwright/report${slot}`, open: 'never' }]],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',
