@@ -361,6 +361,49 @@ h3 {
   font-weight: 780;
 }
 
+/* Phase 0 defects, fixed in Phase 6. All four appear in the approved mockups,
+   and .metric-foot is already emitted by shipped Phase-3, -4 and -5 templates,
+   so until now that third line in every metric tile rendered unstyled. */
+.metric-foot {
+  display: block;
+  margin-top: 4px;
+  color: var(--fb-muted);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+/* The tone a metric carries when its number is the one to worry about, and the
+   matching reassuring tone. Both are borrow-nothing: only the accent changes,
+   so a strip of four tiles still reads as one row. */
+.metric.warn {
+  border-color: var(--fb-warn-border, #e6c9a8);
+  background: var(--fb-warn-bg, #fff8ef);
+}
+
+.metric.warn .metric-value {
+  color: var(--fb-warn-ink, #8a5a12);
+}
+
+.metric.good {
+  border-color: var(--fb-good-border, #bcd9c2);
+  background: var(--fb-good-bg, #f4fbf5);
+}
+
+.metric.good .metric-value {
+  color: var(--fb-good-ink, #256b3a);
+}
+
+/* The affirmative terminal action, distinct from the neutral one beside it. */
+.btn.approve {
+  border-color: var(--fb-good-border, #bcd9c2);
+  background: var(--fb-good-bg, #f4fbf5);
+  color: var(--fb-good-ink, #256b3a);
+}
+
+.btn.approve:hover {
+  border-color: var(--fb-good-ink, #256b3a);
+}
+
 /* Buttons */
 .btn,
 button,
