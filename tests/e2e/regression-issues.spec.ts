@@ -386,7 +386,10 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-018 renders empty future head reports without all-zero rows', async ({ adminPage }) => {
     await adminPage.goto('/reports/heads?from=2099-01&to=2099-01');
-    await expect(adminPage.getByText('No report rows.')).toBeVisible();
+    // Phase 6 gave every empty state an action, so the copy grew past the bare
+    // "No report rows." this used to match. The guard is the row count — one
+    // empty row, never a page of all-zero rows — and that is unchanged.
+    await expect(adminPage.locator('td.empty')).toContainText('No report rows');
     await expect(adminPage.locator('tbody tr')).toHaveCount(1);
   });
 
