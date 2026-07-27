@@ -1,6 +1,6 @@
 # Fervid Budget — build progress
 
-**Last updated:** 2026-07-27 (Phase 4 complete)
+**Last updated:** 2026-07-27 (Phases 4 and 5 complete)
 **Branch:** `main` (all work committed here; nothing pushed)
 
 Resume by reading this file, then the phase plan named under "Next up".
@@ -33,7 +33,7 @@ phases. The design system, specs and every phase plan are committed.
 | 2 | Request workflow + Configuration | **Done** (33/33) |
 | 3 | Linking + settlement | **Done** (21/21) |
 | 4 | Recoverables | **Done** (13/13) |
-| 5 | Notifications | Not started (12 tasks) |
+| 5 | Notifications | **Done** (12/12) |
 | 6 | Redraw the 11 original screens | Not started (9 tasks) |
 
 **Migration sequence** (one monotonic line, `PRAGMA user_version`):
@@ -53,27 +53,77 @@ v1 permissions · v2 vendors · v3 requests · v4 payments-linking ·
 ```
 go build ./... && go vet ./... && go test -count=1 ./...   # all five packages ok
 make test-race                                             # ok, no race reports
-make test-cover                                            # app 72.0%  auth 92.2%
-                                                           # config 90.9%  money 100%  store 73.7%
+make test-cover                                            # app 71.5%  auth 92.2%  notify 86.8%
+                                                           # config 90.9%  money 100%  store 74.1%
 npm run typecheck                                          # clean
-npx playwright test                                        # 149 passed, 39 skipped, 0 failed
+npx playwright test                                        # 153 passed, 39 skipped, 0 failed
 ```
 
-The 39 skips are structural and pre-existing: the `mobile-chrome` copies of the
-three chromium-only spec files (`baseline`, `components`, `linking-settlement`),
-skipped by their own guards. `regression-issues.spec.ts` is excluded from mobile
-by `playwright.config.ts` `testIgnore` and contributes no skips.
+The 39 skips are structural and pre-existing, and the count breaks down exactly:
+`baseline` 22 + `components` 15 + `linking-settlement` 2. Each is the
+**mobile-chrome copy** of a chromium-only file, skipping itself via
+`test.skip(project.name !== 'chromium', …)`; nothing is skipped on desktop and
+nothing is skipped because it fails. `regression-issues.spec.ts` uses a
+different mechanism — `playwright.config.ts` `testIgnore` drops it from the
+mobile project entirely, so it is never collected and contributes 0 skips.
 
-Phase 4 added 4 Playwright tests: `/recoverables` and `/recoverables/list` in
+Six of the ten spec files run on **both** devices, including
+`core-workflows.spec.ts` (the 390 px reserve → settle journey), `shell.spec.ts`
+and `ux.spec.ts`. Mobile coverage of the real flows is therefore genuine; the
+three single-run files do work that is not device-dependent.
+
+Phases 4 and 5 added 8 Playwright tests between them: `/recoverables`,
+`/recoverables/list`, `/notifications` and `/admin/notifications` in
 `shell.spec.ts`, across both device projects.
 
 ---
 
 ## Next up
 
-**Phase 5 — notifications**, `docs/superpowers/plans/2026-07-25-phase-5-notifications-plan.md`
-(12 tasks). Its migration is **v7**, not the v6 the plan text says. It owns the
-last line in `unbuiltPrefixes`, `/admin/notifications`.
+**Phase 6 — redraw the 11 original screens**,
+`docs/superpowers/plans/2026-07-25-phase-6-existing-screens-plan.md` (9 tasks).
+It adds no migration. Fold in the four missing CSS rules listed under Known
+gaps — `.metric-foot` is the urgent one, since shipped Phase-3, -4 and -5
+screens already use it.
+
+### Where the Phase 5 plan was wrong
+
+- **Migration is v7**, not the v6 the plan says.
+- **`SetAppSettings` was already taken.** Phase 2 owns
+  `AppSettings(ctx) map[string]string` and
+  `SetAppSettings(ctx, actor, map[string]string)`, so the plan's
+  `SetAppSettings(ctx, actor, AppSettings)` could not compile. The typed wrapper
+  over that same table is `MailSettings` / `GetMailSettings` / `SetMailSettings`.
+- **The plan's `kindFor` in `internal/notify` was dropped.** `store.AddNotification`
+  already derives `kind` from the event at write time; a second copy could only
+  drift from the one the `.segmented` filter queries.
+- **The notification row markup in the plan does not lay out.** Built as a
+  `<form>` wrapping a `<button>`, the centre overflowed by 1011 px once it had
+  rows — caught by `ux.spec.ts`, not by eye. The approved design is
+  `<a class="notif">` holding `.n-ico`, `.n-main` and a `<time>`.
+
+**A defect found on the way:** `.gitignore`'s first line was an unanchored
+`server`, meant for the built binary. It also matched the **`cmd/server`
+directory**, so `cmd/server/main.go` had never been committed and a fresh clone
+could not build at all. The rule is now `/server`.
+
+Phase 5 detail:
+
+| Task | Scope | Commit |
+|---|---|---|
+| 1 | Env-only SMTP password | `e97b950` |
+| 2 | Migration v7, twelve events, in-app table | `0c6c0ed` |
+| 3 | Mail settings, rule accessors, permission lookup | `aa43695` |
+| 4 | In-app channel, scoped reads, mark-read | `3ca35c5` |
+| 5 | Reminder queries on injected clock + thresholds | `a182e04` |
+| 6 | Configuration "Reminders and ageing" fieldset | `1db18e8` |
+| 7 | notify package: Mailer, SMTPMailer, harness | `1268073` |
+| 8 | Service.Notify: in-app always, email opt-in | `b1520cb` |
+| 9 | RunReminders + Scheduler | `072a8be` |
+| 10 | Notification centre + bell count | `5ade0cf` |
+| 11 | Admin rules screen + event hooks | `411f231` |
+| 12 | Scheduler on shutdown ctx + .gitignore fix | `4307271` |
+| — | Notification row rebuilt on the approved markup | `5b4182c` |
 
 ### Where the Phase 4 plan was wrong
 
