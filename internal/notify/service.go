@@ -37,48 +37,59 @@ type RequestView struct {
 // if the event's email channel is switched on, resolves email recipients and
 // sends. A failure to send email never costs the user their in-app record.
 func (s *Service) Notify(ctx context.Context, event string, req store.Request) error {
+	_, err := s.notify(ctx, event, req)
+	return err
+}
+
+// notify is Notify with a report of who it reached. Only the reminder scheduler
+// needs it: its audit row is the only witness the stale-reservation screen's
+// "a reminder went out" claim has (F-F-02), and that row has to name who was
+// told. Resolving the recipients a second time to write the row is exactly how
+// the row and the delivery would drift apart, so the delivery reports itself.
+func (s *Service) notify(ctx context.Context, event string, req store.Request) ([]string, error) {
 	cfg, err := s.st.NotificationSetting(ctx, event)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil // unknown event: nothing configured, nothing to deliver
+		return nil, nil // unknown event: nothing configured, nothing to deliver
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	app, err := s.st.GetMailSettings(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	view, err := s.newRequestView(ctx, req, app)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	accountUsers, err := s.accountsUsers(ctx, cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 1. In-app, unconditionally (G19).
-	if err := s.writeInApp(ctx, event, cfg, req, view, accountUsers); err != nil {
-		return err
+	told, err := s.writeInApp(ctx, event, cfg, req, view, accountUsers)
+	if err != nil {
+		return told, err
 	}
 
 	// 2. Email, only when this event opted in.
 	if !cfg.EmailEnabled {
-		return nil
+		return told, nil
 	}
 	to, cc := resolveRecipients(event, cfg, app, view, emails(accountUsers))
 	if len(to) == 0 && len(cc) == 0 {
-		return nil
+		return told, nil
 	}
 	subject, err := renderTemplate(cfg.SubjectTemplate, view)
 	if err != nil {
-		return fmt.Errorf("notification %q subject: %w", event, err)
+		return told, fmt.Errorf("notification %q subject: %w", event, err)
 	}
 	body, err := renderTemplate(cfg.BodyTemplate, view)
 	if err != nil {
-		return fmt.Errorf("notification %q body: %w", event, err)
+		return told, fmt.Errorf("notification %q body: %w", event, err)
 	}
-	return s.mailer.Send(ctx, Message{From: formatFrom(app), To: to, Cc: cc, Subject: subject, Body: body})
+	return told, s.mailer.Send(ctx, Message{From: formatFrom(app), To: to, Cc: cc, Subject: subject, Body: body})
 }
 
 func (s *Service) accountsUsers(ctx context.Context, cfg store.NotificationSetting) ([]store.User, error) {
@@ -88,16 +99,26 @@ func (s *Service) accountsUsers(ctx context.Context, cfg store.NotificationSetti
 	return s.st.UsersWithPermission(ctx, "payment", "process")
 }
 
-// writeInApp creates one notifications row per resolved recipient. The title is
-// the rendered subject when the template is valid and a plain fallback when it
-// is not — a broken email template must never cost the user their in-app record.
+// writeInApp creates one notifications row per resolved recipient and returns
+// the recipients' names, which is what lets the reminder scheduler record who it
+// told (F-F-02) without resolving them twice. The title is the rendered subject
+// when the template is valid and a plain fallback when it is not — a broken
+// email template must never cost the user their in-app record.
 //
 // Kind is left empty: store.AddNotification derives it from the event, which is
 // the one definition the .segmented filter queries.
-func (s *Service) writeInApp(ctx context.Context, event string, cfg store.NotificationSetting, req store.Request, v RequestView, accountUsers []store.User) error {
+func (s *Service) writeInApp(ctx context.Context, event string, cfg store.NotificationSetting, req store.Request, v RequestView, accountUsers []store.User) ([]string, error) {
 	var accountIDs []int64
+	names := map[int64]string{}
 	for _, u := range accountUsers {
 		accountIDs = append(accountIDs, u.ID)
+		names[u.ID] = u.Name
+	}
+	if req.RequesterID != 0 && v.RequesterName != "" {
+		names[req.RequesterID] = v.RequesterName
+	}
+	if req.ManagerID != 0 && v.ManagerName != "" {
+		names[req.ManagerID] = v.ManagerName
 	}
 	title, err := renderTemplate(cfg.SubjectTemplate, v)
 	if err != nil || strings.TrimSpace(title) == "" {
@@ -116,20 +137,39 @@ func (s *Service) writeInApp(ctx context.Context, event string, cfg store.Notifi
 		id := req.ID
 		reqID = &id
 	}
+	var told []string
 	for _, uid := range resolveInAppUsers(event, cfg, req, accountIDs) {
 		if _, err := s.st.AddNotification(ctx, store.Notification{
 			UserID: uid, Event: event, RequestID: reqID,
 			Title: title, Body: body, Href: requestHref(req),
 		}); err != nil {
-			return err
+			return told, err
+		}
+		name, ok := names[uid]
+		if !ok {
+			// The assignee addressed personally below need not still hold
+			// payment:process — a reservation outlives a role change — so their
+			// name is not always in the group already loaded.
+			//
+			// A failure here costs a name in an audit summary, never a delivery:
+			// the row above is already written, and returning an error would
+			// abort the reminder batch before MarkReminderSent stamps the
+			// cadence, which would re-send the same reminder on every tick.
+			if u, uerr := s.st.UserByID(ctx, uid); uerr == nil {
+				name = u.Name
+				names[uid] = name
+			}
+		}
+		if name != "" {
+			told = append(told, name)
 		}
 	}
-	return nil
+	return told, nil
 }
 
 // resolveInAppUsers mirrors resolveRecipients in user-id space. The include
 // flags are the same switches an admin sees; the assigned accountant is
-// addressed personally for the two events the design routes to them.
+// addressed personally for the events the design routes to them.
 func resolveInAppUsers(event string, cfg store.NotificationSetting, req store.Request, accountIDs []int64) []int64 {
 	var ids []int64
 	if cfg.IncludeRequester && req.RequesterID != 0 {
@@ -140,7 +180,22 @@ func resolveInAppUsers(event string, cfg store.NotificationSetting, req store.Re
 	}
 	if cfg.IncludeAccounts && !(event == EventRequestUrgent && req.Status == "pending") {
 		switch event {
-		case EventCancellationRequested, EventReminderStaleReservation:
+		// Events about one specific reservation. Addressing the whole Accounts
+		// group would chase four people about work that belongs to one, and for
+		// reservation_reassigned the single right recipient is the *new* holder —
+		// ReassignReservation moves processing_by, so by the time this fires the
+		// column already names them.
+		//
+		// A partial review and a cancellation both keep processing_by set (the
+		// request never left 'processing' before it got there), so the accountant
+		// who recorded the shortfall or froze the payment is the one told. The
+		// fallback to the whole group is what covers a request whose holder let
+		// it go — reservation_released nulls processing_by, and a request that
+		// reached partial_review or cancellation_requested some other way has
+		// nobody personally on the hook.
+		case EventCancellationRequested, EventReminderStaleReservation,
+			EventReservationReassigned, EventPaymentPartialAccepted, EventPaymentPartialConcern,
+			EventCancellationAccepted, EventCancellationDeclined:
 			if req.ProcessingBy != nil && *req.ProcessingBy != 0 {
 				ids = append(ids, *req.ProcessingBy) // the person who reserved it
 			} else {

@@ -262,3 +262,240 @@ func TestNotifyUnknownEventIsANoOp(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// F-F-06: the nine events the audit found missing must reach the person who
+// needs to know, and — for the events about one specific reservation — must not
+// chase the whole Accounts group about work that belongs to one accountant.
+//
+// The audience flags below are the seeded ones; internal/store's
+// TestMigrationV9SeedsTheNineMissingEvents pins that the migration really seeds
+// these, and this test pins what they resolve to.
+func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	requester := mustUser(t, st, "ae-req@test", "Rhea Requester", "data_entry")
+	manager := mustUser(t, st, "ae-mgr@test", "Manav Manager", "admin")
+	holder := mustUser(t, st, "ae-holder@test", "Anil Holder", "data_entry")
+	otherAcct := mustUser(t, st, "ae-other@test", "Other Accountant", "data_entry")
+	grantAccounts(t, st, holder, otherAcct)
+
+	cases := []struct {
+		event    string
+		status   string
+		holding  bool // processing_by is set to holder
+		cfg      store.NotificationSetting
+		want     []int64
+		notWant  []int64
+		wantKind string
+	}{
+		{event: EventRequestWithdrawn, status: "withdrawn",
+			cfg:      store.NotificationSetting{IncludeManager: true},
+			want:     []int64{manager},
+			notWant:  []int64{requester, holder, otherAcct},
+			wantKind: "activity"},
+		{event: EventRequestReraised, status: "pending",
+			cfg:      store.NotificationSetting{IncludeManager: true},
+			want:     []int64{manager},
+			notWant:  []int64{requester, holder, otherAcct},
+			wantKind: "activity"},
+		{event: EventRequestUnheld, status: "approved",
+			cfg:      store.NotificationSetting{IncludeRequester: true},
+			want:     []int64{requester},
+			notWant:  []int64{manager, holder, otherAcct},
+			wantKind: "activity"},
+		// Release nulls processing_by, so there is no assignee left to address —
+		// and the release screen states that the requester and the approver are
+		// both notified, so both are.
+		{event: EventReservationReleased, status: "approved",
+			cfg:      store.NotificationSetting{IncludeRequester: true, IncludeManager: true},
+			want:     []int64{requester, manager},
+			notWant:  []int64{holder, otherAcct},
+			wantKind: "activity"},
+		// Reassignment moves processing_by, so "the assigned accountant" is
+		// already the new holder by the time this fires — and the accountant who
+		// is not involved hears nothing.
+		{event: EventReservationReassigned, status: "processing", holding: true,
+			cfg:      store.NotificationSetting{IncludeRequester: true, IncludeManager: true, IncludeAccounts: true},
+			want:     []int64{requester, manager, holder},
+			notWant:  []int64{otherAcct},
+			wantKind: "activity"},
+		{event: EventPaymentPartialAccepted, status: "completed_partial", holding: true,
+			cfg:      store.NotificationSetting{IncludeRequester: true, IncludeAccounts: true},
+			want:     []int64{requester, holder},
+			notWant:  []int64{manager, otherAcct},
+			wantKind: "activity"},
+		// A concern is written words addressed to the accountant, waiting on
+		// their answer — the same shape as request_returned, so it files under
+		// "mention" and shows up on that tab.
+		{event: EventPaymentPartialConcern, status: "partial_review", holding: true,
+			cfg:      store.NotificationSetting{IncludeAccounts: true},
+			want:     []int64{holder},
+			notWant:  []int64{requester, manager, otherAcct},
+			wantKind: "mention"},
+		{event: EventCancellationAccepted, status: "cancelled", holding: true,
+			cfg:      store.NotificationSetting{IncludeRequester: true, IncludeAccounts: true},
+			want:     []int64{requester, holder},
+			notWant:  []int64{manager, otherAcct},
+			wantKind: "activity"},
+		{event: EventCancellationDeclined, status: "approved", holding: true,
+			cfg:      store.NotificationSetting{IncludeRequester: true, IncludeAccounts: true},
+			want:     []int64{requester, holder},
+			notWant:  []int64{manager, otherAcct},
+			wantKind: "activity"},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.event, func(t *testing.T) {
+			number := "PR-2026-0009" + strconv.Itoa(10+i)
+			processing := time.Now().UTC().Add(-48 * time.Hour)
+			var processingAt *time.Time
+			if tc.holding {
+				processingAt = &processing
+			}
+			reqID := insertRequest(t, st, number, tc.status, requester, manager, time.Now().UTC().Add(-72*time.Hour), processingAt)
+			if tc.holding {
+				if _, err := st.DB().ExecContext(ctx, `UPDATE payment_requests SET processing_by=? WHERE id=?`, holder, reqID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := tc.cfg
+			cfg.Event = tc.event
+			cfg.SubjectTemplate = "{{number}} — " + tc.event
+			cfg.BodyTemplate = "{{amount}} to {{payee}}. Open it: {{link}}"
+			enableEvent(t, st, actor, cfg)
+
+			svc := NewService(st, &fakeMailer{})
+			req, err := st.Request(ctx, reqID)
+			must(t, err)
+			must(t, svc.Notify(ctx, tc.event, req))
+
+			for _, uid := range tc.want {
+				rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: uid, Limit: 200})
+				must(t, err)
+				var got *store.Notification
+				for j := range rows {
+					if rows[j].Event == tc.event && rows[j].RequestID != nil && *rows[j].RequestID == reqID {
+						got = &rows[j]
+					}
+				}
+				if got == nil {
+					t.Fatalf("%s: user %d got no row", tc.event, uid)
+				}
+				if got.Kind != tc.wantKind {
+					t.Fatalf("%s: kind = %q, want %q — a wrong kind hides the row under every .segmented tab but All",
+						tc.event, got.Kind, tc.wantKind)
+				}
+				contains(t, got.Title, number)
+				if got.Href != "/requests/"+itoa(reqID) {
+					t.Fatalf("%s: href = %q", tc.event, got.Href)
+				}
+			}
+			for _, uid := range tc.notWant {
+				rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: uid, Limit: 200})
+				must(t, err)
+				for _, row := range rows {
+					if row.Event == tc.event && row.RequestID != nil && *row.RequestID == reqID {
+						t.Fatalf("%s: user %d was notified and should not have been", tc.event, uid)
+					}
+				}
+			}
+		})
+	}
+}
+
+// The .segmented filter on /notifications queries `kind`, which
+// store.AddNotification derives from the event at write time — there is no
+// second copy in this package to drift from it. So a new event's rows really are
+// reachable under the tab they belong to, not only under "All".
+func TestNewEventsAreReachableUnderTheirFilterTab(t *testing.T) { // F-F-06
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	requester := mustUser(t, st, "fb-req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "fb-mgr@test", "Manav", "admin")
+	holder := mustUser(t, st, "fb-holder@test", "Anil", "data_entry")
+	grantAccounts(t, st, holder)
+	processing := time.Now().UTC().Add(-48 * time.Hour)
+	reqID := insertRequest(t, st, "PR-2026-000950", "partial_review", requester, manager, processing, &processing)
+	if _, err := st.DB().ExecContext(ctx, `UPDATE payment_requests SET processing_by=? WHERE id=?`, holder, reqID); err != nil {
+		t.Fatal(err)
+	}
+	enableEvent(t, st, actor, store.NotificationSetting{Event: EventPaymentPartialConcern, IncludeAccounts: true,
+		SubjectTemplate: "concern on {{number}}", BodyTemplate: "b {{link}}"})
+	enableEvent(t, st, actor, store.NotificationSetting{Event: EventReservationReleased, IncludeRequester: true,
+		SubjectTemplate: "released {{number}}", BodyTemplate: "b {{link}}"})
+
+	svc := NewService(st, &fakeMailer{})
+	req, err := st.Request(ctx, reqID)
+	must(t, err)
+	must(t, svc.Notify(ctx, EventPaymentPartialConcern, req))
+	must(t, svc.Notify(ctx, EventReservationReleased, req))
+
+	mentions, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: holder, Scope: "mentions"})
+	must(t, err)
+	if len(mentions) != 1 || mentions[0].Event != EventPaymentPartialConcern {
+		t.Fatalf("Mentions tab for the accountant = %+v, want the partial concern", mentions)
+	}
+	// The requester's release row is activity: it reports a settled fact and asks
+	// nothing, so it must not be filed as a mention or a reminder.
+	for _, scope := range []string{"mentions", "reminders"} {
+		rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: requester, Scope: scope})
+		must(t, err)
+		if len(rows) != 0 {
+			t.Fatalf("release row appears under %q = %+v, want it under activity only", scope, rows)
+		}
+	}
+	counts, err := st.NotificationCounts(ctx, requester)
+	must(t, err)
+	if counts.All != 1 || counts.Unread != 1 {
+		t.Fatalf("requester counts = %+v, want one unread row", counts)
+	}
+}
+
+// The management recipient list is Cc-on-email-only and never receives an in-app
+// row, because there is no user id to address one to. The nine new events follow
+// that convention rather than inventing another: none of them copies management
+// on its own, and an organisation that wants them to sets the event's own
+// cc_recipients.
+func TestAuditEventsDoNotCopyManagementByThemselves(t *testing.T) { // F-F-06
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	must(t, st.SetMailSettings(ctx, actor, store.MailSettings{
+		SMTPHost: "smtp.test", SMTPFromAddr: "no@reply.test",
+		ManagementRecipients: "boss@fervid.test", BaseURL: "https://budget.test",
+	}))
+	requester := mustUser(t, st, "mg-req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "mg-mgr@test", "Manav", "admin")
+	reqID := insertRequest(t, st, "PR-2026-000960", "approved", requester, manager, time.Now().UTC(), nil)
+
+	mailer := &fakeMailer{}
+	svc := NewService(st, mailer)
+	for _, event := range []string{EventRequestWithdrawn, EventRequestReraised, EventRequestUnheld,
+		EventReservationReleased, EventReservationReassigned, EventPaymentPartialAccepted,
+		EventPaymentPartialConcern, EventCancellationAccepted, EventCancellationDeclined} {
+		enableEvent(t, st, actor, store.NotificationSetting{Event: event, EmailEnabled: true,
+			IncludeRequester: true, IncludeManager: true,
+			SubjectTemplate: "{{number}}", BodyTemplate: "b {{link}}"})
+		req, err := st.Request(ctx, reqID)
+		must(t, err)
+		must(t, svc.Notify(ctx, event, req))
+	}
+	for _, m := range mailer.messages() {
+		for _, cc := range m.Cc {
+			if cc == "boss@fervid.test" {
+				t.Fatalf("event copied management on its own: %q Cc %v", m.Subject, m.Cc)
+			}
+		}
+	}
+	// And management never gets an in-app row, since it is an address, not a user.
+	var rows int
+	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications n
+		JOIN users u ON u.id=n.user_id WHERE u.email='boss@fervid.test'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("in-app rows for the management list = %d, want 0", rows)
+	}
+}

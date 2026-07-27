@@ -388,10 +388,20 @@ func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time) (Recover
 	today := asOf.UTC().Format("2006-01-02")
 	month := asOf.UTC().Format("2006-01")
 	var m RecoverableMetrics
+	// F-E-05: the overdue pair carries `paid <> ''` because recoverableAgeing
+	// applies exactly that guard per row — it answers "Awaiting payment", not
+	// overdue, before it ever compares dates. Money that never left cannot be
+	// overdue. Without it the dashboard tile counted unpaid, approved requests as
+	// overdue and then sent the reader to a register that showed fewer red rows
+	// than the summary promised.
+	//
+	// Deliberately not applied to the due-in-30 pair: that tile is the calendar of
+	// expected returns coming up, and the register's own `due30` filter does not
+	// filter on payment either, so the two still describe the same population.
 	err := s.db.QueryRowContext(ctx, `SELECT
 		COALESCE(SUM(amt),0), COUNT(*),
-		COALESCE(SUM(CASE WHEN exp <> '' AND exp < ? THEN amt ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN exp <> '' AND exp < ? THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN paid <> '' AND exp <> '' AND exp < ? THEN amt ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN paid <> '' AND exp <> '' AND exp < ? THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN exp <> '' AND exp >= ? AND julianday(exp)-julianday(?) <= 30 THEN amt ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN exp <> '' AND exp >= ? AND julianday(exp)-julianday(?) <= 30 THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN substr(paid,1,7)=? THEN amt ELSE 0 END),0),

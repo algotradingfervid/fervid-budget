@@ -53,11 +53,18 @@ type NotificationCounts struct {
 // notificationKind maps an event to the filter bucket it belongs in. A mention
 // is an event where a person wrote something addressed to you and is waiting on
 // an answer; everything else is activity.
+//
+// Of the nine events migration v9 added (F-F-06), exactly one is a mention:
+// payment_partial_concern carries the approver's written words to the
+// accountant who recorded the shortfall and waits on their reply, which is the
+// same shape as request_returned. The other eight report something that has
+// already been settled — a withdrawal, a release, a hold lifted, a decision
+// taken — and ask nothing of the reader, so they are activity.
 func notificationKind(event string) string {
 	switch event {
 	case "reminder_pending", "reminder_stale_reservation":
 		return "reminder"
-	case "request_returned", "request_on_hold", "request_rejected":
+	case "request_returned", "request_on_hold", "request_rejected", "payment_partial_concern":
 		return "mention"
 	default:
 		return "activity"

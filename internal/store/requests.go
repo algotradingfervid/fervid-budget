@@ -13,6 +13,59 @@ import (
 	"fervidbudget/internal/money"
 )
 
+// beginWriteTx opens a transaction that is a writer from its first statement.
+//
+// This is not decoration. SQLite will not upgrade a transaction that already
+// holds a read snapshot into a writer while another writer is active, and it
+// deliberately does **not** consult the busy handler for that upgrade — retrying
+// could only deadlock — so `_pragma=busy_timeout(5000)` on the DSN never applies
+// to it and the loser fails instantly with SQLITE_BUSY. Every writer in this
+// file used to be shaped BeginTx → read → write, which is exactly that case:
+// two simultaneous submits, or two simultaneous decisions, handed the loser a
+// 500 and threw their form away (F-B-10, F-C-05).
+//
+// Taking the write lock first is the way out, and it is the `BEGIN IMMEDIATE`
+// the driver can only express per-DSN (modernc.org/sqlite's `_txlock`), not per
+// call site. The statement below matches no row and changes nothing: SQLite
+// acquires the database write lock when a write statement starts, before it
+// filters rows, so this reserves the lock — and because the transaction holds no
+// read snapshot yet, the busy handler *does* apply and a second writer waits its
+// turn instead of erroring.
+//
+// Writers still guard their UPDATE with the state they expect and check
+// RowsAffected, the shape ReserveRequest uses (store.go:751): the lock decides
+// who goes first, the condition decides whether going second still makes sense.
+func (s *Store) beginWriteTx(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE request_number_seq SET last=last WHERE 1=0`); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
+// ErrRequestRaced is the loser of a write race: the row moved between the read
+// that authorised this call and the conditional UPDATE that would have applied
+// it. It is a validation error, not a server error, so the reader is told the
+// request was already decided instead of meeting an internal-error page
+// (F-B-10, F-C-05).
+var ErrRequestRaced = fmt.Errorf("%w: somebody else changed this request a moment ago — reload it and look again", ErrValidation)
+
+// affectedOne turns a conditional UPDATE's row count into the race refusal.
+func affectedOne(res sql.Result) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrRequestRaced
+	}
+	return nil
+}
+
 // settingInTx reads a runtime setting on the caller's transaction, falling back
 // to def when the key is absent. Numbering must see the format that is in force
 // at the instant the number is reserved, so it reads inside the same tx.
@@ -93,7 +146,12 @@ var legalTransitions = map[string]map[string]bool{
 	"pending":  {"approved": true, "returned": true, "rejected": true, "withdrawn": true},
 	// G1/G2: post-approval cancellation. An approved request may be frozen by
 	// the requester (cancellation_requested) or cancelled outright by a manager.
-	"approved":               {"cancellation_requested": true, "cancelled": true},
+	"approved": {"cancellation_requested": true, "cancelled": true},
+	// The edge back to 'approved' belongs to DecideCancellation(accept=false)
+	// alone — that path is gated on approval:cancel, demands a written reason and
+	// records `cancel_decline`. ApproveRequest used to borrow it through
+	// canTransition and so lifted the requester's freeze with none of the three
+	// (F-C-03); it now tests for 'pending' itself.
 	"cancellation_requested": {"cancelled": true, "approved": true},
 	// Phase 3 (G14): a manager-accepted partial closes distinctly from a clean pay.
 	// "completed_partial" has no outgoing edges — terminal, like "completed".
@@ -252,6 +310,122 @@ func forcesRequesterPayee(t string) bool {
 	return t == "reimbursement" || t == "employee_advance"
 }
 
+// scrubFieldsNotOwned clears the columns a request's treatment and its type do
+// not own, before anything is written or validated.
+//
+// The form renders these fieldsets as alternatives, so no browser can send both.
+// But `hidden` is not validation and neither is a `data-when` reveal: a crafted
+// POST used to store the concealed half, and request_detail prints every column
+// that is non-empty — so one request could read as recoverable to a person and
+// behave as a budget expense to every query, or carry an invoice number on a
+// reimbursement that has no invoice (F-B-15, F-B-04). Clearing here is the same
+// move forcesRequesterPayee already makes for vendor_id, applied to the rest of
+// the shape.
+//
+// It runs before validateRequestInput so the validator sees exactly what will be
+// stored, and so a value that is about to be dropped cannot be refused for being
+// malformed.
+func scrubFieldsNotOwned(in RequestInput) RequestInput {
+	// Recoverable columns belong to the treatment, not the type: an employee
+	// advance is recoverable or budget depending on how it was raised.
+	if in.Treatment != "recoverable" {
+		in.RecoverableCategory = ""
+		in.Counterparty = ""
+		in.ExpectedReturnDate = ""
+		in.RepaymentNotes = ""
+	}
+	// The rest belong to the type, and mirror validateRequestInput's per-type
+	// requirements exactly — whatever a type is asked for, it keeps.
+	if in.Type != "vendor_invoice" {
+		in.InvoiceNo = ""
+		in.InvoiceDate = ""
+	}
+	if in.Type != "vendor_advance" && in.Type != "employee_advance" {
+		in.AdvanceReason = ""
+	}
+	if in.Type != "reimbursement" {
+		in.ExpenseDate = ""
+	}
+	return in
+}
+
+// requireApprover refuses a manager_id that cannot decide the request.
+//
+// The form's approver control is built from ListApprovers, so it only ever
+// offers active users holding approval:approve — and that was the only
+// enforcement. Every decision route is gated on the verb **and** on
+// manager_id == actor, so a request routed to anybody else can be decided by
+// nobody: the named person is refused by the route gate and every real manager
+// by the ownership check, leaving withdrawal as the only exit (F-A-08). The
+// query is ListApprovers' own, minus the ordering and the self-exclusion
+// validateRequestInput already applies.
+func (s *Store) requireApprover(ctx context.Context, managerID int64) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users u
+ JOIN user_roles ur ON ur.user_id=u.id
+ JOIN role_permissions rp ON rp.role_id=ur.role_id
+ WHERE u.id=? AND u.active=1 AND rp.resource='approval' AND rp.action='approve'`, managerID).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: that person cannot approve requests — choose one of the approvers offered", ErrValidation)
+	}
+	return nil
+}
+
+// validateRequestRefs re-checks, against the database, the ids whose only other
+// guard is a narrowed <select>: the approver must be able to approve (F-A-08),
+// the head must be live and must belong to the project the request names
+// (F-B-03, F-B-05), and the vendor must still be active (F-B-07).
+//
+// The head test is deliberately ListHeads(ctx, true)'s own condition —
+// `h.active=1 AND p.active=1` — because the form's list is built from exactly
+// that query, and a rule enforced only by the list it populates is a rule a
+// hand-rolled POST does not have to obey.
+func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error {
+	if err := s.requireApprover(ctx, in.ManagerID); err != nil {
+		return err
+	}
+	if in.HeadID > 0 {
+		var projectID int64
+		var headActive, projectActive int
+		err := s.db.QueryRowContext(ctx, `SELECT h.project_id, h.active, p.active
+ FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, in.HeadID).
+			Scan(&projectID, &headActive, &projectActive)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: that budget head does not exist", ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if in.ProjectID > 0 && projectID != in.ProjectID {
+			// Every budget and variance figure is keyed on the head, so a request
+			// that names one project and charges another project's head
+			// misattributes the spend the moment it is paid.
+			return fmt.Errorf("%w: that budget head belongs to a different project — choose a head under the project you named", ErrValidation)
+		}
+		if headActive != 1 || projectActive != 1 {
+			return fmt.Errorf("%w: that budget head has been retired — choose a head that is still open", ErrValidation)
+		}
+	}
+	if in.VendorID > 0 {
+		var status string
+		err := s.db.QueryRowContext(ctx, `SELECT status FROM vendors WHERE id=?`, in.VendorID).Scan(&status)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: that vendor does not exist", ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if status != "active" {
+			// 'inactive' on a vendor is how this product says "do not pay these
+			// people any more", and the vendor master is the authority for a payee.
+			return fmt.Errorf("%w: that vendor is no longer active — choose an active vendor", ErrValidation)
+		}
+	}
+	return nil
+}
+
 const requestSelect = `SELECT r.id,r.number,r.status,r.treatment,r.type,r.recoverable_category,r.recoverable_category_id,
  r.project_id,COALESCE(p.name,''),r.head_id,COALESCE(h.name,''),
  r.vendor_id,COALESCE(NULLIF(v.name,''),r.vendor_payee),COALESCE(v.gstin,''),r.vendor_payee,r.short_title,
@@ -368,11 +542,15 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 		in.VendorID = 0
 		in.VendorPayee = actor.Name
 	}
+	in = scrubFieldsNotOwned(in)
 	rules, err := s.recoverableRules(ctx)
 	if err != nil {
 		return 0, err
 	}
 	if err := validateRequestInput(in, rules); err != nil {
+		return 0, err
+	}
+	if err := s.validateRequestRefs(ctx, in); err != nil {
 		return 0, err
 	}
 	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
@@ -398,7 +576,10 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 			return 0, err
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	// A writer from its first statement: the numbering settings are read inside
+	// this transaction, and a deferred transaction that reads before it writes
+	// cannot be upgraded while another submit is in flight (F-B-10).
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -454,7 +635,7 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 // SubmitRequest resubmits a request the approver returned for correction. It is
 // the only remaining transition into `pending` after creation (D1).
 func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -480,7 +661,12 @@ func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 	if err := validateAttachmentPolicy(required, n, before.AttachmentExceptionReason); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='pending', submitted_at=CURRENT_TIMESTAMP, reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='pending', submitted_at=CURRENT_TIMESTAMP, reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status=? AND requester_id=?`, id, before.Status, actor.ID)
+	if err != nil {
+		return err
+	}
+	if err := affectedOne(res); err != nil {
 		return err
 	}
 	after := before
@@ -580,11 +766,17 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 		in.VendorID = 0
 		in.VendorPayee = actor.Name
 	}
+	in = scrubFieldsNotOwned(in)
 	rules, err := s.recoverableRules(ctx)
 	if err != nil {
 		return err
 	}
 	if err := validateRequestInput(in, rules); err != nil {
+		return err
+	}
+	// Same gate on the edit path: rerouting a request to a non-approver by
+	// editing it strands it exactly as raising it that way does (F-A-08).
+	if err := s.validateRequestRefs(ctx, in); err != nil {
 		return err
 	}
 	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
@@ -598,7 +790,7 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 	if err := validateUrgency(in, mode); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -615,20 +807,25 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 	}
 	// Pending edits reset the reminder timer and reroute to the chosen approver.
 	// P5 hook: re-notify the (possibly new) approver here.
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET
  treatment=?, type=?, recoverable_category=?, recoverable_category_id=?, project_id=?, head_id=?, vendor_id=?, vendor_payee=?,
  short_title=?, amount=?, purpose=?, needed_by=?, invoice_no=?, invoice_date=?, expense_date=?,
  advance_reason=?, counterparty=?, expected_return_date=?, repayment_notes=?, urgent=?,
  urgency_reason=?, attachment_exception_reason=?, manager_id=?, reminder_last_sent=NULL,
  updated_at=CURRENT_TIMESTAMP
- WHERE id=?`,
+ WHERE id=? AND status=? AND requester_id=?`,
 		in.Treatment, in.Type, in.RecoverableCategory, categoryID, nullableID(in.ProjectID), nullableID(in.HeadID),
 		nullableID(in.VendorID), in.VendorPayee, strings.TrimSpace(in.ShortTitle),
 		in.Amount, in.Purpose, nullableText(in.NeededBy), in.InvoiceNo,
 		nullableText(in.InvoiceDate), nullableText(in.ExpenseDate), in.AdvanceReason,
 		in.Counterparty, nullableText(in.ExpectedReturnDate), in.RepaymentNotes,
-		boolInt(in.Urgent), in.UrgencyReason, in.AttachmentExceptionReason, in.ManagerID, id); err != nil {
+		boolInt(in.Urgent), in.UrgencyReason, in.AttachmentExceptionReason, in.ManagerID,
+		id, before.Status, actor.ID)
+	if err != nil {
 		return classify(err)
+	}
+	if err := affectedOne(res); err != nil {
+		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
 	if err != nil {
@@ -643,7 +840,7 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 }
 
 func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -658,7 +855,12 @@ func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error
 	if !canTransition(before.Status, "withdrawn") {
 		return fmt.Errorf("%w: a %s request cannot be withdrawn", ErrValidation, before.Status)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='withdrawn', updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='withdrawn', updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status=? AND requester_id=?`, id, before.Status, actor.ID)
+	if err != nil {
+		return err
+	}
+	if err := affectedOne(res); err != nil {
 		return err
 	}
 	after := before
@@ -671,11 +873,15 @@ func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error
 	return tx.Commit()
 }
 
+// ApproveRequest records the approver's decision. Two rules make it narrower
+// than the transition table alone: the decision is legal from 'pending' and from
+// nowhere else (F-C-03), and the approved amount — which is the ceiling Accounts
+// may pay to (G13) — may be reduced and never raised (F-C-01).
 func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmount int64, note string) error {
 	if approvedAmount <= 0 {
 		return fmt.Errorf("%w: approved amount must be positive", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -692,10 +898,37 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 	if before.RequesterID == actor.ID {
 		return ErrForbidden
 	}
-	if !canTransition(before.Status, "approved") {
+	// F-C-03: not canTransition. legalTransitions also carries
+	// cancellation_requested → approved, and that edge belongs to
+	// DecideCancellation(accept=false) alone — the path that is gated on
+	// approval:cancel, requires a written reason and writes `cancel_decline`,
+	// because the requester and Accounts both read it. Approving from the frozen
+	// state lifted the freeze with none of those, rewrote approved_amount,
+	// re-stamped approved_at and left a stale cancel_reason on an approved row
+	// that no screen renders — so the override was invisible to the person who
+	// asked for the cancellation.
+	if before.Status == "cancellation_requested" {
+		return fmt.Errorf("%w: this request is waiting on your cancellation decision — decide that first, and declining it is what returns it to approved", ErrValidation)
+	}
+	if before.Status != "pending" {
 		return fmt.Errorf("%w: a %s request cannot be approved", ErrValidation, before.Status)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='approved', approved_amount=?, approved_by=?, approved_at=CURRENT_TIMESTAMP, decision_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, approvedAmount, actor.ID, strings.TrimSpace(note), id); err != nil {
+	// F-C-01: the approved amount is not a note, it is the authority to pay —
+	// G13 caps a payment at it (store.go:900–910). Approving above the request
+	// therefore raises that ceiling above what anybody asked for, on one person's
+	// signature, and the audit trail cannot tell it from an ordinary approval.
+	// Downwards is the adjustment the approve sheet offers ("You may approve a
+	// smaller amount than was asked for"); upwards is a different obligation, and
+	// the answer to that is a new request.
+	if approvedAmount > before.Amount {
+		return fmt.Errorf("%w: you cannot approve more than the %s that was requested — approve up to that amount, or cancel this request and ask for a new one", ErrValidation, money.FormatPaise(before.Amount))
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='approved', approved_amount=?, approved_by=?, approved_at=CURRENT_TIMESTAMP, decision_reason=?, updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status='pending' AND manager_id=?`, approvedAmount, actor.ID, strings.TrimSpace(note), id, actor.ID)
+	if err != nil {
+		return err
+	}
+	if err := affectedOne(res); err != nil {
 		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
@@ -716,7 +949,7 @@ func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, act
 	if reason == "" {
 		return fmt.Errorf("%w: %s", ErrValidation, missingMsg)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -731,7 +964,12 @@ func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, act
 	if !canTransition(before.Status, to) {
 		return fmt.Errorf("%w: a %s request cannot be %s", ErrValidation, before.Status, to)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, to, reason, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status=? AND manager_id=?`, to, reason, id, before.Status, actor.ID)
+	if err != nil {
+		return err
+	}
+	if err := affectedOne(res); err != nil {
 		return err
 	}
 	after := before
@@ -764,7 +1002,12 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	if newManagerID <= 0 {
 		return fmt.Errorf("%w: choose an approver to reassign to", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Reassignment is F-A-08's recovery path, so it must not be a way back into
+	// the same hole: the new approver has to be able to approve.
+	if err := s.requireApprover(ctx, newManagerID); err != nil {
+		return err
+	}
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -780,8 +1023,13 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	if newManagerID == before.RequesterID {
 		return fmt.Errorf("%w: a request cannot be reassigned to its own requester", ErrValidation)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET manager_id=?, decision_reason=?, reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`, newManagerID, reason, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET manager_id=?, decision_reason=?, reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status='pending'`, newManagerID, reason, id)
+	if err != nil {
 		return classify(err)
+	}
+	if err := affectedOne(res); err != nil {
+		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
 	if err != nil {
@@ -803,7 +1051,9 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 // ReraiseRequest copies a rejected request into a new one. D1: the copy is
 // created already pending with its own number — there is no draft to land in.
 func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Reads the source row and the numbering settings before it writes, so it
+	// needs the write lock up front for the same reason CreateRequest does.
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -835,9 +1085,12 @@ func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64
   vendor_id, vendor_payee, short_title, amount, purpose, needed_by, invoice_no, invoice_date, expense_date,
   advance_reason, counterparty, expected_return_date, repayment_notes, urgent, urgency_reason,
   attachment_exception_reason, requester_id, manager_id, CURRENT_TIMESTAMP
- FROM payment_requests WHERE id=?`, number, id)
+ FROM payment_requests WHERE id=? AND status='rejected' AND requester_id=?`, number, id, actor.ID)
 	if err != nil {
 		return 0, classify(err)
+	}
+	if err := affectedOne(res); err != nil {
+		return 0, err
 	}
 	newID, err := res.LastInsertId()
 	if err != nil {
@@ -863,7 +1116,7 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 	if reason == "" {
 		return fmt.Errorf("%w: say why it should be cancelled", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -878,15 +1131,29 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 	if !canTransition(before.Status, "cancellation_requested") {
 		return fmt.Errorf("%w: a %s request cannot be sent for cancellation", ErrValidation, before.Status)
 	}
-	// A hold only ever describes an approved request that Accounts has paused
-	// (L7). The moment the request leaves 'approved' the pause is meaningless —
-	// payment is frozen by the cancellation itself — and a hold left set here
-	// would outlive its own status, so the queue's hold tab and the detail
-	// screen's pill would both go on describing a request nobody is holding.
-	// Clearing it keeps the invariant simple: on_hold=1 implies status
-	// 'approved'. The reason is not lost; the audit row below carries the whole
-	// before/after snapshot.
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancellation_requested', cancel_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
+	// The hold is suspended by the freeze, not destroyed by it (F-C-07).
+	//
+	// `on_hold=1` still implies `status='approved'` — that invariant is what lets
+	// the hold tab, the hold pill and ReserveRequest all trust one column — so the
+	// flag is cleared here. `hold_reason` is deliberately **not**: it is the
+	// accountant's unanswered question, and it is what DecideCancellation reads to
+	// restore the pause when the cancellation is declined. Clearing both used to
+	// cost requirement L7, "On hold (only Accounts lifts)": a requester asking for
+	// cancellation and an approver declining it lifted an accountant's hold
+	// between them, and the request came back genuinely re-reservable with the
+	// question still unanswered.
+	//
+	// A non-empty hold_reason with on_hold=0 is never rendered as a hold: every
+	// reader of HoldReason is gated on OnHold or on activeHold, so the frozen
+	// request shows the cancellation banner and only that. UnholdRequest requires
+	// on_hold=1, so nobody can quietly discard the suspended question either — it
+	// comes back with the request, and Accounts lifts it or does not.
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancellation_requested', cancel_reason=?, on_hold=0, updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status='approved' AND requester_id=?`, reason, id, actor.ID)
+	if err != nil {
+		return err
+	}
+	if err := affectedOne(res); err != nil {
 		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
@@ -919,7 +1186,19 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 	if !accept {
 		to, action = "approved", "cancel_decline"
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	// The hold's fate follows the decision (F-C-07). Accepting kills the request,
+	// and nothing may still be "on hold" on a dead row — the hold tab would keep
+	// listing it and offering "Read reply" on a request no reply can change, so
+	// both columns go. Declining returns the request to 'approved', which is the
+	// one status a hold may describe, so the pause RequestCancellation suspended
+	// comes back: only Accounts lifts a hold (L7), and neither the requester who
+	// asked for the cancellation nor the approver who refused it has answered the
+	// accountant's question. hold_reason is the record that there was one.
+	holdSQL := `, on_hold=0, hold_reason=''`
+	if !accept {
+		holdSQL = `, on_hold=CASE WHEN COALESCE(hold_reason,'') <> '' THEN 1 ELSE 0 END`
+	}
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -934,11 +1213,12 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 	if before.Status != "cancellation_requested" || !canTransition(before.Status, to) {
 		return fmt.Errorf("%w: there is no cancellation to decide on a %s request", ErrValidation, before.Status)
 	}
-	// Same invariant as RequestCancellation: a hold belongs to an approved
-	// request. Accepting kills the request outright, and declining returns it to
-	// 'approved' from a state that already cleared the hold, so neither branch
-	// may leave one set.
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, to, note, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?`+holdSQL+`, updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status='cancellation_requested' AND manager_id=?`, to, note, id, actor.ID)
+	if err != nil {
+		return err
+	}
+	if err := affectedOne(res); err != nil {
 		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
@@ -964,7 +1244,7 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 	if reason == "" {
 		return fmt.Errorf("%w: a reason is required to cancel a request", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -982,7 +1262,12 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 	// A cancelled request is dead, so nothing may still be "on hold" on it: the
 	// hold tab would keep listing it and offering "Read reply" on a request no
 	// reply can change.
-	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancelled', cancel_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, reason, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancelled', cancel_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status=? AND manager_id=?`, reason, id, before.Status, actor.ID)
+	if err != nil {
+		return err
+	}
+	if err := affectedOne(res); err != nil {
 		return err
 	}
 	after, err := requestInTx(ctx, tx, id)
@@ -1003,7 +1288,7 @@ func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int
 	if body == "" {
 		return 0, fmt.Errorf("%w: comment cannot be empty", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -1052,7 +1337,7 @@ func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID 
 	if err := validateAttachment(in); err != nil {
 		return 0, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -1268,15 +1553,108 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 	return clause, args
 }
 
-func (s *Store) ListRequests(ctx context.Context, opts RequestListOptions) ([]Request, error) {
-	if opts.Limit <= 0 {
-		opts.Limit = 200
+// RequestsUnlimited asks for every row the filter matches, with no cap at all.
+// The CSV export is what needs it: an export taken for reconciliation that drops
+// rows without saying so is worse than no export (D3, F-B-16).
+const RequestsUnlimited = -1
+
+// defaultRequestLimit is the cap applied when a caller names no number. It is a
+// guard against a panel accidentally reading the whole table, not a display
+// decision — a screen that lists requests uses ListRequestsPage, which reports
+// the total and whether anything was left out.
+const defaultRequestLimit = 200
+
+// RequestPage is a list of requests that knows what it is not showing.
+//
+// F-B-16: ListRequests capped itself at 200 rows while CountRequests — the tab
+// count rendered right beside it — had no cap at all, so a queue promised 214 and
+// drew 200 with nothing on the page saying so, and the CSV export dropped the
+// same fourteen rows just as quietly. Silence was the defect. Total and Truncated
+// are what a screen needs in order to stop lying: page on Offset/Limit and say
+// which page this is, or ask for RequestsUnlimited and carry every row.
+type RequestPage struct {
+	Requests []Request
+	// Total rows matching the same filter, ignoring Limit and Offset. This is
+	// exactly CountRequests, so a tab built from Total can never disagree with
+	// the rows beneath it.
+	Total int
+	// Offset and Limit as they were applied. Limit is 0 when no cap was applied.
+	Offset int
+	Limit  int
+	// Truncated reports that rows matching the filter are not in Requests —
+	// either later pages, or rows the cap dropped.
+	Truncated bool
+}
+
+// RequestPageOptions is RequestListOptions plus the offset a paged screen needs.
+// Offset lives here rather than on RequestListOptions because every existing
+// caller of that struct means "the first N", and its zero value must go on
+// meaning exactly that.
+type RequestPageOptions struct {
+	RequestListOptions
+	Offset int
+}
+
+// ListRequestsPage returns a window onto the matching requests together with the
+// total the same filter matches, so the screen can say what it is not showing.
+func (s *Store) ListRequestsPage(ctx context.Context, opts RequestPageOptions) (RequestPage, error) {
+	total, err := s.CountRequests(ctx, opts.RequestListOptions)
+	if err != nil {
+		return RequestPage{}, err
 	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+	rows, err := s.listRequestRows(ctx, opts.RequestListOptions, opts.Offset)
+	if err != nil {
+		return RequestPage{}, err
+	}
+	page := RequestPage{Requests: rows, Total: total, Offset: opts.Offset}
+	if opts.Limit != RequestsUnlimited {
+		page.Limit = effectiveRequestLimit(opts.Limit)
+	}
+	page.Truncated = opts.Offset+len(rows) < total
+	return page, nil
+}
+
+// ListRequests returns the matching rows and nothing about what it left out. A
+// caller that renders a list, or exports one, wants ListRequestsPage instead;
+// this stays for the panels that deliberately show only a head (the dashboard's
+// four rows) and for the queues that pass an explicit Limit.
+func (s *Store) ListRequests(ctx context.Context, opts RequestListOptions) ([]Request, error) {
+	return s.listRequestRows(ctx, opts, 0)
+}
+
+func effectiveRequestLimit(limit int) int {
+	if limit <= 0 {
+		return defaultRequestLimit
+	}
+	return limit
+}
+
+func (s *Store) listRequestRows(ctx context.Context, opts RequestListOptions, offset int) ([]Request, error) {
 	clause, args := requestWhere(opts)
-	// Urgent first, then oldest first: the list is sorted by who has been kept
-	// waiting longest, which is what requests-list.html promises.
-	q := requestSelect + clause + ` ORDER BY r.urgent DESC, r.created_at DESC, r.id DESC LIMIT ?`
-	args = append(args, opts.Limit)
+	// F-B-18: urgent first, then **oldest** first. The comment here and the
+	// sub-line on requests-list.html both say the list is sorted by who has been
+	// kept waiting longest, and that is created_at ASC — it used to be DESC, so
+	// the most neglected request was the last one on the page, or on no page at
+	// all once the 200-row cap bit. CURRENT_TIMESTAMP resolves only to the second,
+	// so a burst of submissions shares one value; id breaks the tie and keeps them
+	// in the order they arrived.
+	q := requestSelect + clause + ` ORDER BY r.urgent DESC, r.created_at, r.id`
+	switch {
+	case opts.Limit == RequestsUnlimited && offset > 0:
+		// SQLite has no bare OFFSET: -1 is its "no limit" sentinel.
+		q += ` LIMIT -1 OFFSET ?`
+		args = append(args, offset)
+	case opts.Limit == RequestsUnlimited:
+	case offset > 0:
+		q += ` LIMIT ? OFFSET ?`
+		args = append(args, effectiveRequestLimit(opts.Limit), offset)
+	default:
+		q += ` LIMIT ?`
+		args = append(args, effectiveRequestLimit(opts.Limit))
+	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err

@@ -67,6 +67,95 @@ var defaultNotificationSettings = []NotificationSetting{
 		BodyTemplate:    "{{number}} has been in processing since {{processing_on}} with no settlement recorded.\n\nOpen it: {{link}}"},
 }
 
+// auditNotificationSettings are the nine events the 2026-07-27 audit found
+// missing (F-F-06): six workflow actions notified nobody at all, and three more
+// sat in the same gap. They are seeded by migration v9 rather than being
+// appended to defaultNotificationSettings, because v7 has already run on every
+// installed database and a seed only ever runs once — see PROGRESS.md, "Seeding
+// only happens in v1".
+//
+// Two conventions from the original twelve are followed deliberately rather
+// than reinvented:
+//
+//   - email_enabled is left at its 0 default, so a fresh install delivers in-app
+//     rows only and email stays opt-in per event.
+//   - the management recipient list is not touched. It is Cc-on-email-only for
+//     request_approved and the post-approval urgent case, and it never receives
+//     an in-app row because there is no user id to address one to. An
+//     organisation that wants management copied on any of these sets the event's
+//     own cc_recipients, which is the supported per-event control.
+var auditNotificationSettings = []NotificationSetting{
+	{Event: "request_withdrawn", Label: "Withdrawn by the requester", Audience: "Approver", IncludeManager: true,
+		SubjectTemplate: "{{requester}} withdrew {{number}} — no approval needed",
+		BodyTemplate:    "{{requester}} withdrew {{number}} ({{amount}} to {{payee}}) before it was decided. It has left your queue and needs nothing further from you.\n\nOpen it: {{link}}"},
+	{Event: "request_reraised", Label: "Raised again after a rejection", Audience: "Approver", IncludeManager: true,
+		SubjectTemplate: "{{number}} needs your approval — raised again after a rejection",
+		BodyTemplate:    "{{requester}} raised {{number}} again after an earlier rejection. It is {{amount}} to {{payee}}.\n\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"},
+	{Event: "request_unheld", Label: "Hold lifted", Audience: "Requester", IncludeRequester: true,
+		SubjectTemplate: "{{number}} is off hold and back in the payment queue",
+		BodyTemplate:    "Accounts lifted the hold on {{number}}. It is queued to be paid again and nothing more is needed from you.\n\nOpen it: {{link}}"},
+	{Event: "reservation_released", Label: "Reservation released", Audience: "Requester + approver",
+		IncludeRequester: true, IncludeManager: true,
+		SubjectTemplate: "{{number}} is unclaimed again — the reservation was released",
+		BodyTemplate:    "The accountant who had taken {{number}} ({{amount}} to {{payee}}) for processing released it. It is approved and back in the open queue for someone to pick up.\n\nOpen it: {{link}}"},
+	{Event: "reservation_reassigned", Label: "Reservation handed to someone else", Audience: "Requester + approver + the new assignee",
+		IncludeRequester: true, IncludeManager: true, IncludeAccounts: true,
+		SubjectTemplate: "{{number}} is now being processed by someone else",
+		BodyTemplate:    "{{number}} ({{amount}} to {{payee}}) stayed reserved and changed hands, so it never went back to the open queue.\n\nOpen it: {{link}}"},
+	{Event: "payment_partial_accepted", Label: "Partial payment accepted", Audience: "Requester + assigned accountant",
+		IncludeRequester: true, IncludeAccounts: true,
+		SubjectTemplate: "{{number}} is closed — the shortfall was accepted",
+		BodyTemplate:    "{{approver}} accepted that {{number}} was paid {{amount}} against {{approved_amount}} approved. The balance will not be paid and the request is closed.\n\nOpen it: {{link}}"},
+	{Event: "payment_partial_concern", Label: "Concern raised about a partial payment", Audience: "Assigned accountant", IncludeAccounts: true,
+		SubjectTemplate: "{{approver}} raised a concern about the partial payment on {{number}}",
+		BodyTemplate:    "{{approver}} is not satisfied with the shortfall on {{number}}: {{amount}} paid against {{approved_amount}} approved. The request stays in review until the concern is answered.\n\nOpen it: {{link}}"},
+	{Event: "request_cancellation_accepted", Label: "Cancellation accepted", Audience: "Requester + assigned accountant",
+		IncludeRequester: true, IncludeAccounts: true,
+		SubjectTemplate: "{{number}} was cancelled — the payment will not be made",
+		BodyTemplate:    "{{approver}} accepted the ask to cancel {{number}} ({{approved_amount}} to {{payee}}). Nothing further will be paid against it.\n\nOpen it: {{link}}"},
+	{Event: "request_cancellation_declined", Label: "Cancellation declined", Audience: "Requester + assigned accountant",
+		IncludeRequester: true, IncludeAccounts: true,
+		SubjectTemplate: "{{number}} stands — the cancellation was declined",
+		BodyTemplate:    "{{approver}} declined the ask to cancel {{number}}. It is approved again for {{approved_amount}} to {{payee}} and the payment is no longer frozen.\n\nOpen it: {{link}}"},
+}
+
+// seedNotificationSettings inserts event rules without ever overwriting one.
+//
+// ON CONFLICT DO NOTHING, never DO UPDATE: an installed database has an
+// administrator's edits in these columns — their own recipients, their own
+// wording, email switched on — and a re-seed would silently reset every one of
+// them. That makes the whole function safe to run twice, which is what lets a
+// migration be re-applied after a user_version reset.
+//
+// startOrder is the sort_order already in use, so a later migration's events
+// land after the earlier ones on the admin screen instead of interleaving.
+func seedNotificationSettings(tx *sql.Tx, rows []NotificationSetting, startOrder int) error {
+	for i, n := range rows {
+		if _, err := tx.Exec(`INSERT INTO notification_settings
+			(event,label,audience,email_enabled,to_recipients,cc_recipients,include_requester,include_manager,include_accounts,subject_template,body_template,sort_order)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event) DO NOTHING`,
+			n.Event, n.Label, n.Audience, boolInt(n.EmailEnabled), n.ToRecipients, n.CcRecipients,
+			boolInt(n.IncludeRequester), boolInt(n.IncludeManager), boolInt(n.IncludeAccounts),
+			n.SubjectTemplate, n.BodyTemplate, startOrder+i+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UpAuditNotificationEvents is migration v9: the nine event rules of F-F-06.
+//
+// It adds rows and nothing else — no schema change, no re-seed of the twelve
+// v7 already wrote — so it is idempotent by construction and an administrator's
+// existing settings are untouched whether it runs once or ten times.
+//
+// Exported because the migrations slice lives in migrations.go and this file
+// owns the notification vocabulary; register it there as
+// {Version: 9, Name: "notification_events_audit", Up: UpAuditNotificationEvents}.
+func UpAuditNotificationEvents(tx *sql.Tx) error {
+	return seedNotificationSettings(tx, auditNotificationSettings, len(defaultNotificationSettings))
+}
+
 // upNotifications creates notification_settings and the in-app notifications
 // table. app_settings (key/value) is created by Phase 2's v3 migration and is
 // deliberately NOT re-created here.
@@ -102,15 +191,5 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_i
 CREATE INDEX IF NOT EXISTS idx_notifications_request ON notifications(request_id);`); err != nil {
 		return err
 	}
-	for i, n := range defaultNotificationSettings {
-		if _, err := tx.Exec(`INSERT INTO notification_settings
-			(event,label,audience,email_enabled,to_recipients,cc_recipients,include_requester,include_manager,include_accounts,subject_template,body_template,sort_order)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event) DO NOTHING`,
-			n.Event, n.Label, n.Audience, boolInt(n.EmailEnabled), n.ToRecipients, n.CcRecipients,
-			boolInt(n.IncludeRequester), boolInt(n.IncludeManager), boolInt(n.IncludeAccounts),
-			n.SubjectTemplate, n.BodyTemplate, i+1); err != nil {
-			return err
-		}
-	}
-	return nil
+	return seedNotificationSettings(tx, defaultNotificationSettings, 0)
 }

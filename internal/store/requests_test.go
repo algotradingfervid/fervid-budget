@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1276,5 +1278,665 @@ func TestSimilarRequestsFindsRecentNearDuplicatesOnly(t *testing.T) {
 	none, err := s.SimilarRequests(ctx, SimilarRequestOptions{VendorID: anand, Amount: 1})
 	if err != nil || len(none) != 0 {
 		t.Fatalf("no matches = %#v, %v; want empty, nil", none, err)
+	}
+}
+
+// ===========================================================================
+// The 2026-07-27 QA audit repairs. One test per finding, named by it.
+// ===========================================================================
+
+// auditRequest raises a plain, valid reimbursement so a decision test does not
+// have to restate the whole body.
+func auditRequest(t *testing.T, s *Store, ctx context.Context, req, mgr User, headID, amount int64) int64 {
+	t.Helper()
+	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
+		ShortTitle: "Site travel", ProjectID: 1, HeadID: headID, Amount: amount,
+		Purpose: "site visit", ExpenseDate: "2026-07-21", ManagerID: mgr.ID})
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	return id
+}
+
+// F-C-01. The approved amount is the authority to pay — G13 caps a payment at it
+// — so an approver may reduce it and may never raise it. Before this guard one
+// person could authorise ₹25,000 against an ₹18,400 request and Accounts paid the
+// larger figure in full.
+func TestApproveRequestRefusesMoreThanWasRequested(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+
+	over := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	err := s.ApproveRequest(ctx, mgr, over, 2500000, "")
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("approving ₹25,000 against an ₹18,400 request = %v, want ErrValidation", err)
+	}
+	if !strings.Contains(err.Error(), money.FormatPaise(1840000)) {
+		t.Fatalf("the refusal must name what was actually requested: %v", err)
+	}
+	got, _ := s.Request(ctx, over)
+	if got.Status != "pending" || got.ApprovedAmount != nil {
+		t.Fatalf("a refused approval wrote something: status=%q approved=%v", got.Status, got.ApprovedAmount)
+	}
+
+	// One paise over is still over.
+	if err := s.ApproveRequest(ctx, mgr, over, 1840001, ""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("one paise over = %v, want ErrValidation", err)
+	}
+	// Exactly the requested amount is the ordinary approval.
+	if err := s.ApproveRequest(ctx, mgr, over, 1840000, ""); err != nil {
+		t.Fatalf("approving the exact amount: %v", err)
+	}
+	// And less is the adjustment the approve sheet exists for.
+	under := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	if err := s.ApproveRequest(ctx, mgr, under, 1200000, "only the flights"); err != nil {
+		t.Fatalf("approving less: %v", err)
+	}
+	cut, _ := s.Request(ctx, under)
+	if cut.ApprovedAmount == nil || *cut.ApprovedAmount != 1200000 {
+		t.Fatalf("reduced approval = %v, want 1200000", cut.ApprovedAmount)
+	}
+}
+
+// F-C-03. legalTransitions carries cancellation_requested → approved for
+// DecideCancellation(accept=false) alone: that path is gated on approval:cancel,
+// demands a written reason and records `cancel_decline`. ApproveRequest borrowed
+// the edge through canTransition and so lifted the requester's freeze with none of
+// the three, rewriting approved_amount and leaving a stale cancel_reason on an
+// approved row that no screen renders.
+func TestApproveIsRefusedWhileACancellationIsUndecided(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	id := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	if err := s.ApproveRequest(ctx, mgr, id, 1840000, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestCancellation(ctx, req, id, "The trip is off."); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.ApproveRequest(ctx, mgr, id, 999900, "")
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("approving a frozen request = %v, want ErrValidation", err)
+	}
+	if !strings.Contains(err.Error(), "cancellation") {
+		t.Fatalf("the refusal must point at the cancellation: %v", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.Status != "cancellation_requested" {
+		t.Fatalf("status = %q, want cancellation_requested — the freeze must hold", got.Status)
+	}
+	if got.ApprovedAmount == nil || *got.ApprovedAmount != 1840000 {
+		t.Fatalf("approved_amount was rewritten to %v", got.ApprovedAmount)
+	}
+	if got.CancelReason != "The trip is off." {
+		t.Fatalf("cancel_reason = %q; the requester must still be able to read their own ask", got.CancelReason)
+	}
+	// Declining is the route that returns it to approved, and it records itself.
+	if err := s.DecideCancellation(ctx, mgr, id, false, "Pay it as approved."); err != nil {
+		t.Fatal(err)
+	}
+	trail, err := s.Audit(ctx, "payment_request", id, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var declines int
+	for _, a := range trail {
+		if a.Action == "cancel_decline" {
+			declines++
+		}
+	}
+	if declines != 1 {
+		t.Fatalf("cancel_decline rows = %d, want exactly 1", declines)
+	}
+}
+
+// F-C-07. Requirement L7 is "On hold (only Accounts lifts)". A cancellation ask
+// used to destroy the hold and a declined cancellation restored nothing, so a
+// requester and an approver lifted an accountant's block between them and the
+// request came back genuinely re-reservable with the question unanswered.
+//
+// `on_hold=1` still implies `status='approved'`, so the flag is suspended for the
+// duration of the freeze; hold_reason carries the question across it, and the
+// decline restores the pause.
+func TestADeclinedCancellationRestoresAccountsHold(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	accID, err := s.CreateUser(ctx, "acct-hold@example.com", "Asha Accounts", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc, _ := s.UserByID(ctx, accID)
+
+	id := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	if err := s.ApproveRequest(ctx, mgr, id, 1840000, ""); err != nil {
+		t.Fatal(err)
+	}
+	const question = "Which head should this hit?"
+	if err := s.HoldRequest(ctx, acc, id, question); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RequestCancellation(ctx, req, id, "Might not need it."); err != nil {
+		t.Fatal(err)
+	}
+	frozen, _ := s.Request(ctx, id)
+	// The flag is down, because a hold only ever describes an approved request —
+	// but the question is not lost.
+	if frozen.OnHold {
+		t.Fatal("on_hold survived into cancellation_requested; the invariant is on_hold=1 implies approved")
+	}
+	if frozen.HoldReason != question {
+		t.Fatalf("hold_reason = %q, want the accountant's question kept across the freeze", frozen.HoldReason)
+	}
+
+	if err := s.DecideCancellation(ctx, mgr, id, false, "Still needed."); err != nil {
+		t.Fatal(err)
+	}
+	back, _ := s.Request(ctx, id)
+	if back.Status != "approved" {
+		t.Fatalf("status = %q, want approved", back.Status)
+	}
+	if !back.OnHold || back.HoldReason != question {
+		t.Fatalf("the hold was not restored: on_hold=%v reason=%q", back.OnHold, back.HoldReason)
+	}
+	// Offered is not the same as permitted: ReserveRequest's conditional UPDATE
+	// requires on_hold=0, so a refused reservation is the only proof the pause is
+	// real rather than merely rendered.
+	if err := s.ReserveRequest(ctx, acc, id); !errors.Is(err, ErrRequestOnHold) {
+		t.Fatalf("reserving the re-held request = %v, want ErrRequestOnHold", err)
+	}
+	// Only Accounts lifts it, and then it is payable.
+	if err := s.UnholdRequest(ctx, acc, id); err != nil {
+		t.Fatalf("Unhold: %v", err)
+	}
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatalf("reserve after Accounts lifted the hold: %v", err)
+	}
+}
+
+// The other branch: accepting the cancellation kills the request, and a dead
+// request holds nothing — the hold tab would otherwise keep offering "Read reply"
+// on a row no reply can change.
+func TestAnAcceptedCancellationClearsTheHoldEntirely(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	accID, _ := s.CreateUser(ctx, "acct-accept@example.com", "Asha Accounts", "hash", "admin", true)
+	acc, _ := s.UserByID(ctx, accID)
+
+	id := auditRequest(t, s, ctx, req, mgr, headID, 500000)
+	if err := s.ApproveRequest(ctx, mgr, id, 500000, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HoldRequest(ctx, acc, id, "Bank details?"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestCancellation(ctx, req, id, "Cancel it."); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DecideCancellation(ctx, mgr, id, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	dead, _ := s.Request(ctx, id)
+	if dead.Status != "cancelled" || dead.OnHold || dead.HoldReason != "" {
+		t.Fatalf("cancelled request still carries a hold: status=%q on_hold=%v reason=%q",
+			dead.Status, dead.OnHold, dead.HoldReason)
+	}
+}
+
+// F-B-10. CreateRequest reads the numbering settings and then writes. In a
+// deferred transaction SQLite refuses that upgrade while another writer is active
+// and does not consult the busy handler for it, so busy_timeout could not help and
+// the loser of two simultaneous submits met a 500 with their form gone. Both must
+// now succeed, with consecutive numbers and no duplicate.
+func TestConcurrentSubmitsBothSucceed(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	other, err := s.CreateUser(ctx, "second-raiser@example.com", "Second Raiser", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := s.UserByID(ctx, other)
+
+	const racers = 6
+	actors := []User{req, second}
+	ids := make([]int64, racers)
+	errs := make([]error, racers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			ids[i], errs[i] = s.CreateRequest(ctx, actors[i%len(actors)], RequestInput{
+				Treatment: "budget", Type: "reimbursement", ShortTitle: fmt.Sprintf("Race %d", i),
+				ProjectID: 1, HeadID: headID, Amount: 1000 + int64(i), Purpose: "race",
+				ExpenseDate: "2026-07-21", ManagerID: mgr.ID})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	seen := map[string]bool{}
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("racer %d lost its form to %v — every concurrent submit must commit", i, err)
+		}
+		r, err := s.Request(ctx, ids[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[r.Number] {
+			t.Fatalf("number %q was handed out twice", r.Number)
+		}
+		seen[r.Number] = true
+	}
+	if len(seen) != racers {
+		t.Fatalf("%d distinct numbers for %d submits", len(seen), racers)
+	}
+}
+
+// F-C-05. Two sessions of the same approver deciding at once: exactly one commits
+// — that always held — and the loser is now told no rather than handed
+// SQLITE_BUSY and a 500. Every pairing in the finding is covered: approve vs
+// approve, approve vs reject, and accept vs decline a cancellation.
+func TestConcurrentDecisionsRefuseTheLoserRatherThanFailing(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+
+	// race runs two writers at once and returns their errors in order.
+	race := func(a, b func() error) (error, error) {
+		var errA, errB error
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); <-start; errA = a() }()
+		go func() { defer wg.Done(); <-start; errB = b() }()
+		close(start)
+		wg.Wait()
+		return errA, errB
+	}
+	// exactlyOneWon insists on one nil and one refusal a handler can phrase.
+	exactlyOneWon := func(label string, errA, errB error) {
+		t.Helper()
+		wins := 0
+		for _, err := range []error{errA, errB} {
+			switch {
+			case err == nil:
+				wins++
+			case errors.Is(err, ErrValidation), errors.Is(err, ErrForbidden):
+			default:
+				t.Fatalf("%s: the loser met %v — a race must be a refusal, never a server error", label, err)
+			}
+		}
+		if wins != 1 {
+			t.Fatalf("%s: %d writers committed, want exactly 1 (%v / %v)", label, wins, errA, errB)
+		}
+	}
+
+	approveRace := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	a, b := race(
+		func() error { return s.ApproveRequest(ctx, mgr, approveRace, 1840000, "first") },
+		func() error { return s.ApproveRequest(ctx, mgr, approveRace, 1200000, "second") })
+	exactlyOneWon("approve vs approve", a, b)
+	if got := requestStatus(t, s, ctx, approveRace); got != "approved" {
+		t.Fatalf("approve vs approve left status %q", got)
+	}
+
+	mixedRace := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	a, b = race(
+		func() error { return s.ApproveRequest(ctx, mgr, mixedRace, 1840000, "") },
+		func() error { return s.RejectRequest(ctx, mgr, mixedRace, "Race it.") })
+	exactlyOneWon("approve vs reject", a, b)
+	if got := requestStatus(t, s, ctx, mixedRace); got != "approved" && got != "rejected" {
+		t.Fatalf("approve vs reject left status %q", got)
+	}
+
+	cancelRace := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	if err := s.ApproveRequest(ctx, mgr, cancelRace, 1840000, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestCancellation(ctx, req, cancelRace, "Stop it."); err != nil {
+		t.Fatal(err)
+	}
+	a, b = race(
+		func() error { return s.DecideCancellation(ctx, mgr, cancelRace, true, "") },
+		func() error { return s.DecideCancellation(ctx, mgr, cancelRace, false, "Keep it.") })
+	exactlyOneWon("accept vs decline", a, b)
+	if got := requestStatus(t, s, ctx, cancelRace); got != "cancelled" && got != "approved" {
+		t.Fatalf("accept vs decline left status %q", got)
+	}
+
+	// And one audit row per decision, never two.
+	for _, id := range []int64{approveRace, mixedRace, cancelRace} {
+		trail, err := s.Audit(ctx, "payment_request", id, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts := map[string]int{}
+		for _, entry := range trail {
+			counts[entry.Action]++
+		}
+		for _, action := range []string{"approve", "reject", "cancel", "cancel_decline"} {
+			if counts[action] > 1 {
+				t.Fatalf("request %d recorded %s %d times", id, action, counts[action])
+			}
+		}
+	}
+}
+
+// F-B-16. The list capped itself at 200 rows while the tab count beside it had no
+// cap, so a queue promised 214 and drew 200 with nothing saying so, and the CSV
+// export dropped the same rows. ListRequestsPage reports the total and whether
+// anything was left out; RequestsUnlimited carries every row.
+func TestListRequestsPageReportsTheTotalAndTheTruncation(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	const total = 205
+	for i := 0; i < total; i++ {
+		auditRequest(t, s, ctx, req, mgr, headID, int64(1000+i))
+	}
+
+	opts := RequestPageOptions{RequestListOptions: RequestListOptions{Scope: "all"}}
+	capped, err := s.ListRequestsPage(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capped.Total != total {
+		t.Fatalf("Total = %d, want %d", capped.Total, total)
+	}
+	if len(capped.Requests) != defaultRequestLimit {
+		t.Fatalf("rows = %d, want the default cap of %d", len(capped.Requests), defaultRequestLimit)
+	}
+	if !capped.Truncated {
+		t.Fatal("205 rows behind a 200-row page and Truncated is false — this is the silence F-B-16 is about")
+	}
+
+	// Page two finishes the list and says it is the end.
+	page2 := opts
+	page2.Offset = defaultRequestLimit
+	rest, err := s.ListRequestsPage(ctx, page2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest.Requests) != total-defaultRequestLimit {
+		t.Fatalf("page two rows = %d, want %d", len(rest.Requests), total-defaultRequestLimit)
+	}
+	if rest.Truncated {
+		t.Fatal("the last page must not report itself truncated")
+	}
+
+	// The export's shape: every row, and nothing hidden.
+	whole := opts
+	whole.Limit = RequestsUnlimited
+	all, err := s.ListRequestsPage(ctx, whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Requests) != total || all.Truncated || all.Limit != 0 {
+		t.Fatalf("unlimited page = %d rows, truncated=%v limit=%d; want %d rows, false, 0",
+			len(all.Requests), all.Truncated, all.Limit, total)
+	}
+	// No row appears on both pages and none is missed.
+	seen := map[int64]bool{}
+	for _, r := range append(append([]Request{}, capped.Requests...), rest.Requests...) {
+		if seen[r.ID] {
+			t.Fatalf("request %d appears on two pages", r.ID)
+		}
+		seen[r.ID] = true
+	}
+	if len(seen) != total {
+		t.Fatalf("the two pages cover %d rows, want %d", len(seen), total)
+	}
+}
+
+// F-B-18. "Sorted by who is holding them up" is created_at ASC. It used to be
+// DESC, so the request kept waiting longest was last — or on no page at all once
+// the cap bit. CURRENT_TIMESTAMP is second-resolution, so id breaks the tie.
+func TestListRequestsPutsTheLongestWaitingFirst(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	oldest := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+	middle := auditRequest(t, s, ctx, req, mgr, headID, 2000)
+	newest := auditRequest(t, s, ctx, req, mgr, headID, 3000)
+
+	list, err := s.ListRequests(ctx, RequestListOptions{Scope: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []int64{}
+	for _, r := range list {
+		got = append(got, r.ID)
+	}
+	want := []int64{oldest, middle, newest}
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("order = %v, want oldest first %v", got, want)
+		}
+	}
+
+	// Urgent still jumps the queue, and inside the urgent block the oldest leads.
+	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET urgent=1 WHERE id IN (?,?)`, middle, newest); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.ListRequests(ctx, RequestListOptions{Scope: "all"})
+	if len(list) != 3 || list[0].ID != middle || list[1].ID != newest || list[2].ID != oldest {
+		t.Fatalf("urgent-first order = %v", list)
+	}
+}
+
+// F-A-08. The approver <select> is built from ListApprovers, so it only ever
+// offers people who can approve — and that was the only enforcement. A request
+// routed anywhere else can be decided by nobody: the named person fails the route
+// gate and every real manager fails the ownership check.
+func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	strangerID, err := s.CreateUser(ctx, "nobody@example.com", "No Body", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The control: this person is not in the list the form is built from.
+	offered, err := s.ListApprovers(ctx, req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range offered {
+		if u.ID == strangerID {
+			t.Fatal("the fixture is wrong: the stranger holds approval:approve")
+		}
+	}
+
+	body := RequestInput{Treatment: "budget", Type: "reimbursement", ShortTitle: "Site travel",
+		ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "site visit",
+		ExpenseDate: "2026-07-21", ManagerID: strangerID}
+	if _, err := s.CreateRequest(ctx, req, body); !errors.Is(err, ErrValidation) {
+		t.Fatalf("routing to a non-approver = %v, want ErrValidation", err)
+	}
+
+	// The edit path is the same hole one route over.
+	id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+	reroute := body
+	reroute.ManagerID = strangerID
+	if err := s.UpdateRequest(ctx, req, id, reroute); !errors.Is(err, ErrValidation) {
+		t.Fatalf("rerouting to a non-approver = %v, want ErrValidation", err)
+	}
+	// So is reassignment, which is this finding's own recovery path.
+	if err := s.ReassignRequest(ctx, mgr, id, strangerID, "Take this over."); !errors.Is(err, ErrValidation) {
+		t.Fatalf("reassigning to a non-approver = %v, want ErrValidation", err)
+	}
+	still, _ := s.Request(ctx, id)
+	if still.ManagerID != mgr.ID {
+		t.Fatalf("a refused reroute moved the approver to %d", still.ManagerID)
+	}
+
+	// Granting the verb makes the same person acceptable, which proves the check
+	// reads the grant and not something incidental about the account.
+	grantApprovalPermission(t, s, ctx, strangerID)
+	if _, err := s.CreateRequest(ctx, req, body); err != nil {
+		t.Fatalf("routing to a real approver: %v", err)
+	}
+	// And a deactivated approver is refused too: they strand the request just as
+	// completely as somebody holding no verb.
+	if _, err := s.DB().ExecContext(ctx, `UPDATE users SET active=0 WHERE id=?`, strangerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRequest(ctx, req, body); !errors.Is(err, ErrValidation) {
+		t.Fatalf("routing to a deactivated approver = %v, want ErrValidation", err)
+	}
+}
+
+// F-B-05, F-B-03, F-B-07. The form narrows all three of these controls, and
+// narrowing a <select> is not validation.
+func TestCreateRequestRechecksTheIdsTheFormNarrows(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+
+	otherProject, err := s.UpsertProject(ctx, 0, "People", true, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignHead, err := s.UpsertHead(ctx, 0, otherProject, "Payroll", "1", true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiredHead, err := s.UpsertHead(ctx, 0, 1, "Closed cost centre", "1", false, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadVendorID := seedTestVendor(t, s, ctx, "Dead Vendor")
+	if _, err := s.DB().ExecContext(ctx, `UPDATE vendors SET status='inactive' WHERE id=?`, deadVendorID); err != nil {
+		t.Fatal(err)
+	}
+
+	base := RequestInput{Treatment: "budget", Type: "vendor_invoice", ShortTitle: "Switchgear",
+		ProjectID: 1, HeadID: headID, VendorID: vendorID, Amount: 100000, Purpose: "panels",
+		InvoiceNo: "SE/1", InvoiceDate: "2026-07-18", ManagerID: mgr.ID}
+	// The control: the honest body is accepted.
+	if _, err := s.CreateRequest(ctx, req, base); err != nil {
+		t.Fatalf("the valid body must be accepted: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(in RequestInput) RequestInput
+		says   string
+	}{
+		{"F-B-05 a head under a different project",
+			func(in RequestInput) RequestInput { in.HeadID = foreignHead; return in }, "different project"},
+		{"F-B-03 a retired head",
+			func(in RequestInput) RequestInput { in.HeadID = retiredHead; return in }, "retired"},
+		{"F-B-07 an inactive vendor",
+			func(in RequestInput) RequestInput { in.VendorID = deadVendorID; return in }, "no longer active"},
+	} {
+		in := tc.mutate(base)
+		_, err := s.CreateRequest(ctx, req, in)
+		if !errors.Is(err, ErrValidation) {
+			t.Fatalf("%s = %v, want ErrValidation", tc.name, err)
+		}
+		if !strings.Contains(err.Error(), tc.says) {
+			t.Fatalf("%s: message %q does not say why", tc.name, err)
+		}
+		// And the same refusal on the edit path.
+		id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+		if err := s.UpdateRequest(ctx, req, id, in); !errors.Is(err, ErrValidation) {
+			t.Fatalf("%s on edit = %v, want ErrValidation", tc.name, err)
+		}
+	}
+
+	// Retiring the *project* takes its heads out of the form too
+	// (ListHeads(ctx,true) is `h.active=1 AND p.active=1`), so it must refuse here.
+	if _, err := s.UpsertProject(ctx, otherProject, "People", false, 2); err != nil {
+		t.Fatal(err)
+	}
+	closed := base
+	closed.ProjectID, closed.HeadID = otherProject, foreignHead
+	if _, err := s.CreateRequest(ctx, req, closed); !errors.Is(err, ErrValidation) {
+		t.Fatalf("a head under a retired project = %v, want ErrValidation", err)
+	}
+}
+
+// F-B-15, F-B-04. The form renders these fieldsets as alternatives, so no browser
+// can send both — and `hidden` is not validation. A crafted POST stored the
+// concealed half and request_detail printed every non-empty column, so a budget
+// expense read as recoverable and a reimbursement carried an invoice number.
+func TestColumnsAShapeDoesNotOwnAreCleared(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+
+	// F-B-15: a budget vendor_invoice carrying the recoverable fieldset.
+	budgetID, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
+		ShortTitle: "Switchgear", ProjectID: 1, HeadID: headID, VendorID: vendorID, Amount: 100000,
+		Purpose: "panels", InvoiceNo: "SE/1", InvoiceDate: "2026-07-18", ManagerID: mgr.ID,
+		RecoverableCategory: "emd", Counterparty: "Shadow Counterparty",
+		ExpectedReturnDate: "2027-03-31", RepaymentNotes: "Terms that do not belong here."})
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	budget, _ := s.Request(ctx, budgetID)
+	if budget.Counterparty != "" || budget.ExpectedReturnDate != "" || budget.RepaymentNotes != "" {
+		t.Fatalf("a budget expense kept recoverable columns: cp=%q return=%q notes=%q",
+			budget.Counterparty, budget.ExpectedReturnDate, budget.RepaymentNotes)
+	}
+	if budget.RecoverableCategory != "" || budget.RecoverableCategoryID != nil {
+		t.Fatalf("a budget expense kept a category: %q / %v", budget.RecoverableCategory, budget.RecoverableCategoryID)
+	}
+
+	// F-B-04: a reimbursement carrying the invoice and advance fields.
+	reimbID, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
+		ShortTitle: "Cab receipts", ProjectID: 1, HeadID: headID, Amount: 4500, Purpose: "travel",
+		ExpenseDate: "2026-07-21", ManagerID: mgr.ID, InvoiceNo: "FORGED-1",
+		InvoiceDate: "2026-07-01", AdvanceReason: "Not a field this type has."})
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	reimb, _ := s.Request(ctx, reimbID)
+	if reimb.InvoiceNo != "" || reimb.InvoiceDate != "" || reimb.AdvanceReason != "" {
+		t.Fatalf("a reimbursement kept invoice/advance columns: no=%q date=%q reason=%q",
+			reimb.InvoiceNo, reimb.InvoiceDate, reimb.AdvanceReason)
+	}
+	// A forged invoice number must not be able to collide with a genuine one in
+	// the duplicate check either. Amount is left at 0 so only the invoice branch
+	// of SimilarRequests can match — otherwise the row comes back on its amount
+	// and proves nothing.
+	dupes, err := s.SimilarRequests(ctx, SimilarRequestOptions{Payee: req.Name, InvoiceNo: "FORGED-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range dupes {
+		if d.ID == reimbID {
+			t.Fatal("the scrubbed invoice number is still matchable")
+		}
+	}
+
+	// And a vendor_invoice keeps everything it does own.
+	if budget.InvoiceNo != "SE/1" || budget.InvoiceDate != "2026-07-18" {
+		t.Fatalf("the scrub took a field the type owns: no=%q date=%q", budget.InvoiceNo, budget.InvoiceDate)
+	}
+	// The edit path scrubs identically.
+	if err := s.UpdateRequest(ctx, req, reimbID, RequestInput{Treatment: "budget", Type: "reimbursement",
+		ShortTitle: "Cab receipts", ProjectID: 1, HeadID: headID, Amount: 4500, Purpose: "travel",
+		ExpenseDate: "2026-07-21", ManagerID: mgr.ID, InvoiceNo: "FORGED-2",
+		Counterparty: "Nobody"}); err != nil {
+		t.Fatalf("UpdateRequest: %v", err)
+	}
+	edited, _ := s.Request(ctx, reimbID)
+	if edited.InvoiceNo != "" || edited.Counterparty != "" {
+		t.Fatalf("the edit path stored columns the shape does not own: no=%q cp=%q",
+			edited.InvoiceNo, edited.Counterparty)
 	}
 }

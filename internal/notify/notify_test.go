@@ -86,9 +86,23 @@ func grantAccounts(t *testing.T, st *store.Store, userIDs ...int64) {
 	}
 }
 
+// enableEvent configures one event rule.
+//
+// The INSERT is there because SetNotificationSetting is deliberately an UPDATE,
+// not an upsert — an unknown event must be refused rather than create a rule
+// nothing fires — and migration v9's nine events (F-F-06) are registered in
+// migrations.go, a file this package's owner does not edit. Seeding the row here
+// first makes the tests independent of when that one-line registration lands,
+// and ON CONFLICT DO NOTHING keeps them correct after it has.
 func enableEvent(t *testing.T, st *store.Store, actor store.User, in store.NotificationSetting) {
 	t.Helper()
-	if err := st.SetNotificationSetting(context.Background(), actor, in); err != nil {
+	ctx := context.Background()
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO notification_settings(event,label,audience) VALUES(?,?,?) ON CONFLICT(event) DO NOTHING`,
+		in.Event, in.Event, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetNotificationSetting(ctx, actor, in); err != nil {
 		t.Fatal(err)
 	}
 }

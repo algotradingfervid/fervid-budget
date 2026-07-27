@@ -366,17 +366,29 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     expect(reqCountAfter, 'the requester who asked to cancel gets no row of their own from this event').toBe(reqCountBefore);
   });
 
-  test('TC-F-010 — the admin rules screen renders exactly the twelve seeded events, in notify.AllEvents order', async () => {
+  // Twelve became twenty-one when migration v9 seeded rows for the nine actions
+  // F-F-06 found notifying nobody. v7's twelve keep their order and come first —
+  // v9 appends at sort_order 13-21 and never rewrites an existing row — so this
+  // assertion still pins "the screen shows notify.AllEvents in seeded order", and
+  // it is the test that catches a new event declared but never seeded, or seeded
+  // in the wrong place.
+  test('TC-F-010 — the admin rules screen renders exactly the seeded events, in notify.AllEvents order', async () => {
     await adminPage.goto('/admin/notifications');
     const slugs = await adminPage.locator('.t-cards .t-sub').allTextContents();
     expect(slugs.map(s => s.trim())).toEqual([
+      // v7 — Phase 5's twelve
       'request_submitted', 'request_edited', 'request_returned', 'request_rejected',
       'request_approved', 'request_urgent', 'request_on_hold', 'request_cancellation_requested',
-      'payment_settled', 'payment_partial_review', 'reminder_pending', 'reminder_stale_reservation'
+      'payment_settled', 'payment_partial_review', 'reminder_pending', 'reminder_stale_reservation',
+      // v9 — the nine the audit found unnotified (F-F-06)
+      'request_withdrawn', 'request_reraised', 'request_unheld',
+      'reservation_released', 'reservation_reassigned',
+      'payment_partial_accepted', 'payment_partial_concern',
+      'request_cancellation_accepted', 'request_cancellation_declined'
     ]);
   });
 
-  test('TC-F-010b — email is disabled by default for every one of the twelve seeded events', async () => {
+  test('TC-F-010b — email is disabled by default for every one of the seeded events', async () => {
     // Must run before any Section-4 test flips one, and before any local
     // dev re-run has ever flipped one on this database. defaultNotification-
     // Settings (internal/store/migrations_notifications.go) never sets
@@ -387,7 +399,9 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     // request_approved in — only the in-app row is unconditional.
     await adminPage.goto('/admin/notifications');
     const pills = await adminPage.locator('.t-cards tbody tr td[data-label="Email"] .pill').allTextContents();
-    expect(pills.length).toBe(12);
+    // 21 since v9. Asserted as a count rather than left open because a row that
+    // failed to seed would otherwise pass this test silently.
+    expect(pills.length, 'every seeded event has an Email cell').toBe(21);
     for (const text of pills) {
       expect(text.trim(), 'every seeded event ships with email Off').toBe('Off');
     }
@@ -756,7 +770,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     await adminPage.goto('/admin/notifications');
     const rows = adminPage.locator('.t-cards tbody tr');
     const count = await rows.count();
-    expect(count).toBe(12);
+    expect(count, 'one row per seeded event — 21 since migration v9').toBe(21);
     for (let i = 0; i < count; i++) {
       await expect(rows.nth(i).locator('td[data-label="In-app"] .pill')).toHaveText('On');
     }

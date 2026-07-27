@@ -36,12 +36,18 @@ func (s *Service) runReminderBatch(ctx context.Context, now time.Time, th store.
 		return err
 	}
 	for _, req := range reqs {
-		if err := s.Notify(ctx, event, req); err != nil {
+		told, err := s.notify(ctx, event, req)
+		if err != nil {
 			return err
 		}
 		// Stamping after the send is what stops the next tick repeating it
-		// inside the configured cadence.
-		if err := s.st.MarkReminderSent(ctx, req.ID, now); err != nil {
+		// inside the configured cadence — and, since F-F-02, is also what puts
+		// the reminder on the request's own history, so the stale-reservation
+		// screen's "a reminder went out" can be checked against the trail
+		// printed directly underneath it instead of being taken on trust.
+		if err := s.st.MarkReminderSent(ctx, req.ID, now, store.ReminderAudit{
+			Label: reminderLabel(event), Recipients: told,
+		}); err != nil {
 			return err
 		}
 	}

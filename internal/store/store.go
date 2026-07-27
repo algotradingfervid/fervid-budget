@@ -1234,10 +1234,26 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	if search := strings.ToLower(strings.TrimSpace(opts.Query)); search != "" {
 		// The payee is searched as it is displayed: typing a vendor's name must
 		// find the row that shows that name.
-		q += ` AND (lower(r.number) LIKE ? ESCAPE '\' OR lower(u.name) LIKE ? ESCAPE '\' OR lower(COALESCE(NULLIF(v.name,''),r.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(h.name,'')) LIKE ? ESCAPE '\' OR CAST(r.amount AS TEXT) LIKE ? ESCAPE '\')`
+		//
+		// F-D-04: so is the amount. r.amount is int64 paise, so matching the
+		// search text against CAST(r.amount AS TEXT) meant `7,431.00` — the only
+		// form of the figure that appears on any screen, since every rendering
+		// goes through money.FormatPaise — never found ₹7,431.00, while 743100
+		// did. The text match is kept, because a substring of the paise integer
+		// is still a useful needle and TC-D-013 pins that 743100 works; what is
+		// added is an exact paise comparison whenever the needle parses as money.
+		// money.ParsePaise already strips ₹, commas and whitespace, so it is the
+		// right normaliser and the two cannot drift.
+		amountClause := ` OR CAST(r.amount AS TEXT) LIKE ? ESCAPE '\'`
 		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
 		needle := "%" + esc + "%"
-		args = append(args, needle, needle, needle, needle, needle, needle)
+		extra := []any{needle, needle, needle, needle, needle, needle}
+		if paise, err := money.ParsePaise(search); err == nil {
+			amountClause += ` OR r.amount = ?`
+			extra = append(extra, paise)
+		}
+		q += ` AND (lower(r.number) LIKE ? ESCAPE '\' OR lower(u.name) LIKE ? ESCAPE '\' OR lower(COALESCE(NULLIF(v.name,''),r.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(h.name,'')) LIKE ? ESCAPE '\'` + amountClause + `)`
+		args = append(args, extra...)
 	}
 	// CURRENT_TIMESTAMP is second-resolution, so a burst of approvals shares one
 	// timestamp; id breaks the tie and keeps the order stable.

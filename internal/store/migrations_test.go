@@ -351,12 +351,18 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 			t.Fatalf("table %q missing: %v", table, err)
 		}
 	}
+	// Scoped to v7's own sort_order block, because notification_settings is
+	// append-only across migrations: v9 seeds nine more events (F-F-06) at
+	// sort_order 13-21, and a count of the whole table would make this test about
+	// the size of the catalogue rather than about what v7 does.
+	// TestMigrationV9SeedsTheNineMissingEvents owns the total.
 	var count int
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM notification_settings`).Scan(&count); err != nil {
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM notification_settings WHERE sort_order<=?`,
+		len(defaultNotificationSettings)).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 12 {
-		t.Fatalf("seeded events = %d, want 12", count)
+		t.Fatalf("v7-seeded events = %d, want 12", count)
 	}
 	want := []string{
 		"request_submitted", "request_edited", "request_returned", "request_rejected",

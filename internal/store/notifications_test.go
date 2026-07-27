@@ -87,11 +87,18 @@ func TestNotificationSettingUpsertAndFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 12 {
-		t.Fatalf("events = %d, want 12 (seeded)", len(all))
+	// Screen order is the seeded sort_order, and notification_settings is
+	// append-only across migrations — v9 adds nine more events (F-F-06). So this
+	// pins that v7's twelve come first and in their seeded order, which is what
+	// the screen's order actually means, rather than a total that grows with each
+	// migration that adds an event.
+	if len(all) < len(defaultNotificationSettings) {
+		t.Fatalf("events = %d, want at least the %d v7 seeded", len(all), len(defaultNotificationSettings))
 	}
-	if all[0].Event != "request_submitted" || all[len(all)-1].Event != "reminder_stale_reservation" {
-		t.Fatalf("AllNotificationSettings must return screen order, got %q … %q", all[0].Event, all[len(all)-1].Event)
+	for i, want := range defaultNotificationSettings {
+		if all[i].Event != want.Event {
+			t.Fatalf("AllNotificationSettings must return screen order: row %d = %q, want %q", i, all[i].Event, want.Event)
+		}
 	}
 }
 

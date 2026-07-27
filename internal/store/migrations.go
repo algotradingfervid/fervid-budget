@@ -25,6 +25,7 @@ type migration struct {
 //	v6 — recoverable categories (Phase 4)
 //	v7 — notification settings (Phase 5)
 //	v8 — payments.head_id nullable (2026-07-27 audit, F-D-11/F-E-01/F-G-001)
+//	v9 — notification rows for nine unnotified actions (2026-07-27 audit, F-F-06)
 //
 // Phase 3 consumed v5 for a grant back-fill, so every phase plan written before
 // it is off by one from here on. Migrations are append-only and are never
@@ -334,6 +335,14 @@ ON CONFLICT(key) DO NOTHING;
 		Version: 8,
 		Name:    "payments_head_nullable",
 		Up:      upPaymentsHeadNullable,
+	},
+	{
+		// The nine workflow actions that notified nobody. Adds rows only —
+		// ON CONFLICT(event) DO NOTHING — so an administrator's edits to v7's
+		// twelve survive, which is why this is a migration and never a re-seed.
+		Version: 9,
+		Name:    "notification_events_audit",
+		Up:      UpAuditNotificationEvents,
 	},
 }
 

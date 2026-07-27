@@ -842,3 +842,128 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 		t.Fatalf("settled recoverable counted as actuals: %d", grid.Total.Actual)
 	}
 }
+
+// F-E-05. The dashboard's "Past expected return" tile and the register are the
+// same population at two levels of detail, so they must apply the same rule:
+// recoverableAgeing checks `paidOn == ""` first and answers "Awaiting payment",
+// because money that never left cannot be overdue. RecoverableMetrics compared
+// only dates, so an approved, unpaid, years-overdue request inflated the tile and
+// the reader who followed it found fewer red rows than they were promised.
+func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+
+	// Paid, and past its expected return: genuinely overdue.
+	paid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000601", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
+	payRecoverable(t, s, ctx, actor, headID, paid, "2026-02-12", 200000)
+
+	before, err := s.RecoverableMetrics(ctx, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.OverdueCount != 1 || before.OverdueAmount != 200000 {
+		t.Fatalf("the paid, late row = %d over %d, want 200000 over 1", before.OverdueAmount, before.OverdueCount)
+	}
+
+	// Approved but never paid, with a return date years in the past.
+	unpaid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000602", "approved", "emd", "Ridge Metro", "2019-01-31", 777000, false)
+
+	after, err := s.RecoverableMetrics(ctx, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.OverdueCount != before.OverdueCount || after.OverdueAmount != before.OverdueAmount {
+		t.Fatalf("an unpaid recoverable moved the overdue tile to %d over %d; unpaid money cannot be overdue",
+			after.OverdueAmount, after.OverdueCount)
+	}
+	// It is still outstanding — the tile that counts money at risk must see it.
+	if after.OutstandingCount != before.OutstandingCount+1 || after.OutstandingAmount != before.OutstandingAmount+777000 {
+		t.Fatalf("outstanding = %d over %d, want the unpaid row included",
+			after.OutstandingAmount, after.OutstandingCount)
+	}
+
+	// And the register agrees, row for row: this is the rule the dashboard was
+	// diverging from.
+	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overdueRows int
+	for _, r := range rows {
+		if r.Overdue {
+			overdueRows++
+		}
+		if r.RequestID == unpaid {
+			if r.Overdue || r.AgeingLabel != "Awaiting payment" {
+				t.Fatalf("the unpaid row reads %q (overdue=%v), want Awaiting payment", r.AgeingLabel, r.Overdue)
+			}
+		}
+	}
+	if overdueRows != after.OverdueCount {
+		t.Fatalf("the register shows %d overdue rows and the tile claims %d", overdueRows, after.OverdueCount)
+	}
+}
+
+// F-E-02 (store half). The request form's category <select> is six hardcoded
+// options, so an admin-added category is enforced and unreachable and a
+// deactivated one is still offered. The store half is
+// ListRecoverableCategories(ctx, true): this pins the contract the template needs
+// — every active category, in the order it should be rendered, each carrying the
+// stable `code` that goes in the option's value and the admin's `name` for its
+// label. TestRecoverableCategoryCRUD covers the CRUD; this covers the handover.
+func TestActiveCategoriesAreTheOptionsTheRequestFormMustRender(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, _ := seedActorAndHead(t, s, ctx)
+
+	added, err := s.UpsertRecoverableCategory(ctx, actor, 0, "Retention money", false, true, true, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deactivate one of the six seeded codes.
+	var otherID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='other'`).Scan(&otherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertRecoverableCategory(ctx, actor, otherID, "Other", false, false, false, 6); err != nil {
+		t.Fatal(err)
+	}
+
+	offered, err := s.ListRecoverableCategories(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes := make([]string, 0, len(offered))
+	for _, c := range offered {
+		if !c.Active {
+			t.Fatalf("activeOnly returned an inactive category: %+v", c)
+		}
+		if c.Code == "" || c.Name == "" {
+			t.Fatalf("an option needs both a value and a label: %+v", c)
+		}
+		codes = append(codes, c.Code)
+	}
+	want := []string{"employee_advance", "emd", "pbg", "icd", "security_deposit", "retention_money"}
+	if strings.Join(codes, ",") != strings.Join(want, ",") {
+		t.Fatalf("offered codes = %v, want %v (sort_order then name, 'other' deactivated)", codes, want)
+	}
+	// The rule set the validator enforces is built from the same query, so what
+	// the form offers and what a submit is allowed to name cannot drift.
+	rules, err := s.recoverableRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != len(offered) {
+		t.Fatalf("%d rules for %d offered categories", len(rules), len(offered))
+	}
+	rule, ok := rules["retention_money"]
+	if !ok || !rule.RequiresCounterparty {
+		t.Fatalf("the admin's own rule did not reach the validator: %+v (present=%v)", rule, ok)
+	}
+	if _, offeredStill := rules["other"]; offeredStill {
+		t.Fatal("a deactivated category is still nameable on a new request")
+	}
+	_ = added
+}

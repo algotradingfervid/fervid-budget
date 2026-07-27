@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,15 +31,124 @@ func seedReminderRequest(t *testing.T, s *Store, ctx context.Context, number, st
 	return id
 }
 
-func TestCalendarDaysBetweenCountsDateBoundaries(t *testing.T) {
-	a := time.Date(2026, 7, 20, 23, 0, 0, 0, time.UTC)
-	b := time.Date(2026, 7, 23, 1, 0, 0, 0, time.UTC)
-	if got := calendarDaysBetween(a, b); got != 3 {
-		t.Fatalf("calendarDaysBetween = %d, want 3", got)
+// F-F-08: the thresholds are elapsed 24-hour days, not calendar-date
+// boundaries. TestCalendarDaysBetweenCountsDateBoundaries used to live here and
+// exercised a helper nothing in production ever called; the helper is gone and
+// this test replaces it by pinning the semantics that actually run, so the two
+// can no longer disagree.
+//
+// A request submitted at 23:50 has not "waited a day" ten minutes later at
+// 00:00, and — the decisive case — a reminder sent at 23:55 is not repeatable
+// five minutes later at midnight.
+func TestReminderThresholdsCountElapsedDaysNotCalendarBoundaries(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	id := seedReminderRequest(t, s, ctx, "PR-2026-000020", "pending")
+	th := ReminderThresholds{PendingAfterDays: 1, RepeatEveryDays: 1, StaleAfterDays: 1}
+
+	submitted := time.Date(2026, 7, 20, 23, 50, 0, 0, time.UTC)
+	if _, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET submitted_at=? WHERE id=?`, submitted, id); err != nil {
+		t.Fatal(err)
 	}
-	// Two hours apart across midnight is one calendar day, not zero.
-	if got := calendarDaysBetween(a, time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC)); got != 1 {
-		t.Fatalf("across midnight = %d, want 1", got)
+	// Ten minutes later, one date boundary has been crossed. Not a day.
+	justPastMidnight := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	if due, err := s.RequestsPendingReminder(ctx, justPastMidnight, th); err != nil {
+		t.Fatal(err)
+	} else if len(due) != 0 {
+		t.Fatalf("due ten minutes after submission = %d, want 0 — a date boundary is not an elapsed day", len(due))
+	}
+	// A full 24 hours later it is due.
+	if due, err := s.RequestsPendingReminder(ctx, submitted.Add(24*time.Hour), th); err != nil {
+		t.Fatal(err)
+	} else if len(due) != 1 {
+		t.Fatalf("due after 24 elapsed hours = %d, want 1", len(due))
+	}
+
+	// The repeat cadence reads the same way: a reminder sent at 23:55 is not
+	// repeatable at midnight, which is the case that makes calendar-day
+	// semantics unusable for this threshold.
+	sent := time.Date(2026, 7, 24, 23, 55, 0, 0, time.UTC)
+	if err := s.MarkReminderSent(ctx, id, sent, ReminderAudit{Label: "Pending-approval reminder"}); err != nil {
+		t.Fatal(err)
+	}
+	if due, _ := s.RequestsPendingReminder(ctx, time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC), th); len(due) != 0 {
+		t.Fatalf("repeatable five minutes later = %d, want 0", len(due))
+	}
+	if due, _ := s.RequestsPendingReminder(ctx, sent.Add(24*time.Hour), th); len(due) != 1 {
+		t.Fatalf("repeatable after 24 elapsed hours = %d, want 1", len(due))
+	}
+}
+
+// F-F-02: "a reminder went out" needs a witness. The stale-reservation screen's
+// "Who has been told" thread is built from the audit log, so the reminder has to
+// leave a row there — naming which reminder and who was told, since both
+// reminders land on the same request's trail.
+func TestMarkReminderSentWritesAnAuditRow(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	id := seedReminderRequest(t, s, ctx, "PR-2026-000030", "processing")
+	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
+
+	if err := s.MarkReminderSent(ctx, id, now, ReminderAudit{
+		Label: "Stale-reservation reminder", Recipients: []string{"Anil Kumar"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.Audit(ctx, "payment_request", id, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []AuditEntry
+	for _, e := range entries {
+		if e.Action == "remind" {
+			found = append(found, e)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("remind audit rows = %d, want 1", len(found))
+	}
+	got := found[0]
+	if got.ActorID != nil {
+		t.Fatalf("actor_id = %v, want NULL — no person sent this, the scheduler did", *got.ActorID)
+	}
+	if got.ActorName == "" {
+		t.Fatal("actor_name is blank; the trail renders it in front of the verb")
+	}
+	if !strings.Contains(got.Summary, "Stale-reservation reminder") {
+		t.Fatalf("summary = %q, want it to name which reminder went out", got.Summary)
+	}
+	if !strings.Contains(got.Summary, "Anil Kumar") {
+		t.Fatalf("summary = %q, want it to name who was told", got.Summary)
+	}
+
+	// A second reminder is a second row: the trail is a history, not a flag.
+	if err := s.MarkReminderSent(ctx, id, now.AddDate(0, 0, 1), ReminderAudit{Label: "Stale-reservation reminder"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = s.Audit(ctx, "payment_request", id, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := 0
+	for _, e := range entries {
+		if e.Action == "remind" {
+			rows++
+		}
+	}
+	if rows != 2 {
+		t.Fatalf("remind audit rows after a second reminder = %d, want 2", rows)
+	}
+
+	// A reminder for a request that is not there writes nothing at all.
+	if err := s.MarkReminderSent(ctx, 987654, now, ReminderAudit{Label: "Pending-approval reminder"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("MarkReminderSent on a missing request = %v, want ErrNotFound", err)
+	}
+	var stray int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='remind' AND entity_id=987654`).Scan(&stray); err != nil {
+		t.Fatal(err)
+	}
+	if stray != 0 {
+		t.Fatalf("audit rows for a missing request = %d, want 0", stray)
 	}
 }
 
@@ -97,7 +208,7 @@ func TestRequestsPendingReminderHonoursConfiguredThreshold(t *testing.T) {
 	}
 
 	// Once reminded, the repeat cadence suppresses it until the window passes.
-	if err := s.MarkReminderSent(ctx, id, now); err != nil {
+	if err := s.MarkReminderSent(ctx, id, now, ReminderAudit{Label: "Pending-approval reminder"}); err != nil {
 		t.Fatal(err)
 	}
 	if due, _ := s.RequestsPendingReminder(ctx, now, th); len(due) != 0 {

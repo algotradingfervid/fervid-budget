@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,4 +166,88 @@ func TestSchedulerRunsOnStartAndStopsOnCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("scheduler did not stop on cancel")
 	}
+}
+
+// F-F-02: the stale-reservation screen tells an accountant "a reminder went
+// out", and the "Who has been told" thread printed under it is built from the
+// audit log. So every reminder the scheduler sends has to leave a row there,
+// naming which reminder it was and who it actually reached.
+func TestRunRemindersLeavesAnAuditRowNamingWhoWasTold(t *testing.T) { // F-F-02
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	requester := mustUser(t, st, "ra-req@test", "Rhea Requester", "data_entry")
+	manager := mustUser(t, st, "ra-mgr@test", "Manav Manager", "admin")
+	acct := mustUser(t, st, "ra-acct@test", "Anil Holder", "data_entry")
+	grantAccounts(t, st, acct)
+	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
+
+	pending := insertRequest(t, st, "PR-2026-000901", "pending", requester, manager, now.AddDate(0, 0, -4), nil)
+	processing := now.AddDate(0, 0, -3)
+	stale := insertRequest(t, st, "PR-2026-000902", "processing", requester, manager, now.AddDate(0, 0, -6), &processing)
+	if _, err := st.DB().ExecContext(ctx, `UPDATE payment_requests SET processing_by=? WHERE id=?`, acct, stale); err != nil {
+		t.Fatal(err)
+	}
+	enableEvent(t, st, actor, store.NotificationSetting{Event: EventReminderPending, IncludeManager: true,
+		SubjectTemplate: "Reminder: {{number}}", BodyTemplate: "b {{link}}"})
+	enableEvent(t, st, actor, store.NotificationSetting{Event: EventReminderStaleReservation, IncludeAccounts: true,
+		SubjectTemplate: "Still reserved: {{number}}", BodyTemplate: "b {{link}}"})
+
+	svc := NewService(st, &fakeMailer{})
+	must(t, svc.RunReminders(ctx, now))
+
+	// The pending reminder names the approver it chased.
+	summary := remindSummary(t, st, pending)
+	contains(t, summary, "Pending-approval reminder")
+	contains(t, summary, "Manav Manager")
+
+	// The stale one names the accountant holding the reservation — and says which
+	// reminder it was, so a reader on the stale screen is not shown a pending
+	// reminder and told it was the one-day nudge.
+	summary = remindSummary(t, st, stale)
+	contains(t, summary, "Stale-reservation reminder")
+	contains(t, summary, "Anil Holder")
+	if strings.Contains(summary, "Pending-approval") {
+		t.Fatalf("stale reminder row reads %q", summary)
+	}
+
+	// The cadence still governs: a second run the same day repeats neither the
+	// notification nor the audit row.
+	must(t, svc.RunReminders(ctx, now))
+	if n := remindRowCount(t, st, stale); n != 1 {
+		t.Fatalf("remind audit rows after a second same-day run = %d, want 1", n)
+	}
+	// A day later there is a second reminder and a second row: the trail is a
+	// history, which is what makes "when did we last chase this" answerable.
+	must(t, svc.RunReminders(ctx, now.AddDate(0, 0, 1)))
+	if n := remindRowCount(t, st, stale); n != 2 {
+		t.Fatalf("remind audit rows the next day = %d, want 2", n)
+	}
+}
+
+func remindEntries(t *testing.T, st *store.Store, requestID int64) []store.AuditEntry {
+	t.Helper()
+	entries, err := st.Audit(context.Background(), "payment_request", requestID, 100)
+	must(t, err)
+	var out []store.AuditEntry
+	for _, e := range entries {
+		if e.Action == "remind" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func remindRowCount(t *testing.T, st *store.Store, requestID int64) int {
+	t.Helper()
+	return len(remindEntries(t, st, requestID))
+}
+
+func remindSummary(t *testing.T, st *store.Store, requestID int64) string {
+	t.Helper()
+	rows := remindEntries(t, st, requestID)
+	if len(rows) != 1 {
+		t.Fatalf("remind audit rows for request %d = %d, want 1", requestID, len(rows))
+	}
+	return rows[0].Summary
 }
