@@ -471,22 +471,22 @@ func TestGridAndReportExcludeRecoverablePayments(t *testing.T) { // V2
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s, ctx)
-	if err := s.SetBudget(ctx, actor, headID, "2026-08", 1000000); err != nil {
+	if err := s.SetBudget(ctx, actor, headID, "2026-02", 1000000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-08-05", Amount: 300000, VendorPayee: "Budget Vendor"}); err != nil {
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-02-05", Amount: 300000, VendorPayee: "Budget Vendor"}); err != nil {
 		t.Fatal(err)
 	}
-	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000001", "2026-08-06", 700000)
+	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000001", "2026-02-06", 700000)
 
-	grid, err := s.Grid(ctx, "2026-08", "", "")
+	grid, err := s.Grid(ctx, "2026-02", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if grid.Total.Actual != 300000 {
 		t.Fatalf("grid actual = %d, want 300000 (recoverable excluded)", grid.Total.Actual)
 	}
-	rows, err := s.Report(ctx, "2026-08", "2026-08", "heads")
+	rows, err := s.Report(ctx, "2026-02", "2026-02", "heads")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,10 +501,10 @@ func TestHistoricalPaymentsStillCountAsActuals(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s, ctx)
-	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-08-05", Amount: 450000, VendorPayee: "Legacy Vendor"}); err != nil {
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-02-05", Amount: 450000, VendorPayee: "Legacy Vendor"}); err != nil {
 		t.Fatal(err)
 	}
-	grid, err := s.Grid(ctx, "2026-08", "", "")
+	grid, err := s.Grid(ctx, "2026-02", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,22 +517,22 @@ func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s, ctx)
-	if err := s.SetBudget(ctx, actor, headID, "2026-09", 1000000); err != nil {
+	if err := s.SetBudget(ctx, actor, headID, "2026-03", 1000000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-09-03", Amount: 250000, VendorPayee: "Budget Vendor"}); err != nil {
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-03-03", Amount: 250000, VendorPayee: "Budget Vendor"}); err != nil {
 		t.Fatal(err)
 	}
-	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000009", "2026-09-04", 800000)
+	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000009", "2026-03-04", 800000)
 
-	grid, err := s.Grid(ctx, "2026-09", "", "")
+	grid, err := s.Grid(ctx, "2026-03", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if grid.Total.Actual != 250000 {
 		t.Fatalf("grid actual = %d, want 250000 (recoverable excluded)", grid.Total.Actual)
 	}
-	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-09", To: "2026-09", Viewer: RecoverableViewerAll()})
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-03", To: "2026-03", Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -810,7 +810,7 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 	reqID, _ := res.LastInsertId()
 
 	if _, err := s.RecordPaymentForRequest(ctx, actor, reqID,
-		PaymentInput{HeadID: headID, PaidOn: "2026-08-20", Amount: 500000, VendorPayee: "State PWD"}, "settled", "", nil); err != nil {
+		PaymentInput{HeadID: headID, PaidOn: "2026-02-20", Amount: 500000, VendorPayee: "State PWD"}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}
 
@@ -826,7 +826,7 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 	if treatment != "recoverable" || gotCat != catID || expReturn != "2027-06-30" || notes != "Refund on award" {
 		t.Fatalf("recoverable classification not retained: treatment=%s cat=%d return=%s notes=%s", treatment, gotCat, expReturn, notes)
 	}
-	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-08", To: "2026-08", Viewer: RecoverableViewerAll()})
+	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-02", To: "2026-02", Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -834,7 +834,7 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 		t.Fatalf("recoverable report after settle = %+v", rec)
 	}
 	// And the money it moved is still not budget spend.
-	grid, err := s.Grid(ctx, "2026-08", "", "")
+	grid, err := s.Grid(ctx, "2026-02", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -966,4 +966,169 @@ func TestActiveCategoriesAreTheOptionsTheRequestFormMustRender(t *testing.T) {
 		t.Fatal("a deactivated category is still nameable on a new request")
 	}
 	_ = added
+}
+
+// categoryUsage reads one category's InUse figure off the very list the
+// Configuration screen renders, so a test asserting agreement between the
+// screen's number and the delete refusal's number is asking the same question
+// the screen asks.
+func categoryUsage(t *testing.T, s *Store, ctx context.Context, id int64) (RecoverableCategoryUsage, bool) {
+	t.Helper()
+	rows, err := s.ListRecoverableCategoriesWithUsage(ctx)
+	if err != nil {
+		t.Fatalf("ListRecoverableCategoriesWithUsage: %v", err)
+	}
+	for _, row := range rows {
+		if row.ID == id {
+			return row, true
+		}
+	}
+	return RecoverableCategoryUsage{}, false
+}
+
+// TestDeleteRecoverableCategoryRemovesAnUnusedOne is F-E-06's happy path: the
+// permission recoverable_category:delete has been grantable since Phase 4 with
+// no code behind it at all, and this is the store half of it meaning something.
+func TestDeleteRecoverableCategoryRemovesAnUnusedOne(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, _ := seedActorAndHead(t, s, ctx)
+
+	id, err := s.UpsertRecoverableCategory(ctx, actor, 0, "Tender fee", false, false, true, 9)
+	if err != nil {
+		t.Fatalf("UpsertRecoverableCategory: %v", err)
+	}
+	if usage, ok := categoryUsage(t, s, ctx, id); !ok || usage.InUse != 0 {
+		t.Fatalf("a fresh category = %+v, present=%v; want InUse 0", usage, ok)
+	}
+	if err := s.DeleteRecoverableCategory(ctx, actor, id); err != nil {
+		t.Fatalf("DeleteRecoverableCategory: %v", err)
+	}
+	if _, ok := categoryUsage(t, s, ctx, id); ok {
+		t.Fatal("the category is still listed after being deleted")
+	}
+	// A hard delete of a configuration row is exactly the kind of thing that has
+	// to be answerable for afterwards.
+	entries, err := s.Audit(ctx, "recoverable_category", id, 10)
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	var deleted bool
+	for _, e := range entries {
+		deleted = deleted || e.Action == "delete"
+	}
+	if !deleted {
+		t.Fatalf("the delete left no audit trail: %+v", entries)
+	}
+	if err := s.DeleteRecoverableCategory(ctx, actor, id); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleting it twice = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteRecoverableCategory(ctx, actor, 999999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleting an unknown id = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeleteRecoverableCategoryRefusesOneInUseAndLeavesItIntact is the half that
+// matters. payment_requests.recoverable_category_id carries no REFERENCES clause
+// — the v3 schema comment says why — so the database will happily orphan every
+// request pointing at a deleted category, and nothing would break loudly: the
+// register would simply render a blank category and the rules that category
+// enforced would stop applying. The pre-check is the only guard, it must name
+// the count the way DeleteRole names its holders, and the row must survive the
+// refusal intact.
+func TestDeleteRecoverableCategoryRefusesOneInUseAndLeavesItIntact(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+
+	var emdID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='emd'`).Scan(&emdID); err != nil {
+		t.Fatal(err)
+	}
+	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000901", "approved", "emd", "Ridge Metro", "2027-03-31", 200000, false)
+	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000902", "completed", "emd", "Coastal Power", "2027-03-31", 300000, false)
+
+	err := s.DeleteRecoverableCategory(ctx, actor, emdID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("deleting a category in use = %v, want ErrForbidden", err)
+	}
+	// The handler turns this into the sentence the operator reads, so the count
+	// and the name have to be in it.
+	if !strings.Contains(err.Error(), "2") || !strings.Contains(err.Error(), "EMD") {
+		t.Fatalf("the refusal does not name the category and how many use it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "deactivate") {
+		t.Fatalf("the refusal does not offer the way out the design intends: %v", err)
+	}
+
+	// Refused means refused: the row, its rules and the requests pointing at it
+	// are all exactly as they were.
+	usage, ok := categoryUsage(t, s, ctx, emdID)
+	if !ok {
+		t.Fatal("the category was deleted despite the refusal")
+	}
+	if usage.InUse != 2 || !usage.RequiresProject || usage.Name != "EMD" {
+		t.Fatalf("the refused category changed: %+v", usage)
+	}
+	var orphans int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_requests pr
+		WHERE pr.recoverable_category_id IS NOT NULL
+		  AND NOT EXISTS(SELECT 1 FROM recoverable_categories c WHERE c.id=pr.recoverable_category_id)`).Scan(&orphans); err != nil {
+		t.Fatal(err)
+	}
+	if orphans != 0 {
+		t.Fatalf("%d requests point at a category that no longer exists", orphans)
+	}
+	// Deactivating is the way out, and it still works — the refusal is about the
+	// hard delete, not about the category being untouchable.
+	if _, err := s.UpsertRecoverableCategory(ctx, actor, emdID, "EMD", true, false, false, 2); err != nil {
+		t.Fatalf("deactivating a category in use: %v", err)
+	}
+	if usage, _ := categoryUsage(t, s, ctx, emdID); usage.Active {
+		t.Fatal("the category is still active after being deactivated")
+	}
+}
+
+// TestDeleteRecoverableCategoryRefusalAgreesWithInUse stops the two definitions
+// drifting. The Configuration screen prints InUse beside the Delete button; if
+// the refusal counted anything else, the operator would read "0 in use" and be
+// told the category is used by something.
+func TestDeleteRecoverableCategoryRefusalAgreesWithInUse(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s, ctx)
+
+	var icdID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&icdID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, fmt.Sprintf("PR-2026-00091%d", i),
+			"approved", "icd", "Meridian", "2027-03-31", 100000, false)
+		usage, _ := categoryUsage(t, s, ctx, icdID)
+		err := s.DeleteRecoverableCategory(ctx, actor, icdID)
+		if !errors.Is(err, ErrForbidden) {
+			t.Fatalf("delete with %d in use = %v, want ErrForbidden", usage.InUse, err)
+		}
+		if usage.InUse != i {
+			t.Fatalf("InUse = %d after seeding %d requests", usage.InUse, i)
+		}
+		if want := fmt.Sprintf("%d request", i); !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal says %q; it must name the same %d the screen prints", err.Error(), i)
+		}
+	}
+	// Singular and plural both read correctly, because the sentence is shown to
+	// a person.
+	if !strings.Contains(mustDeleteErr(t, s, ctx, actor, icdID), "3 requests") {
+		t.Fatal("the refusal does not pluralise")
+	}
+}
+
+func mustDeleteErr(t *testing.T, s *Store, ctx context.Context, actor User, id int64) string {
+	t.Helper()
+	err := s.DeleteRecoverableCategory(ctx, actor, id)
+	if err == nil {
+		t.Fatal("DeleteRecoverableCategory unexpectedly succeeded")
+	}
+	return err.Error()
 }

@@ -154,8 +154,8 @@ test.describe('documented issue regression guards', () => {
     // Operations / Office Rent is budgeted for 2026-06 alone, so a payment
     // recorded into any other month is spend against no budget at all.
     const request = await createApprovedRequest(adminPage, runId, { amount: '20.00' });
-    await settlePayment(adminPage, request.id, { amount: '20.00', paidOn: '2027-09-15' });
-    await adminPage.goto('/grid?month=2027-09&status=unbudgeted');
+    await settlePayment(adminPage, request.id, { amount: '20.00', paidOn: '2025-09-15' });
+    await adminPage.goto('/grid?month=2025-09&status=unbudgeted');
     await expect(adminPage.locator('.pill.unbudgeted', { hasText: 'Unbudgeted spend' }).first()).toBeVisible();
   });
 
@@ -174,7 +174,7 @@ test.describe('documented issue regression guards', () => {
   // no route in this product creates an unlinked payment to reach it with. The
   // redirect is asserted instead of a form this phase put out of reach.
   test('ISS-004 makes locked-month payment surfaces read-only', async ({ adminPage, runId }) => {
-    const month = '2027-10';
+    const month = '2025-10';
     const settled = await createApprovedRequest(adminPage, runId, { amount: '30.00' });
     const blocked = await createApprovedRequest(adminPage, runId, { amount: '40.00' });
 
@@ -232,7 +232,7 @@ test.describe('documented issue regression guards', () => {
     const proof = proofFile(testInfo, 'recorded-proof.txt', 'recorded proof');
     await settlePayment(adminPage, request.id, {
       amount: '50.00',
-      paidOn: '2027-11-15',
+      paidOn: '2025-11-15',
       attachment: proof
     });
     const file = adminPage.locator('.file-row', { hasText: 'recorded-proof.txt' });
@@ -256,7 +256,7 @@ test.describe('documented issue regression guards', () => {
     await openPaymentEntry(adminPage, request.id);
     await fillPaymentEntry(adminPage, {
       amount: '6000.00',
-      paidOn: '2027-12-19',
+      paidOn: '2025-12-19',
       mode: 'bank_transfer',
       reference: `REF-${runId}`,
       note: `Remark ${runId}`
@@ -272,12 +272,12 @@ test.describe('documented issue regression guards', () => {
     // attempt will post and as the figures the accountant can read.
     const carried = adminPage.locator('form[action="/payments"]');
     await expect(carried.locator('input[name="amount"]')).toHaveValue(/^6,?000\.00$/);
-    await expect(carried.locator('input[name="paid_on"]')).toHaveValue('2027-12-19');
+    await expect(carried.locator('input[name="paid_on"]')).toHaveValue('2025-12-19');
     await expect(carried.locator('input[name="payment_mode"]')).toHaveValue('bank_transfer');
     await expect(carried.locator('input[name="reference_no"]')).toHaveValue(`REF-${runId}`);
     await expect(carried.locator('input[name="remarks"]')).toHaveValue(`Remark ${runId}`);
     const readable = adminPage.locator('.card .dl');
-    await expect(readable).toContainText('2027-12-19');
+    await expect(readable).toContainText('2025-12-19');
     await expect(readable).toContainText('Bank transfer');
     await expect(readable).toContainText(`REF-${runId}`);
     await expect(readable).toContainText(`Remark ${runId}`);
@@ -408,9 +408,9 @@ test.describe('documented issue regression guards', () => {
     // each reserved and settled in its own month.
     const january = await createApprovedRequest(adminPage, runId, { amount: '11.11' });
     const february = await createApprovedRequest(adminPage, runId, { amount: '22.22' });
-    const janPath = await settlePayment(adminPage, january.id, { amount: '11.11', paidOn: '2028-01-15' });
-    const febPath = await settlePayment(adminPage, february.id, { amount: '22.22', paidOn: '2028-02-15' });
-    await adminPage.goto('/grid?month=2028-01');
+    const janPath = await settlePayment(adminPage, january.id, { amount: '11.11', paidOn: '2024-01-15' });
+    const febPath = await settlePayment(adminPage, february.id, { amount: '22.22', paidOn: '2024-02-15' });
+    await adminPage.goto('/grid?month=2024-01');
     // Keyed on each payment's own link rather than its payee: a request raised
     // through the real form leaves payments.vendor_payee empty (payment_form
     // posts .Request2.VendorPayee, which only reimbursements fill), so the
@@ -486,7 +486,7 @@ test.describe('documented issue regression guards', () => {
     const proof = proofFile(testInfo, 'download-proof.txt', 'download proof');
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
-      paidOn: '2028-03-15',
+      paidOn: '2024-03-15',
       attachment: proof
     });
     // The proof list is .file-row with its own Download link; the old detail
@@ -510,7 +510,7 @@ test.describe('documented issue regression guards', () => {
     const proof = proofFile(testInfo, 'timeline-proof.txt', 'timeline');
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
-      paidOn: '2028-04-15',
+      paidOn: '2024-04-15',
       attachment: proof
     });
     const trail = adminPage.locator('ol.thread');
@@ -531,7 +531,7 @@ test.describe('documented issue regression guards', () => {
   // is asserted on the payment that does exist, screen and route alike.
   test('ISS-025 offers no attachment or void mutation on a payment that cannot be mutated', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '60.00' });
-    const paymentPath = await settlePayment(adminPage, request.id, { amount: '60.00', paidOn: '2028-05-15' });
+    const paymentPath = await settlePayment(adminPage, request.id, { amount: '60.00', paidOn: '2024-05-15' });
 
     await expect(adminPage.locator('.card-head .pill', { hasText: 'Read-only' })).toBeVisible();
     await expect(adminPage.getByRole('button', { name: 'Upload' })).toHaveCount(0);
@@ -540,7 +540,7 @@ test.describe('documented issue regression guards', () => {
     await expect(adminPage.locator('input[name="attachment"]')).toHaveCount(0);
 
     // The ledger row agrees: View, and no Remove disclosure to open.
-    await adminPage.goto('/payments?month=2028-05');
+    await adminPage.goto('/payments?month=2024-05');
     const row = adminPage.locator('tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
     await expect(row.getByRole('link', { name: 'View' })).toBeVisible();
     await expect(row.getByRole('link', { name: 'Edit' })).toHaveCount(0);
@@ -559,7 +559,7 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-026 treats percent and underscore as literal search characters', async ({ adminPage, runId }) => {
-    const month = '2028-06';
+    const month = '2024-06';
     const literal = `Literal%_${runId}`;
     // The payee is the request's, not the payment's — it is a hidden input
     // copied from the approved request, and a vendor request stores it as
@@ -609,7 +609,7 @@ test.describe('documented issue regression guards', () => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
-      paidOn: '2028-07-15',
+      paidOn: '2024-07-15',
       mode: 'bank_transfer'
     });
     await expect(adminPage.locator('dd', { hasText: 'Bank transfer' }).first()).toBeVisible();
@@ -712,7 +712,7 @@ test.describe('responsive and visual smoke', () => {
   test('payment upload control accepts a file and retains visual evidence', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
     await openPaymentEntry(adminPage, request.id);
-    await fillPaymentEntry(adminPage, { amount: '10.00', paidOn: '2028-09-15', reference: `UTR-${runId}` });
+    await fillPaymentEntry(adminPage, { amount: '10.00', paidOn: '2024-09-15', reference: `UTR-${runId}` });
     // The uploader is a hidden <input type="file"> inside <label class="uploader">
     // with no accessible name at all, so getByLabel('Attachment') finds nothing
     // on this screen. setInputFiles works on a hidden input.

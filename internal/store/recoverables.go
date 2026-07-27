@@ -226,6 +226,81 @@ func (s *Store) UpsertRecoverableCategory(ctx context.Context, actor User, id in
 	return savedID, nil
 }
 
+// DeleteRecoverableCategory removes a category outright, refusing while any
+// request still points at it (F-E-06).
+//
+// recoverable_category:delete has been a grantable permission since Phase 4 with
+// nothing behind it: the only mutating route calls UpsertRecoverableCategory,
+// which only ever INSERTs or UPDATEs, so an administrator could grant "delete"
+// on this resource and buy exactly nothing. This is the store half of consuming
+// it.
+//
+// The refusal, not the delete, is the point. payment_requests.recoverable_category_id
+// deliberately carries no REFERENCES clause — the v3 schema comment explains why
+// (a forward foreign key to a table Phase 4 had not created yet would have made
+// every request write fail) — so the database will NOT stop a delete from
+// orphaning history. Nothing would break loudly: the register would render a
+// blank category for every affected request and the rules that category enforced
+// would quietly stop applying. So the pre-check is the only guard there is, and
+// it runs inside the same transaction as the DELETE, which is what stops a
+// request raised between the count and the write from being orphaned anyway.
+//
+// It mirrors DeleteRole's holder pre-check exactly: an ErrForbidden carrying the
+// count, so the handler can say how many rather than "you do not have
+// permission". The count asks the same question ListRecoverableCategoriesWithUsage
+// answers as InUse — the number of requests whose recoverable_category_id is this
+// row — so the Delete button's refusal and the "in use" figure printed beside it
+// can never disagree. TestDeleteRecoverableCategoryRefusalAgreesWithInUse pins that.
+//
+// Deactivating (active=0) remains the ordinary way to retire a category, and is
+// the only thing that works once it has been used. That is the Phase-4 design
+// ("no hard delete... a category may be referenced by historical requests"), and
+// this makes the permission honest without softening it: delete is for a
+// category added by mistake, before anything has named it.
+func (s *Store) DeleteRecoverableCategory(ctx context.Context, actor User, id int64) error {
+	// beginWriteTx takes the write lock with the transaction's first statement:
+	// this is a read-then-write, the shape that hands the loser SQLITE_BUSY when
+	// the transaction starts as a reader.
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var name string
+	err = tx.QueryRowContext(ctx, `SELECT name FROM recoverable_categories WHERE id=?`, id).Scan(&name)
+	if err == sql.ErrNoRows {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var inUse int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_requests WHERE recoverable_category_id=?`, id).Scan(&inUse); err != nil {
+		return err
+	}
+	if inUse > 0 {
+		return fmt.Errorf("%w: %s is used by %d %s — deactivate it instead, so those requests keep their category",
+			ErrForbidden, name, inUse, pluralRequests(inUse))
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM recoverable_categories WHERE id=?`, id); err != nil {
+		return classify(err)
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "delete",
+		EntityType: "recoverable_category", EntityID: &id, Summary: "Deleted recoverable category " + name,
+		Before: map[string]any{"id": id, "name": name}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func pluralRequests(n int) string {
+	if n == 1 {
+		return "request"
+	}
+	return "requests"
+}
+
 func (s *Store) ListRecoverableCategoriesWithUsage(ctx context.Context) ([]RecoverableCategoryUsage, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.code,c.name,c.requires_project,c.requires_counterparty,c.active,c.sort_order,c.created_at,
 		(SELECT COUNT(*) FROM payment_requests pr WHERE pr.recoverable_category_id=c.id)

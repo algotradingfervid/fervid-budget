@@ -92,41 +92,94 @@ func (s *Store) AddNotification(ctx context.Context, in Notification) (int64, er
 
 const notificationSelect = `SELECT id,user_id,event,kind,request_id,title,body,href,read_at,created_at FROM notifications`
 
-func (s *Store) ListNotifications(ctx context.Context, f NotificationFilter) ([]Notification, error) {
-	q := notificationSelect + ` WHERE user_id=?`
-	args := []any{f.UserID}
-	switch f.Scope {
+// defaultNotificationLimit is the cap applied when a filter names no number.
+const defaultNotificationLimit = 100
+
+// NotificationPage is a window onto the centre that knows what it is not
+// showing. It is deliberately the same shape as RequestPage — Total and
+// Truncated, meaning the same things — so the app layer meets one idiom for
+// "this list is capped" rather than two (F-G-037, F-B-16).
+type NotificationPage struct {
+	Notifications []Notification
+	// Total rows matching the same filter, ignoring Limit. For each scope this
+	// is exactly the matching NotificationCounts field, so the number on the
+	// filter strip and the rows beneath it cannot disagree.
+	Total int
+	// Limit as it was applied.
+	Limit int
+	// Truncated reports that rows matching the filter are not in Notifications.
+	Truncated bool
+}
+
+// notificationScopeWhere is the single translation of a filter scope into SQL,
+// shared by the rows query and the count so the two can never select different
+// sets — which is the whole defect this page type exists to close.
+func notificationScopeWhere(scope string) string {
+	switch scope {
 	case "unread":
-		q += ` AND read_at IS NULL`
+		return ` AND read_at IS NULL`
 	case "mentions":
-		q += ` AND kind='mention'`
+		return ` AND kind='mention'`
 	case "reminders":
-		q += ` AND kind='reminder'`
+		return ` AND kind='reminder'`
 	}
-	// CURRENT_TIMESTAMP is second-resolution, so a burst written in one request
-	// shares a timestamp; id is the tie-break that keeps the order stable.
-	q += ` ORDER BY created_at DESC, id DESC`
+	return ""
+}
+
+// ListNotificationsPage returns the notifications a filter matches together with
+// how many it matched in total.
+//
+// F-G-037: the centre listed at most 100 rows while NotificationCounts, rendered
+// on the filter strip immediately above them, counted with no cap at all — so a
+// user past the cap read "All 137" over 100 rows and nothing said which 37 were
+// missing, or that any were. That is not hypothetical: an area-D test passes
+// alone and fails in a full run purely because the shared admin has crossed the
+// cap by the time it looks. Silence was the defect; the cap is fine.
+func (s *Store) ListNotificationsPage(ctx context.Context, f NotificationFilter) (NotificationPage, error) {
+	where := ` WHERE user_id=?` + notificationScopeWhere(f.Scope)
+
+	var page NotificationPage
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications`+where, f.UserID).Scan(&page.Total); err != nil {
+		return NotificationPage{}, err
+	}
+
 	limit := f.Limit
 	if limit <= 0 {
-		limit = 100
+		limit = defaultNotificationLimit
 	}
-	q += ` LIMIT ?`
-	args = append(args, limit)
+	page.Limit = limit
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	// CURRENT_TIMESTAMP is second-resolution, so a burst written in one request
+	// shares a timestamp; id is the tie-break that keeps the order stable.
+	rows, err := s.db.QueryContext(ctx, notificationSelect+where+` ORDER BY created_at DESC, id DESC LIMIT ?`, f.UserID, limit)
 	if err != nil {
-		return nil, err
+		return NotificationPage{}, err
 	}
 	defer rows.Close()
-	var out []Notification
 	for rows.Next() {
 		var n Notification
 		if err := rows.Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt); err != nil {
-			return nil, err
+			return NotificationPage{}, err
 		}
-		out = append(out, n)
+		page.Notifications = append(page.Notifications, n)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return NotificationPage{}, err
+	}
+	page.Truncated = len(page.Notifications) < page.Total
+	return page, nil
+}
+
+// ListNotifications returns the matching rows and nothing about what it left
+// out. It is the shape the notify package's tests read the channel with, where
+// the cap is never in play; a screen renders ListNotificationsPage instead, so
+// it can say what it is not showing.
+func (s *Store) ListNotifications(ctx context.Context, f NotificationFilter) ([]Notification, error) {
+	page, err := s.ListNotificationsPage(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	return page.Notifications, nil
 }
 
 // Notification reads one row, scoped to its owner. Another user's id returns

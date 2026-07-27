@@ -395,3 +395,123 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 		t.Fatalf("user_version = %d, want >= 7", version)
 	}
 }
+
+// TestMigrationV10AddsAndBackfillsPaymentsVendorID simulates an installed v9
+// database — payments with no vendor_id, one payment linked to a vendor request
+// and one free-standing historical payment — and proves v10: the column arrives
+// with its foreign key live, the linked payment inherits the vendor from the
+// request it settles, the unlinked one is left NULL because nothing can say who
+// it was paid to, the index exists, and a second run changes nothing.
+//
+// It is deliberately NOT a table rebuild, which is the whole reason this test is
+// short next to v8's. `ALTER TABLE … ADD COLUMN … REFERENCES` is legal with
+// PRAGMA foreign_keys on precisely because the new column defaults to NULL, so
+// none of v8's stash-and-restore machinery is needed. The assertions at the end
+// are what prove the shortcut is sound rather than merely quiet.
+func TestMigrationV10AddsAndBackfillsPaymentsVendorID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	vendorID := seedVendorNamed(t, s, "Sundaram Electricals Pvt Ltd")
+	reqID := seedVendorRequest(t, s, ctx, 7, "approved", requester.ID, mgrID, headID, vendorID, 500000)
+
+	// Reconstruct the pre-v10 shape: v8's rebuilt table, minus vendor_id.
+	// payment_attachments is empty on a fresh store, so the DROP is legal with
+	// foreign keys enforced.
+	if _, err := s.DB().Exec(`
+DROP TABLE payments;
+CREATE TABLE payments (
+  id INTEGER PRIMARY KEY,
+  head_id INTEGER REFERENCES heads(id),
+  paid_on TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  vendor_payee TEXT,
+  payment_mode TEXT,
+  invoice_no TEXT,
+  reference_no TEXT,
+  remarks TEXT,
+  entered_by INTEGER NOT NULL REFERENCES users(id),
+  updated_by INTEGER REFERENCES users(id),
+  voided_by INTEGER REFERENCES users(id),
+  void_reason TEXT,
+  voided_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  request_id INTEGER REFERENCES payment_requests(id),
+  settlement TEXT NOT NULL DEFAULT '',
+  partial_reason TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_payments_head ON payments(head_id);
+CREATE INDEX idx_payments_paid_on ON payments(paid_on);
+CREATE INDEX idx_payments_voided ON payments(voided_at);
+CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_id IS NOT NULL;
+`); err != nil {
+		t.Fatalf("reconstruct pre-v10 payments: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO payments(id,head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement)
+		VALUES(1,?,?,?,?,?,?,'settled')`, headID, "2025-06-15", 500000, "Sundaram Electricals Pvt Ltd", acc.ID, reqID); err != nil {
+		t.Fatalf("seed linked payment: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO payments(id,head_id,paid_on,amount,vendor_payee,entered_by)
+		VALUES(2,?,?,?,?,?)`, headID, "2025-05-10", 7777, "Somebody Historical", acc.ID); err != nil {
+		t.Fatalf("seed historical payment: %v", err)
+	}
+	if _, err := s.DB().Exec(`PRAGMA user_version = 9`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("v10: %v", err)
+	}
+
+	var n int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('payments') WHERE name='vendor_id'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("payments.vendor_id missing after v10 (n=%d err=%v)", n, err)
+	}
+	var linked sql.NullInt64
+	if err := s.DB().QueryRow(`SELECT vendor_id FROM payments WHERE id=1`).Scan(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if !linked.Valid || linked.Int64 != vendorID {
+		t.Fatalf("linked payment vendor_id = %v, want %d — the back-fill did not follow request_id", linked, vendorID)
+	}
+	var historical sql.NullInt64
+	if err := s.DB().QueryRow(`SELECT vendor_id FROM payments WHERE id=2`).Scan(&historical); err != nil {
+		t.Fatal(err)
+	}
+	if historical.Valid {
+		t.Fatalf("historical payment vendor_id = %v, want NULL — a payment that settles no request has no vendor to inherit", historical)
+	}
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_payments_vendor' AND tbl_name='payments'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("idx_payments_vendor missing after v10 (n=%d err=%v)", n, err)
+	}
+	// The foreign key really is live on the added column, on a pooled connection.
+	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by,vendor_id) VALUES(?,?,?,?,999999)`,
+		headID, "2025-06-20", 100, acc.ID); err == nil {
+		t.Fatal("dangling vendor_id accepted; ADD COLUMN … REFERENCES did not carry the constraint")
+	}
+	// And NULL stays representable, which is what makes the whole approach legal.
+	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by) VALUES(?,?,?,?)`,
+		headID, "2025-06-21", 100, acc.ID); err != nil {
+		t.Fatalf("NULL vendor_id refused: %v", err)
+	}
+
+	// Idempotence: re-running v10 adds nothing and overwrites nothing. The
+	// deliberate value on the historical row is the interesting part — the
+	// back-fill only ever fills NULLs, so a later correction survives.
+	if _, err := s.DB().Exec(`UPDATE payments SET vendor_id=? WHERE id=2`, vendorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`PRAGMA user_version = 9`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("re-running v10: %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT vendor_id FROM payments WHERE id=2`).Scan(&historical); err != nil {
+		t.Fatal(err)
+	}
+	if !historical.Valid || historical.Int64 != vendorID {
+		t.Fatalf("re-running v10 discarded a deliberate vendor_id: %v", historical)
+	}
+}

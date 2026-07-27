@@ -128,17 +128,59 @@ func NextRequestNumber(tx *sql.Tx, year string) (string, error) {
 	return fmt.Sprintf("%s-%s-%0*d", prefix, year, width, last), nil
 }
 
+// requestTypes is what validateRequestInput accepts. There are five, and the
+// fifth is the divergence F-D-14 reports: the product's type chooser
+// (`requestTypeOptions`, internal/app/requests.go) offers four cards, and
+// `/requests/new?type=recoverable` therefore falls back to the chooser with no
+// form behind it.
+//
+// The type is kept, and its validation branch with it, because it is NOT dead
+// code: `POST /requests` reaches the store with whatever type the body carried,
+// so a `recoverable`-typed request is creatable today by anything that is not
+// the chooser — and the branch below is what makes such a submission be refused
+// for its real reason (the category's project rule) rather than accepted
+// unvalidated or refused for a type the store had just accepted. That is the
+// behaviour F-E-08's fix depends on, and both `internal/app` and the audit
+// suites drive it directly.
+//
+// So the reconciliation F-D-14 asks for belongs on the other side of the line:
+// either the chooser grows a fifth card or the handler refuses the type before
+// the store sees it. Neither is this file's to make. Reported, not fixed here.
 var requestTypes = map[string]bool{
 	"vendor_invoice": true, "vendor_advance": true, "reimbursement": true,
 	"employee_advance": true, "recoverable": true,
 }
 
-// requestStatuses is the Phase-2 status enum. 'draft' is deliberately absent —
-// D1: a request exists only once submitted. Phase 3 appends on_hold,
-// processing, completed and completed_partial.
+// requestStatuses is the complete status enum — every value that can appear in
+// payment_requests.status, in workflow order (F-C-08).
+//
+// It listed seven until the 2026-07-27 audit, on the strength of a comment
+// saying "Phase 3 appends" the rest. Phase 3 shipped the four extra statuses and
+// never came back for the comment, so a reader consulting the enum for the set
+// of states this system has was told four of the eleven do not exist —
+// including both terminal ones.
+//
+// Two things are deliberately NOT here:
+//
+//   - 'draft'. D1: a request exists only once submitted, and
+//     migrations.go's CHECK (status <> 'draft') makes the value unrepresentable
+//     for the life of the table, not merely unused.
+//   - 'on_hold'. The old comment named it as a status Phase 3 would append. It
+//     is not a status and never was: it is a boolean column that qualifies
+//     'approved', which is exactly the confusion the activeHold predicate and
+//     the "on_hold implies approved" invariant exist to prevent. A request on
+//     hold has status 'approved'.
+//
+// docs/superpowers/specs/2026-07-25-payment-requests-overview.md still describes
+// nine statuses and omits cancellation_requested, cancelled and
+// completed_partial. This map is the authority; the document is the thing that
+// is wrong, and correcting it is not this file's to do.
 var requestStatuses = map[string]bool{
 	"pending": true, "returned": true, "approved": true, "rejected": true,
 	"withdrawn": true, "cancellation_requested": true, "cancelled": true,
+	// Phase 3, the settlement half.
+	"processing": true, "partial_review": true,
+	"completed": true, "completed_partial": true,
 }
 
 var legalTransitions = map[string]map[string]bool{
@@ -155,7 +197,17 @@ var legalTransitions = map[string]map[string]bool{
 	"cancellation_requested": {"cancelled": true, "approved": true},
 	// Phase 3 (G14): a manager-accepted partial closes distinctly from a clean pay.
 	// "completed_partial" has no outgoing edges — terminal, like "completed".
-	"partial_review": {"completed": true, "completed_partial": true},
+	//
+	// F-C-08: the edge to "completed" used to be declared here and no code could
+	// traverse it. Only two writers produce a completed state and neither starts
+	// from partial_review — RecordPaymentForRequest writes 'completed' WHERE
+	// status='processing', and AcceptPartial writes 'completed_partial' WHERE
+	// status='partial_review'. A shortfall the manager accepts closes as
+	// completed_partial precisely so that the difference between "paid in full"
+	// and "balance written off" survives in the record, so an edge that would
+	// erase it is not one to leave lying about for a future caller of
+	// decideRequest to reach for. Removed rather than implemented.
+	"partial_review": {"completed_partial": true},
 }
 
 func canTransition(from, to string) bool {

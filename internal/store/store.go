@@ -123,6 +123,29 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
+// UpdateUser rewrites a user's profile — name, legacy role, active flag and
+// optionally the password — and touches nothing else.
+//
+// It is NOT the Users screen's path and must not become one again. F-G-034
+// replaced that with SaveUser, which applies the profile, the role assignment
+// and the default approver in a single transaction, because a save refused by
+// the second of three separate calls used to leave the first one's rename
+// committed. Any new writer that saves the edit sheet uses SaveUser.
+//
+// It is kept, rather than deleted with its callers rewritten, because SaveUser
+// is not a drop-in replacement for a narrow write: UserSaveInput.RoleIDs is
+// "the user's roles now", so a nil slice CLEARS the assignment. A caller that
+// only wants to deactivate somebody would have to read their roles back and
+// echo them, and getting that wrong is a silent permission change. That is what
+// this function is for, and the callers that want exactly it today are the
+// fixtures in internal/auth's session tests (deactivating a signed-in user) and
+// store_test.go's field-validation pin.
+//
+// Its one weakness, recorded rather than hidden: the last-active-administrator
+// guard reads on s.db and then writes on s.db, with no transaction around the
+// pair. SaveUser re-asks the same question inside its own transaction for
+// exactly that reason. This is not reachable from any route today; it becomes a
+// real race the moment one calls it.
 func (s *Store) UpdateUser(ctx context.Context, id int64, name, role string, active bool, passwordHash string) error {
 	name = strings.TrimSpace(name)
 	if err := validateUserFields("placeholder@example.invalid", name, role); err != nil {
@@ -1061,15 +1084,21 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	}
 	defer tx.Rollback()
 	var status, treatment, displayPayee, invoiceNo string
-	var processingBy, headID sql.NullInt64
+	var processingBy, headID, vendorID sql.NullInt64
 	var requested int64
 	var approved sql.NullInt64
 	// The display payee, exactly as Request() resolves it: a vendor_invoice
 	// names its payee with vendor_id and leaves the snapshot empty.
+	//
+	// F-G-009: r.vendor_id is read for the same reason head_id is — it is a fact
+	// of the request, not of the form — and is written onto the payment so the
+	// vendor master can total spend by identity instead of by matching the payee
+	// snapshot's text. Migration v10 back-filled the payments that already
+	// existed; this is what keeps every payment made from now on linked.
 	if err := tx.QueryRowContext(ctx, `SELECT r.status, r.processing_by, r.amount, r.approved_amount,
-		r.treatment, r.head_id, COALESCE(NULLIF(v.name,''), r.vendor_payee, ''), COALESCE(r.invoice_no,'')
+		r.treatment, r.head_id, r.vendor_id, COALESCE(NULLIF(v.name,''), r.vendor_payee, ''), COALESCE(r.invoice_no,'')
 		FROM payment_requests r LEFT JOIN vendors v ON v.id=r.vendor_id
-		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &displayPayee, &invoiceNo); err != nil {
+		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &vendorID, &displayPayee, &invoiceNo); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, ErrNotFound
 		}
@@ -1102,9 +1131,15 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if in.HeadID != 0 {
 		headArg = in.HeadID
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by,request_id,settlement,partial_reason)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		headArg, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, requestID, settlement, partialReason)
+	// Same treatment for the vendor: NULL, never 0. A reimbursement or an
+	// employee advance names no vendor row at all, and vendors(id) has no row 0.
+	var vendorArg any
+	if vendorID.Valid && vendorID.Int64 != 0 {
+		vendorArg = vendorID.Int64
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO payments(head_id,vendor_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by,request_id,settlement,partial_reason)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		headArg, vendorArg, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, requestID, settlement, partialReason)
 	if err != nil {
 		return 0, classify(err)
 	}
@@ -1889,12 +1924,22 @@ func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOption
 		return fmt.Errorf("%w: valid head, date, and positive amount are required", ErrValidation)
 	}
 	// F-D-06: paid_on records when money left the bank, so a date after today
-	// records something that has not happened. "Today" comes from the injected
-	// clock on the input, never time.Now() — a zero Now means the caller
-	// supplied no clock and the check is skipped (see PaymentInput.Now).
+	// records something that has not happened.
+	//
+	// "Today" is in.Now when a caller injects a clock, and time.Now().UTC()
+	// when it does not. That default is the fix, not a detail: the check was
+	// written to skip on a zero Now, no production caller ever set the field,
+	// and so the rule shipped inert — present in the code, pinned by a store
+	// test, and enforced against nobody. Forgetting to inject a clock must mean
+	// "enforce", never "skip"; injection stays so a test can pin the day.
+	//
 	// paid_on and the formatted clock share the YYYY-MM-DD shape, so a plain
 	// string comparison is a correct date comparison.
-	if !in.Now.IsZero() && in.PaidOn > in.Now.Format("2006-01-02") {
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if in.PaidOn > now.Format("2006-01-02") {
 		return fmt.Errorf("%w: paid on cannot be a future date — money cannot have left the bank after today", ErrValidation)
 	}
 	if s.IsLocked(ctx, in.PaidOn[:7]) {

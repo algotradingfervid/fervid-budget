@@ -157,7 +157,7 @@ func TestLastActiveAdminAndAttachmentInvariants(t *testing.T) {
 	if err := s.UpdateUser(ctx, actor.ID, actor.Name, "data_entry", true, ""); !errors.Is(err, ErrValidation) {
 		t.Fatalf("demoting final admin = %v, want %v", err, ErrValidation)
 	}
-	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-09-02", Amount: 5000})
+	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-03-02", Amount: 5000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,13 +171,13 @@ func TestLastActiveAdminAndAttachmentInvariants(t *testing.T) {
 	if got, err := s.AttachmentByID(ctx, attachments[0].ID); err != nil || got.PaymentID != paymentID {
 		t.Fatalf("AttachmentByID = %+v, %v", got, err)
 	}
-	if err := s.LockMonth(ctx, actor, "2026-09", "close"); err != nil {
+	if err := s.LockMonth(ctx, actor, "2026-03", "close"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AddAttachment(ctx, actor, paymentID, "second.txt", "/tmp/second.txt", "text/plain", 1); !errors.Is(err, ErrLockedMonth) {
 		t.Fatalf("locked AddAttachment = %v, want %v", err, ErrLockedMonth)
 	}
-	if err := s.UnlockMonth(ctx, actor, "2026-09", "correction"); err != nil {
+	if err := s.UnlockMonth(ctx, actor, "2026-03", "correction"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.VoidPayment(ctx, actor, paymentID, "duplicate"); err != nil {
@@ -203,18 +203,18 @@ func TestCreatePaymentWithAttachmentIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s, ctx)
-	_, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-10-02", Amount: 5000}, &AttachmentInput{OriginalName: "", StoredPath: "/tmp/nope", SizeBytes: 1})
+	_, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-04-02", Amount: 5000}, &AttachmentInput{OriginalName: "", StoredPath: "/tmp/nope", SizeBytes: 1})
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("invalid attachment = %v, want %v", err, ErrValidation)
 	}
-	payments, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-10", Limit: 10})
+	payments, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-04", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(payments) != 0 {
 		t.Fatalf("payment was written despite rejected attachment: %+v", payments)
 	}
-	id, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-10-02", Amount: 5000}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", MimeType: "application/pdf", SizeBytes: 10})
+	id, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-04-02", Amount: 5000}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", MimeType: "application/pdf", SizeBytes: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 		s := newTestStore(t)
 		actor, headID := seedActorAndHead(t, s, ctx)
 		abortAuditAction(t, s, "create")
-		if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000}); err == nil {
+		if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000}); err == nil {
 			t.Fatal("CreatePayment succeeded despite audit failure")
 		}
 		if got := paymentCount(t, s); got != 0 {
@@ -240,12 +240,12 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	t.Run("update_with_attachment", func(t *testing.T) {
 		s := newTestStore(t)
 		actor, headID := seedActorAndHead(t, s, ctx)
-		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000, VendorPayee: "Original"})
+		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000, VendorPayee: "Original"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		abortAuditAction(t, s, "update")
-		err = s.UpdatePaymentWithAttachment(ctx, actor, paymentID, PaymentInput{HeadID: headID, PaidOn: "2026-11-03", Amount: 2000, VendorPayee: "Changed"}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", SizeBytes: 1})
+		err = s.UpdatePaymentWithAttachment(ctx, actor, paymentID, PaymentInput{HeadID: headID, PaidOn: "2026-05-03", Amount: 2000, VendorPayee: "Changed"}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", SizeBytes: 1})
 		if err == nil {
 			t.Fatal("UpdatePaymentWithAttachment succeeded despite audit failure")
 		}
@@ -261,7 +261,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	t.Run("void", func(t *testing.T) {
 		s := newTestStore(t)
 		actor, headID := seedActorAndHead(t, s, ctx)
-		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000})
+		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,7 +277,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	t.Run("attachment", func(t *testing.T) {
 		s := newTestStore(t)
 		actor, headID := seedActorAndHead(t, s, ctx)
-		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-11-02", Amount: 1000})
+		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -296,11 +296,11 @@ func TestUpdatePaymentWithAttachmentCommitsTogether(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s, ctx)
-	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-12-01", Amount: 1000})
+	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-06-01", Amount: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdatePaymentWithAttachment(ctx, actor, paymentID, PaymentInput{HeadID: headID, PaidOn: "2026-12-02", Amount: 2000}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", SizeBytes: 1}); err != nil {
+	if err := s.UpdatePaymentWithAttachment(ctx, actor, paymentID, PaymentInput{HeadID: headID, PaidOn: "2026-06-02", Amount: 2000}, &AttachmentInput{OriginalName: "receipt.pdf", StoredPath: "/tmp/receipt.pdf", SizeBytes: 1}); err != nil {
 		t.Fatal(err)
 	}
 	payment, err := s.Payment(ctx, paymentID)
@@ -924,11 +924,15 @@ func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 	}
 }
 
-// TestValidatePaymentRefusesFutureDateAgainstInjectedClock is the F-D-06 store
-// half. The rule reads the injected clock on the input, never time.Now(); a
-// zero clock leaves the check dormant, which is what keeps today's handlers —
-// and the shipped fixtures that date payments into future months — unchanged
-// until the wiring wave supplies the clock deliberately.
+// TestValidatePaymentRefusesFutureDateAgainstInjectedClock is F-D-06.
+//
+// The rule reads the injected clock when the caller supplies one, so a test can
+// pin the day — and falls back to time.Now().UTC() when it does not, so the
+// rule is enforced whether or not anybody remembered to wire a clock. The
+// second half is the fix: the check shipped skipping on a zero Now, no
+// production caller ever set the field, and the guard therefore refused nothing
+// for a whole release. The last block below is what pins that, and it is the
+// exact assertion this test used to make in reverse.
 func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -964,10 +968,18 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	if _, err := s.RecordPaymentForRequest(ctx, actor, reqID, PaymentInput{HeadID: headID, PaidOn: "2027-01-01", Amount: 5000, Now: clock}, "settled", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("future-dated settlement = %v, want ErrValidation", err)
 	}
-	// Dormant without a clock: this pins the deliberate default so wiring the
-	// handler is a visible decision, not an accident.
-	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2027-06-01", Amount: 1000}); err != nil {
-		t.Fatalf("clockless future payment = %v; the check must stay dormant until the handler supplies the clock", err)
+	// No clock at all — the shape every production caller uses. The rule must
+	// still bite, because a guard that switches itself off when the caller
+	// forgets to inject a clock guards nothing, which is what F-D-06 found.
+	// Both dates are relative to the real day, so this cannot rot into a test
+	// that passes only until the calendar catches up with a literal.
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: tomorrow, Amount: 1000}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("clockless payment dated %s = %v, want ErrValidation — the default must be enforcement, not a skip", tomorrow, err)
+	}
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: yesterday, Amount: 1000}); err != nil {
+		t.Fatalf("clockless payment dated %s = %v; the past is not what this rule refuses", yesterday, err)
 	}
 }
 

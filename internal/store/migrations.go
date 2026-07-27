@@ -26,6 +26,7 @@ type migration struct {
 //	v7 — notification settings (Phase 5)
 //	v8 — payments.head_id nullable (2026-07-27 audit, F-D-11/F-E-01/F-G-001)
 //	v9 — notification rows for nine unnotified actions (2026-07-27 audit, F-F-06)
+//	v10 — payments.vendor_id (2026-07-27 audit, F-G-009/F-G-010)
 //
 // Phase 3 consumed v5 for a grant back-fill, so every phase plan written before
 // it is off by one from here on. Migrations are append-only and are never
@@ -344,6 +345,59 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "notification_events_audit",
 		Up:      UpAuditNotificationEvents,
 	},
+	// 2026-07-27 audit, F-G-009 / F-G-010: the vendor master's two numbers had
+	// no join to stand on. v2's own comment promised "Phase 2 adds vendor_id
+	// alongside it rather than replacing it" and Phase 2 never did.
+	{
+		Version: 10,
+		Name:    "payments_vendor_id",
+		Up:      upPaymentsVendorID,
+	},
+}
+
+// upPaymentsVendorID gives a payment the vendor it was made to, so the vendor
+// master can stop inferring it from a name (F-G-009, F-G-010).
+//
+// It is deliberately NOT a table rebuild. v8 had to rebuild because SQLite
+// cannot drop a NOT NULL in place, and its doc comment records what that cost:
+// PRAGMA foreign_keys rides on the DSN and cannot be changed inside the
+// migration's transaction, defer_foreign_keys alone does not survive a DROP,
+// and payment_attachments had to be stashed and restored around it. None of
+// that applies here. `ALTER TABLE … ADD COLUMN … REFERENCES vendors(id)` is
+// legal with foreign keys enforced precisely because the new column's default
+// is NULL, so no existing row is left dangling — SQLite's own rule, verified
+// against modernc.org/sqlite inside a transaction before this was written, and
+// already relied on by v4 for payments.request_id.
+//
+// Three steps, each of them re-runnable:
+//
+//   - Add the column, guarded by columnExists exactly as v4 guards its three.
+//   - Back-fill from the request the payment settles. payments.request_id is
+//     v4's link and payment_requests.vendor_id is v3's, so the vendor is one
+//     join away for every linked payment; the WHERE keeps it to rows that are
+//     still NULL, so a re-run can never overwrite a later deliberate value.
+//   - Index it, because vendorPaidThisYear now filters on it per vendor row.
+//
+// Payments written before v10 that settle no request keep vendor_id NULL for
+// ever: there is nothing to derive it from. That is what the payee-name
+// fallback in vendorPaidThisYear exists to cover.
+func upPaymentsVendorID(tx *sql.Tx) error {
+	exists, err := columnExists(tx, "payments", "vendor_id")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := tx.Exec(`ALTER TABLE payments ADD COLUMN vendor_id INTEGER REFERENCES vendors(id)`); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE payments
+		SET vendor_id = (SELECT r.vendor_id FROM payment_requests r WHERE r.id = payments.request_id)
+		WHERE vendor_id IS NULL AND request_id IS NOT NULL`); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS idx_payments_vendor ON payments(vendor_id)`)
+	return err
 }
 
 // upPaymentsHeadNullable rebuilds payments so head_id is nullable, preserving

@@ -331,10 +331,11 @@ type PaymentInput struct {
 	Remarks     string
 	// Now is the injected clock validatePayment measures PaidOn against
 	// (F-D-06): a payment dated after Now's date is refused, because money
-	// cannot have left the bank in the future. Zero means "no clock supplied"
-	// and skips the future-date check — the wiring wave passes time.Now()
-	// from the handler once the shipped fixtures that date payments into
-	// future months are corrected. Mirrors LinkableOptions.Now.
+	// cannot have left the bank in the future. Zero means "no clock supplied",
+	// and the check then measures against time.Now().UTC() — the default is
+	// enforcement, never a skip, because a rule that switches itself off when a
+	// caller forgets to pass a clock is not a rule. Injection is for tests that
+	// need to pin the day. Mirrors LinkableOptions.Now.
 	Now time.Time
 }
 

@@ -478,6 +478,16 @@ func (s *Store) CopyRole(ctx context.Context, actor User, srcID int64, name stri
 
 // SetUserRoles replaces a user's entire role assignment atomically. Every role
 // id must exist; unknown ids are rejected before any write.
+//
+// The Users screen no longer calls this: F-G-034 folded the three writes behind
+// one submit into SaveUser, so that a refusal cannot leave a rename committed
+// with the roles unchanged. This stays as the assignment-only write, because
+// SaveUser cannot stand in for it — SaveUser also rewrites the profile from
+// UserSaveInput, so granting somebody a role through it means restating their
+// name, legacy role and active flag, and any field you get wrong is written.
+// Its callers are the seeding fixtures across internal/app and internal/store
+// that need a user to hold a particular role before a route is exercised, which
+// is a genuine and recurring need and not an accident of history.
 func (s *Store) SetUserRoles(ctx context.Context, actor User, userID int64, roleIDs []int64) error {
 	unique := map[int64]struct{}{}
 	for _, id := range roleIDs {
@@ -530,10 +540,18 @@ func (s *Store) UserRoles(ctx context.Context, userID int64) ([]Role, error) {
 	return out, rows.Err()
 }
 
-// SetUserDefaultApprover records who approves this user's requests by default.
-// A user can never be their own default approver — self-approval is not
+// SetUserDefaultApprover records who approves this user's requests by default
+// (D9). A user can never be their own default approver — self-approval is not
 // acceptable, and the rule lives here rather than in the <select> because a
 // hidden option is not validation. approverID 0 clears the field.
+//
+// As with SetUserRoles, the Users screen goes through SaveUser since F-G-034,
+// and this is kept as the field-only write for the same reason: SaveUser would
+// also rewrite the profile and clear the role assignment, so using it to set one
+// column means restating four others. It is the function the D9 rules are pinned
+// against (approvers_test.go, permissions_test.go), and SaveUser enforces the
+// identical three refusals — self, unknown, inactive — so the two must stay in
+// step; if one gains a rule the other needs it too.
 func (s *Store) SetUserDefaultApprover(ctx context.Context, actor User, userID, approverID int64) error {
 	if approverID != 0 && approverID == userID {
 		return fmt.Errorf("%w: a user cannot be their own default approver", ErrValidation)

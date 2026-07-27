@@ -147,17 +147,61 @@ func vendorSelect(withBank bool) string {
 	return vendorColumns
 }
 
-// vendorPaidThisYear is the list screen's "Paid this year" column. Until Phase
-// 3 gives payments a vendor_id, the payee snapshot is the only link there is,
-// so the match is EXACT: a payment counts towards a vendor only when its
-// recorded payee is that vendor's name. It therefore under-counts a payment
-// whose payee was typed differently, and can never attribute one to the wrong
-// vendor — vendor names are uniquely indexed. On a financial screen, missing a
-// row is recoverable; crediting the wrong vendor is not.
+// vendorPaidThisYear is the list screen's "Paid this year" column.
+//
+// The link is payments.vendor_id, which migration v10 added and back-filled
+// from the request each payment settles (F-G-009). Before v10 there was no such
+// column, and the payee snapshot was the only link there was — which meant
+// renaming a vendor silently zeroed its whole payment history, because the
+// figure was string equality against a denormalised copy of the old name.
+//
+// The payee match survives as a FALLBACK, and only for rows the join cannot
+// reach: a payment with vendor_id IS NULL settles no request, so there is
+// nothing to inherit a vendor from and its payee text is again the only
+// evidence. Those are the pre-v10 direct payments — history, not new work,
+// since every payment this product creates today is linked and carries the id.
+//
+// The fallback keeps the property the original comment was written to defend,
+// and it is not negotiable: the match is EXACT — lowercased and trimmed, never
+// LIKE, never a prefix. A payment counts towards a vendor only when its recorded
+// payee IS that vendor's name, so a row can be missed but can never be credited
+// to the wrong vendor (vendor names are uniquely indexed, case-insensitively).
+// On a financial screen, missing a row is recoverable; crediting the wrong
+// vendor is not.
 const vendorPaidThisYear = `,COALESCE((SELECT SUM(py.amount) FROM payments py
 	WHERE py.voided_at IS NULL
-	  AND lower(trim(COALESCE(py.vendor_payee,''))) = lower(trim(v.name))
+	  AND (py.vendor_id = v.id
+	       OR (py.vendor_id IS NULL
+	           AND lower(trim(COALESCE(py.vendor_payee,''))) = lower(trim(v.name))))
 	  AND substr(py.paid_on,1,4) = ?), 0)`
+
+// vendorOpenRequests is the list screen's "Open requests" column, which until
+// F-G-010 was declared on the struct, scanned by nothing and therefore rendered
+// a hard 0 for every vendor — an assertion that there is no open work, made
+// without asking.
+//
+// "Open" is deliberately not a new definition. It is requestBuckets["open"] —
+// the exact status set behind /requests?bucket=open — so this count and the list
+// a reader would reach for cannot disagree about how many there are. F-G-006 is
+// the same class of defect (a dashboard tile whose status set had drifted from
+// the bucket its link pointed at), and reusing the slice rather than re-typing
+// the statuses is what stops that happening here.
+//
+// vendorOpenStatuses carries the bind arguments in the same order, so the two
+// can never be updated apart.
+var vendorOpenRequests, vendorOpenStatuses = buildVendorOpenRequests()
+
+func buildVendorOpenRequests() (string, []any) {
+	statuses := append([]string(nil), requestBuckets["open"]...)
+	sort.Strings(statuses) // deterministic SQL text, whatever order the map holds
+	args := make([]any, 0, len(statuses))
+	for _, st := range statuses {
+		args = append(args, st)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")
+	return `,(SELECT COUNT(*) FROM payment_requests pr
+		WHERE pr.vendor_id = v.id AND pr.status IN (` + placeholders + `))`, args
+}
 
 // scanVendor reads one row. withBank and withTotals must match the projection
 // vendorSelect produced, so the scan targets and the column list can never
@@ -178,7 +222,7 @@ func scanVendor(scanner interface{ Scan(...any) error }, withBank, withTotals bo
 			&bank.DefaultPaymentMode, &bank.PaymentTermsDays)
 	}
 	if withTotals {
-		dest = append(dest, &v.PaidThisYear)
+		dest = append(dest, &v.PaidThisYear, &v.OpenRequests)
 	}
 	if err := scanner.Scan(dest...); err != nil {
 		if err == sql.ErrNoRows {
@@ -207,9 +251,11 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 		opt.Limit = 300
 	}
 
-	// The paid-this-year subquery is in the projection, so its parameter binds
-	// before any WHERE parameter.
+	// Both totals are sub-selects in the projection, so their parameters bind
+	// before any WHERE parameter — the year first, then the open-status list, in
+	// the order the SELECT list names them.
 	args := []any{time.Now().Format("2006")}
+	args = append(args, vendorOpenStatuses...)
 	var where []string
 	switch strings.ToLower(strings.TrimSpace(opt.Status)) {
 	case "all":
@@ -236,7 +282,7 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 		where = append(where, `trim(gstin)=''`)
 	}
 
-	query := `SELECT ` + vendorSelect(withBank) + vendorPaidThisYear + ` FROM vendors v`
+	query := `SELECT ` + vendorSelect(withBank) + vendorPaidThisYear + vendorOpenRequests + ` FROM vendors v`
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
