@@ -189,7 +189,13 @@ func (a *App) respondStoreError(w http.ResponseWriter, r *http.Request, err erro
 	case errors.Is(err, store.ErrLockedMonth):
 		status, message = http.StatusConflict, "This month is locked and cannot be changed."
 	case errors.Is(err, store.ErrForbidden):
-		status, message = http.StatusForbidden, "You do not have permission to perform this action."
+		// friendly, not a fixed sentence: a refusal that carries its own reason
+		// keeps it. "This request is on hold" and "reserve this request before
+		// recording its payment" are state conflicts, and telling the caller they
+		// lack a permission they hold sends them to an administrator for a grant
+		// they already have (F-D-02, F-G-023). A bare ErrForbidden still reads as
+		// the permission refusal, because that is what friendly answers for it.
+		status, message = http.StatusForbidden, friendly(err)
 	case errors.Is(err, store.ErrValidation), errors.Is(err, store.ErrDuplicate), errors.Is(err, store.ErrInactiveHead):
 		status, message = http.StatusBadRequest, friendly(err)
 	}

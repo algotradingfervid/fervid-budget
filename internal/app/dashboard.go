@@ -73,8 +73,13 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, err)
 			return
 		}
+		// Bucket, not a hand-written status list. The tile links to
+		// /requests?bucket=open and counted a different set — it omitted
+		// `returned`, which that bucket includes — so a requester with one pending
+		// and one returned request was told 1 and shown 2 (F-G-006). One predicate,
+		// named once, in the place the link already names.
 		if err := area("in-progress", "▤", "In progress", "See all my requests →", "/requests?bucket=open",
-			store.RequestListOptions{Scope: "own", Statuses: []string{"pending", "approved", "cancellation_requested"}}); err != nil {
+			store.RequestListOptions{Scope: "own", Bucket: "open"}); err != nil {
 			a.respondStoreError(w, r, err)
 			return
 		}
@@ -92,10 +97,36 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if a.auth.Can(u, "payment", "process") {
-		if err := area("accounts", "₹", "Approved and unclaimed", "Open all requests →", "/requests?bucket=open",
-			store.RequestListOptions{Scope: "all", Statuses: []string{"approved"}}); err != nil {
+		// The queue's own query, not a second one over the same data.
+		//
+		// This area used to be built with the literal Scope: "all" written into the
+		// call, so its tile and its four rows were company-wide for anybody holding
+		// payment:process whatever their request scope said — and each row linked to
+		// a detail page the same caller is refused (F-G-018). It also counted
+		// `status='approved'` with no on_hold or processing_by test, so it disagreed
+		// with the accounts queue's metric of the identical name: place a hold and
+		// the queue's number dropped while this one did not (F-G-007).
+		//
+		// LinkablePaymentRequests answers both: it takes the caller's scope, and its
+		// Counts.Approved *is* the number the queue renders — approved, unclaimed and
+		// not on hold. Available is that same set as rows, so the count and the list
+		// come from one query and cannot drift.
+		set, err := a.st.LinkablePaymentRequests(r.Context(), store.LinkableOptions{
+			Scope: a.effectiveScope(u, ""), ViewerID: u.ID, Status: "approved",
+		})
+		if err != nil {
 			a.respondStoreError(w, r, err)
 			return
+		}
+		counts["accounts"] = set.Counts.Approved
+		if set.Counts.Approved > 0 {
+			rows := set.Available
+			if len(rows) > dashboardRows {
+				rows = rows[:dashboardRows]
+			}
+			areas = append(areas, WorkArea{Key: "accounts", Icon: "₹", Title: "Approved and unclaimed",
+				Count: set.Counts.Approved, Requests: rows,
+				FootText: "Open the payment queue →", FootHref: "/accounts-queue?tab=approved"})
 		}
 	}
 	if links := a.adminLinks(u); len(links) > 0 {

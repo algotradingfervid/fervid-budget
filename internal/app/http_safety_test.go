@@ -39,8 +39,11 @@ func TestHTTPErrorStatusContract(t *testing.T) {
 	invalid := url.Values{"project_id": {"0"}, "name": {"Invalid head"}, "due_day": {"32"}}
 	resp := s.postForm("/heads", invalid)
 	requireStatus(t, resp, http.StatusBadRequest)
-	if !strings.Contains(responseBody(t, resp), "validation") {
-		t.Fatal("400 response does not explain a validation failure")
+	// The rule, not the sentinel. `validation failed:` is how the code recognises
+	// the class of error and is stripped before a person reads it (F-B-08), so
+	// what a 400 has to carry is the sentence naming what was wrong.
+	if body := responseBody(t, resp); !strings.Contains(body, "project and head name are required") {
+		t.Fatalf("400 response does not explain what was wrong: %s", body)
 	}
 
 	// CSRF failures must be rejected before an admin action reaches its handler.

@@ -638,7 +638,10 @@ func TestShellIsBuiltFromPermissionsAndSkippedForHTMXFragments(t *testing.T) {
 	// first candidate in centreActions and Phase 2 built /approvals, so the
 	// fall-through that used to land on Pay no longer happens.
 	adminShell := renderAs(t, handler, manager, admin, "/payments", nil)
-	for _, want := range []string{"chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=3", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log"} {
+	// Six badges, not three: the store's three badgeSpecs plus the unread bell
+	// count and the two work-queue counts navSpec has always declared and nothing
+	// populated (F-G-013).
+	for _, want := range []string{"chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=6", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log", "item=Notifications"} {
 		if !strings.Contains(adminShell, want) {
 			t.Fatalf("admin shell missing %q: %s", want, adminShell)
 		}

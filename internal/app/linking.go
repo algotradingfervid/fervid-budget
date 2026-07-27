@@ -52,9 +52,22 @@ func (a *App) withHolderName(r *http.Request, req store.Request) store.Request {
 	return req
 }
 
+// Conflict causes for the reservation screen. ReserveRequest refuses for three
+// different reasons and used to return one ErrForbidden for all of them, so the
+// screen said "Someone else took this request before you" about a request whose
+// status was 'approved' and whose processing_by was NULL (F-D-02). Wave 1 gave
+// each cause its own sentinel; these are what the template branches on, so the
+// mapping from a store error to a sentence lives in exactly one place.
+const (
+	conflictTaken       = "taken"        // somebody really does hold it
+	conflictHold        = "hold"         // approved, but paused by Accounts (L7)
+	conflictNotApproved = "not-approved" // any other status: completed, cancelled, frozen…
+)
+
 // reservationConflict renders G15: the losing accountant gets a screen naming
-// the winner, not an error page. It is the single place a lost race is
-// presented, so the queue, the picker and the payment form all agree.
+// what actually happened, not an error page. It is the single place a refused
+// reservation is presented, so the queue, the picker and the payment form all
+// agree.
 func (a *App) reservationConflict(w http.ResponseWriter, r *http.Request, req store.Request, cause error) {
 	req = a.withHolderName(r, req)
 	holder := req.ProcessingByName
@@ -62,12 +75,51 @@ func (a *App) reservationConflict(w http.ResponseWriter, r *http.Request, req st
 		holder = "Someone else"
 	}
 	a.log.WarnContext(r.Context(), "reservation conflict",
-		"request_id", requestID(r), "request", req.ID, "holder", holder, "error", cause)
+		"request_id", requestID(r), "request", req.ID, "holder", holder,
+		"cause", conflictCause(req, cause), "error", cause)
+	title := "Already taken"
+	switch conflictCause(req, cause) {
+	case conflictHold:
+		title = "On hold"
+	case conflictNotApproved:
+		title = "Not available to process"
+	}
 	a.renderStatus(w, r, http.StatusConflict, "reservation_conflict", PageData{
-		Title:    "Already taken",
-		Request2: req,
-		Holder:   holder,
+		Title:         title,
+		Request2:      req,
+		Holder:        holder,
+		ConflictCause: conflictCause(req, cause),
 	})
+}
+
+// conflictCause reads the sentinel and the row together, because neither alone is
+// enough.
+//
+// The sentinel says which test the conditional UPDATE failed; the row says what
+// the request actually is. They can disagree, and the disagreement is the whole
+// finding: RecordPaymentForRequest leaves processing_by set on a completed
+// request, so ReserveRequest's cause check — which asks about processing_by
+// before it asks about the status — answers ErrAlreadyReserved for a request that
+// was paid last month. "Someone else is paying it" is not true of that request,
+// so the row wins on the question of whether anybody holds it.
+//
+// The row is also all there is on the two paths that discover a conflict by
+// reading rather than by being refused: paymentEntry and settlementPreview both
+// arrive with a nil cause.
+func conflictCause(req store.Request, cause error) string {
+	switch {
+	case activeHold(req) || errors.Is(cause, store.ErrRequestOnHold):
+		return conflictHold
+	case req.Status == "processing" && req.ProcessingBy != nil:
+		return conflictTaken
+	case req.Status == "approved":
+		// Approved, unheld and unreserved by the time the row was re-read: the
+		// caller lost the race and the winner has already let go, so the race is
+		// still the honest answer.
+		return conflictTaken
+	default:
+		return conflictNotApproved
+	}
 }
 
 // heldByCaller answers the one question every settlement screen asks first:
@@ -103,8 +155,16 @@ func (a *App) requestRecordPayment(w http.ResponseWriter, r *http.Request) {
 // know how to build.
 type queueTab struct{ Key, Label string }
 
+// The Approved tab is labelled the way the metric strip above it labels the same
+// number, because the number and the rows answer different questions and always
+// will: the badge is the strictly takeable set (approved · unclaimed · not on
+// hold) while the rows also include the ones somebody is already paying, so the
+// picker can render them as .co.is-taken instead of silently hiding a request
+// from the person about to duplicate it. Labelled "Approved", the badge looked
+// like an undercount of its own list (F-G-008); labelled this way it is visibly
+// counting something narrower.
 var queueTabs = []queueTab{
-	{"approved", "Approved"}, {"processing", "Processing"}, {"hold", "On hold"},
+	{"approved", "Approved, unclaimed"}, {"processing", "Processing"}, {"hold", "On hold"},
 	{"partial_review", "Partial review"}, {"paid", "Paid"},
 }
 
@@ -245,14 +305,23 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 	if req.HeadID != nil {
 		headID = *req.HeadID
 	}
+	// The lock, before the form rather than after it. The grid renders "Locked"
+	// in place of its Add buttons and /budgets carries a locked banner; this
+	// screen carried nothing, so an accountant filled in the amount, the date,
+	// the mode, the reference and the note and only learned the period was closed
+	// on the confirmation (F-G-020). The month tested is the one the date field
+	// opens on, which is the month a settlement recorded now would land in.
+	paidOn := time.Now().Format("2006-01-02")
 	a.render(w, r, "payment_form", PageData{
 		Title:          "Record payment",
 		Request2:       req,
 		SelectedHeadID: headID,
 		ReserveMine:    true,
+		Month:          paidOn[:7],
+		Locked:         a.st.IsLocked(r.Context(), paidOn[:7]),
 		Payment: store.Payment{
 			HeadID: headID,
-			PaidOn: time.Now().Format("2006-01-02"),
+			PaidOn: paidOn,
 			Amount: approvedOf(req),
 			// The display payee, not the snapshot column: a vendor_invoice names
 			// its payee with vendor_id and leaves vendor_payee empty, so the
@@ -480,6 +549,9 @@ func (a *App) requestAcceptPartial(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The requester learns the balance is never coming and the accountant learns
+	// to stop chasing it. Nothing told either of them before (F-F-06).
+	a.fire(r, notify.EventPaymentPartialAccepted, id)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
 }
 
@@ -491,6 +563,8 @@ func (a *App) requestRaiseConcern(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The concern waits on Accounts, so Accounts has to be told (F-F-06).
+	a.fire(r, notify.EventPaymentPartialConcern, id)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d/partial-review", id), http.StatusSeeOther)
 }
 
@@ -631,6 +705,11 @@ func (a *App) requestRelease(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The screen's action bar states that the requester and the approver are both
+	// notified. It is now true (F-D-12/F-F-06): the seeded rule for this event
+	// includes both, and the invoice being unclaimed again is exactly the kind of
+	// interruption a hold already told them about.
+	a.fire(r, notify.EventReservationReleased, req.ID)
 	http.Redirect(w, r, "/accounts-queue", http.StatusSeeOther)
 }
 
@@ -671,6 +750,9 @@ func (a *App) requestReassign(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// Same promise as release, same audience, plus the colleague who is now
+	// expected to pay it (F-D-12/F-F-06).
+	a.fire(r, notify.EventReservationReassigned, req.ID)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
@@ -716,6 +798,9 @@ func (a *App) requestUnhold(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// request_on_hold told the requester the pause began; this is the other half,
+	// and without it nobody was ever told the pause was over (F-D-12/F-F-06).
+	a.fire(r, notify.EventRequestUnheld, req.ID)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
@@ -743,10 +828,18 @@ func (a *App) requestStale(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, terr)
 		return
 	}
+	// The banner quotes the staleness threshold, so it reads the configured one
+	// rather than asserting "the one-day mark" an admin may have changed (F-F-03).
+	thresholds, therr := a.st.ReminderThresholds(r.Context())
+	if therr != nil {
+		a.respondStoreError(w, r, therr)
+		return
+	}
 	a.render(w, r, "reservation_stale", PageData{
 		Title:       "Reserved too long",
 		Request2:    a.withHolderName(r, req),
 		Audit:       trail,
+		Reminders:   thresholds,
 		ReserveMine: heldByCaller(req, auth.CurrentUser(r).ID),
 	})
 }

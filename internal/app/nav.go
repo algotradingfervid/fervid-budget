@@ -52,6 +52,13 @@ type Shell struct {
 var navSpec = []NavGroup{
 	{Title: "", Items: []NavItem{
 		{Key: "dashboard", Label: "Home", Href: "/", Icon: "⌂"},
+		// G19's own centre, and the only entry point to it above 860 px. The
+		// .m-topbar bell is display:none on every desktop, and navSpec had no item,
+		// so a desktop user had no way to discover their notifications existed
+		// (F-F-05). No Resource: every row the screen can return is already scoped
+		// to the signed-in user by the store, which is why the route itself needs no
+		// verb either. The badge is the unread count, injected in buildPageShell.
+		{Key: "notifications", Label: "Notifications", Href: "/notifications", Icon: "✉", Badge: "notifications"},
 	}},
 	// Soon marks a screen whose route does not exist yet: it renders as an
 	// announcement, not a link, so nobody can click through to a 404. The
@@ -145,6 +152,9 @@ func (a *App) buildPageShell(r *http.Request, user store.User, perms store.Permi
 		)
 		badges = map[string]int{}
 	}
+	if badges == nil {
+		badges = map[string]int{}
+	}
 	shell.Badges = badges
 	// The bell is the one count that is not permission-derived: every row is
 	// already addressed to this user, so there is nothing to gate. A failure
@@ -156,8 +166,48 @@ func (a *App) buildPageShell(r *http.Request, user store.User, perms store.Permi
 		)
 	} else {
 		shell.Unread = unread
+		shell.Badges["notifications"] = unread
 	}
+	a.workQueueBadges(r, user, perms, shell.Badges)
 	return shell
+}
+
+// workQueueBadges fills in the two badges navSpec has always declared and no
+// query ever populated (F-G-013): a manager with pending approvals saw no badge
+// on Approvals, and an accountant saw none on the Accounts queue — the two counts
+// a person most needs at a glance were the two that were never built, which is the
+// opposite of D4.
+//
+// They are computed here rather than as store badgeSpecs because neither is a
+// scalar sub-select over one table the way the other three are: the approvals
+// count needs the caller's `assigned` scope, and the queue count needs the
+// takeable predicate (approved · unclaimed · not on hold) that
+// LinkablePaymentRequests already owns and CountRequests cannot express. A
+// batched read in the store is the better long-term home; a looser count is not.
+//
+// Each is gated on the same verb its nav item is, so an unauthorised count is
+// never computed. A failure costs the badge and never the page.
+func (a *App) workQueueBadges(r *http.Request, user store.User, perms store.PermissionSet, badges map[string]int) {
+	if can(perms, "approval", "approve") {
+		n, err := a.st.CountRequests(r.Context(), store.RequestListOptions{
+			Scope: "assigned", ViewerID: user.ID, Statuses: []string{"pending"}})
+		if err != nil {
+			a.log.WarnContext(r.Context(), "approvals badge unavailable",
+				"request_id", requestID(r), "error", err)
+		} else {
+			badges["approvals"] = n
+		}
+	}
+	if can(perms, "payment", "process") {
+		set, err := a.st.LinkablePaymentRequests(r.Context(), store.LinkableOptions{
+			Scope: a.auth.Scope(user, "request"), ViewerID: user.ID, Status: "approved", Limit: 1})
+		if err != nil {
+			a.log.WarnContext(r.Context(), "accounts queue badge unavailable",
+				"request_id", requestID(r), "error", err)
+		} else {
+			badges["accounts_queue"] = set.Counts.Approved
+		}
+	}
 }
 
 const (
@@ -214,10 +264,16 @@ func resolveTabs(perms store.PermissionSet) TabBar {
 	// The tab bar is the only navigation a phone has, so a tab pointing at an
 	// unbuilt screen is a dead end with no way around it. Skip those until
 	// their route exists.
-	if requests := (TabItem{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"}); routeBuilt(requests.Href) {
+	// Every tab is gated on the verb its own route is gated on. A tab that 403s is
+	// worse than an absent one on a phone, where the bar is the only navigation
+	// there is: /grid is now RequirePermission("grid","view") (F-A-02/F-G-032), so
+	// the Budget fallback below used to hand a Requester — who holds no grid:view —
+	// a tab that refused them, and a role-less account two of them.
+	grid := TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"}
+	if requests := (TabItem{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"}); can(perms, "request", "view") && routeBuilt(requests.Href) {
 		tabs.Left = append(tabs.Left, requests)
 	} else if can(perms, "grid", "view") {
-		tabs.Left = append(tabs.Left, TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"})
+		tabs.Left = append(tabs.Left, grid)
 	}
 	for _, candidate := range centreActions {
 		if can(perms, candidate.Resource, candidate.Action) && routeBuilt(candidate.Tab.Href) {
@@ -225,10 +281,11 @@ func resolveTabs(perms store.PermissionSet) TabBar {
 			break
 		}
 	}
-	if can(perms, "payment", "view") {
+	switch {
+	case can(perms, "payment", "view"):
 		tabs.Right = append(tabs.Right, TabItem{Key: "payments", Label: "Payments", Href: "/payments", Icon: "▦"})
-	} else {
-		tabs.Right = append(tabs.Right, TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"})
+	case can(perms, "grid", "view"):
+		tabs.Right = append(tabs.Right, grid)
 	}
 	tabs.Right = append(tabs.Right, moreTab)
 	return tabs

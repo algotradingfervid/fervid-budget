@@ -190,7 +190,7 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 		"Reserved by others",
 		"On hold",
 		`class="segmented"`,
-		"Approved <span class=\"n\">1</span>",
+		"Approved, unclaimed <span class=\"n\">1</span>",
 		"Processing <span class=\"n\">1</span>",
 		"On hold <span class=\"n\">1</span>",
 		"Partial review <span class=\"n\">0</span>",
@@ -245,7 +245,7 @@ func TestAccountsQueueSearchNarrowsRows(t *testing.T) {
 		t.Fatalf("queue search did not narrow:\n%s", body)
 	}
 	// Counts are scope-wide, not search-scoped: the tab still says 2.
-	if !strings.Contains(body, "Approved <span class=\"n\">2</span>") {
+	if !strings.Contains(body, "Approved, unclaimed <span class=\"n\">2</span>") {
 		t.Fatalf("search distorted the tab counts:\n%s", body)
 	}
 }
@@ -1265,14 +1265,18 @@ func TestReservationScreenRefusesARequestTheCallerMayNotRead(t *testing.T) {
 		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
 	s.login("outsider@example.test", "OutsiderPass1234")
 
-	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""), http.StatusForbidden)
-	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""), http.StatusForbidden)
+	// All four answer 404 rather than 403: every one routes through
+	// loadViewableRequest, and an out-of-scope row has to be indistinguishable
+	// from a row that does not exist or the status code enumerates the id space
+	// (F-G-002).
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""), http.StatusNotFound)
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""), http.StatusNotFound)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{
 		"action": {"reassign"}, "to_user_id": {strconvFormat(deepak.ID)}, "reason": {"I want it"}, "confirm": {"on"},
-	}), http.StatusForbidden)
+	}), http.StatusNotFound)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{
 		"action": {"release"}, "reason": {"Not mine to hold"}, "confirm": {"on"},
-	}), http.StatusForbidden)
+	}), http.StatusNotFound)
 
 	if got := reservationHolder(t, s, reqID); got != admin.ID {
 		t.Fatalf("processing_by = %d after four refusals, want %d", got, admin.ID)

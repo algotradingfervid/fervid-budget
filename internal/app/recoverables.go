@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
 	"fervidbudget/internal/auth"
-	"fervidbudget/internal/money"
 	"fervidbudget/internal/store"
 )
 
@@ -37,8 +37,25 @@ func (a *App) recoverablesDashboard(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The by-category drill-through used to link to ?q={label}, and the label
+	// appears in none of the columns the free-text search covers — so clicking a
+	// row that said "1" landed on a different number (F-G-012). ?category={id} is
+	// the control the list actually honours, and RecoverableRollup carries no id,
+	// so the label is mapped back to one here. The rollup's own label is the
+	// category name, or "Uncategorised" for a row with no category, which matches
+	// nothing and correctly keeps its link off.
+	cats, err := a.st.ListRecoverableCategories(r.Context(), false)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	ids := make(map[string]int64, len(cats))
+	for _, c := range cats {
+		ids[c.Name] = c.ID
+	}
 	a.render(w, r, "recoverables_dashboard", PageData{
 		Title: "Recoverable payments", RecMetrics: metrics, ByCategory: byCat, ByCounterparty: byCp,
+		CategoryIDs: ids,
 	})
 }
 
@@ -71,6 +88,41 @@ func (a *App) recoverableListOptions(r *http.Request) store.RecoverableReportOpt
 	}
 }
 
+// withinRequestScope applies the caller's `request` data scope to the register.
+//
+// F-G-016/F-E-03: the register is a second view over `payment_requests` and it
+// never asked who was reading it. `recoverable_report:view` alone returned every
+// category, counterparty, project, amount, requester and repayment note in the
+// company — including rows the very same caller is refused on `/requests/{id}`.
+// R3 requires a data scope per resource and R6 requires it enforced server-side,
+// so the register answers the same question `canViewRequest` answers, and the two
+// views over one table cannot disagree about who may see a row.
+//
+// Nothing is exposed under the shipped roles — Accounts and Admin both hold
+// `request=all`, which is exactly why this would have survived unnoticed — so the
+// fast path is "scope is all, nothing to do". Otherwise it is one memoised read
+// per distinct request id, the same trade auditWithinRequestScope makes. The
+// store's RecoverableReportOptions carries no viewer, so the filter lives here.
+func (a *App) withinRequestScope(r *http.Request, rows []store.RecoverableRow) []store.RecoverableRow {
+	u := auth.CurrentUser(r)
+	scope := a.auth.Scope(u, "request")
+	if scope == store.ScopeAll {
+		return rows
+	}
+	visible := map[int64]bool{}
+	out := rows[:0]
+	for _, row := range rows {
+		if _, known := visible[row.RequestID]; !known {
+			req, err := a.st.Request(r.Context(), row.RequestID)
+			visible[row.RequestID] = err == nil && canViewRequest(scope, u, req)
+		}
+		if visible[row.RequestID] {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 func (a *App) recoverablesList(w http.ResponseWriter, r *http.Request) {
 	opts := a.recoverableListOptions(r)
 	rows, err := a.st.RecoverableReport(r.Context(), opts)
@@ -78,6 +130,7 @@ func (a *App) recoverablesList(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	rows = a.withinRequestScope(r, rows)
 	cats, err := a.st.ListRecoverableCategories(r.Context(), false)
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -101,6 +154,8 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The download obeys the same row scope the screen does (F-G-016/F-E-03).
+	rows = a.withinRequestScope(r, rows)
 	u := auth.CurrentUser(r)
 	scope := "all live recoverables"
 	if opts.From != "" || opts.To != "" {
@@ -112,7 +167,7 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Number", "Category", "Counterparty", "Project", "Amount", "Paid On", "Expected Return", "Ageing", "Status", "Requester", "Repayment Notes"})
 	for _, row := range rows {
-		_ = cw.Write([]string{row.Number, row.Category, row.Counterparty, row.Project, money.FormatPaise(row.Amount),
+		_ = cw.Write([]string{row.Number, row.Category, row.Counterparty, row.Project, csvAmount(row.Amount),
 			row.PaidOn, row.ExpectedReturnDate, row.AgeingLabel, row.Status, row.Requester, row.RepaymentNotes})
 	}
 	cw.Flush()
@@ -120,7 +175,7 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="recoverables.csv"`)
 	if _, err := w.Write(body.Bytes()); err != nil {
 		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
@@ -137,6 +192,14 @@ func (a *App) recoverableDetail(w http.ResponseWriter, r *http.Request) {
 	// This screen is the recoverables register, not a general request viewer.
 	if req.Treatment != "recoverable" {
 		a.respondError(w, r, http.StatusNotFound, "That request is not a recoverable payment.", nil)
+		return
+	}
+	// The same row scope /requests/{id} applies, answered the same way it answers
+	// it — 404, so the register is not an existence oracle either (F-G-016/F-G-002).
+	u := auth.CurrentUser(r)
+	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
+			fmt.Errorf("recoverable %d is outside the caller's data scope", req.ID))
 		return
 	}
 	// Reuse the register query so ageing here and in the list can never

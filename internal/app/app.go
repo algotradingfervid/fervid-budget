@@ -133,6 +133,20 @@ type PageData struct {
 	TypeFilter string
 	Treatment  string
 	Counts     map[string]int
+	// Page is what the requests list is *not* showing. The 200-row cap used to be
+	// silent while the tab count beside it had no cap at all, so a tab promised
+	// 214 and the list drew 200 (F-B-16). Total, Offset and Truncated are what
+	// let the screen say so and offer the next page.
+	Page store.RequestPage
+	// Reminders are the admin-configured thresholds, so the copy that explains
+	// the wait to a requester reads the live setting instead of a hardcoded
+	// "three days" (F-F-03).
+	Reminders store.ReminderThresholds
+	// RecCategory is the recoverable category the form is currently on, resolved
+	// from the active category rows. The conditional project/counterparty fields
+	// are revealed from its own Requires flags, so an admin-added category
+	// behaves like a seeded one (F-E-02/F-B-17).
+	RecCategory store.RecoverableCategory
 	// Thread is the merged history-and-conversation stream the detail screens
 	// render as one `.thread`; RequestAtts is that request's own documents.
 	Thread      []store.ThreadEntry
@@ -150,6 +164,9 @@ type PageData struct {
 	Settlement  SettlementPreview
 	ReserveMine bool
 	Holder      string
+	// ConflictCause is which of ReserveRequest's three refusals the conflict
+	// screen is reporting: "taken", "hold" or "not-approved" (F-D-02).
+	ConflictCause string
 	// Trail is the one screen whose history spans two entities. Thread is the
 	// request's merged stream and cannot carry the payment's audit rows, so the
 	// partial review merges the two-entity trail with the conversation itself
@@ -172,10 +189,15 @@ type PageData struct {
 	Categories       []store.RecoverableCategory
 	CategoryUsage    []store.RecoverableCategoryUsage
 	CategoryID       int64
-	Ageing           string
-	Recoverable      store.RecoverableRow
-	RecPayment       store.Payment
-	HasPayment       bool
+	// CategoryIDs maps a rollup's category label to its id, so the dashboard's
+	// by-category row links to ?category={id} — the filter the list actually
+	// honours — instead of a free-text search that cannot reproduce the count
+	// it was clicked from (F-G-012). RecoverableRollup carries no id of its own.
+	CategoryIDs map[string]int64
+	Ageing      string
+	Recoverable store.RecoverableRow
+	RecPayment  store.Payment
+	HasPayment  bool
 
 	// Notifications (Phase 5). Notifs is the user's own centre; NotifSettings
 	// and MailCfg are the admin rules screen.
@@ -316,6 +338,16 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"auditEntities": auditEntities,
 		"auditActions":  auditActions,
 		"waitingOn":     waitingOn,
+		// The requests list's pager arithmetic. `sub` is already taken by the money
+		// subtraction the settlement screens use, and an offset can never go
+		// negative, so these two are their own pair.
+		"add": func(a, b int) int { return a + b },
+		"sub0": func(a, b int) int {
+			if b <= 0 || a-b < 0 {
+				return 0
+			}
+			return a - b
+		},
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
 		},
@@ -917,7 +949,11 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.render(w, r, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads, Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7]) || p.VoidedAt != nil})
+	// Month is the payment's own, so "Back to grid" returns to the month this
+	// payment belongs to rather than to / — which was the grid before Phase 4 and
+	// is the dashboard now (F-G-029).
+	a.render(w, r, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads,
+		Month: p.PaidOn[:7], Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7]) || p.VoidedAt != nil})
 }
 
 func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
@@ -1337,13 +1373,18 @@ func reRenderStatus(err error) int {
 	return storeErrorStatus(err)
 }
 
+// lockMonth and unlockMonth land on /grid?month=, which is the one screen that
+// renders the lock and its reason. They used to redirect to /?month=, which was
+// the variance grid before Phase 4 made / the dashboard — so an operator locked
+// a month and was dropped on a page that read the month parameter not at all and
+// confirmed nothing (F-G-019, and the same root cause as F-G-029).
 func (a *App) lockMonth(w http.ResponseWriter, r *http.Request) {
 	month := r.PathValue("month")
 	if err := a.st.LockMonth(r.Context(), auth.CurrentUser(r), month, r.FormValue("reason")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/?month="+month, http.StatusSeeOther)
+	http.Redirect(w, r, "/grid?month="+month, http.StatusSeeOther)
 }
 
 func (a *App) unlockMonth(w http.ResponseWriter, r *http.Request) {
@@ -1352,7 +1393,7 @@ func (a *App) unlockMonth(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/?month="+month, http.StatusSeeOther)
+	http.Redirect(w, r, "/grid?month="+month, http.StatusSeeOther)
 }
 
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
@@ -1888,19 +1929,25 @@ func (a *App) exportGrid(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Project", "Head", "Budget", "Actual", "Variance", "Variance %", "Status"})
 	for _, row := range grid.Rows {
-		_ = cw.Write([]string{row.Project, row.Head, money.FormatPaise(row.Budget), money.FormatPaise(row.Actual), money.FormatPaise(row.Variance), row.VariancePercent, row.Status})
+		_ = cw.Write([]string{row.Project, row.Head, csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent, row.Status})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {
 		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="variance-`+month+`.csv"`)
 	if _, err := w.Write(body.Bytes()); err != nil {
 		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
 	}
 }
+
+// reportLevels are the three groupings store.Report knows, which are also the
+// three /reports/* paths. The CSV takes the level as a parameter so a download
+// pressed from the Projects or Monthly tab exports that tab (F-G-031); it used to
+// hardcode "heads" whichever tab it was pressed from.
+var reportLevels = map[string]bool{"monthly": true, "projects": true, "heads": true}
 
 func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 	year := queryDefault(r, "year", time.Now().Format("2006"))
@@ -1909,25 +1956,29 @@ func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 	if from > to {
 		from, to = to, from
 	}
-	rows, err := a.st.Report(r.Context(), from, to, "heads")
+	level := strings.TrimSpace(r.URL.Query().Get("level"))
+	if !reportLevels[level] {
+		level = "heads"
+	}
+	rows, err := a.st.Report(r.Context(), from, to, level)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
 	u := auth.CurrentUser(r)
-	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported report " + from + " to " + to})
+	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported " + level + " report " + from + " to " + to})
 	var body bytes.Buffer
 	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Period", "Project", "Head", "Budget", "Actual", "Variance", "Variance %"})
 	for _, row := range rows {
-		_ = cw.Write([]string{row.Period, row.Project, row.Head, money.FormatPaise(row.Budget), money.FormatPaise(row.Actual), money.FormatPaise(row.Variance), row.VariancePercent})
+		_ = cw.Write([]string{row.Period, row.Project, row.Head, csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {
 		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="report-`+from+`-to-`+to+`.csv"`)
 	if _, err := w.Write(body.Bytes()); err != nil {
 		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
@@ -2069,6 +2120,24 @@ func summarizeReports(rows []store.ReportRow) ReportSummary {
 	return s
 }
 
+// csvAmount is how money leaves the application in a file. Every export used to
+// write money.FormatPaise, so an Actual cell read "₹1,50,000.00" — quoted,
+// because the Indian grouping commas would otherwise break the field, and
+// Number() of it is NaN (F-G-030). An export is the hop where the data stops
+// being a rendered report and starts being data, so it carries rupees to two
+// decimals with no symbol, no grouping and no quoting, and the reader formats.
+func csvAmount(paise int64) string {
+	sign := ""
+	if paise < 0 {
+		sign, paise = "-", -paise
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, paise/100, paise%100)
+}
+
+// friendly turns a store error into the sentence a person reads. The
+// `validation failed: ` sentinel is stripped: it is how the code recognises the
+// class of error, never something anybody wants to find at the top of a form
+// (F-B-08).
 func friendly(err error) string {
 	switch {
 	case errors.Is(err, store.ErrLockedMonth):
@@ -2078,7 +2147,11 @@ func friendly(err error) string {
 	case errors.Is(err, store.ErrInactiveHead):
 		return "This project/head is inactive."
 	case errors.Is(err, store.ErrValidation):
-		return err.Error()
+		// The sentence only, never the sentinel. The case of the first letter is
+		// left exactly as the store wrote it: these strings are sentence
+		// fragments the screens embed as well as show ("Correct it and confirm
+		// again"), and a great many of them are asserted verbatim.
+		return strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": ")
 	case errors.Is(err, store.ErrForbidden):
 		// A refusal that carries a reason keeps it. The state conflicts on the
 		// settlement path — "reserve this request before recording its payment",

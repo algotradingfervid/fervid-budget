@@ -971,9 +971,13 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 	}
 
 	// --- A third party in neither seat cannot read it at all (Q5/R6). ---
+	// 404, not 403: an out-of-scope row answers exactly as a non-existent one
+	// does, or the status code is an existence oracle for the whole id space
+	// (F-G-002). TestOutOfScopeRequestIsIndistinguishableFromAMissingOne pins the
+	// pair.
 	s.seedRequester("nosy@example.test", "Nosy Parker", "OtherPass1234")
 	s.login("nosy@example.test", "OtherPass1234")
-	requireStatus(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""), http.StatusForbidden)
+	requireStatus(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""), http.StatusNotFound)
 }
 
 // The decisions the detail page's sheets post, through HTTP rather than through

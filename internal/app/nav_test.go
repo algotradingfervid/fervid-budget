@@ -99,12 +99,15 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 		{
 			name:  "data entry sees only its own screens",
 			perms: dataEntryPerms(),
-			want:  []string{"Accounts queue", "Home", "My requests", "Payments ledger", "Recoverables", "Reports", "Variance grid"},
+			want:  []string{"Accounts queue", "Home", "My requests", "Notifications", "Payments ledger", "Recoverables", "Reports", "Variance grid"},
 		},
 		{
+			// Home and the notification centre: the two items with no Resource.
+			// The centre is ungated on purpose — every row it can return is already
+			// scoped to the signed-in user (G19, F-F-05).
 			name:  "no grants leaves only ungated items",
 			perms: store.NewPermissionSet(nil, nil),
-			want:  []string{"Home"},
+			want:  []string{"Home", "Notifications"},
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -162,6 +165,7 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 		perms     store.PermissionSet
 		wantLabel string
 		wantHref  string
+		wantLeft  []string
 		wantRight []string
 	}{
 		// The centre action falls through any candidate whose screen is not
@@ -170,11 +174,18 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 		// and an approver who can also pay lands on Approve rather than falling
 		// through to Pay. TestTabBarNeverLinksToAnUnbuiltRoute keeps the two in
 		// step: a screen leaves unbuiltPrefixes and its tab lights up here.
+		//
+		// Every tab is gated on the verb its own route is gated on. wantLeft says
+		// which of Requests / Budget / nothing the case is entitled to, because a
+		// tab that answers 403 is a dead end on the only navigation a phone has:
+		// /requests needs request:view and /grid needs grid:view, which the
+		// role-less case and the bare requester hold neither of.
 		{
 			name:      "approver gets the approvals queue",
 			perms:     store.NewPermissionSet([]store.Grant{{Resource: "approval", Action: "approve"}, {Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}, nil),
 			wantLabel: "Approve",
 			wantHref:  "/approvals",
+			wantLeft:  []string{"Home"},
 			wantRight: []string{"Payments", "More"},
 		},
 		{
@@ -182,6 +193,7 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 			perms:     store.NewPermissionSet([]store.Grant{{Resource: "payment", Action: "create"}, {Resource: "request", Action: "create"}, {Resource: "payment", Action: "view"}}, nil),
 			wantLabel: "Pay",
 			wantHref:  "/payments/new",
+			wantLeft:  []string{"Home"},
 			wantRight: []string{"Payments", "More"},
 		},
 		{
@@ -189,20 +201,23 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 			perms:     store.NewPermissionSet([]store.Grant{{Resource: "request", Action: "create"}}, nil),
 			wantLabel: "New",
 			wantHref:  "/requests/new",
-			wantRight: []string{"Budget", "More"},
+			wantLeft:  []string{"Home"},
+			wantRight: []string{"More"},
 		},
 		{
 			name:      "no grants falls back to home",
 			perms:     store.NewPermissionSet(nil, nil),
 			wantLabel: "Home",
 			wantHref:  "/",
-			wantRight: []string{"Budget", "More"},
+			wantLeft:  []string{"Home"},
+			wantRight: []string{"More"},
 		},
 		{
 			name:      "every grant takes the first built match",
 			perms:     adminPerms(),
 			wantLabel: "Approve",
 			wantHref:  "/approvals",
+			wantLeft:  []string{"Home", "Requests"},
 			wantRight: []string{"Payments", "More"},
 		},
 	} {
@@ -214,17 +229,8 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 			if got := tabLabels(tabs.Right); strings.Join(got, "|") != strings.Join(testCase.wantRight, "|") {
 				t.Fatalf("right tabs = %v, want %v", got, testCase.wantRight)
 			}
-			// /requests is built, so the Requests tab is there for everyone; it
-			// was replaced by Budget while the screen did not exist, and dropped
-			// entirely for a user without grid:view.
-			wantLeft := "Home"
-			if routeBuilt("/requests") {
-				wantLeft = "Home|Requests"
-			} else if testCase.perms != nil && testCase.perms.Can("grid", "view") {
-				wantLeft = "Home|Budget"
-			}
-			if got := tabLabels(tabs.Left); strings.Join(got, "|") != wantLeft {
-				t.Fatalf("left tabs = %v, want %s", got, wantLeft)
+			if got := tabLabels(tabs.Left); strings.Join(got, "|") != strings.Join(testCase.wantLeft, "|") {
+				t.Fatalf("left tabs = %v, want %v", got, testCase.wantLeft)
 			}
 			if len(tabs.Left) > 2 || len(tabs.Right) > 2 {
 				t.Fatalf("tab bar sides hold %d and %d items, want at most 2 each", len(tabs.Left), len(tabs.Right))
