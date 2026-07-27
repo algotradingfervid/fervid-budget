@@ -532,10 +532,15 @@ test.describe('approving', () => {
     // is refused on the ceiling and not on the reservation guard.
     succeeded(await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}), 'reserving it for payment');
 
+    // 2026-06-15, not 2029-06-15. F-D-06 is enforced through the UI now:
+    // `validatePayment` (internal/store/store.go:1936-1943) refuses a `paid_on`
+    // after today, because paid_on records when money left the bank and a date
+    // in the future records something that has not happened. The date keeps its
+    // own month, so nothing in this file settles twice into one month.
     const settleBody = (amount: string) => ({
       request_id: String(req.id),
       amount,
-      paid_on: '2029-06-15',
+      paid_on: '2026-06-15',
       payment_mode: 'bank_transfer',
       reference_no: `UTR-C014B-${req.id}`,
       settlement: 'settled'
@@ -1102,10 +1107,25 @@ test.describe('the cancellation flow', () => {
     }
   });
 
+  // REWRITTEN for the F-G-002 fix. The GET used to be required to answer 403 and
+  // now answers 404, and the difference is the fix rather than a slip: a
+  // Requester's data scope really is "own", so the row is not readable — and
+  // `loadViewableRequest` (internal/app/requests.go:325-348), which
+  // `requestCancelForm` resolves through (:1006), now withholds the row's
+  // EXISTENCE too. A 403 there said "this id is real but not yours", which let
+  // anybody holding request:view walk the id space and count the company's
+  // requests.
+  //
+  // The POST is unchanged at 403 and is the sharper half of the case either way:
+  // `RequestCancellation` (internal/store/requests.go:1262) compares
+  // `requester_id` to the actor, so holding request:cancel is not permission to
+  // cancel somebody else's request even for a caller who already knows the id.
   test('TC-C-085 — holding request:cancel is not permission to cancel somebody else\'s request', async () => {
     const req = await approvedRequest();
     const form = await probeGet(outsider.page, `/requests/${req.id}/cancel`);
-    expect(form.status, 'a Requester\'s data scope is "own", so the row is not even readable').toBe(403);
+    expect(form.status, 'a Requester\'s data scope is "own", so the row is not even readable — nor findable').toBe(
+      404
+    );
     const ask = await askCancel(outsider, req.id, 'I want this stopped.');
     expect(ask.status, 'and the POST is refused by the store as well').toBe(403);
     expect(await statusPill(mgrA, req.id), 'the request is untouched').toBe('Approved — awaiting payment');
@@ -1392,28 +1412,36 @@ test.describe('the cancellation flow', () => {
   /**
    * The information-flow half of the hold interaction.
    *
-   * **Nobody is told** when a cancellation is decided: there is no notify event
-   * for either decision — the vocabulary stops at `EventCancellationRequested`
-   * (`internal/notify/events.go:9–21`) — and neither `requestCancellationDecide`
-   * nor `requestCancelOutright` calls `a.fire` (`internal/app/requests.go`). So
-   * the accountant who placed the hold is told the cancellation was asked for and
-   * never told it was refused. That half is F-F-06, wired by a later wave, and its
-   * assertions are left exactly as written.
+   * REWRITTEN TWICE, and the second rewrite inverts the case's own subject.
    *
-   * The control matters: the ask's own notification proves the mechanism works
-   * and that Accounts is on the routing list for this flow, so the silence after
-   * the decline is a real absence rather than a switched-off environment.
+   * As written for the audit it was called "nobody is told when a cancellation
+   * is decided", and that was true: the notify vocabulary stopped at
+   * `EventCancellationRequested`, so an accountant who had frozen work on a
+   * request learned it was asked about and never learned the answer. That is
+   * F-F-06, and it is fixed. There are now two events, not one, because the two
+   * sentences are opposites — "nothing will be paid" and "payment is unfrozen"
+   * (`EventCancellationAccepted` / `EventCancellationDeclined`,
+   * `internal/notify/events.go:60-67`) — `requestCancellationDecide` fires
+   * whichever is true (`internal/app/requests.go:1057-1064`), and both seed rows
+   * carry IncludeRequester and IncludeAccounts
+   * (`internal/store/migrations_notifications.go:112-119`).
    *
-   * REWRITTEN in part for the F-C-07 fix. The tail of this case used to assert
-   * that the accountant's question was gone from every screen after the decline —
-   * "the hold banner is gone", no `On hold` pill — and that it survived only in the
-   * audit trail, which no queue links to. That was the defect, and it is fixed:
-   * the hold is suspended by the ask and restored by the decline, so the question
-   * comes back onto the screen the accountant works from. What the tail now
-   * asserts is exactly that, which is also what makes the silence above matter
-   * less than it did: the hold is no longer lost, only unannounced.
+   * Which accountant: `resolveInAppUsers` addresses `processing_by` personally
+   * when a reservation exists and falls back to the whole Accounts group when it
+   * does not (`internal/notify/service.go:181-205`). The request here is held,
+   * never reserved, so the group is the right list and the holder is in it.
+   *
+   * The control is kept and still matters — the ask's own notification proves
+   * the mechanism is live in this environment, so a count that did NOT move
+   * afterwards would be a real absence rather than switched-off mail.
+   *
+   * The earlier rewrite, for F-C-07, is unchanged: the tail used to assert the
+   * accountant's question was gone from every screen after the decline. It is
+   * not — the hold is suspended by the ask and restored by the decline, so the
+   * question comes back onto the screen they work from. Between the two fixes
+   * the accountant now both keeps the hold and hears about the decision.
    */
-  test('TC-C-097B — nobody is told when a cancellation is decided, though the accountant keeps their hold', async () => {
+  test('TC-C-097B — the cancellation decision reaches the accountant and the requester, and the hold survives it', async () => {
     const req = await approvedRequest();
     const number = await requestNumber(requester, req.id);
     const notices = async (actor: Actor) => {
@@ -1429,25 +1457,34 @@ test.describe('the cancellation flow', () => {
     expect(
       afterAsk,
       'CONTROL: request_cancellation_requested includes Accounts, so the ask must reach the accountant — ' +
-        'without this the silence below would prove nothing'
+        'without this a count that did not move below would prove nothing'
     ).toBeGreaterThan(beforeAsk);
 
     // The requester already holds notices for the approval and for the hold —
     // both correctly addressed to them — so the question is not how many they
-    // have but whether the decision adds one. It does not.
+    // have but whether the decision adds one. It does.
     const requesterBefore = await notices(requester);
     succeeded(await decideCancel(mgrA, req.id, 'decline', 'Pay it as approved.'), 'declining');
     expect(
       await notices(accounts),
-      'but the decision that unfroze the payment tells the accountant nothing'
-    ).toBe(afterAsk);
+      'the decision that unfroze the payment tells the accountant who had stopped working on it'
+    ).toBeGreaterThan(afterAsk);
     expect(
       await notices(requester),
-      'and it tells the requester who asked for the cancellation nothing either'
-    ).toBe(requesterBefore);
+      'and it tells the requester who asked for the cancellation what became of their ask'
+    ).toBeGreaterThan(requesterBefore);
 
-    // The question the accountant asked is back on the screen they work from
-    // (F-C-07), so the missing notification costs them a visit and not the hold.
+    // It is the DECLINE they are told about, not the ask again: the two events
+    // exist separately because the sentences are opposites, and an accountant
+    // told "cancellation requested" twice would stop rather than restart.
+    await accounts.page.goto('/notifications?scope=all');
+    await expect(
+      accounts.page.locator('.notif-list .notif', { hasText: number }).first(),
+      'the newest notice on this request says the cancellation was declined'
+    ).toContainText('declined', { ignoreCase: true });
+
+    // And the question the accountant asked is back on the screen they work from
+    // (F-C-07), so the notification and the hold agree with each other.
     await accounts.page.goto(`/requests/${req.id}`);
     await expect(
       accounts.page.locator('.banner.warn'),
@@ -1624,7 +1661,8 @@ test.describe('legal transitions', () => {
     const req = await approvedRequest('18400', '18400');
     await settlePayment(accounts.page, req.id, {
       amount: '10000',
-      paidOn: '2029-04-15',
+      // A past date, one month of its own — see the note on TC-C-014B's settleBody.
+      paidOn: '2026-04-15',
       settlement: 'partial',
       partialReason: 'The vendor accepted a part payment for now.'
     });
@@ -1642,7 +1680,8 @@ test.describe('legal transitions', () => {
     const req = await approvedRequest('18400', '18400');
     await settlePayment(accounts.page, req.id, {
       amount: '10000',
-      paidOn: '2029-05-15',
+      // A past date, one month of its own — see the note on TC-C-014B's settleBody.
+      paidOn: '2026-05-15',
       settlement: 'partial',
       partialReason: 'Part now, the balance is written off.'
     });
@@ -1667,7 +1706,8 @@ test.describe('legal transitions', () => {
 
   test('TC-C-117 — a completed request is terminal: nothing in the grid moves it', async () => {
     const req = await approvedRequest('18400', '18400');
-    await settlePayment(accounts.page, req.id, { amount: '18400', paidOn: '2029-03-15' });
+    // A past date, one month of its own — see the note on TC-C-014B's settleBody.
+    await settlePayment(accounts.page, req.id, { amount: '18400', paidOn: '2026-03-15' });
     expect(await statusPill(mgrA, req.id), 'a settled payment completes the request').toBe('Completed');
 
     for (const action of transitionActions) {
@@ -1746,16 +1786,27 @@ test.describe('rerouting by edit', () => {
   });
 
   /**
-   * F-C-04. `requestEdit` commits UpdateRequest and only then calls
-   * SubmitRequest, and `canTransition("pending","pending")` is false — so
-   * resubmitting a still-pending request answers 400 with the correction form
-   * and the posted values still in it, having already saved them. A refusal that
-   * applied half its work is worse than either outcome on its own: the reader is
-   * told it failed and the approver has silently moved.
+   * F-C-04, fixed — annotation retired. `requestEdit` was three calls in a row —
+   * update, attach, submit — so a resubmission that failed its own preconditions
+   * left the edit committed AND audited as done while the requester was shown a
+   * 400: the history asserted a change the caller had just been told did not
+   * happen, and the approver had silently moved. `canTransition("pending",
+   * "pending")` is false, so this is the ordinary way to reach that state, not a
+   * contrived one.
+   *
+   * One press is now one transaction: `store.EditRequest` commits all three or
+   * none, and validates the submit against the EDITED row rather than the row as
+   * it was on entry (`internal/app/requests.go:797-822`). So a refused resubmit
+   * writes nothing and audits nothing.
+   *
+   * The soft assertions are kept: a regression that reroutes AND renames should
+   * be reported as both, not stopped at the first. The audit-trail assertion is
+   * new — the original defect's worst half was the audit row, and a rollback
+   * that left the row would be the same lie with the data put back.
    */
-  test('TC-C-123 — a refused resubmission must not leave the edit applied (finding F-C-04)', async () => {
-    test.fail();
+  test('TC-C-123 — a refused resubmission leaves nothing applied (finding F-C-04)', async () => {
     const req = await pendingRequest(mgrA.id);
+    const trailBefore = await auditTrail(req.id);
     const probe = await resubmit(requester, req.id, `${req.title} corrected`, mgrB.id);
     expect(probe.status, 'a pending request cannot be resubmitted — there is nothing to resubmit').toBe(400);
     expect(probe.body, 'and the store says so').toContain('a pending request cannot be submitted');
@@ -1767,6 +1818,12 @@ test.describe('rerouting by edit', () => {
     expect
       .soft(await requester.page.locator('h1').innerText(), 'nor renamed it')
       .toBe(req.title);
+    expect
+      .soft(await queueCards(mgrB, 'to-approve', req.title), 'nor put it in the other approver\'s queue')
+      .toBe(0);
+    expect
+      .soft(await auditTrail(req.id), 'and nothing was written down as having happened')
+      .toBe(trailBefore);
   });
 });
 

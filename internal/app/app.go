@@ -911,7 +911,14 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 		// obeys, or payment:view becomes a way around Q5/R6.
 		u := auth.CurrentUser(r)
 		if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
-			a.respondError(w, r, http.StatusForbidden, "You cannot see the request behind this payment.", nil)
+			// 404, not 403, and the same sentence a missing payment gets. This was
+			// the last route where the pair still distinguished "exists but is not
+			// yours" from "does not exist", which is the enumeration oracle F-G-002
+			// closed on /requests/{id} and Wave 3 closed on both attachment routes.
+			// It was never in that finding's scope, so nobody looked at it until two
+			// spec agents arrived at it independently from opposite directions.
+			a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
+				fmt.Errorf("payment %d belongs to request %d, outside the caller's data scope", p.ID, req.ID))
 			return
 		}
 		// The trail the screen shows spans both entities: the request from

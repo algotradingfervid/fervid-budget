@@ -3,14 +3,11 @@ module fervidbudget
 go 1.25.0
 
 require (
-	github.com/casbin/casbin/v2 v2.135.0
 	golang.org/x/crypto v0.53.0
 	modernc.org/sqlite v1.39.1
 )
 
 require (
-	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
-	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

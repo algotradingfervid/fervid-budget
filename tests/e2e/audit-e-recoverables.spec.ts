@@ -516,16 +516,101 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-007 — No delete action exists for a category, in use or not', async ({ adminPage }) => {
+  test('TC-E-007 — [F-E-06] A category can be deleted while nothing names it, and the refusal counts what does', async ({
+    adminPage,
+    browser,
+    runId
+  }) => {
+    // F-E-06, fixed. `recoverable_category:delete` had been grantable from the
+    // Roles screen since Phase 4 and no route ever consulted it, so an
+    // administrator could hand it out and buy nothing at all; this test recorded
+    // that absence as if it were the design. The door is now
+    // POST /configuration/recoverable-categories/{id}/delete (internal/app/app.go:614),
+    // gated on that verb, over store.DeleteRecoverableCategory
+    // (internal/store/recoverables.go:260), which counts the requests still
+    // pointing at the row inside the DELETE's own transaction.
+    //
+    // The refusal is the interesting half and the reason the finding was worth a
+    // door rather than dropping the verb: deactivating stays the way to retire a
+    // category that has been used, and the refusal has to say so with the count
+    // the "In use" column beside the button already prints, not flatten into "you
+    // do not have permission" (the F-G-023 mistake).
     const bodyBefore = (await probeGet(adminPage, '/configuration')).body;
-    expect(bodyBefore, 'the fieldset must offer no delete control').not.toMatch(/>Delete</i);
-    for (const bad of ['/configuration/recoverable-categories/1/delete', '/configuration/recoverable-categories/999999/delete']) {
-      const get = await probeGet(adminPage, bad);
-      expectOutcome(get, [404, 405], `GET ${bad} must not exist`);
-      const post = await probePost(adminPage, bad, {});
-      expectOutcome(post, [404, 405], `POST ${bad} must not exist`);
+    expect(bodyBefore, 'an admin holds recoverable_category:delete, so the fieldset offers the control').toMatch(
+      />Delete</i
+    );
+
+    // Only POST is routed. `GET /` is a catch-all, so a GET of this path is
+    // handled by it rather than met with a method refusal — either answer proves
+    // the same thing, that deleting is not reachable by navigation.
+    const get = await probeGet(adminPage, '/configuration/recoverable-categories/1/delete');
+    expectOutcome(get, [404, 405], 'deleting is a mutation, so the path answers no GET');
+
+    const missing = await probePost(adminPage, '/configuration/recoverable-categories/999999/delete', {});
+    expect(missing.status, 'a category id that does not exist is not found').toBe(404);
+
+    // Both halves are driven against categories this test made, never a seeded
+    // one: deleting is real now, and a test that reached for EMD would be one
+    // "in use" count away from destroying the row five later cases raise
+    // requests against.
+    const inUseName = `Delete probe in use ${runId}`;
+    await createCategoryThroughScreen(adminPage, inUseName, 'none');
+    const inUse = await categoryRowFields(adminPage, inUseName);
+    const inUseCode = `delete_probe_in_use_${runId}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+    const requester = await asRole(adminPage, browser, runId, ['Requester'], 'e007req');
+    const managerSubject = await asRole(adminPage, browser, runId, ['Manager'], 'e007mgr');
+    try {
+      const managerId = await approverIdFor(requester.page, managerSubject.subject.name);
+      const filed = await probePost(requester.page, '/requests', {
+        treatment: 'recoverable',
+        type: 'employee_advance',
+        advance_reason: 'Delete probe',
+        recoverable_category: inUseCode,
+        short_title: `Delete probe request ${runId}`,
+        purpose: 'Delete probe',
+        amount: '5000',
+        expected_return_date: '2027-05-31',
+        repayment_notes: 'n/a',
+        manager_id: managerId
+      });
+      expect(filed.status, 'one request now names the category, which is what makes it in use').toBe(303);
+
+      const refused = await probePost(adminPage, `/configuration/recoverable-categories/${inUse.id}/delete`, {});
+      expect(refused.status, 'a category a request still points at cannot be deleted').toBe(403);
+      expect(
+        refused.body,
+        'the refusal names the category and counts what is holding it, so it agrees with the "In use" column beside the button'
+      ).toContain(`${inUseName} is used by 1 request`);
+      expect(refused.body, 'and names the remedy that does work').toContain('deactivate it instead');
+      expect(
+        refused.body,
+        'never the permission sentence — the caller holds the verb, the data is what refused'
+      ).not.toContain('You do not have permission to perform this action.');
+
+      await adminPage.goto('/configuration');
+      const stillThere = adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: inUseName }) });
+      await expect(stillThere, 'and the refused row is still there').toHaveCount(1);
+      await expect(stillThere.locator('td[data-label="In use"]'), 'with the count the refusal quoted').toHaveText('1');
+    } finally {
+      await requester.close();
+      await managerSubject.close();
     }
-    // An in-use seeded category (EMD) can always be re-saved; usage never blocks a save.
+
+    // Not in use: deleted, and gone from the screen.
+    const freshName = `Delete probe unused ${runId}`;
+    await createCategoryThroughScreen(adminPage, freshName, 'none');
+    const fresh = await categoryRowFields(adminPage, freshName);
+    const deleted = await probePost(adminPage, `/configuration/recoverable-categories/${fresh.id}/delete`, {});
+    expect(deleted.status, 'a category nothing names is a mistake to undo, and delete is what undoes it').toBe(303);
+    await adminPage.goto('/configuration');
+    await expect(
+      adminPage.locator('td.t-lead', { hasText: new RegExp(`^${freshName}$`) }),
+      'the row is gone from Configuration'
+    ).toHaveCount(0);
+
+    // An in-use seeded category can always be re-saved; usage blocks the delete,
+    // never the save.
     const emd = await categoryRowFields(adminPage, 'EMD');
     const resave = await probePost(adminPage, '/configuration/recoverable-categories', {
       id: emd.id,
@@ -572,7 +657,16 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-010 — [F-E-02] A newly admin-created category is never selectable on the real request form', async ({ adminPage, runId }) => {
+  test('TC-E-010 — [F-E-02] A newly admin-created category is selectable on the real request form', async ({ adminPage, runId }) => {
+    // F-E-02 · F-B-17, fixed. The Category <select> was six hardcoded <option>
+    // literals and never read `recoverable_categories`, so V4's promise — an
+    // admin adds a category and its rules are enforced without a code change —
+    // was half kept: the *enforcement* shipped (TC-E-024/025/026 prove the new
+    // category's own project/counterparty rule is honoured) and the affordance
+    // did not, so the category could only ever be reached by a hand-rolled POST.
+    // The options are now `{{range .Categories}}` over the active rows
+    // (internal/app/templates.go:1829), fed by ListRecoverableCategories(ctx, true)
+    // (internal/app/requests.go:488).
     const name = `Selectable probe ${runId}`;
     await createCategoryThroughScreen(adminPage, name, 'none');
     const code = `selectable_probe_${runId}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -581,13 +675,32 @@ test.describe('TC-E — Recoverables', () => {
     const values = await adminPage.locator('#rcategory option').evaluateAll(opts => opts.map(o => (o as HTMLOptionElement).value));
     expect(
       values,
-      'the Category <select> is hardcoded to the six seed codes (templates.go:1738-1743) and never reads recoverable_categories, ' +
-        'so an admin-added category can never be chosen through the product — F-E-02'
-    ).not.toContain(code);
-    expect(values.sort()).toEqual(['emd', 'employee_advance', 'icd', 'other', 'pbg', 'security_deposit'].sort());
+      'a category an administrator added must be choosable through the product, not only through a forged POST — F-E-02'
+    ).toContain(code);
+    await expect(
+      adminPage.locator(`#rcategory option[value="${code}"]`),
+      'and it is offered under the name the administrator typed'
+    ).toHaveText(name);
+    expect(
+      values,
+      'the six seeded codes are still offered — the new source is the table, not a replacement vocabulary'
+    ).toEqual(expect.arrayContaining(['emd', 'employee_advance', 'icd', 'other', 'pbg', 'security_deposit']));
+
+    // The <select> is the table, so it can be *driven* to the new category too:
+    // a hardcoded list would have made this selectOption throw.
+    await adminPage.locator('#rcategory').selectOption(code);
+    await expect(
+      adminPage.locator(`#rcategory option[value="${code}"]`),
+      'and the server-rendered swap comes back with it selected'
+    ).toHaveAttribute('selected', '');
   });
 
-  test('TC-E-011 — [F-E-02] A deactivated seed category is still offered on the request form', async ({ adminPage }) => {
+  test('TC-E-011 — [F-E-02] A deactivated seed category is no longer offered on the request form', async ({ adminPage }) => {
+    // The other half of F-E-02 · F-B-17. Deactivating was already enforced —
+    // validateRequestInput refused a request naming an inactive category
+    // (TC-E-004) — but the option stayed on the form, so the refusal arrived only
+    // after the whole form had been filled in. The <select> now ranges over the
+    // *active* rows alone, so a retired category is simply not offered.
     const other = await categoryRowFields(adminPage, 'Other');
     await probePost(adminPage, '/configuration/recoverable-categories', {
       id: other.id,
@@ -598,9 +711,16 @@ test.describe('TC-E — Recoverables', () => {
     });
     try {
       await adminPage.goto('/requests/new?type=employee_advance');
-      const otherOption = adminPage.locator('#rcategory option[value="other"]');
-      await expect(otherOption, 'the deactivated "Other" option must still be present and enabled').toHaveCount(1);
-      expect(await otherOption.isDisabled()).toBe(false);
+      await expect(
+        adminPage.locator('#rcategory option[value="other"]'),
+        'a deactivated category must not be offered — the refusal cannot be the first the requester hears of it'
+      ).toHaveCount(0);
+      await expect(
+        adminPage.locator('#rcategory option[value="emd"]'),
+        'while the categories that are still active are untouched'
+      ).toHaveCount(1);
+      // TC-E-004 already proves the deactivated category stays filterable in the
+      // register: history keeps its category, only new requests are refused.
     } finally {
       await probePost(adminPage, '/configuration/recoverable-categories', {
         id: other.id,
@@ -870,8 +990,10 @@ test.describe('TC-E — Recoverables', () => {
       const settle = await attemptSettleRecoverable(adminPage, id, '50000');
       outcomes.push({ category: c.category, status: settle.status, body: settle.body });
     }
-    // Evidence for the findings report — printed even though the expect() below is what
-    // actually drives the test.fail() semantics.
+    // Every category is driven before any assertion runs, and the outcomes are
+    // printed, so one run reports all five rather than stopping at the first —
+    // the whole finding was that the *category* decided whether approved money
+    // could be paid at all, which a first-failure abort would hide.
     console.log('F-E-01 evidence, one settlement attempt per category:', JSON.stringify(outcomes.map(o => ({ category: o.category, status: o.status }))));
     for (const o of outcomes) {
       expect(o.status, `${o.category}: settlement must succeed (302/303 → /payments/{id}) — got ${o.status}`).toBeGreaterThanOrEqual(300);

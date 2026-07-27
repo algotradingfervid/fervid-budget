@@ -507,7 +507,19 @@ it.describe('A · every type and treatment, through the real form', () => {
     }
   });
 
-  it('TC-B-006 — the recoverable type has no card and no form, yet POST /requests accepts it', async ({
+  // REWRITTEN. This case was named "…and no form, yet POST /requests accepts
+  // it" and its middle assertion said an unknown `?type=` "falls back to the
+  // chooser". That silent fallback is gone: `requestNew`
+  // (internal/app/requests.go:105-117) answers **400** for any `?type=` naming
+  // no card, carrying `unofferedRequestType` (:100) as the reason, and only a
+  // bare /requests/new is the ordinary 200 chooser. A URL that names something
+  // the system will not raise is a client error about that URL, and answering
+  // 200 said the opposite.
+  //
+  // The gap the case exists for is unchanged and still pinned below: the
+  // store's fifth type has no way in through the UI, and a hand-rolled POST
+  // raising one is accepted and stored.
+  it('TC-B-006 — the recoverable type has no card, ?type=recoverable is refused, yet POST /requests accepts it', async ({
     world
   }) => {
     // requestTypeOptions (internal/app/requests.go:42) carries four types;
@@ -519,11 +531,17 @@ it.describe('A · every type and treatment, through the real form', () => {
       'there is no chooser card for the recoverable type'
     ).toHaveCount(0);
 
-    await page.goto('/requests/new?type=recoverable');
-    await expect(
-      page.getByRole('heading', { level: 1 }),
-      'an unknown ?type= falls back to the chooser'
-    ).toHaveText('What are you asking to be paid?');
+    const refused = await probeGet(page, '/requests/new?type=recoverable');
+    expect(
+      refused.status,
+      `a ?type= naming no card is refused, never quietly ignored; got ${refused.outcome}`
+    ).toBe(400);
+    expect(refused.body, 'and the reader is told what was wrong with the URL they arrived on').toContain(
+      'That is not a request type this system raises'
+    );
+    expect(refused.body, 'on the chooser itself, which is the nearest screen there is').toContain(
+      'What are you asking to be paid?'
+    );
 
     const id = await raiseOk(page, validBody(world, 'recoverable'));
     await page.goto(`/requests/${id}`);
@@ -1017,21 +1035,48 @@ it.describe('B · the required, forced and optional matrix', () => {
     ).toHaveCount(0);
   });
 
-  // F-B-02: renderRejectedRequestForm looks the type up in requestTypeLabels
-  // (internal/app/requests.go:180) and the `recoverable` type is not in it, so
-  // every refusal of that type answers one generic sentence and throws the
-  // requester's whole form away.
-  it.fail('TC-B-091 — a refused recoverable-type submit says why and keeps what was typed', async ({
-    world
-  }) => {
+  // F-B-02, fixed — annotation retired. `renderRejectedRequestForm` looked the
+  // type up in `requestTypeLabels` and the `recoverable` type is not in it, so
+  // every refusal of that type answered one generic sentence — "that is not a
+  // kind of request this system raises" — about a request the store had accepted
+  // seconds earlier, and threw the whole submission away with it. It now tells
+  // the two apart by the store's own message rather than by a second copy of the
+  // type vocabulary (internal/app/requests.go:249-275): an unknown type keeps the
+  // vocabulary sentence, and a refused `recoverable` keeps **the rule that
+  // refused it** and comes back on the chooser.
+  //
+  // WHAT THIS CASE NO LONGER ASSERTS, and why that is not a weakening. It
+  // demanded the form come back "with their typing still in it". There is no
+  // form to come back to: `recoverable` has no chooser card, and TC-B-006 pins
+  // that `/requests/new?type=recoverable` is refused outright — so the product
+  // answered the second half of F-B-02 by removing the screen rather than by
+  // repopulating it. The typing-survives-a-refusal rule is real and is asserted
+  // below against a type that *does* have a form, which is where it can hold.
+  it('TC-B-091 — a refused recoverable-type submit names the rule that refused it', async ({ world }) => {
     const probe = await raise(world.requester.page, validBody(world, 'recoverable', { repayment_notes: '' }));
     expect(probe.status, 'it is refused, which is the rule working').toBe(400);
     expect(message(probe), 'the requester must be told which rule refused them').toContain(
       'repayment or refund terms are required'
     );
-    expect(probe.body, 'and the form must come back with their typing still in it').toContain(
-      'name="repayment_notes"'
+    expect(
+      message(probe),
+      'and where to go, since this type has no form of its own to be returned to'
+    ).toContain('start again from a request type');
+    expect(probe.body, 'which is the chooser').toContain('What are you asking to be paid?');
+    expect(
+      probe.body,
+      'never the vocabulary sentence: the store raises this type, so saying it does not is the defect'
+    ).not.toContain('not a kind of request this system raises');
+
+    // The same rule, one type over, where there is a form: a carded type comes
+    // back with the fieldset and the typing intact.
+    const carded = await raise(
+      world.requester.page,
+      validBody(world, 'employee_advance', { repayment_notes: '', purpose: `Kept typing ${world.runId}` })
     );
+    expect(carded.status, 'refused for the same reason').toBe(400);
+    expect(carded.body, 'and its form does come back').toContain('name="repayment_notes"');
+    expect(carded.body, 'with what was typed still in it').toContain(`Kept typing ${world.runId}`);
   });
 });
 
@@ -1238,7 +1283,13 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     });
     expect(added.status, `the category must be created; got ${added.outcome}`).toBeLessThan(400);
     await world.adminPage.goto('/configuration');
-    await expect(world.adminPage.locator('td', { hasText: name })).toHaveCount(1);
+    // `td.t-lead`, not any `td`: F-E-06's delete control names the category
+    // again for a screen reader — `Delete<span class="sr-only"> {{.Name}}</span>`
+    // (internal/app/templates.go:3324) — so a bare `td` filter now matches two
+    // cells in the one row. The lead cell is the listing; the second is the
+    // accessible name of a button, and counting it as a second listing would be
+    // reading the fix as a duplicate.
+    await expect(world.adminPage.locator('td.t-lead', { hasText: name })).toHaveCount(1);
 
     const refused = await raise(
       world.requester.page,
@@ -1264,12 +1315,18 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     ).toHaveText(`Recoverable · ${code}`);
   });
 
-  // F-B-17: the category <select> is hardcoded to the six seeded codes
-  // (internal/app/templates.go:1738–1743) and normalizeRecoverableCategory
-  // (internal/app/requests.go:132) rewrites anything else, so an admin-added
-  // category is enforceable but unreachable. Confirms a sibling audit's DV3 —
-  // narrowed: the submit path does not misfile it, the form cannot offer it.
-  it.fail('TC-B-098 — an admin-added recoverable category is offered on the form and survives a swap', async ({
+  // F-B-17 · F-E-02, fixed — annotation retired. The category `<select>` was
+  // hardcoded to the six seeded codes and `normalizeRecoverableCategory`
+  // rewrote anything else, so a category an administrator added was enforceable
+  // on submit (TC-B-097) and unreachable on the form: the only way to raise one
+  // was to hand-roll the POST. The `<select>` now ranges over `.Categories` —
+  // the live `recoverable_categories` rows (internal/app/templates.go:1826-1830)
+  // — and `normalizeRecoverableCategory` (internal/app/requests.go:171-) checks
+  // against those rows instead of substituting a code, so the htmx swap keeps
+  // the category it was given and reveals the field that category's own rule
+  // requires. This case is the regression guard on the whole path from the
+  // configuration screen to the fieldset.
+  it('TC-B-098 — an admin-added recoverable category is offered on the form and survives a swap', async ({
     world
   }) => {
     const name = `Retention bond ${world.runId}`;
@@ -1418,12 +1475,16 @@ it.describe('D · the vendor control', () => {
     }
   });
 
-  // F-B-13: request_vendor_field's combo-input carries no `name`
-  // (internal/app/templates.go:2486) where the create form's carries name="q"
-  // (:1902). htmx sends the triggering input's own name/value pair, so the edit
-  // screen asks GET /vendors/search with no q, and SearchVendors("") returns nil
-  // (internal/store/vendors.go:337). Confirms a sibling audit's DS2.
-  it.fail('TC-B-094 — the vendor combobox on the edit screen can search', async ({ world }) => {
+  // F-B-13, fixed — annotation retired. `request_vendor_field`'s combo-input
+  // carried no `name` where the create form's carries `name="q"`, and htmx sends
+  // the triggering input's own name/value pair — so the edit screen asked
+  // GET /vendors/search with no `q` at all and `SearchVendors("")` returns nil
+  // (internal/store/vendors.go:337). The box was there, it typed, and it could
+  // never offer a single vendor, which meant the vendor on a pending request
+  // could not be changed by anybody holding vendor:view. The partial now carries
+  // the same `name="q"` the create form does. This case is the regression guard
+  // on that one attribute, driven end to end through the real control.
+  it('TC-B-094 — the vendor combobox on the edit screen can search', async ({ world }) => {
     // The admin holds vendor:view, so the edit screen renders the combobox for
     // them; a Requester gets the plain select on both screens (TC-B-061).
     const id = await raiseOk(world.adminPage, validBody(world, 'vendor_invoice'));
@@ -1689,7 +1750,14 @@ it.describe('G · what the requester may still do', () => {
     const failures = capturePageErrors(page);
     try {
       await page.goto(`/requests/${id}/edit`);
-      await expect(page.locator('.banner.info')).toContainText('restarts the three-day');
+      // F-F-03: the wait is `reminder_pending_days` read from configuration, not
+      // a three spelled out in the copy — the banner renders
+      // `{{.Reminders.PendingAfterDays}}-day` (internal/app/templates.go:2696-2697)
+      // and the seeded default is 3 (internal/store/reminders.go:68). "day", not
+      // "calendar day", is decision 2 of the repair: a calendar boundary needs a
+      // timezone this app does not have, so every threshold is elapsed days.
+      // Nothing in this file changes the setting, so the number here is the seed's.
+      await expect(page.locator('.banner.info')).toContainText(/restarts the\s+3-day reminder clock/);
       await page.getByLabel('Amount').fill('21500');
       await page.locator('#apr').selectOption(world.manager2.id);
       await page.getByRole('button', { name: /^Save and notify/ }).click();
@@ -1867,18 +1935,33 @@ it.describe('G · what the requester may still do', () => {
     expect(message(ask)).toContain('cannot be sent for cancellation');
   });
 
+  // REWRITTEN for the F-G-002 fix. Four of these probes used to require 403 and
+  // now require 404, and the split between the two is the fix, not an accident.
+  //
+  // Everything routed through `loadViewableRequest`
+  // (internal/app/requests.go:325-348) answers **404** for a row outside the
+  // caller's data scope — deliberately the same answer an id that does not exist
+  // gets, so the status code stops being an existence oracle a requester could
+  // walk the id space with (TC-B-088 pins the indistinguishability itself).
+  //
+  // The three POSTs that go straight to the store still answer **403**:
+  // `WithdrawRequest` (internal/store/requests.go:986), `ReraiseRequest` (:1199)
+  // and `RequestCancellation` (:1262) each compare `requester_id` to the actor
+  // and return ErrForbidden. That is not an inconsistency — a caller who names
+  // an id in a write already knows it exists, and hiding that would cost the
+  // clearer refusal for nothing.
   it('TC-B-077 — a stranger cannot edit, withdraw, re-raise or ask to cancel another request', async ({
     world
   }) => {
     const id = await raiseOk(world.requester.page, validBody(world, 'reimbursement'));
     const stranger = world.stranger.page;
 
-    expectOutcome(await probeGet(stranger, `/requests/${id}`), [403], 'reading another requester request');
-    expectOutcome(await probeGet(stranger, `/requests/${id}/edit`), [403], 'opening the edit screen');
-    expectOutcome(await probeGet(stranger, `/requests/${id}/cancel`), [403], 'opening the cancel screen');
+    expectOutcome(await probeGet(stranger, `/requests/${id}`), [404], 'reading another requester request');
+    expectOutcome(await probeGet(stranger, `/requests/${id}/edit`), [404], 'opening the edit screen');
+    expectOutcome(await probeGet(stranger, `/requests/${id}/cancel`), [404], 'opening the cancel screen');
     expectOutcome(
       await probePost(stranger, `/requests/${id}/edit`, validBody(world, 'reimbursement')),
-      [403],
+      [404],
       'saving somebody else edit'
     );
     expectOutcome(await probePost(stranger, `/requests/${id}/withdraw`, {}), [403], 'withdrawing');
@@ -1950,7 +2033,12 @@ it.describe('H · the conversation', () => {
   it('TC-B-080 — a stranger cannot comment on someone else request', async ({ world }) => {
     const id = await raiseOk(world.requester.page, validBody(world, 'reimbursement'));
     const probe = await probePost(world.stranger.page, `/requests/${id}/comment`, { body: 'Let me in.' });
-    expectOutcome(probe, [403], 'commenting on a request outside your scope');
+    // 404, not 403 (F-G-002). `requestComment` resolves the row through
+    // `loadViewableRequest` (internal/app/requests.go:976), which answers a row
+    // outside the caller's scope exactly as it answers one that does not exist —
+    // so posting comments at ids is not a way to find out which ids are real.
+    // The comment is still refused, which is the whole point of the case.
+    expectOutcome(probe, [404], 'commenting on a request outside your scope');
 
     await world.requester.page.goto(`/requests/${id}`);
     await expect(world.requester.page.locator('.thread')).not.toContainText('Let me in.');
@@ -2062,10 +2150,22 @@ it.describe('I · documents', () => {
     }
   });
 
-  // F-B-09: the request screens link a request_attachments row to
-  // GET /attachments/{id}, which reads payment_attachments — a different table
-  // with a sequence of its own.
-  it.fail('TC-B-084 — a requester can download the document on their own request', async ({ world }) => {
+  // F-B-09 (with F-A-05) **critical**, fixed — annotation retired, and the
+  // expected href changed with it. The request screens linked a
+  // `request_attachments` row to `GET /attachments/{id}`, which reads
+  // `payment_attachments` — a different table whose id sequence also starts at
+  // 1 — so Download on your own invoice served whichever stranger's bank advice
+  // happened to share the number, and served nothing at all once the sequences
+  // diverged. Request documents now have a route of their own,
+  // `GET /requests/{id}/attachments/{attachmentID}` (internal/app/app.go:468),
+  // whose handler checks the attachment really belongs to the request in the
+  // path and then applies the request's own row scope
+  // (internal/app/app.go:1129-1159).
+  //
+  // So the assertion this case makes about the href is not cosmetic: a link
+  // back to `/attachments/{id}` would be the defect returning. The scoped half
+  // of the same route is TC-B-085's subject.
+  it('TC-B-084 — a requester can download the document on their own request', async ({ world }) => {
     const page = await world.requester.ctx.newPage();
     let href = '';
     try {
@@ -2086,13 +2186,27 @@ it.describe('I · documents', () => {
     } finally {
       await page.close();
     }
-    expect(href, 'the detail screen offers a download link').toMatch(/^\/attachments\/\d+$/);
+    expect(
+      href,
+      'a request document is served by the request-scoped route, never by the payment one'
+    ).toMatch(/^\/requests\/\d+\/attachments\/\d+$/);
 
     const probe = await probeGet(world.requester.page, href);
     expect(
       probe.status,
       `the link the screen renders must serve the requester's own document; got ${probe.outcome}`
     ).toBe(200);
+
+    // The {id} in the path is a check, not decoration: the same attachment id
+    // hung off somebody else's request number is refused, and refused as a 404
+    // so the route cannot be used to count attachments either.
+    const attachmentID = href.split('/').pop();
+    const theirs = await raiseOk(world.stranger.page, validBody(world, 'reimbursement'));
+    const crossed = await probeGet(world.requester.page, `/requests/${theirs}/attachments/${attachmentID}`);
+    expect(
+      crossed.status,
+      `an attachment asked for under another request must not be served; got ${crossed.outcome}`
+    ).toBe(404);
   });
 
   // F-B-11 (with F-A-01), fixed while this suite was being repaired — the
@@ -2150,9 +2264,17 @@ it.describe('I · documents', () => {
       expect(download, 'the payment carries a downloadable proof').toMatch(/^\/attachments\/\d+$/);
 
       // The Requester cannot see the request behind it…
+      //
+      // 404 on the request and 403 on the payment, and the two are read from
+      // different code: `loadViewableRequest` (internal/app/requests.go:335-347)
+      // withholds the row's existence as well as its contents (F-G-002), while
+      // `paymentDetail` (internal/app/app.go:911-915) still names the reason —
+      // "You cannot see the request behind this payment." Both are refusals,
+      // which is what this case turns on; the difference is recorded here rather
+      // than smoothed over so a later reader can see it was measured.
       expectOutcome(
         await probeGet(world.requester.page, `/requests/${id}`),
-        [403],
+        [404],
         'the request behind the payment is out of scope'
       );
       expectOutcome(
@@ -2206,25 +2328,67 @@ it.describe('J · a Requester sees only their own work', () => {
     expect(csv.status, 'a Requester holds request:view, so the export is theirs to take').toBe(200);
     expect(csv.body, 'their own request is in it').toContain(mineNumber);
     expect(csv.body, 'somebody else is not').not.toContain(theirsNumber);
-    expect(csv.body.split('\n')[0], 'the header names the columns').toContain('Number,Status,Type');
-    // C3: money in the export carries exactly one symbol per cell.
-    const amounts = csv.body.match(/₹[\d,]+\.\d{2}/g) ?? [];
-    expect(amounts.length, 'the export renders money').toBeGreaterThan(0);
-    expect(csv.body.includes('₹₹'), 'FormatPaise already carries the symbol').toBe(false);
+    const header = csv.body.split('\n')[0].split(',');
+    expect(header.slice(0, 3).join(','), 'the header names the columns').toBe('Number,Status,Type');
+
+    // REWRITTEN for F-G-030. This used to demand `₹12,500.00` in every money
+    // cell, on C3's "money renders once with a single symbol" — which is the
+    // rule for a *screen*. A CSV is opened by a spreadsheet, and "₹12,500.00" is
+    // text there: the column cannot be summed, sorted or averaged, so the export
+    // was money nobody could do arithmetic on. `csvAmount`
+    // (internal/app/app.go:2147) writes a bare `12500.00`. The rendered screen
+    // still carries the symbol and TC-B-016 pins that; the two are deliberately
+    // different, and this case is what stops the symbol coming back here.
+    const row = csv.body.split('\n').find(line => line.startsWith(mineNumber));
+    expect(row, 'the requester own row is in the export').toBeTruthy();
+    const cells = row!.split(',');
+    expect(cells.length, 'no field in this fixture contains a comma, so the split is the row').toBe(header.length);
+    expect(
+      cells[header.indexOf('Amount')],
+      'money in the export is a number a spreadsheet can add up, not a formatted string'
+    ).toMatch(/^\d+\.\d{2}$/);
+    expect(csv.body.includes('₹'), 'so no cell in the file carries a currency symbol at all').toBe(false);
   });
 
-  it('TC-B-088 — another requester request by direct id is refused', async ({ world }) => {
+  // REWRITTEN for the F-G-002 fix. This case used to require 403 on somebody
+  // else's request and 404 on an id that does not exist, and its comment said
+  // "the two must not be swapped". They are now deliberately the same answer:
+  // the existence of a row is information about that row, so a requester walking
+  // the id space could otherwise read off exactly which ids exist and, by
+  // extension, how many requests the company raises. `loadViewableRequest`
+  // (internal/app/requests.go:325-348) answers 404 either way and logs the
+  // attempt.
+  //
+  // What this case now protects is the indistinguishability itself — the same
+  // status AND the same sentence, since a page that names the difference leaks
+  // what the status no longer does. A 403 anywhere in this list puts the oracle
+  // back.
+  it('TC-B-088 — another requester request by direct id is indistinguishable from one that does not exist', async ({
+    world
+  }) => {
     const theirs = await raiseOk(world.stranger.page, validBody(world, 'reimbursement'));
+    const missing = await probeGet(world.requester.page, '/requests/98765432');
+    expectOutcome(missing, [404], 'an id that does not exist');
+    expect(missing.body, 'and it says only that').toContain('The requested record was not found.');
+
     for (const path of [
       `/requests/${theirs}`,
       `/requests/${theirs}/submitted`,
       `/requests/${theirs}/edit`,
       `/requests/${theirs}/cancel`
     ]) {
-      expectOutcome(await probeGet(world.requester.page, path), [403], `${path} by URL typing`);
+      const probe = await probeGet(world.requester.page, path);
+      expectOutcome(probe, [404], `${path} by URL typing`);
+      expect(
+        probe.body,
+        `${path}: a row that exists must answer word for word what a row that does not exist answers`
+      ).toContain('The requested record was not found.');
     }
-    // A request that does not exist is a 404, not a 403 — the two must not be swapped.
-    expectOutcome(await probeGet(world.requester.page, '/requests/98765432'), [404], 'a missing id');
+
+    // And the refusal is a refusal, not a rendered request that happens to carry
+    // a 404: none of the stranger's own data comes back with it.
+    const detail = await probeGet(world.requester.page, `/requests/${theirs}`);
+    expect(detail.body, 'no request number rides out on the refusal').not.toMatch(NUMBER_RE);
   });
 
   it('TC-B-089 — anonymous and no-role callers are refused the form and the POST', async ({
@@ -2259,11 +2423,26 @@ it.describe('J · a Requester sees only their own work', () => {
     );
   });
 
-  // F-B-16: ListRequests defaults Limit to 200 (internal/store/requests.go:1272)
-  // and both the list and the CSV export take it, while CountRequests — the tab
-  // count beside them — has no limit at all (:1296). Confirms a sibling audit's
-  // DS8, and extends it: the export drops rows silently.
-  it.fail('TC-B-099 — a list of more than 200 requests is never silently truncated', async ({ world }) => {
+  // F-B-16, fixed — annotation retired, and the case now asserts the fix rather
+  // than the shape it was guessed to have. `ListRequests` capped the rows at 200
+  // while `CountRequests` — the tab count beside them — had no cap at all, so
+  // the All tab promised 214 and the list drew 200 with nothing on the page
+  // saying so, and the CSV silently dropped the same fourteen.
+  //
+  // The repair is NOT "render every row": 205 cards on one page is a slower
+  // screen and a worse one. It is that the truncation stops being silent —
+  // `ListRequestsPage` returns Total/Offset/Truncated
+  // (internal/store/requests.go:1700-1794, handler at internal/app/requests.go:612),
+  // the screen states "Showing 1–200 of 205" and offers "Older →"
+  // (internal/app/templates.go:2264-2269), and the export takes
+  // `RequestsUnlimited` (internal/app/requests.go:1157-1163) because an export
+  // taken for reconciliation that drops rows without saying so is worse than no
+  // export.
+  //
+  // So the name still holds — never SILENTLY truncated — and the assertions
+  // below are what makes it true: the count is reachable, the page says how much
+  // of it is on screen, and the file carries all of it.
+  it('TC-B-099 — a list of more than 200 requests is never silently truncated', async ({ world }) => {
     // Its own subject, so 205 rows cannot disturb any other case's list.
     const bulk = await asRole(world.adminPage, world.browser, world.runId, ['Requester'], 'bulk-b99');
     try {
@@ -2281,11 +2460,29 @@ it.describe('J · a Requester sees only their own work', () => {
         (await bulk.page.locator('.segmented a', { hasText: /^All\s/ }).locator('.n').innerText()).trim()
       );
       expect(counted, 'the fixture raised 205').toBeGreaterThanOrEqual(205);
+
+      // The page carries one screenful and says which screenful it is.
       const rendered = await bulk.page.locator('.req-card').count();
-      expect(
-        rendered,
-        `the All tab promises ${counted} and the list renders ${rendered} — a tab must never promise a number the list does not show`
-      ).toBe(counted);
+      expect(rendered, 'the first page is the store default of 200 rows').toBe(200);
+      // The pager is a bare `.cluster` (internal/app/templates.go:2265), so it
+      // is addressed by the sentence it exists to say rather than by a class.
+      const showing = bulk.page.locator('span.muted.small', { hasText: /^Showing / });
+      await expect(
+        showing,
+        `the All tab promises ${counted} and the list draws ${rendered} — the page must say so in as many words`
+      ).toHaveText(`Showing 1–${rendered} of ${counted}`);
+      await expect(
+        bulk.page.getByRole('link', { name: /Older/ }),
+        'and the rest must be reachable'
+      ).toHaveCount(1);
+
+      // Following it reaches the remainder, so "Total" is a promise the product keeps.
+      await bulk.page.goto(`/requests?bucket=all&offset=${rendered}`);
+      const remainder = await bulk.page.locator('.req-card').count();
+      expect(remainder, 'page two carries the rows page one did not').toBe(counted - rendered);
+      await expect(bulk.page.locator('span.muted.small', { hasText: /^Showing / })).toHaveText(
+        `Showing ${rendered + 1}–${counted} of ${counted}`
+      );
 
       const csv = await probeGet(bulk.page, '/requests/export.csv?bucket=all');
       expect(csv.status).toBe(200);

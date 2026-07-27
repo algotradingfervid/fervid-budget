@@ -794,6 +794,13 @@ func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
 // The payment screen is half a request screen. Reading it must therefore obey
 // the same row scope /requests/{id} obeys, or payment:view becomes a way round
 // it.
+//
+// The refusal is 404 and not 403, which is the later half of the same rule: a
+// 403 here and a 404 for a missing id would let a caller walk payments.id and
+// learn which payments exist from the difference. That is exactly the oracle
+// F-G-002 closed on /requests/{id} and Wave 3 closed on both attachment routes;
+// this route was never in that finding's scope, so it kept the 403 until two
+// spec agents arrived at it independently.
 func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Scope")
@@ -809,8 +816,15 @@ func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 
 	s.login("auditor@example.test", "AuditorPassword123")
 	resp := s.request(http.MethodGet, fmt.Sprintf("/payments/%d", linkedID), nil, "")
-	requireStatus(t, resp, http.StatusForbidden)
-	_ = responseBody(t, resp)
+	requireStatus(t, resp, http.StatusNotFound)
+	refused := responseBody(t, resp)
+	// Indistinguishable from an id nobody ever used: same status, and the refusal
+	// must not leak the number, payee or amount of the payment it is hiding.
+	missing := s.request(http.MethodGet, "/payments/99999", nil, "")
+	requireStatus(t, missing, http.StatusNotFound)
+	if strings.Contains(refused, "Legacy Vendor") || strings.Contains(refused, "5,000") {
+		t.Fatalf("the refusal describes the payment it is withholding:\n%s", refused)
+	}
 	// The request-less ledger row is untouched: this closes a way into request
 	// data, not a way into the ledger.
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", histID), nil, ""), http.StatusOK)

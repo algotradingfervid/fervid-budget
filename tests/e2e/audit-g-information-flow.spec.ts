@@ -11,7 +11,10 @@
  *     across a dozen screens and two CSVs, asserted exactly at every hop. The
  *     money assertions also count the `₹` glyphs, because `money.FormatPaise`
  *     (internal/money/money.go:36-45) already carries one and a template that
- *     adds its own would render `₹ ₹1,00,000.00`.
+ *     adds its own would render `₹ ₹1,00,000.00`. A **CSV** hop is the mirror
+ *     image: `csvAmount` (internal/app/app.go:2147) writes the same paise as a
+ *     plain `100000.00`, so the file must carry the number and no glyph at all
+ *     (F-G-030).
  *  2. **Agreement** — the same fact shown in two places must be the same number.
  *     A tile that promises 3 and a queue that lists 5 is a defect even when both
  *     queries are individually correct.
@@ -61,13 +64,33 @@ async function expectMoney(page: Page, selector: string, expected: string, what:
   ).toBe(1);
 }
 
-/** The same assertion against a plain string (a CSV cell, a probe body). */
-function expectMoneyIn(haystack: string, expected: string, what: string) {
-  expect(haystack.includes(expected), `${what}: ${expected} is absent`).toBe(true);
-  // A double-format bug would render "₹ ₹1,00,000.00"; the single-space and
-  // no-space forms are both wrong and both caught here.
-  expect(haystack.includes('₹ ₹'), `${what}: a doubled ₹ is present`).toBe(false);
-  expect(haystack.includes('₹₹'), `${what}: a doubled ₹ is present`).toBe(false);
+/** Every comma-separated field of a CSV body, so a cell can be matched exactly. */
+function csvCells(body: string): string[] {
+  return body.split(/\r?\n/).flatMap(line => line.split(','));
+}
+
+/**
+ * The CSV counterpart of `expectMoney`: a money column must be a NUMBER.
+ *
+ * All four exports write amounts through `csvAmount` (internal/app/app.go:2147),
+ * which emits `paise/100 . paise%100` — no currency glyph, no Indian digit
+ * grouping, and therefore never a quoted cell. That is F-G-030's fix: the export
+ * used to carry `"₹1,50,000.00"`, which is a report and not data, and
+ * `Number()` of it is NaN in every spreadsheet and script that opens it.
+ *
+ * Both halves are asserted, because either alone would pass the wrong file: the
+ * exact cell must be there, and no `₹` may appear anywhere in the body — the
+ * amount columns are the only place one could come from.
+ */
+function expectCSVAmount(body: string, plain: string, what: string) {
+  expect(
+    csvCells(body).includes(plain),
+    `${what}: no cell holds the plain number ${plain}\n${body.split(/\r?\n/).slice(0, 5).join('\n')}`
+  ).toBe(true);
+  expect(
+    body.includes('₹'),
+    `${what}: a CSV amount is a number, so no ₹ may appear anywhere in the file`
+  ).toBe(false);
 }
 
 /**
@@ -109,6 +132,10 @@ interface RaiseOptions {
   title: string;
   invoiceNo: string;
   invoiceDate?: string;
+  /** The month an approval commits to. `lockedApprovalMonth`
+   *  (internal/app/requests.go:916) reads it and nothing else, so a request
+   *  without one names no period at all. */
+  neededBy?: string;
   purpose?: string;
   approverName: string;
 }
@@ -147,6 +174,7 @@ async function raiseVendorRequest(page: Page, opts: RaiseOptions): Promise<{ id:
   await page.getByLabel('Amount').fill(opts.amount);
   await page.getByLabel('Invoice number').fill(opts.invoiceNo);
   await page.getByLabel('Invoice date').fill(opts.invoiceDate ?? '2026-07-18');
+  if (opts.neededBy) await page.getByLabel('Needed by').fill(opts.neededBy);
   await page.getByLabel('Purpose').fill(opts.purpose ?? `Purpose for ${opts.title}.`);
   await page.getByLabel('Approver').selectOption({ label: opts.approverName });
   await page.getByRole('button', { name: 'Submit request' }).click();
@@ -162,11 +190,13 @@ async function raiseVendorRequest(page: Page, opts: RaiseOptions): Promise<{ id:
  *
  * `type=recoverable` exists in the store's vocabulary
  * (internal/store/requests.go:78-81) but NOT in the UI's
- * (`requestTypeOptions`, internal/app/requests.go:42-55), so
- * `/requests/new?type=recoverable` falls back to the type chooser. The only
+ * (`requestTypeLabels`, internal/app/requests.go:42-66), so
+ * `/requests/new?type=recoverable` answers 400 with the chooser and a reason —
+ * it used to bounce silently to the chooser as though nothing had been asked
+ * for (F-D-14, `unofferedRequestType` at internal/app/requests.go:100). The only
  * route to a recoverable through the shipped screens is `employee_advance`,
  * which `requestNew` opens with the recoverable treatment already selected
- * (internal/app/requests.go:89-92).
+ * (internal/app/requests.go:129-132).
  */
 async function raiseRecoverable(
   page: Page,
@@ -353,15 +383,24 @@ async function auditRows(page: Page, actorName: string, entity = 'payment_reques
 /**
  * The stored action behind a rendered Action pill.
  *
- * `actionText` (internal/app/app.go:1882-1907) spells ten actions for a reader
- * and returns every other identifier verbatim — which is F-G-005. Reversing the
- * ten here lets each assertion name the stored action it means, while `rendered`
- * stays available for the tests that are about the gap itself.
+ * `actionText` (internal/app/app.go:2441-2515) used to spell ten actions and
+ * return every other identifier verbatim, so the whole request workflow printed
+ * as its raw column value beside a properly spelled "Updated" (F-G-005). It now
+ * spells every action the store writes, and this map is its exact inverse —
+ * which is what lets each assertion below name the stored action it means while
+ * `rendered` stays available for the tests that are about the wording itself.
+ *
+ * Two verbs share a rendering, and both collapse onto the one the store actually
+ * writes on the paths this file drives: `update`/`edit` both read "Updated", and
+ * `process`/`reserve` both read "Reserved". Nothing here writes `edit` or
+ * `reserve`, so the ambiguity is resolvable and resolved; if a screen ever starts
+ * writing them, an assertion on `rendered` is the honest way to tell them apart.
  */
 function auditAction(rendered: string): string {
   const spelled: Record<string, string> = {
     Created: 'create',
     Updated: 'update',
+    Deleted: 'delete',
     Voided: 'void',
     Locked: 'lock',
     Unlocked: 'unlock',
@@ -369,7 +408,29 @@ function auditAction(rendered: string): string {
     'Logged out': 'logout',
     Exported: 'export',
     Attached: 'attach',
-    'Login failed': 'login_failed'
+    'Login failed': 'login_failed',
+    'Settings saved': 'settings',
+    Submitted: 'submit',
+    Approved: 'approve',
+    Returned: 'return',
+    Rejected: 'reject',
+    Withdrawn: 'withdraw',
+    'Raised again': 'reraise',
+    Commented: 'comment',
+    Cancelled: 'cancel',
+    'Cancellation asked': 'cancel_request',
+    'Approval reassigned': 'approval_reassign',
+    Reserved: 'process',
+    Released: 'release',
+    'Reservation reassigned': 'reassign',
+    'Put on hold': 'hold',
+    'Taken off hold': 'unhold',
+    Settled: 'settle',
+    'Marked partial': 'mark_partial',
+    'Partial accepted': 'accept_partial',
+    'Concern raised': 'concern',
+    'Reminder sent': 'remind',
+    Viewed: 'view'
   };
   return spelled[rendered] ?? rendered;
 }
@@ -400,10 +461,16 @@ test.describe('G · the money trail', () => {
   /**
    * IF3 → IF4 → IF8 → IF12, end to end, for a lakh-grouped figure.
    *
-   * The month is this test's alone (2026-09), and the seed budgets only
+   * The month is this test's alone (2024-09), and the seed budgets only
    * 2026-06, so the grid's company total for that month is exactly this one
    * payment — which makes "the grid followed the money" an equality rather than
    * a delta.
+   *
+   * The month is in the PAST because `validatePayment` now refuses a `paid_on`
+   * after today (F-D-06, internal/store/store.go:1938-1943): money cannot have
+   * left the bank on a date that has not happened. Every date in this file moved
+   * back by two years when the guard was wired through the UI, keeping each
+   * test's own month distinct.
    */
   test('TC-G-001 — a lakh-grouped amount survives twelve hops with exactly one ₹ at each', async ({
     adminPage,
@@ -412,7 +479,8 @@ test.describe('G · the money trail', () => {
   }) => {
     const errors = capturePageErrors(adminPage);
     const MONEY = '₹1,00,000.00';
-    const PLAIN = '1,00,000.00';
+    const PLAIN = '1,00,000.00'; // the money field's own grouped, glyph-less value
+    const CSV_PLAIN = '100000.00'; // what csvAmount writes: a number, ungrouped
 
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgr1-${runId}`);
     const payee = `Trail Vendor ${runId}`;
@@ -516,7 +584,7 @@ test.describe('G · the money trail', () => {
     );
 
     // Hop 10 — the settlement sheet compares approved against paid.
-    await adminPage.getByLabel('Paid on').fill('2026-09-15');
+    await adminPage.getByLabel('Paid on').fill('2024-09-15');
     await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-T1-${runId}`);
     await adminPage.getByLabel('Processing note').fill(`Trail one ${runId}`);
@@ -570,7 +638,7 @@ test.describe('G · the money trail', () => {
     );
 
     // Hop 13 — the payments ledger row.
-    await adminPage.goto('/payments?month=2026-09');
+    await adminPage.goto('/payments?month=2024-09');
     await adminPage.getByLabel('Search').fill(`Trail one ${runId}`);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     const ledger = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
@@ -583,7 +651,7 @@ test.describe('G · the money trail', () => {
     );
 
     // Hop 14 — the variance grid actual for the head, and the company total.
-    await adminPage.goto('/grid?month=2026-09');
+    await adminPage.goto('/grid?month=2024-09');
     await expectMoney(
       adminPage,
       'tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)',
@@ -593,25 +661,32 @@ test.describe('G · the money trail', () => {
     await expectMoney(adminPage, 'tfoot tr.total td:nth-child(5)', MONEY, 'hop 14b — grid company total');
 
     // Hop 15 — the monthly report reuses Grid, so its actual is the same number.
-    await adminPage.goto('/reports/monthly?from=2026-09&to=2026-09');
+    await adminPage.goto('/reports/monthly?from=2024-09&to=2024-09');
     await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', MONEY, 'hop 15 — /reports/monthly Actual');
 
-    // Hop 16 — /export.csv.
-    const gridCSV = await csv(adminPage, '/export.csv?month=2026-09');
-    expectMoneyIn(gridCSV, MONEY, 'hop 16 — /export.csv');
+    // Hop 16 — /export.csv. The last hop of the chain is a machine, so the
+    // figure arrives as a number: `csvAmount` writes "100000.00" where the
+    // screens above write "₹1,00,000.00" (F-G-030).
+    const gridCSV = await csv(adminPage, '/export.csv?month=2024-09');
+    expectCSVAmount(gridCSV, CSV_PLAIN, 'hop 16 — /export.csv');
     expect(
       gridCSV.split('\n').filter(line => line.includes('Office Rent')).length,
       'hop 16 — the head appears exactly once in the grid CSV'
     ).toBe(1);
 
     // Hop 17 — /reports/ytd.csv.
-    const ytdCSV = await csv(adminPage, '/reports/ytd.csv?from=2026-09&to=2026-09');
-    expectMoneyIn(ytdCSV, MONEY, 'hop 17 — /reports/ytd.csv');
+    const ytdCSV = await csv(adminPage, '/reports/ytd.csv?from=2024-09&to=2024-09');
+    expectCSVAmount(ytdCSV, CSV_PLAIN, 'hop 17 — /reports/ytd.csv');
 
     // Hop 18 — /requests/export.csv keeps the REQUESTED figure, which here
     // equals the approved one.
-    const reqCSV = await csv(adminPage, `/requests/export.csv?q=${encodeURIComponent(number)}`);
-    expectMoneyIn(reqCSV, MONEY, 'hop 18 — /requests/export.csv');
+    //
+    // `bucket=all` because the export defaults to `open` now, exactly as the list
+    // it sits on does: one URL, one set (F-G-014, internal/app/requests.go:1152).
+    // This request has been settled, so it is closed, and asking for it without
+    // saying so would be asking the wrong question.
+    const reqCSV = await csv(adminPage, `/requests/export.csv?bucket=all&q=${encodeURIComponent(number)}`);
+    expectCSVAmount(reqCSV, CSV_PLAIN, 'hop 18 — /requests/export.csv');
 
     expectNoRuntimeErrors(errors, 'no console error, page error or 5xx anywhere on the trail');
     await approver.close();
@@ -625,6 +700,7 @@ test.describe('G · the money trail', () => {
   test('TC-G-002 — paise precision survives the whole trail', async ({ adminPage, browser, runId }) => {
     const errors = capturePageErrors(adminPage);
     const MONEY = '₹12,34,567.89';
+    const CSV_PLAIN = '1234567.89';
 
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgr2-${runId}`);
     const payee = `Paise Vendor ${runId}`;
@@ -647,14 +723,14 @@ test.describe('G · the money trail', () => {
     // cheque, upi, cash, card and other — there is no NEFT/RTGS split.
     const paymentPath = await settlePayment(adminPage, raised.id, {
       amount: '1234567.89',
-      paidOn: '2026-10-15',
+      paidOn: '2024-10-15',
       mode: 'bank_transfer',
       reference: `UTR-T2-${runId}`,
       remarks: `Trail paise ${runId}`
     });
     await expectMoney(adminPage, '.rh-amt', MONEY, 'payment detail head');
 
-    await adminPage.goto('/payments?month=2026-10');
+    await adminPage.goto('/payments?month=2024-10');
     await expectMoney(
       adminPage,
       `tbody tr:has(a[href="${paymentPath}"]) td[data-label="Amount"]`,
@@ -662,7 +738,7 @@ test.describe('G · the money trail', () => {
       'payments ledger'
     );
 
-    await adminPage.goto('/grid?month=2026-10');
+    await adminPage.goto('/grid?month=2024-10');
     await expectMoney(
       adminPage,
       'tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)',
@@ -671,11 +747,17 @@ test.describe('G · the money trail', () => {
     );
     await expectMoney(adminPage, 'tfoot tr.total td:nth-child(5)', MONEY, 'grid company total');
 
-    await adminPage.goto('/reports/monthly?from=2026-10&to=2026-10');
+    await adminPage.goto('/reports/monthly?from=2024-10&to=2024-10');
     await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', MONEY, '/reports/monthly Actual');
 
-    expectMoneyIn(await csv(adminPage, '/export.csv?month=2026-10'), MONEY, '/export.csv');
-    expectMoneyIn(await csv(adminPage, '/reports/ytd.csv?from=2026-10&to=2026-10'), MONEY, '/reports/ytd.csv');
+    // The paise tail survives the plain-number form too, which is the whole
+    // point of this case: 1234567.89 and not 1234567.9 or 1234568.
+    expectCSVAmount(await csv(adminPage, '/export.csv?month=2024-10'), CSV_PLAIN, '/export.csv');
+    expectCSVAmount(
+      await csv(adminPage, '/reports/ytd.csv?from=2024-10&to=2024-10'),
+      CSV_PLAIN,
+      '/reports/ytd.csv'
+    );
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -699,6 +781,9 @@ test.describe('G · the money trail', () => {
     const APPROVED = '₹42,500.75';
     const PAID = '₹37,000.25';
     const SHORTFALL = '₹5,500.50'; // approved − paid
+    const REQUESTED_CSV = '50000.00';
+    const APPROVED_CSV = '42500.75';
+    const PAID_CSV = '37000.25';
 
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgr3-${runId}`);
     const payee = `Adjust Vendor ${runId}`;
@@ -740,7 +825,7 @@ test.describe('G · the money trail', () => {
 
     const paymentPath = await settlePayment(adminPage, raised.id, {
       amount: '37000.25',
-      paidOn: '2026-11-15',
+      paidOn: '2024-11-15',
       mode: 'cheque',
       reference: `UTR-T3-${runId}`,
       remarks: `Trail adjusted ${runId}`,
@@ -776,7 +861,7 @@ test.describe('G · the money trail', () => {
     );
 
     // The grid follows PAID, and not requested and not approved.
-    await adminPage.goto('/grid?month=2026-11');
+    await adminPage.goto('/grid?month=2024-11');
     const actual = adminPage.locator('tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)');
     await expectMoney(adminPage, 'tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)', PAID, 'grid actual');
     const actualText = (await actual.innerText()).trim();
@@ -785,22 +870,26 @@ test.describe('G · the money trail', () => {
     await expectMoney(adminPage, 'tfoot tr.total td:nth-child(5)', PAID, 'grid company total follows paid');
 
     // And so does every downstream report.
-    await adminPage.goto('/reports/monthly?from=2026-11&to=2026-11');
+    await adminPage.goto('/reports/monthly?from=2024-11&to=2024-11');
     await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', PAID, '/reports/monthly Actual follows paid');
-    expectMoneyIn(await csv(adminPage, '/export.csv?month=2026-11'), PAID, '/export.csv follows paid');
-    expectMoneyIn(await csv(adminPage, '/reports/ytd.csv?from=2026-11&to=2026-11'), PAID, '/reports/ytd.csv');
+    expectCSVAmount(await csv(adminPage, '/export.csv?month=2024-11'), PAID_CSV, '/export.csv follows paid');
+    expectCSVAmount(
+      await csv(adminPage, '/reports/ytd.csv?from=2024-11&to=2024-11'),
+      PAID_CSV,
+      '/reports/ytd.csv'
+    );
 
     // The requests CSV keeps the REQUESTED figure — documented, and worth
     // pinning: an approved-down request exports the figure nobody approved.
-    const reqCSV = await csv(adminPage, `/requests/export.csv?q=${encodeURIComponent(raised.number)}`);
-    expectMoneyIn(reqCSV, REQUESTED, '/requests/export.csv Amount column');
+    const reqCSV = await csv(adminPage, `/requests/export.csv?bucket=all&q=${encodeURIComponent(raised.number)}`);
+    expectCSVAmount(reqCSV, REQUESTED_CSV, '/requests/export.csv Amount column');
     expect(
-      reqCSV.includes(APPROVED),
+      reqCSV.includes(APPROVED_CSV),
       'F-G-011: /requests/export.csv has no approved-amount column, so the adjusted figure is absent'
     ).toBe(false);
 
     // The ledger total for the month equals exactly the paid figure.
-    await adminPage.goto('/payments?month=2026-11');
+    await adminPage.goto('/payments?month=2024-11');
     await expectMoney(
       adminPage,
       `tbody tr:has(a[href="${paymentPath}"]) td[data-label="Amount"]`,
@@ -828,7 +917,7 @@ test.describe('G · the money trail', () => {
       .click();
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     await adminPage.getByLabel('Amount actually paid').fill('9000.00');
-    await adminPage.getByLabel('Paid on').fill('2026-12-15');
+    await adminPage.getByLabel('Paid on').fill('2024-12-15');
     await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-OVER-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -840,14 +929,14 @@ test.describe('G · the money trail', () => {
     await expect(sheet.locator('.banner.bad')).toContainText('more than the approved');
 
     // The month is otherwise empty, so "nothing was written" is an equality.
-    await adminPage.goto('/grid?month=2026-12');
+    await adminPage.goto('/grid?month=2024-12');
     await expectMoney(
       adminPage,
       'tfoot tr.total td:nth-child(5)',
       '₹0.00',
       'a refused settlement must not move the grid'
     );
-    await adminPage.goto('/payments?month=2026-12');
+    await adminPage.goto('/payments?month=2024-12');
     expect(await dataRows(adminPage), 'a refused settlement must not put a row in the ledger').toBe(0);
 
     await adminPage.goto(`/requests/${request.id}`);
@@ -946,7 +1035,7 @@ test.describe('G · payee, project, head, invoice', () => {
 
     // Hop 5 — the settlement sheet's sub-line.
     await adminPage.getByLabel('Amount actually paid').fill('6400.00');
-    await adminPage.getByLabel('Paid on').fill('2027-01-12');
+    await adminPage.getByLabel('Paid on').fill('2025-01-12');
     await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-P1-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -976,7 +1065,7 @@ test.describe('G · payee, project, head, invoice', () => {
     ).toContainText('Operations / Office Rent');
 
     // Hop 7 — the ledger, found BY the payee, which proves the search index too.
-    await adminPage.goto('/payments?month=2027-01');
+    await adminPage.goto('/payments?month=2025-01');
     await adminPage.getByLabel('Search').fill(payee);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     const ledger = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
@@ -985,7 +1074,7 @@ test.describe('G · payee, project, head, invoice', () => {
     await expect(ledger.locator('td[data-label="Reference"]')).toContainText(`INV-P1-${runId}`);
 
     // Hop 8 — /requests/export.csv reads Request.Vendor, not the snapshot.
-    const reqCSV = await csv(adminPage, `/requests/export.csv?q=${encodeURIComponent(raised.number)}`);
+    const reqCSV = await csv(adminPage, `/requests/export.csv?bucket=all&q=${encodeURIComponent(raised.number)}`);
     expect(reqCSV, 'hop 8 — the requests CSV Payee column').toContain(payee);
 
     expectNoRuntimeErrors(errors);
@@ -1043,7 +1132,7 @@ test.describe('G · payee, project, head, invoice', () => {
 
     const paymentPath = await settlePayment(adminPage, id, {
       amount: '3250.50',
-      paidOn: '2027-02-10',
+      paidOn: '2025-02-10',
       mode: 'upi',
       reference: `UTR-R1-${runId}`,
       remarks: `Reimburse ${runId}`
@@ -1052,14 +1141,14 @@ test.describe('G · payee, project, head, invoice', () => {
       requester.subject.name
     );
 
-    await adminPage.goto('/payments?month=2027-02');
+    await adminPage.goto('/payments?month=2025-02');
     await adminPage.getByLabel('Search').fill(requester.subject.name);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     const ledger = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
     await expect(ledger, 'the ledger is searchable by the reimbursement payee').toHaveCount(1);
     await expect(ledger.locator('td[data-label="Payee"]')).toHaveText(requester.subject.name);
 
-    const reqCSV = await csv(adminPage, `/requests/export.csv?q=${encodeURIComponent(number)}`);
+    const reqCSV = await csv(adminPage, `/requests/export.csv?bucket=all&q=${encodeURIComponent(number)}`);
     expect(reqCSV, 'the requests CSV payee for a reimbursement').toContain(requester.subject.name);
 
     expectNoRuntimeErrors(errors);
@@ -1127,7 +1216,7 @@ test.describe('G · payee, project, head, invoice', () => {
 
     const paymentPath = await settlePayment(adminPage, id, {
       amount: '2500.00',
-      paidOn: '2027-03-10',
+      paidOn: '2025-03-10',
       reference: `UTR-F1-${runId}`,
       remarks: `Forged ${runId}`
     });
@@ -1169,7 +1258,7 @@ test.describe('G · the audit trail', () => {
     await approveFor(approver.page, raised.id, '9500.00');
     await settlePayment(adminPage, raised.id, {
       amount: '9500.00',
-      paidOn: '2027-04-14',
+      paidOn: '2025-04-14',
       reference: `UTR-A1-${runId}`,
       remarks: `Audit ${runId}`
     });
@@ -1373,7 +1462,7 @@ test.describe('G · the audit trail', () => {
     const refused = await probePost(adminPage, '/payments', {
       request_id: String(request.id),
       amount: '99999.00',
-      paid_on: '2027-05-10',
+      paid_on: '2025-05-10',
       payment_mode: 'bank_transfer',
       reference_no: `UTR-N2-${runId}`,
       head_id: '1',
@@ -1394,7 +1483,7 @@ test.describe('G · the audit trail', () => {
       'no settle row may survive a refused settlement'
     ).toBe(0);
 
-    await adminPage.goto('/payments?month=2027-05');
+    await adminPage.goto('/payments?month=2025-05');
     expect(await dataRows(adminPage), 'and no ledger row either').toBe(0);
 
     expectNoRuntimeErrors(errors);
@@ -1453,13 +1542,15 @@ test.describe('G · the audit trail', () => {
   });
 
   /**
-   * The audit log is entirely unscoped: `Store.Audit`
-   * (internal/store/store.go:1591-1603) never receives a viewer. Today that is
-   * latent, because `audit:view` is granted to Admin alone — this test pins the
-   * gate that keeps it latent, and TC-G-052 shows what happens when it is
-   * opened by a custom role.
+   * `audit:view` is an Admin grant, and nothing else in the seed carries it.
+   *
+   * `Store.Audit` still receives no viewer — the row scope is applied above it, in
+   * `auditWithinRequestScope` — so this gate is the first of the log's two
+   * defences and the only one the seeded roles ever exercise. TC-G-055 is the
+   * other: what a custom role holding `audit:view` with `request=own` actually
+   * gets.
    */
-  test('TC-G-026 — the audit log is Admin-only today, which is the only thing scoping it', async ({
+  test('TC-G-026 — audit:view is an Admin grant, which is the log\'s outer gate', async ({
     adminPage,
     browser,
     runId
@@ -1481,13 +1572,24 @@ test.describe('G · the audit trail', () => {
   });
 
   /**
-   * Two rendering gaps on `/audit`, pinned so a fix turns them red. The Entity
-   * dropdown offers nine values and `payment_request` is not one of them
-   * (internal/app/templates.go:3262), and `actionText`
-   * (internal/app/app.go:1882-1906) maps ten actions, so every workflow action
-   * prints as its raw identifier.
+   * The audit screen's two vocabularies, pinned against the drift that produced
+   * F-G-004 and F-G-005.
+   *
+   * The Entity `<select>` was a hand-maintained literal in the template that had
+   * drifted so far from what the store writes that `payment_request` — the entity
+   * every request, approval, reservation and settlement is filed under — could not
+   * be asked for at all, and no request action was offered either. And `actionText`
+   * spelled ten actions and returned every other identifier verbatim, so a reader
+   * saw "Updated" beside a raw "approve" on the same page.
+   *
+   * Both option lists are now built in Go from the values the store actually writes
+   * (`auditEntities`/`auditActions`, internal/app/app.go:2549-2578), and `actionText`
+   * (:2441-2515) spells every one of them. This case asserts the three properties
+   * that keep them from drifting apart again: the filters offer the request
+   * workflow, choosing one really narrows the log, and the action a row carries is
+   * spelled for a person rather than printed as a column value.
    */
-  test('TC-G-027 — the audit filter cannot reach requests, and workflow actions render raw', async ({
+  test('TC-G-027 — the audit filters reach the request workflow, and every action is spelled for a reader', async ({
     adminPage,
     browser,
     runId
@@ -1505,33 +1607,55 @@ test.describe('G · the audit trail', () => {
     await approveFor(approver.page, raised.id, '1000.00');
 
     await adminPage.goto('/audit');
+    const entityValues = await adminPage
+      .locator('select[name="entity"] option')
+      .evaluateAll(nodes => nodes.map(n => (n as HTMLOptionElement).value));
+    expect(
+      entityValues,
+      'the Entity filter must be able to name the entity the whole request workflow is filed under'
+    ).toContain('payment_request');
     const entities = await adminPage.locator('select[name="entity"] option').allInnerTexts();
     expect(
-      entities.some(o => /request/i.test(o)),
-      'F-G-004: no Entity option reaches payment_request, so the whole request workflow is unfilterable from the UI'
-    ).toBe(false);
-    const actions = await adminPage.locator('select[name="action"] option').allInnerTexts();
-    expect(
-      actions.some(o => /approv/i.test(o)),
-      'F-G-004: no Action option reaches approve either'
-    ).toBe(false);
+      entities.some(o => /payment request/i.test(o)),
+      'and it is labelled for a reader, not shown as its column value'
+    ).toBe(true);
 
-    // The rows exist and are reachable only by hand-typing the query string.
+    const actionValues = await adminPage
+      .locator('select[name="action"] option')
+      .evaluateAll(nodes => nodes.map(n => (n as HTMLOptionElement).value));
+    // The request workflow, the settlement flow and the reservation flow: three
+    // families the filter used to reach none of.
+    for (const action of ['submit', 'approve', 'return', 'reject', 'cancel', 'process', 'settle']) {
+      expect(actionValues, `the Action filter offers "${action}"`).toContain(action);
+    }
+    const actions = await adminPage.locator('select[name="action"] option').allInnerTexts();
+    expect(actions, 'and spells them').toContain('Approved');
+
+    // Choosing them narrows the log rather than merely being offered: this is the
+    // filter doing the work the query string used to have to be hand-typed for.
+    await adminPage.goto(
+      `/audit?entity=payment_request&action=approve&actor=${encodeURIComponent(approver.subject.name)}`
+    );
+    const filtered = adminPage.locator('tbody tr');
+    await expect(filtered, 'the filtered log carries the approve row').not.toHaveCount(0);
+    for (const rendered of await filtered.locator('td:nth-child(4)').allInnerTexts()) {
+      expect(rendered.trim(), 'and nothing else — the filter is applied, not decorative').toBe('Approved');
+    }
+
+    // The row itself: the pill is a word, and the stored action behind it is the
+    // one the workflow wrote.
     const rows = await auditRows(adminPage, approver.subject.name, 'payment_request', raised.id);
-    expect(rows.length, 'the rows are there — only the filter cannot name them').toBeGreaterThan(0);
-    // `actionText` spells ten actions and returns every other identifier
-    // verbatim, so the whole request workflow renders as its column values.
     const approveRow = rows.find(r => r.action === 'approve');
     expect(approveRow, 'the approve row is in the log').toBeDefined();
     expect(
       approveRow!.rendered,
-      'F-G-005: the Action pill prints the raw identifier "approve", where an audited "update" reads "Updated"'
-    ).toBe('approve');
-    // The contrast, on the same page: a mapped action IS spelled for a reader.
+      'the Action pill spells "approve" as "Approved", the way it always spelled "update" as "Updated"'
+    ).toBe('Approved');
+    // The original contrast, kept: the ten actions that were always mapped still are.
     const spelled = await auditRows(adminPage, 'Fervid Admin', 'user');
     expect(
       spelled.some(r => r.rendered === 'Created' || r.rendered === 'Updated'),
-      'F-G-005: the ten mapped actions are spelled properly, which is what makes the rest look unfinished'
+      'the ten actions that were always spelled still are, so nothing regressed the other way'
     ).toBe(true);
 
     await approver.close();
@@ -1544,12 +1668,17 @@ test.describe('G · the audit trail', () => {
 
 test.describe('G · the same fact in several places', () => {
   /**
-   * The dashboard is the only screen that builds a second, different options
-   * object for its counts instead of reusing the queue's
-   * (internal/app/dashboard.go:71-96 vs internal/app/requests.go:482-494). Three
-   * of its five tiles therefore cannot agree with what they link to.
+   * Every dashboard tile agrees with the screen its own link points at.
+   *
+   * The dashboard used to build a second, different options object for its counts
+   * instead of reusing the bucket its link named: "My open requests" counted
+   * pending + approved + cancellation_requested where /requests?bucket=open also
+   * includes `returned`, so a requester holding one pending and one returned
+   * request was told 1 and shown 2 (F-G-006). The tile now passes
+   * `Bucket: "open"` — the predicate the link already names, named once
+   * (internal/app/dashboard.go:81-83) — so the two cannot drift apart again.
    */
-  test('TC-G-030 — the approval tiles agree with /approvals; the requester tiles and the accounts tile do not', async ({
+  test('TC-G-030 — every dashboard tile equals the bucket its own link points at', async ({
     adminPage,
     browser,
     runId
@@ -1612,12 +1741,12 @@ test.describe('G · the same fact in several places', () => {
     expect(needsAction, 'for a scope-own requester the needs-me tile and bucket do agree').toBe(needsMeRows);
     expect(needsAction, 'one request was returned to this requester').toBe(1);
     expect(openRows, 'the open bucket holds both the pending and the returned request').toBe(2);
-    // F-G-006: the tile counts pending+approved+cancellation_requested and the
-    // bucket adds `returned`, so the two differ by every returned request.
+    // The returned request is the whole test: it is the one status the tile used
+    // to drop, so a tile that still counted the old set would read 1 here.
     expect(
       myOpen,
-      'F-G-006: "My open requests" omits `returned`, which /requests?bucket=open includes'
-    ).toBe(openRows - 1);
+      '"My open requests" is /requests?bucket=open — the returned request is in both'
+    ).toBe(openRows);
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -1625,13 +1754,17 @@ test.describe('G · the same fact in several places', () => {
   });
 
   /**
-   * The tile labelled "Approved, unclaimed" on the dashboard and the metric of
-   * the same name on the accounts queue are two different queries: the
-   * dashboard's omits `on_hold=0` (internal/app/dashboard.go:96) where the
-   * queue's has it (internal/store/store.go:1113). Put one request on hold and
-   * the two numbers part company.
+   * One label, one number, on both screens that carry it.
+   *
+   * "Approved, unclaimed" appears on the dashboard and on the accounts queue, and
+   * they used to be two different queries: the dashboard's had no `on_hold` test
+   * where the queue's did, so putting one request on hold made the two part
+   * company under an identical label (F-G-007). The dashboard now reads
+   * `LinkablePaymentRequests(...).Counts.Approved` — the queue's own query, not a
+   * second one over the same data (internal/app/dashboard.go:113-118) — so a hold
+   * moves both numbers or neither.
    */
-  test('TC-G-031 — the dashboard and the accounts queue disagree about "Approved, unclaimed" once anything is on hold', async ({
+  test('TC-G-031 — the dashboard and the accounts queue show the same "Approved, unclaimed" once a request is on hold', async ({
     adminPage,
     runId
   }) => {
@@ -1669,15 +1802,17 @@ test.describe('G · the same fact in several places', () => {
 
     expect(onHold, 'the queue counts the hold').toBeGreaterThanOrEqual(1);
     expect(afterMetric, 'the queue drops a held request out of "unclaimed"').toBe(beforeMetric - 1);
-    // F-G-007. Two tiles, one label, two numbers.
+    // The hold moved the tile too, by exactly as much, which is the whole fix:
+    // the two are one query now, not two that happen to agree until something
+    // goes on hold.
     expect(
       afterTile,
-      'F-G-007: the dashboard tile has no on_hold test, so it still counts the held request'
-    ).toBe(beforeTile);
+      'the dashboard tile applies the same on_hold test the queue does'
+    ).toBe(beforeTile - 1);
     expect(
-      afterTile === afterMetric,
-      'F-G-007: two screens carrying the identical label "Approved, unclaimed" must not show different numbers'
-    ).toBe(false);
+      afterTile,
+      'two screens carrying the identical label "Approved, unclaimed" must show the identical number'
+    ).toBe(afterMetric);
 
     expect(free.id).toBeGreaterThan(0);
     expectNoRuntimeErrors(errors);
@@ -1782,43 +1917,48 @@ test.describe('G · the same fact in several places', () => {
     const one = await createApprovedRequest(adminPage, runId, { amount: '15000.00' });
     await settlePayment(adminPage, one.id, {
       amount: '15000.00',
-      paidOn: '2027-06-05',
+      paidOn: '2025-06-05',
       reference: `UTR-S1-${runId}`,
       remarks: `Sum one ${runId}`
     });
     const two = await createApprovedRequest(adminPage, runId, { amount: '25000.00' });
     await settlePayment(adminPage, two.id, {
       amount: '25000.00',
-      paidOn: '2027-06-06',
+      paidOn: '2025-06-06',
       reference: `UTR-S2-${runId}`,
       remarks: `Sum two ${runId}`
     });
 
-    await adminPage.goto('/grid?month=2027-06');
+    await adminPage.goto('/grid?month=2025-06');
     const rowCells = await adminPage.locator('tr.head td:nth-child(5)').allInnerTexts();
     const rowSum = rowCells.reduce((acc, cell) => acc + paise(cell), 0);
     const total = paise(await adminPage.locator('tfoot tr.total td:nth-child(5)').innerText());
     expect(rowSum, 'the company total is the sum of the rows above it').toBe(total);
     expect(total, 'both payments landed on the same head, so the total is their sum').toBe(4000000);
 
-    await adminPage.goto('/reports/monthly?from=2027-06&to=2027-06');
+    await adminPage.goto('/reports/monthly?from=2025-06&to=2025-06');
     expect(
       paise(await adminPage.locator('tbody tr td[data-label="Actual"]').innerText()),
       '/reports/monthly reuses Grid, so its actual is the grid total'
     ).toBe(total);
 
-    const gridCSV = await csv(adminPage, '/export.csv?month=2027-06');
+    // The CSV's Actual column is now a column of numbers (F-G-030), so summing it
+    // needs no stripping at all: Number() of the cell is the figure. That is the
+    // property being asserted as much as the total — the reduce below is what a
+    // spreadsheet does, and it used to produce NaN.
+    const gridCSV = await csv(adminPage, '/export.csv?month=2025-06');
+    const header = gridCSV.split(/\r?\n/)[0].split(',');
+    const actualColumn = header.indexOf('Actual');
+    expect(actualColumn, 'the grid CSV names its Actual column').toBeGreaterThan(-1);
     const csvSum = gridCSV
-      .split('\n')
+      .split(/\r?\n/)
       .slice(1)
       .filter(line => line.trim())
       .reduce((acc, line) => {
-        const cells = line.split(',"');
-        // Actual is the 4th column; the quoted money cells make a naive split
-        // unsafe, so pull every ₹ figure and take the second (Budget, Actual…).
-        const figures = line.match(/₹[\d,]+\.\d\d/g) ?? [];
-        void cells;
-        return acc + (figures.length >= 2 ? paise(figures[1]) : 0);
+        const cell = line.split(',')[actualColumn];
+        const value = Number(cell);
+        expect(Number.isNaN(value), `the Actual cell "${cell}" must parse as a number`).toBe(false);
+        return acc + Math.round(value * 100);
       }, 0);
     expect(csvSum, '/export.csv is the same rows, so its Actual column sums to the same total').toBe(total);
 
@@ -1826,11 +1966,22 @@ test.describe('G · the same fact in several places', () => {
   });
 
   /**
-   * PROGRESS.md:384-387 — "Paid this year" matches payments by payee NAME.
-   * The decisive proof is a rename: the payment still exists, the vendor is the
-   * same row, and the figure falls to zero.
+   * "Paid this year" survives a rename, because it is an id join and not a
+   * string match.
+   *
+   * PROGRESS.md:384-387 recorded the old behaviour: the figure was string
+   * equality against `payments.vendor_payee`, a denormalised copy of the name as
+   * it stood at settlement — so renaming a vendor silently zeroed its entire
+   * payment history while every one of those payments still existed (F-G-009).
+   * Migration v10 gave `payments` a `vendor_id`, back-filled from the request each
+   * payment settles, and `vendorPaidThisYear` (internal/store/vendors.go:171-176)
+   * now joins on it, keeping the payee match only as a fallback for rows with no
+   * id to join on.
+   *
+   * The rename is still the decisive step, and it is still asserted the same way
+   * — what changed is the number afterwards.
    */
-  test('TC-G-035 — vendor "Paid this year" is a name match and a rename silently zeroes it', async ({
+  test('TC-G-035 — vendor "Paid this year" is an id join, so a rename does not orphan the history', async ({
     adminPage,
     runId
   }) => {
@@ -1853,7 +2004,7 @@ test.describe('G · the same fact in several places', () => {
       adminPage,
       `tbody tr:has-text("${payee}") td[data-label="Paid this year"]`,
       '₹9,100.00',
-      'the vendor total picks the payment up by payee name'
+      'the vendor total picks the payment up'
     );
 
     // Rename the vendor. Nothing about the payment changes.
@@ -1875,19 +2026,31 @@ test.describe('G · the same fact in several places', () => {
     await adminPage.goto(`/vendors?q=${encodeURIComponent(renamed)}`);
     const after = adminPage.locator('tbody tr', { hasText: renamed });
     await expect(after).toHaveCount(1);
-    // F-G-009 — confirmed empirically, exactly as PROGRESS.md records.
+    // The whole point: the payment's payee text still reads the OLD name — the
+    // ledger row above proves it — and the total still finds it, because the
+    // link is `payments.vendor_id`, which the rename never touched.
     await expectMoney(
       adminPage,
       `tbody tr:has-text("${renamed}") td[data-label="Paid this year"]`,
-      '₹0.00',
-      'F-G-009: a rename silently orphans every payment made to the old name'
+      '₹9,100.00',
+      'a rename cannot orphan a payment: the join is on the id, not on the name'
     );
 
     expectNoRuntimeErrors(errors);
   });
 
-  /** PROGRESS.md:388 — "Open requests" is 0 for everyone. There is no query. */
-  test('TC-G-036 — vendor "Open requests" is 0 even with a live request against the vendor', async ({
+  /**
+   * "Open requests" is a real count of real open work.
+   *
+   * PROGRESS.md:388 recorded the column as 0 for everybody: it was declared on
+   * the struct, scanned by nothing, and therefore rendered Go's zero value — an
+   * assertion that there is no open work against a vendor, made without asking
+   * (F-G-010). `vendorOpenRequests` (internal/store/vendors.go:192-205) now
+   * counts `payment_requests` against the vendor id, and does it over
+   * `requestBuckets["open"]` rather than a second hand-written status list, so
+   * this number and /requests?bucket=open cannot disagree the way F-G-006 did.
+   */
+  test('TC-G-036 — vendor "Open requests" counts the live requests against that vendor', async ({
     adminPage,
     browser,
     runId
@@ -1911,26 +2074,48 @@ test.describe('G · the same fact in several places', () => {
 
     await adminPage.goto(`/vendors?q=${encodeURIComponent(payee)}`);
     const cell = adminPage.locator(`tbody tr:has-text("${payee}") td[data-label="Open requests"]`);
-    // F-G-010 — confirmed: no SQL populates the field, so it renders Go's zero.
     await expect(
       cell,
-      'F-G-010: the vendor list promises an open-request count and no query ever fills it in'
-    ).toHaveText('0');
+      'the one pending request against this vendor is counted'
+    ).toHaveText('1');
 
-    // The footer total is the sum of a column of zeroes.
-    await expect(adminPage.locator('tfoot td[data-label="Open"]')).toHaveText('0');
+    // And it is the same set /requests?bucket=open would list, asked of the same
+    // vendor — the agreement, not merely a non-zero number.
+    await adminPage.goto(`/requests?bucket=open&q=${encodeURIComponent(raised.number)}`);
+    await expect(
+      adminPage.locator('.req-card', { hasText: raised.number }),
+      'because "open" here is requestBuckets["open"], the bucket the list screen uses'
+    ).toHaveCount(1);
+
+    // Deciding it takes it out of the count, which proves the column is a live
+    // query and not a constant that happened to be 1.
+    await approveFor(approver.page, raised.id, '5000.00');
+    await adminPage.goto(`/vendors?q=${encodeURIComponent(payee)}`);
+    await expect(
+      adminPage.locator(`tbody tr:has-text("${payee}") td[data-label="Open requests"]`),
+      'an approved request is still open work, so the count holds'
+    ).toHaveText('1');
+
+    // The footer total is a sum of real counts, so it is at least this vendor's.
+    const footer = Number(await adminPage.locator('tfoot td[data-label="Open"]').innerText());
+    expect(footer, 'the footer totals the column rather than summing zeroes').toBeGreaterThanOrEqual(1);
 
     expectNoRuntimeErrors(errors);
     await approver.close();
   });
 
   /**
-   * The recoverables family shares one predicate, so the dashboard, the list
-   * and the CSV agree — but the dashboard's by-category link searches `q`
-   * instead of setting `category`, so clicking a row cannot reproduce its own
-   * count (internal/app/templates.go:3459 vs the `category` control at :3514).
+   * The recoverables family shares one predicate all the way through: the
+   * dashboard, the list, the CSV — and now the by-category drill-through too.
+   *
+   * That last link used to be `?q={label}`, and the label ("ICD — inter-corporate
+   * deposit") appears in none of the columns the free-text search covers, so a row
+   * that promised 1 landed on a list showing 0 (F-G-012). It is now
+   * `?category={id}` — the control the list actually honours — with the id mapped
+   * back from the rollup's label in the handler
+   * (internal/app/recoverables.go:53-64, rendered at templates.go:3688).
    */
-  test('TC-G-037 — the recoverables dashboard, list and CSV agree, but the category drill-through cannot reproduce its count', async ({
+  test('TC-G-037 — the recoverables dashboard, list and CSV agree, and the category drill-through reproduces its own count', async ({
     adminPage,
     browser,
     runId
@@ -1968,11 +2153,9 @@ test.describe('G · the same fact in several places', () => {
     const csvRows = recCSV.split('\n').filter(l => l.trim()).length - 1;
     expect(csvRows, 'the CSV is the same rows as the list').toBe(listRows);
     expect(recCSV, 'and carries this recoverable').toContain(number);
-    expectMoneyIn(recCSV, '₹60,000.00', 'the recoverable CSV amount');
+    expectCSVAmount(recCSV, '60000.00', 'the recoverable CSV amount');
 
-    // The drill-through. "ICD — inter-corporate deposit" is the category label;
-    // the link searches it as free text against number/counterparty/project/
-    // requester, none of which contains it.
+    // The drill-through: the row's own link must find the row's own number.
     await adminPage.goto('/recoverables');
     const categoryLink = adminPage.locator('tbody td[data-label="Category"] a').first();
     const label = (await categoryLink.innerText()).trim();
@@ -1980,13 +2163,15 @@ test.describe('G · the same fact in several places', () => {
       await adminPage.locator(`tbody tr:has-text("${label}") td[data-label="Count"]`).first().innerText()
     );
     await categoryLink.click();
-    await expect(adminPage).toHaveURL(/\/recoverables\/list\?q=/);
+    await expect(
+      adminPage,
+      'the link sets the control the list honours, not a free-text search for a label'
+    ).toHaveURL(/\/recoverables\/list\?category=\d+$/);
     const drilled = await dataRows(adminPage);
-    // F-G-012.
     expect(
       drilled,
-      `F-G-012: the by-category row promises ${countShown} and its own link finds ${drilled}`
-    ).not.toBe(countShown);
+      `the by-category row promises ${countShown} and its own link must find ${countShown}`
+    ).toBe(countShown);
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -2050,7 +2235,7 @@ test.describe('G · the same fact in several places', () => {
     ).toHaveValue('0');
 
     await adminPage.getByLabel('Amount actually paid').fill('45000.00');
-    await adminPage.getByLabel('Paid on').fill('2027-07-20');
+    await adminPage.getByLabel('Paid on').fill('2025-07-20');
     await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-RC-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -2094,18 +2279,24 @@ test.describe('G · the same fact in several places', () => {
     await expect(
       registerRow.locator('td[data-label="Paid on"]'),
       'and the register carries the date the money left, not "Not yet paid"'
-    ).toHaveText('2027-07-20');
+    ).toHaveText('2025-07-20');
 
     expectNoRuntimeErrors(errors);
     await approver.close();
   });
 
   /**
-   * The two nav badges the shell declares but no query feeds
-   * (internal/app/nav.go:62-63 vs internal/store/badges.go:32-46). A queue with
-   * work in it shows no badge at all.
+   * The sidebar Approvals badge is the approvals queue's own number.
+   *
+   * `nav.go` declared `Badge: "approvals"` and `Badge: "accounts_queue"` and
+   * `badges.go` had a spec for neither, so a queue with work in it showed nothing
+   * at all — the one place a nav badge exists to be useful (F-G-013). Both are now
+   * fed by `workQueueBadges` (internal/app/nav.go:190-211) rather than by a
+   * `badgeSpec`, because each needs the caller's own data scope and the badge SQL
+   * takes at most a user id. The badge is therefore the queue's count and not an
+   * approximation of it, which is what this asserts.
    */
-  test('TC-G-039 — the sidebar Approvals and Accounts-queue badges are declared and never populated', async ({
+  test('TC-G-039 — the sidebar Approvals badge carries the approvals queue\'s own count', async ({
     adminPage,
     browser,
     runId
@@ -2131,21 +2322,52 @@ test.describe('G · the same fact in several places', () => {
     );
     if (mobile) await approver.page.locator('.tabbar .js-more').click();
     await expect(navLink, 'the nav links to the queue').toHaveCount(1);
-    // F-G-013.
+    await expect(navLink.locator('.n'), 'and carries a badge').toHaveCount(1);
     expect(
-      await navLink.locator('.n, .badge').count(),
-      'F-G-013: nav.go declares Badge:"approvals" and badges.go has no spec for it, so the count is never shown'
+      Number(await navLink.locator('.n').innerText()),
+      'the nav badge is the number the queue itself shows, not a second count of the same work'
+    ).toBe(toApprove);
+
+    // The accounts-queue badge is the same promise for the other queue, and it is
+    // the caller's scope that decides it: the approver holds no payment:process,
+    // so they get no badge, and the admin — who does — gets the queue's number.
+    expect(
+      await approver.page.locator('.side-nav a[href="/accounts-queue"], .more-sheet .ms-list a[href="/accounts-queue"]').count(),
+      'a nav item nobody may open is not rendered, badge or no badge'
     ).toBe(0);
+    await adminPage.goto('/accounts-queue?tab=approved');
+    const queueApproved = Number(
+      await adminPage.locator('.segmented a:has-text("Approved") .n').innerText()
+    );
+    const adminNav = adminPage.locator(
+      mobile ? '.more-sheet .ms-list a[href="/accounts-queue"]' : '.side-nav a[href="/accounts-queue"]'
+    );
+    if (mobile) await adminPage.locator('.tabbar .js-more').click();
+    if (queueApproved > 0) {
+      expect(
+        Number(await adminNav.locator('.n').innerText()),
+        'the Accounts queue badge is Counts.Approved, the same number the tab shows'
+      ).toBe(queueApproved);
+    } else {
+      // A zero count renders no badge at all, by design (templates.go:59).
+      expect(await adminNav.locator('.n').count(), 'a zero count draws no badge').toBe(0);
+    }
 
     await approver.close();
   });
 
   /**
-   * `/requests` never reads `status` (internal/app/requests.go:474-476) while
-   * `/requests/export.csv` does (:930). The same query string therefore
-   * describes two different sets, and the CSV is the one that obeys it.
+   * One URL, one set — on the screen and in the file it downloads.
+   *
+   * `/requests` used to read no `status` at all while `/requests/export.csv` read
+   * it and applied it, so the identical query string described two different sets
+   * and only the CSV obeyed it (F-G-014). The screen now passes the named status
+   * as `Statuses` (internal/app/requests.go:596-601) — as `Statuses` rather than
+   * `Status` deliberately, because `requestWhere` reads Bucket first and the
+   * bucket always has a default, so a named status set anywhere else would go on
+   * being ignored.
    */
-  test('TC-G-040 — /requests silently ignores ?status= while its own CSV honours it', async ({
+  test('TC-G-040 — /requests and its own CSV describe the same set for the same ?status=', async ({
     adminPage,
     browser,
     runId
@@ -2167,23 +2389,49 @@ test.describe('G · the same fact in several places', () => {
     await expect(requester.page).toHaveURL(/\/requests\/\d+\/submitted$/);
     const number = (await requester.page.locator('.rh-no').first().innerText()).trim();
 
-    // ?status=rejected: the screen shows the open bucket regardless.
+    // ?status=rejected: the request is pending, so neither surface may show it.
     await requester.page.goto('/requests?status=rejected');
     await expect(
       requester.page.locator('.req-card', { hasText: number }),
-      'F-G-014: the screen ignores ?status= and shows the pending request anyway'
-    ).toHaveCount(1);
-
-    // The CSV for the identical query string honours it and returns nothing.
+      'the screen applies ?status=, so a pending request is not in the rejected set'
+    ).toHaveCount(0);
     const rejectedCSV = await csv(requester.page, '/requests/export.csv?status=rejected');
     expect(
       rejectedCSV.includes(number),
-      'F-G-014: the CSV for the same URL applies the filter, so the two disagree'
+      'and the CSV for the same URL agrees, which is the whole property'
     ).toBe(false);
 
-    // A bare CSV has no bucket default, where the screen defaults to `open`.
+    // ?status=pending: both surfaces find it, so the filter narrows rather than
+    // simply emptying the list.
+    await requester.page.goto('/requests?status=pending');
+    await expect(
+      requester.page.locator('.req-card', { hasText: number }),
+      'the screen applies ?status=pending too'
+    ).toHaveCount(1);
+    const pendingCSV = await csv(requester.page, '/requests/export.csv?status=pending');
+    expect(pendingCSV, 'and so does the CSV for the same URL').toContain(number);
+
+    // The named status beats the bucket default, which is the precedence that
+    // made the screen ignore it in the first place: `bucket` defaults to `open`
+    // and would otherwise win. A closed bucket plus a pending status is the pair
+    // that proves which one the store applied.
+    await requester.page.goto('/requests?bucket=closed&status=pending');
+    await expect(
+      requester.page.locator('.req-card', { hasText: number }),
+      'the status the caller named wins over the tab they happen to be standing on'
+    ).toHaveCount(1);
+
+    // And a bare CSV means the same thing a bare screen does: `open`. The export
+    // used to have no bucket default at all and exported every status, so the
+    // download silently meant something different from the list it sits on — the
+    // other half of F-G-014 (internal/app/requests.go:1152).
     const bareCSV = await csv(requester.page, '/requests/export.csv');
-    expect(bareCSV, 'the bare CSV exports every status, so the request is in it').toContain(number);
+    expect(bareCSV, 'the bare CSV is the open bucket, and this request is pending').toContain(number);
+    const closedCSV = await csv(requester.page, '/requests/export.csv?bucket=closed');
+    expect(
+      closedCSV.includes(number),
+      'so the closed bucket does not carry it — the export honours the bucket the screen would'
+    ).toBe(false);
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -2191,18 +2439,28 @@ test.describe('G · the same fact in several places', () => {
   });
 
   /**
+   * The budgets screen accepts the values it rendered, so an unbudgeted month can
+   * be budgeted.
+   *
    * A figure that cannot be entered is the most complete failure of information
-   * flow there is. Every unbudgeted head renders `{{money .Budget}}` = `₹0.00`
-   * (internal/app/templates.go:1160), `money.ParsePaise` refuses `paise <= 0`
-   * (internal/money/money.go:31-33), and `budgetSave` sets `parseErr` for the
-   * WHOLE batch when any one field fails (internal/app/app.go:1025-1030). So the
-   * screen refuses its own rendered values.
+   * flow there is, and this screen had one. Every unbudgeted head renders
+   * `{{money .Budget}}` = `₹0.00`, `money.ParsePaise` refused `paise <= 0`, and
+   * `budgetSave` abandoned the WHOLE batch when any single field failed — so
+   * pressing Save on a fresh month, changing nothing, was refused, and there was
+   * no incremental path either (F-G-028).
+   *
+   * Three things changed, and all three are asserted below. `parseBudgetPaise`
+   * (internal/app/app.go:1354-1377) reads empty and ₹0.00 as zero rather than as
+   * errors; one unreadable field is now one unreadable field, with everything
+   * else saved and the failures named back to the operator
+   * (internal/app/app.go:1296-1342); and zero is a value a budget may hold, so an
+   * existing figure can be taken back down to it.
    */
-  test('TC-G-041 — the budgets screen refuses the values it rendered, so an unbudgeted month cannot be saved at all', async ({
+  test('TC-G-041 — the budgets screen accepts the values it rendered, and one bad field costs only that field', async ({
     adminPage
   }) => {
     const errors = capturePageErrors(adminPage);
-    const FRESH = '2028-06'; // the seed budgets 2026-06 only
+    const FRESH = '2028-06'; // the seed budgets 2026-06 only, and no test uses this one
 
     await adminPage.goto(`/budgets?month=${FRESH}`);
     const inputs = adminPage.locator('input[name^="budget_"]');
@@ -2213,34 +2471,51 @@ test.describe('G · the same fact in several places', () => {
       'an unbudgeted head is rendered as ₹0.00 by the screen itself'
     ).toHaveValue('₹0.00');
 
-    // Press the screen's own Save without changing anything.
+    // Press the screen's own Save without changing anything. The screen must
+    // accept what the screen wrote.
     const names = await inputs.evaluateAll(nodes => nodes.map(n => (n as HTMLInputElement).name));
     const untouched: Record<string, string> = { month: FRESH };
     for (const name of names) untouched[name] = '₹0.00';
     const asRendered = await probePost(adminPage, '/budgets', untouched);
-    // F-G-028.
     expect(
       asRendered.status,
-      'F-G-028: saving the values the screen rendered is refused — a fresh month cannot be budgeted through the UI'
-    ).toBe(400);
-    expect(asRendered.body, 'and the message blames the amount, not the zero').toContain('invalid budget amount');
+      'saving the values the screen rendered is a 303 back to the month'
+    ).toBe(303);
 
-    // Filling one in does not help: the others are still ₹0.00 and the batch is
-    // rejected whole, so there is no incremental path either.
+    // And a figure can actually be entered — one head at a time, which is how a
+    // month gets budgeted in practice.
     const oneFilled = { ...untouched, [names[0]]: '25,00,000.00' };
-    const partial = await probePost(adminPage, '/budgets', oneFilled);
-    expect(
-      partial.status,
-      'F-G-028: one head at a time does not work either — the whole batch is rejected'
-    ).toBe(400);
+    const filled = await probePost(adminPage, '/budgets', oneFilled);
+    expect(filled.status, 'and so is filling one in and leaving the rest at zero').toBe(303);
     await adminPage.goto(`/budgets?month=${FRESH}`);
     await expect(
       adminPage.locator(`input[name="${names[0]}"]`),
-      'F-G-028: and nothing was written, so the figure is simply unenterable'
-    ).toHaveValue('₹0.00');
+      'the figure was written and reads back as money'
+    ).toHaveValue('₹25,00,000.00');
 
-    // The corollary on a month that IS budgeted: a budget can be changed, but
-    // never reduced to zero.
+    // One unreadable field costs that field and nothing else: the batch is no
+    // longer abandoned whole. The second head gets a real figure in the same POST
+    // as the garbage, and must survive it.
+    const withOneBad = { ...untouched, [names[0]]: 'not a number', [names[1]]: '11,000.00' };
+    const partial = await probePost(adminPage, '/budgets', withOneBad);
+    expect(partial.status, 'the screen comes back with the failure named, as a 400').toBe(400);
+    expect(
+      partial.body,
+      'and the banner counts what was left alone rather than claiming everything was refused'
+    ).toContain('invalid budget amount');
+    await adminPage.goto(`/budgets?month=${FRESH}`);
+    await expect(
+      adminPage.locator(`input[name="${names[1]}"]`),
+      'the readable field in the same batch was saved'
+    ).toHaveValue('₹11,000.00');
+    await expect(
+      adminPage.locator(`input[name="${names[0]}"]`),
+      'and the unreadable one kept the figure it already had'
+    ).toHaveValue('₹25,00,000.00');
+
+    // The corollary on a month that IS budgeted: a budget can be reduced to zero,
+    // which is a genuine operation the old refusal had no way to express. The
+    // seeded month is restored afterwards, because later cases read its figures.
     await adminPage.goto('/budgets?month=2026-06');
     const seeded = adminPage.locator('input[name^="budget_"]').first();
     const seededName = (await seeded.getAttribute('name'))!;
@@ -2249,111 +2524,140 @@ test.describe('G · the same fact in several places', () => {
     const seededNames = await adminPage
       .locator('input[name^="budget_"]')
       .evaluateAll(nodes => nodes.map(n => (n as HTMLInputElement).name));
-    const toZero: Record<string, string> = { month: '2026-06' };
+    const asIs: Record<string, string> = { month: '2026-06' };
     for (const name of seededNames) {
-      toZero[name] = await adminPage.locator(`input[name="${name}"]`).inputValue();
+      asIs[name] = await adminPage.locator(`input[name="${name}"]`).inputValue();
     }
-    toZero[seededName] = '0.00';
-    const zeroed = await probePost(adminPage, '/budgets', toZero);
-    expect(
-      zeroed.status,
-      'F-G-028: an existing budget can never be reduced to zero — a genuine operation with no way to express it'
-    ).toBe(400);
+    const zeroed = await probePost(adminPage, '/budgets', { ...asIs, [seededName]: '0.00' });
+    expect(zeroed.status, 'an existing budget can be taken to zero').toBe(303);
     await adminPage.goto('/budgets?month=2026-06');
     await expect(
       adminPage.locator(`input[name="${seededName}"]`),
-      'and the old figure stands'
+      'and the zero is what the screen reads back'
+    ).toHaveValue('₹0.00');
+
+    // Put it back. 2026-06 is the only month the seed budgets, and TC-G-042 and
+    // TC-G-058 both read it afterwards — a month left zeroed here would leak into
+    // them as a change neither test made.
+    const restored = await probePost(adminPage, '/budgets', asIs);
+    expect(restored.status, 'the seeded month is restored for the cases that read it').toBe(303);
+    await adminPage.goto('/budgets?month=2026-06');
+    await expect(
+      adminPage.locator(`input[name="${seededName}"]`),
+      'and the old figure stands again'
     ).toHaveValue(seededValue);
 
     expectNoRuntimeErrors(errors);
   });
 
   /**
-   * `/` was the variance grid before Phase 4 made it the dashboard, and five
-   * links and one form still point there. The grid's own filter toolbar is
-   * `action="/"` (internal/app/templates.go:136), so month, status and search
-   * are unreachable from the grid: submitting them navigates away.
+   * Everything that says "grid" delivers the grid.
+   *
+   * `/` was the variance grid before Phase 4 made it the dashboard, and the grid's
+   * own filter toolbar plus five links were left pointing at it — so month, status
+   * and search were unreachable from the grid (submitting them navigated away),
+   * and a "Grid" action delivered a page with no grid on it (F-G-029). The toolbar
+   * is `action="/grid"` now (internal/app/templates.go:143) and every link in the
+   * family names `/grid?month=` too.
+   *
+   * The filter is asserted by driving it, not by reading its `action`: an
+   * attribute proves where the form points, and only a submitted filter proves the
+   * destination can apply it.
    */
-  test('TC-G-042 — the /?month= family lands on the dashboard, so the grid filters are unreachable and a lock is unconfirmed', async ({
+  test('TC-G-042 — the grid filter and every "grid" link land on the grid, filtered', async ({
     adminPage
   }) => {
     const errors = capturePageErrors(adminPage);
 
-    // 1 — the grid's own filter form posts to `/`.
+    // 1 — the grid's own filter form posts to the grid.
     await adminPage.goto('/grid?month=2026-06');
     const toolbar = adminPage.locator('form.toolbar[aria-label="Grid filters"]');
     await expect(toolbar, 'the grid has a filter toolbar').toHaveCount(1);
     expect(
       await toolbar.getAttribute('action'),
-      'F-G-029: the grid filter form posts to /, which is the dashboard'
-    ).toBe('/');
+      'the grid filter form posts to /grid, which is the screen it filters'
+    ).toBe('/grid');
 
-    // Submitting it navigates off the grid entirely, taking the filters with it.
-    await toolbar.locator('input[name="q"]').fill('Office');
+    // Submitting it stays on the grid AND narrows it, which is the whole point.
+    const allHeads = await adminPage.locator('tr.head .hname').count();
+    expect(allHeads, 'the unfiltered grid has several heads').toBeGreaterThan(1);
+    await toolbar.locator('input[name="q"]').fill('Office Rent');
     await toolbar.getByRole('button', { name: 'Apply' }).click();
-    await expect(adminPage, 'F-G-029: filtering the grid leaves the grid').toHaveURL(/\/\?/);
+    await expect(adminPage, 'filtering the grid stays on the grid').toHaveURL(/\/grid\?/);
     await expect(
-      adminPage.locator('h1'),
-      'F-G-029: and lands on the dashboard, which cannot filter a grid'
-    ).toContainText('Good day');
-    expect(
-      await adminPage.locator('table.matrix.grid').count(),
-      'F-G-029: the filtered grid is nowhere on the page the filter delivered'
-    ).toBe(0);
+      adminPage.locator('table.matrix.grid'),
+      'and the filtered grid is on the page the filter delivered'
+    ).toHaveCount(1);
+    const filteredHeads = await adminPage.locator('tr.head .hname').allInnerTexts();
+    expect(filteredHeads.length, 'the search narrowed the rows').toBeLessThan(allHeads);
+    for (const head of filteredHeads) {
+      expect(head.trim(), 'and every surviving row matches what was searched for').toContain('Office Rent');
+    }
 
-    // 2 — the dashboard ignores ?month= and ?q= completely.
-    const dash = await probeGet(adminPage, '/?month=2026-06&q=Office&status=over');
-    expect(dash.status).toBe(200);
+    // 2 — the month rides along, so the filtered grid is still the month asked for.
+    await adminPage.goto('/grid?month=2026-06');
+    await toolbar.locator('input[name="q"]').fill('Payroll');
+    await toolbar.getByRole('button', { name: 'Apply' }).click();
     expect(
-      dash.body.includes('2026-06'),
-      'F-G-029: the dashboard does not read the month it was handed'
-    ).toBe(false);
+      new URL(adminPage.url()).searchParams.get('month'),
+      'the toolbar carries the month it was standing on'
+    ).toBe('2026-06');
 
-    // 3 — every other link in the family goes to the same wrong place.
+    // 3 — every other link in the family names the grid too.
     await adminPage.goto('/budgets?month=2026-06');
     expect(
       await adminPage.getByRole('link', { name: 'View grid' }).getAttribute('href'),
-      'F-G-029: the budgets screen "View grid" link'
-    ).toBe('/?month=2026-06');
+      'the budgets screen "View grid" link'
+    ).toBe('/grid?month=2026-06');
     await adminPage.goto('/months');
     const monthsGrid = adminPage.locator('a.btn', { hasText: /^Grid$/ }).first();
     expect(
       (await monthsGrid.getAttribute('href')) ?? '',
-      'F-G-029: the months screen "Grid" action'
-    ).toMatch(/^\/\?month=/);
+      'the months screen "Grid" action'
+    ).toMatch(/^\/grid\?month=/);
 
-    // 4 — following one proves the destination has no grid on it.
+    // 4 — following one proves the destination really is a grid.
     await monthsGrid.click();
-    await expect(adminPage).toHaveURL(/\/\?month=/);
-    expect(
-      await adminPage.locator('table.matrix.grid').count(),
-      'F-G-029: the "Grid" action does not deliver a grid'
-    ).toBe(0);
+    await expect(adminPage).toHaveURL(/\/grid\?month=/);
+    await expect(
+      adminPage.locator('table.matrix.grid'),
+      'the "Grid" action delivers a grid'
+    ).toHaveCount(1);
 
     expectNoRuntimeErrors(errors);
   });
 
   /**
-   * The last hop of the money chain is a machine, not a person, and every one of
-   * the four exports writes `money.FormatPaise` output — a currency glyph plus
-   * Indian digit grouping inside a quoted cell. The figure survives (which is
-   * what TC-G-001–003 assert) but it is not a number any spreadsheet or script
-   * will sum without being told to strip it.
+   * The last hop of the money chain is a machine, not a person, so every one of
+   * the four exports writes a NUMBER.
+   *
+   * They used to write `money.FormatPaise` output — a currency glyph plus Indian
+   * digit grouping, quoted because of the grouping commas. The figure survived
+   * (which is what TC-G-001–003 assert) but it was not something any spreadsheet
+   * or script would sum without being told to strip two things first, so the
+   * export was a report and not data (F-G-030). All four now go through
+   * `csvAmount` (internal/app/app.go:2147-2153).
+   *
+   * This case is the verdict for all four at once, which is why it re-checks the
+   * exports the money-trail cases already walked: the property is that no export
+   * anywhere carries a formatted string, and only checking them together says so.
    */
-  test('TC-G-043 — every CSV amount column is a formatted string, not a number', async ({ adminPage, runId }) => {
+  test('TC-G-043 — every CSV amount column is a plain number a spreadsheet can sum', async ({ adminPage, runId }) => {
     const errors = capturePageErrors(adminPage);
     const request = await createApprovedRequest(adminPage, runId, { amount: '150000.00' });
     await settlePayment(adminPage, request.id, {
       amount: '150000.00',
-      paidOn: '2028-03-07',
+      paidOn: '2024-03-07',
       reference: `UTR-CSV-${runId}`,
       remarks: `CSV shape ${runId}`
     });
 
+    // `bucket=all` on the requests export: it defaults to `open` like the list it
+    // sits on (F-G-014), and this request has been settled.
     const exports: Array<[string, string]> = [
-      ['/export.csv?month=2028-03', 'grid'],
-      ['/reports/ytd.csv?from=2028-03&to=2028-03', 'ytd'],
-      [`/requests/export.csv?q=${encodeURIComponent(request.number)}`, 'requests'],
+      ['/export.csv?month=2024-03', 'grid'],
+      ['/reports/ytd.csv?from=2024-03&to=2024-03', 'ytd'],
+      [`/requests/export.csv?bucket=all&q=${encodeURIComponent(request.number)}`, 'requests'],
       ['/recoverables/list.csv', 'recoverables']
     ];
 
@@ -2361,40 +2665,50 @@ test.describe('G · the same fact in several places', () => {
       const body = await csv(adminPage, path);
       const header = body.split('\n')[0];
       expect(header.length, `${what}: the export has a header row`).toBeGreaterThan(0);
-      if (what === 'recoverables') continue; // no rows guaranteed in this month
-      // F-G-030: the cell is "₹1,50,000.00" — quoted because of the grouping
-      // commas, and unparseable as a number without stripping two things.
+      // No export may carry a currency glyph anywhere, rows or none — the
+      // recoverables register has no row of this test's in it and is checked for
+      // the glyph all the same, because that is the property.
+      expect(body.includes('₹'), `${what}: no ₹ may appear in an export`).toBe(false);
       expect(
-        body.includes('"₹1,50,000.00"'),
-        `F-G-030: ${what} writes the amount as a quoted, symbol-bearing, comma-grouped string`
-      ).toBe(true);
-      expect(
-        /(^|,)150000(\.00)?(,|$)/m.test(body),
-        `F-G-030: ${what} offers no plain-number form of the same figure`
+        body.includes('"1,50,000.00"') || body.includes('1,50,000.00'),
+        `${what}: no Indian-grouped form of the figure may appear either`
       ).toBe(false);
+      if (what === 'recoverables') continue; // no rows guaranteed in this month
+      expect(
+        csvCells(body).includes('150000.00'),
+        `${what} writes the amount as the plain number 150000.00`
+      ).toBe(true);
     }
 
-    // The consequence, stated as an assertion: a naive numeric parse of the
-    // grid CSV's Actual column yields NaN.
-    const grid = await csv(adminPage, '/export.csv?month=2028-03');
-    const dataLine = grid.split('\n').find(l => l.includes('Office Rent'))!;
-    const cells = dataLine.match(/"[^"]*"|[^,]+/g)!.map(c => c.replace(/^"|"$/g, ''));
-    const actualCell = cells.find(c => c.includes('1,50,000'))!;
+    // The consequence, stated as an assertion: the naive numeric parse a
+    // spreadsheet performs on the grid CSV's Actual column now yields the figure.
+    const grid = await csv(adminPage, '/export.csv?month=2024-03');
+    const gridHeader = grid.split(/\r?\n/)[0].split(',');
+    const actualColumn = gridHeader.indexOf('Actual');
+    const dataLine = grid.split(/\r?\n/).find(l => l.includes('Office Rent'))!;
+    const actualCell = dataLine.split(',')[actualColumn];
     expect(
-      Number.isNaN(Number(actualCell)),
-      'F-G-030: Number("₹1,50,000.00") is NaN, so the export is a report and not data'
-    ).toBe(true);
+      Number(actualCell),
+      'Number() of the Actual cell is the figure itself, so the export is data and not a report'
+    ).toBe(150000);
 
     expectNoRuntimeErrors(errors);
   });
 
   /**
-   * `/reports/ytd.csv` calls `Report(from, to, "heads")` unconditionally
-   * (internal/app/app.go:1470-1490) while the screen's "Export CSV" button sits
-   * on all three tabs, so the monthly and projects views export somebody else's
-   * shape.
+   * Export CSV exports the tab that was pressed.
+   *
+   * `/reports/ytd.csv` called `Report(from, to, "heads")` unconditionally while
+   * the button sat on all three tabs, so pressing it on Monthly or Projects
+   * downloaded somebody else's shape — head-level rows naming the very heads the
+   * monthly view deliberately aggregates away (F-G-031). The route takes the
+   * level as a parameter now (`reportLevels`, internal/app/app.go:1968-1985) and
+   * the link carries `&level={{.Mode}}` (templates.go:3467).
+   *
+   * An unknown or absent level still falls back to "heads", which is what keeps a
+   * bookmarked link from a previous release working.
    */
-  test('TC-G-044 — the reports Export CSV always exports head rows, whichever tab pressed it', async ({
+  test('TC-G-044 — the reports Export CSV exports the tab that pressed it', async ({
     adminPage,
     runId
   }) => {
@@ -2402,7 +2716,7 @@ test.describe('G · the same fact in several places', () => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '31000.00' });
     await settlePayment(adminPage, request.id, {
       amount: '31000.00',
-      paidOn: '2028-04-04',
+      paidOn: '2026-04-04',
       reference: `UTR-YTD-${runId}`,
       remarks: `YTD shape ${runId}`
     });
@@ -2412,26 +2726,46 @@ test.describe('G · the same fact in several places', () => {
     // comparison is case-insensitive.
     const headers = async () =>
       (await adminPage.locator('thead th').allInnerTexts()).map(h => h.trim().toLowerCase());
-    await adminPage.goto('/reports/monthly?from=2028-04&to=2028-04');
+    await adminPage.goto('/reports/monthly?from=2026-04&to=2026-04');
     expect(await headers(), 'the monthly view is one row per period').not.toContain('head');
-    await adminPage.goto('/reports/heads?from=2028-04&to=2028-04');
+    await adminPage.goto('/reports/heads?from=2026-04&to=2026-04');
     expect(await headers(), 'the heads view names the head').toContain('head');
 
-    // Both tabs' Export CSV links carry only from/to — no mode at all.
-    await adminPage.goto('/reports/monthly?from=2028-04&to=2028-04');
-    const link = await adminPage.getByRole('link', { name: 'Export CSV' }).getAttribute('href');
-    expect(link, 'the export link carries no mode').toBe('/reports/ytd.csv?from=2028-04&to=2028-04');
+    // The Monthly tab's own link names its own level, and downloads its own shape.
+    await adminPage.goto('/reports/monthly?from=2026-04&to=2026-04');
+    const monthlyLink = await adminPage.getByRole('link', { name: 'Export CSV' }).getAttribute('href');
+    expect(monthlyLink, 'the export link carries the tab it was pressed on').toBe(
+      '/reports/ytd.csv?from=2026-04&to=2026-04&level=monthly'
+    );
+    const monthly = await csv(adminPage, monthlyLink!);
+    expect(
+      monthly.includes('Office Rent'),
+      'the head the monthly view aggregates away stays aggregated away in its export'
+    ).toBe(false);
+    const monthlyRows = monthly.split(/\r?\n/).filter(l => l.trim()).slice(1);
+    expect(monthlyRows.length, 'one month asked for is one row per period').toBe(1);
+    expect(monthlyRows[0], 'and the period is the month').toContain('2026-04');
 
-    const body = await csv(adminPage, link!);
-    // F-G-031.
-    expect(
-      body.split('\n')[0],
-      'F-G-031: pressing Export CSV on the Monthly tab downloads head-level rows'
-    ).toContain('Head');
-    expect(
-      body.includes('Office Rent'),
-      'F-G-031: the head the monthly view deliberately aggregates away is named in its own export'
-    ).toBe(true);
+    // The Heads tab's link names its level, and downloads the head rows.
+    await adminPage.goto('/reports/heads?from=2026-04&to=2026-04');
+    const headsLink = await adminPage.getByRole('link', { name: 'Export CSV' }).getAttribute('href');
+    expect(headsLink).toBe('/reports/ytd.csv?from=2026-04&to=2026-04&level=heads');
+    const heads = await csv(adminPage, headsLink!);
+    expect(heads.includes('Office Rent'), 'the heads export names the head').toBe(true);
+
+    // The Projects tab too, so all three are proven and not just the two that
+    // differ most.
+    await adminPage.goto('/reports/projects?from=2026-04&to=2026-04');
+    const projectsLink = await adminPage.getByRole('link', { name: 'Export CSV' }).getAttribute('href');
+    expect(projectsLink).toBe('/reports/ytd.csv?from=2026-04&to=2026-04&level=projects');
+    const projects = await csv(adminPage, projectsLink!);
+    expect(projects.includes('Operations'), 'the projects export names the project').toBe(true);
+    expect(projects.includes('Office Rent'), 'and not the heads beneath it').toBe(false);
+
+    // A link with no level at all — a bookmark from before the fix — still works,
+    // and still means "heads".
+    const bare = await csv(adminPage, '/reports/ytd.csv?from=2026-04&to=2026-04');
+    expect(bare.includes('Office Rent'), 'an absent level falls back to heads').toBe(true);
 
     expectNoRuntimeErrors(errors);
   });
@@ -2507,10 +2841,13 @@ test.describe('G · confinement', () => {
       assertClean(body, `/requests/export.csv${query}`);
     }
 
-    // 5 — the request itself, and the error page it serves.
+    // 5 — the request itself, and the error page it serves. The refusal is 404
+    // rather than 403: the existence of a row is information about that row, so
+    // an out-of-scope id and a missing one answer the same thing (F-G-002, and
+    // TC-G-051 is the case about that specifically).
     const detail = await probeGet(alice.page, `/requests/${bobID}`);
-    expectOutcome(detail, [403], 'a requester cannot open another requester\'s request');
-    assertClean(detail.body, 'the 403 error page');
+    expectOutcome(detail, [404], 'a requester cannot open another requester\'s request');
+    assertClean(detail.body, 'the 404 error page');
     for (const path of [
       `/requests/${bobID}/edit`,
       `/requests/${bobID}/submitted`,
@@ -2537,12 +2874,21 @@ test.describe('G · confinement', () => {
   });
 
   /**
-   * `loadViewableRequest` reads the row first and checks scope second
-   * (internal/app/requests.go:229-240), so a missing id answers 404 and an
-   * out-of-scope id answers 403. The difference is an oracle: a requester can
-   * walk the id space and learn exactly which requests exist.
+   * A request id is not an existence oracle.
+   *
+   * `loadViewableRequest` reads the row first and checks scope second, and it used
+   * to answer 403 for a row that exists but is out of scope while a row that does
+   * not exist answered 404 — so a requester could walk the id space and learn
+   * exactly which request ids exist, and by extension how many requests the
+   * company raises (F-G-002). Both cases are 404 now
+   * (internal/app/requests.go:335-348), through the same code path, and the
+   * attempt is still logged.
+   *
+   * The pair is the assertion: proving one id answers 404 proves nothing on its
+   * own, because a route that refused everything with 404 would pass it. Only
+   * "these two are indistinguishable" is the property.
    */
-  test('TC-G-051 — 404 and 403 are distinguishable, so a requester can enumerate which request ids exist', async ({
+  test('TC-G-051 — an out-of-scope request and a missing one are indistinguishable, so ids cannot be enumerated', async ({
     adminPage,
     browser,
     runId
@@ -2566,20 +2912,43 @@ test.describe('G · confinement', () => {
 
     const present = await probeGet(alice.page, `/requests/${existing}`);
     const absent = await probeGet(alice.page, '/requests/99999999');
-    expect(present.status, 'an existing row Alice may not see answers 403').toBe(403);
-    expect(absent.status, 'a row that does not exist answers 404').toBe(404);
-    // F-G-002.
+    expect(present.status, 'an existing row Alice may not see answers 404').toBe(404);
+    expect(absent.status, 'a row that does not exist answers 404 too').toBe(404);
     expect(
-      present.status === absent.status,
-      'F-G-002: 403 and 404 differ, so the status code is an existence oracle for every request id'
-    ).toBe(false);
+      present.status,
+      'the two must be indistinguishable, or the status code enumerates every request id'
+    ).toBe(absent.status);
+    // The bodies as well as the codes: a refusal that named the request would be
+    // the same oracle in prose. The error page carries a per-request diagnostic id
+    // (templates.go:105), which differs between any two responses and is the one
+    // thing that must be normalised away before they can be compared.
+    const withoutRequestID = (body: string) => body.replace(/<code>[^<]*<\/code>/, '<code></code>');
+    expect(
+      withoutRequestID(present.body),
+      'and the pages say the same thing, so neither confirms the row is there'
+    ).toBe(withoutRequestID(absent.body));
+
+    // Bob still opens his own, which is what makes the 404 above a scope refusal
+    // rather than a broken route.
+    const own = await probeGet(bob.page, `/requests/${existing}`);
+    expect(own.status, 'the owner reads their own request').toBe(200);
 
     await approver.close();
     await alice.close();
     await bob.close();
   });
 
-  test('TC-G-052 — a Requester is refused every export and every money screen', async ({
+  /**
+   * `/grid` is in the refused list now, and that is the change worth naming.
+   *
+   * It used to be `RequireLogin` only while `/export.csv` — the download of the
+   * very same rows — was gated on `grid:export`, so the data was open and only
+   * carrying it away was controlled (F-G-015/F-G-032). `GET /grid` is gated on
+   * `grid:view` (internal/app/app.go:439), which the Requester role does not hold
+   * (internal/store/migrations.go:526-537), so the whole company budget is no
+   * longer readable by somebody entitled only to their own requests.
+   */
+  test('TC-G-052 — a Requester is refused every export, every money screen and the grid', async ({
     adminPage,
     browser,
     runId
@@ -2587,6 +2956,7 @@ test.describe('G · confinement', () => {
     const requester = await asRole(adminPage, browser, runId, ['Requester'], `noexp-${runId}`);
     for (const path of [
       '/payments',
+      '/grid',
       '/export.csv',
       '/reports/monthly',
       '/reports/ytd.csv',
@@ -2606,20 +2976,31 @@ test.describe('G · confinement', () => {
       const probe = await probeGet(requester.page, path);
       expect(probe.status, `${path} is a Requester's own data`).toBe(200);
     }
-    // And /grid, which is RequireLogin only — a candidate finding, not mine to
-    // fix, recorded so the audit is honest about what a Requester can see.
-    const grid = await probeGet(requester.page, '/grid');
-    expect(grid.status, 'F-G-015: /grid is RequireLogin only, so a Requester reaches it').toBe(200);
+    // The screen and its download are one gate now, not two: a role that cannot
+    // read the grid cannot export it either, and the nav offers neither.
+    await requester.page.goto('/');
+    expect(
+      await requester.page.locator('a[href="/grid"]').count(),
+      'a screen the Requester may not open is not linked from the shell'
+    ).toBe(0);
     await requester.close();
   });
 
   /**
-   * `payment` is a declared scoped resource (internal/store/permissions.go:185),
-   * the admin UI offers its scope radios, and the seed writes `payment=all`
-   * rows — but nothing ever calls `Scope(u, "payment")`. Setting a role to
-   * `payment=own` therefore changes nothing, which breaks R3.
+   * The payment data scope is declared, editable — and read.
+   *
+   * `payment` is a declared scoped resource, the admin UI offers its scope radios
+   * and the seed writes `payment=all` rows, but nothing ever called
+   * `Scope(u, "payment")`: a role built with Payments · Own received the entire
+   * ledger, which is R3 broken in the one place an administrator would reasonably
+   * think they had configured it (F-A-04/F-G-003). `PaymentListOptions` carries
+   * `Scope`/`ViewerID` and filters on `entered_by`, and the ledger passes them
+   * (internal/app/app.go:815-819).
+   *
+   * The search is checked as well as the list, because a filter applied to the
+   * rows and not to the search is the same leak one query string later.
    */
-  test('TC-G-053 — the payment data scope is declared, editable and never read', async ({
+  test('TC-G-053 — the payment data scope is read, so a "own" ledger shows only what the caller entered', async ({
     adminPage,
     browser,
     runId
@@ -2636,7 +3017,7 @@ test.describe('G · confinement', () => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '13100.00' });
     const paymentPath = await settlePayment(adminPage, request.id, {
       amount: '13100.00',
-      paidOn: '2027-08-09',
+      paidOn: '2025-08-09',
       reference: `UTR-SC-${runId}`,
       remarks: `Scope probe ${runId}`
     });
@@ -2648,44 +3029,81 @@ test.describe('G · confinement', () => {
       'the role screen stores and re-renders the payment scope'
     ).toBeChecked();
 
-    const ledger = await probeGet(subject.page, '/payments?month=2027-08');
+    const ledger = await probeGet(subject.page, '/payments?month=2025-08');
     expect(ledger.status, 'payment:view opens the ledger').toBe(200);
-    // F-G-003.
     expect(
       ledger.body.includes('₹13,100.00'),
-      'F-G-003: payment scope "own" is never read, so the ledger shows a payment somebody else entered'
-    ).toBe(true);
+      'payment scope "own" is read, so a payment somebody else entered is not in the list'
+    ).toBe(false);
     // The ledger has no Remarks column, but it does carry the payee and who
     // entered the row — both of which are somebody else's business here.
-    expect(ledger.body.includes(`Payee ${runId}`), 'F-G-003: including its payee').toBe(true);
-    expect(ledger.body.includes('Fervid Admin'), 'F-G-003: and who entered it').toBe(true);
-    // And the search does reach the processing note, so the whole row is
-    // discoverable by a caller whose scope should have excluded it.
-    const searched = await probeGet(subject.page, `/payments?month=2027-08&q=${encodeURIComponent(`Scope probe ${runId}`)}`);
+    expect(ledger.body.includes(`Payee ${runId}`), 'nor its payee').toBe(false);
+    // And the search obeys the same filter, or the row is discoverable one query
+    // string later by the note another accountant typed.
+    const searched = await probeGet(
+      subject.page,
+      `/payments?month=2025-08&q=${encodeURIComponent(`Scope probe ${runId}`)}`
+    );
     expect(
       searched.body.includes('₹13,100.00'),
-      'F-G-003: the ledger search finds it by another accountant\'s processing note'
+      'the ledger search applies the scope too, so the processing note is not a way round it'
+    ).toBe(false);
+
+    // The control: the admin, who holds payment=all, does see it — so the empty
+    // list above is a scope filter and not an empty month.
+    const asAdmin = await probeGet(adminPage, '/payments?month=2025-08');
+    expect(
+      asAdmin.body.includes('₹13,100.00'),
+      'the payment is genuinely there for a caller whose scope reaches it'
     ).toBe(true);
 
-    // The payment detail is protected — but only because the REQUEST behind it
-    // is scope-checked (internal/app/app.go:759), not because payment scope is.
+    // The payment detail is refused as well — by the REQUEST behind it, which is
+    // the second, independent gate.
+    //
+    // 404 rather than 403, and that is the point of the case rather than an
+    // incidental status. This route used to answer 403 here while a payment id
+    // nobody had used answered 404, so the pair told a caller which payment ids
+    // exist — the enumeration oracle F-G-002 closed on /requests/{id} and Wave 3
+    // closed on both attachment routes. It was never inside that finding's scope,
+    // so it kept the 403 until the spec-repair pass reached it.
     const detail = await probeGet(subject.page, paymentPath);
     expectOutcome(
       detail,
-      [403],
-      'the request scope behind the payment is what refuses the detail, which is the only reason this is not worse'
+      [404],
+      'and the detail is refused by the request scope behind the payment'
     );
+    // Which only means anything if a payment that does not exist is answered the
+    // same way. Asserted here rather than assumed, because a 404 that differs in
+    // any visible respect from "no such row" is the same oracle wearing a
+    // different status code.
+    const missing = await probeGet(subject.page, '/payments/999999');
+    expectOutcome(missing, [404], 'a payment id nobody has used answers identically');
 
     await subject.close();
   });
 
   /**
-   * `/recoverables/list` and its CSV read `payment_requests` and never apply the
-   * `request` scope (internal/store/recoverables.go:254). The seed keeps this
-   * latent by granting `recoverable_report` only to Accounts and Admin, both of
-   * whom hold `request=all`. One custom role opens it.
+   * The recoverables register, its CSV and its summary all apply the caller's
+   * request scope.
+   *
+   * The register is a second view over `payment_requests` and it never asked who
+   * was reading it: `recoverable_report:view` alone returned every category,
+   * counterparty, project, amount, requester and repayment note in the company,
+   * including rows the same caller is refused on `/requests/{id}` (F-G-016/F-E-03).
+   * The seed kept it latent — Accounts and Admin both hold `request=all` — and one
+   * custom role opened it.
+   *
+   * The predicate lives in the SQL now (`recoverableScope`,
+   * internal/store/recoverables.go:347) rather than in a handler-side filter, and
+   * the viewer is built once at the one place the screen and its download both
+   * pass through (`recoverableListOptions`, internal/app/recoverables.go:69-96).
+   * An unrecognised scope returns `AND 0`, so it fails closed.
+   *
+   * All four surfaces are checked, because each is a place the filter could have
+   * been forgotten separately — and the summary aggregates are the one Wave 4
+   * initially left company-wide, which left the disclosure half-closed.
    */
-  test('TC-G-054 — the recoverables register and its CSV ignore the caller\'s request scope', async ({
+  test('TC-G-054 — the recoverables register, its CSV and its summary all apply the caller\'s request scope', async ({
     adminPage,
     browser,
     runId
@@ -2713,57 +3131,95 @@ test.describe('G · confinement', () => {
     );
     const nosy = await asCustomRole(adminPage, browser, runId, 'recnosy', role);
 
-    // The row itself is properly refused: canViewRequest does its job.
+    // The row itself is refused: canViewRequest does its job, and everything
+    // below has to agree with it.
     const own = await probeGet(nosy.page, `/requests/${id}`);
-    expectOutcome(own, [403], 'the request detail obeys the caller\'s own scope');
+    expectOutcome(own, [404], 'the request detail obeys the caller\'s own scope');
 
-    // The register does not.
+    // 1 — the register.
     const list = await probeGet(nosy.page, '/recoverables/list');
     expect(list.status, 'recoverable_report:view opens the register').toBe(200);
-    // F-G-016.
     expect(
       list.body.includes(number),
-      'F-G-016: the register lists a request this caller is forbidden to open'
-    ).toBe(true);
-    expect(list.body.includes(counterparty), 'F-G-016: including its counterparty').toBe(true);
-    expect(list.body.includes('₹88,000.00'), 'F-G-016: including its amount').toBe(true);
+      'the register does not list a request this caller is forbidden to open'
+    ).toBe(false);
+    expect(list.body.includes(counterparty), 'nor its counterparty').toBe(false);
+    expect(list.body.includes('₹88,000.00'), 'nor its amount').toBe(false);
 
-    // The CSV discloses MORE than the screen: `exportRecoverable`
-    // (internal/app/recoverables.go:113) adds Requester and Repayment Notes,
-    // neither of which the list template renders.
+    // 2 — the CSV, which discloses MORE than the screen: `exportRecoverable`
+    // (internal/app/recoverables.go:163) writes Requester and Repayment Notes,
+    // neither of which the list template renders. Both build their options
+    // through recoverableListOptions, so the download cannot drift from the
+    // screen the way F-G-016 found it had.
     const listCSV = await csv(nosy.page, '/recoverables/list.csv');
-    expect(listCSV.includes(number), 'F-G-016: and the CSV exports the whole register in one request').toBe(true);
-    expect(listCSV.includes(counterparty)).toBe(true);
-    expectMoneyIn(listCSV, '₹88,000.00', 'the leaked CSV amount');
+    expect(listCSV.includes(number), 'the CSV does not export the row either').toBe(false);
+    expect(listCSV.includes(counterparty)).toBe(false);
+    expect(listCSV.includes('88000.00'), 'nor its amount in the plain form the CSV writes').toBe(false);
     expect(
       listCSV.includes(owner.subject.name),
-      'F-G-016: the CSV names the requester, which the on-screen register does not even show'
-    ).toBe(true);
+      'nor the requester, which the on-screen register does not even show'
+    ).toBe(false);
     expect(
       listCSV.includes(`Refund on close ${runId}`),
-      'F-G-016: and their repayment terms verbatim'
-    ).toBe(true);
-
-    // The screen genuinely has no Requester column — the CSV is the wider leak.
-    await nosy.page.goto('/recoverables/list');
-    const headers = await nosy.page.locator('thead th').allInnerTexts();
-    expect(
-      headers.some(h => /requester/i.test(h)),
-      'the register has no Requester column, so the CSV over-discloses relative to its own screen'
+      'nor their repayment terms'
     ).toBe(false);
 
+    // 3 — the summary aggregates. A counterparty rollup names counterparties and
+    // the tiles total their money, so a summary over a scoped table needs the
+    // scope too, or the register's own tabs link to the disclosure.
+    const dashboard = await probeGet(nosy.page, '/recoverables');
+    expect(dashboard.status, 'recoverable_report:view opens the summary').toBe(200);
+    expect(
+      dashboard.body.includes(counterparty),
+      'the by-counterparty rollup is scoped, so it does not name a counterparty the caller may not see'
+    ).toBe(false);
+    expect(dashboard.body.includes('₹88,000.00'), 'and the tiles do not total their money').toBe(false);
+
+    // The control: Accounts holds request=all, so the row is genuinely there and
+    // the four empty answers above are a scope filter, not an empty register.
+    const accounts = await asRole(adminPage, browser, runId, ['Accounts'], `recall-${runId}`);
+    const wide = await probeGet(accounts.page, '/recoverables/list');
+    expect(wide.body.includes(number), 'a caller with request=all does see the row').toBe(true);
+    expect(wide.body.includes(counterparty), 'with its counterparty').toBe(true);
+
+    // The screen and its download are the same shape: every column the CSV
+    // writes — Requester and Repayment notes included, which the register used
+    // not to render at all — is a column of the screen. That is why one scope,
+    // built once in recoverableListOptions, is enough for both.
+    await accounts.page.goto('/recoverables/list');
+    const headers = (await accounts.page.locator('thead th').allInnerTexts()).map(h => h.trim().toLowerCase());
+    for (const column of ['category', 'counterparty', 'project', 'amount', 'paid on', 'expected back', 'ageing', 'status', 'requester', 'repayment notes']) {
+      expect(headers, `the register renders the CSV's "${column}" column too`).toContain(column);
+    }
+
+    await accounts.close();
     await approver.close();
     await owner.close();
     await nosy.close();
   });
 
   /**
-   * `Store.Audit` never receives a viewer, and `before_json` for a
-   * `payment_request` row is the entire request struct. A caller holding
-   * `audit:view` therefore reads every field of every request in the system,
-   * including ones `/requests/{id}` refuses them.
+   * The audit log is scoped, not redacted.
+   *
+   * `Store.Audit` receives no viewer, and `before_json` for a `payment_request`
+   * row is the entire Request struct — number, purpose, requester, approver,
+   * amount, every date. Rendering that to a caller who is refused
+   * `/requests/{id}` made `audit:view` a way around Q5/R6, carrying strictly more
+   * data than the screens that do check (F-G-017).
+   *
+   * The decision taken was to withhold the ROWS rather than blank their evidence:
+   * C2 requires a history for request mutations, and a history whose before/after
+   * has been redacted is not one. `auditWithinRequestScope`
+   * (internal/app/app.go:1859-1887) drops a `payment_request` row whose request
+   * the caller's scope does not reach, exactly as `loadViewableRequest` withholds
+   * the request — and touches nothing else, so a payment, budget or user row is
+   * unaffected and a caller with `request=all` sees what they always saw.
+   *
+   * Both halves are asserted: the row is gone for the narrow caller, and every
+   * other entity's rows are still there, or "scoped" would have quietly become
+   * "emptied".
    */
-  test('TC-G-055 — the audit log discloses the full text of requests the caller cannot open', async ({
+  test('TC-G-055 — the audit log withholds rows for requests the caller cannot open, and nothing else', async ({
     adminPage,
     browser,
     runId
@@ -2797,24 +3253,42 @@ test.describe('G · confinement', () => {
     const nosy = await asCustomRole(adminPage, browser, runId, 'audnosy', role);
 
     const own = await probeGet(nosy.page, `/requests/${id}`);
-    expectOutcome(own, [403], 'the request detail obeys the caller\'s scope');
+    expectOutcome(own, [404], 'the request detail obeys the caller\'s scope');
 
     const log = await probeGet(nosy.page, `/audit?entity=payment_request&actor=${encodeURIComponent(approver.subject.name)}`);
     expect(log.status, 'audit:view opens the log').toBe(200);
-    // F-G-017.
     expect(
       log.body.includes(number),
-      'F-G-017: the log names a request this caller is forbidden to open'
-    ).toBe(true);
+      'the log does not name a request this caller is forbidden to open'
+    ).toBe(false);
     expect(
       log.body.includes(purpose),
-      'F-G-017: before_json carries the whole Request struct, purpose included'
-    ).toBe(true);
+      'so before_json cannot carry that request\'s purpose either'
+    ).toBe(false);
     expect(
       log.body.includes(owner.subject.name),
-      'F-G-017: and the requester\'s name'
+      'nor the requester\'s name'
+    ).toBe(false);
+    expect(log.body.includes('6400000'), 'nor the amount in paise').toBe(false);
+
+    // The log is scoped, not emptied: the caller's own rows are still there.
+    // `login` is written against entity_type `user`, which the scope does not
+    // touch at all, so this is the "and nothing else" half of the property.
+    const users = await probeGet(nosy.page, '/audit?entity=user');
+    expect(users.status, 'the log still opens for another entity').toBe(200);
+    expect(
+      users.body.includes(nosy.email),
+      'a user row is not a request row, so it is untouched by the request scope'
     ).toBe(true);
-    expect(log.body.includes('6400000'), 'F-G-017: and the amount in paise').toBe(true);
+
+    // And the control: the admin holds request=all, so the row is genuinely in
+    // the log and the four absences above are the scope filter.
+    const wide = await probeGet(
+      adminPage,
+      `/audit?entity=payment_request&actor=${encodeURIComponent(approver.subject.name)}`
+    );
+    expect(wide.body.includes(number), 'a caller with request=all reads the approve row').toBe(true);
+    expect(wide.body.includes(purpose), 'with the before/after evidence intact, unredacted').toBe(true);
 
     await approver.close();
     await owner.close();
@@ -2822,12 +3296,18 @@ test.describe('G · confinement', () => {
   });
 
   /**
-   * `dashboard.go:96` hardwires `Scope: "all"` for the accounts work area
-   * instead of asking `effectiveScope`, so the tile — and the four rows under
-   * it — are company-wide for anyone holding `payment:process`, whatever their
-   * request scope says.
+   * The dashboard accounts area asks for the caller's scope, like the queue it
+   * links to.
+   *
+   * It used to be built with the literal `Scope: "all"` written into the call, so
+   * its tile and its four rows were company-wide for anybody holding
+   * `payment:process` whatever their request scope said — and each row linked to a
+   * detail page the same caller is refused (F-G-018). It now passes
+   * `a.effectiveScope(u, "")` into the queue's own query
+   * (internal/app/dashboard.go:113-118), which is the same call that closed F-G-007
+   * one tile over.
    */
-  test('TC-G-056 — the dashboard accounts area hardwires scope "all" and lists requests the caller cannot open', async ({
+  test('TC-G-056 — the dashboard accounts area applies the caller\'s scope, and agrees with the queue', async ({
     adminPage,
     browser,
     runId
@@ -2860,25 +3340,46 @@ test.describe('G · confinement', () => {
     const nosy = await asCustomRole(adminPage, browser, runId, 'procnosy', role);
 
     const own = await probeGet(nosy.page, `/requests/${id}`);
-    expectOutcome(own, [403], 'the request detail obeys the caller\'s scope');
+    expectOutcome(own, [404], 'the request detail obeys the caller\'s scope');
 
     const dash = await probeGet(nosy.page, '/');
     expect(dash.status, 'the dashboard is RequireLogin only').toBe(200);
-    // F-G-018.
     expect(
       dash.body.includes(number),
-      'F-G-018: the accounts work area hardwires Scope:"all", so it lists a request the caller cannot open'
-    ).toBe(true);
-    expect(dash.body.includes(title), 'F-G-018: with its short title').toBe(true);
-    expect(dash.body.includes('₹55,500.00'), 'F-G-018: and its amount').toBe(true);
+      'the accounts work area applies the caller\'s scope, so it lists no request they cannot open'
+    ).toBe(false);
+    expect(dash.body.includes(title), 'nor its short title').toBe(false);
+    expect(dash.body.includes('₹55,500.00'), 'nor its amount').toBe(false);
 
-    // The accounts queue itself is correct — it asks for the caller's scope.
+    // The accounts queue and the dashboard tile are one query, so they agree —
+    // which is the property, not merely that both happen to be empty.
     const queue = await probeGet(nosy.page, '/accounts-queue?tab=approved');
     expect(queue.status, 'payment:process opens the queue').toBe(200);
     expect(
       queue.body.includes(number),
-      'the queue asks a.auth.Scope(u,"request") and correctly hides the row the dashboard showed'
+      'the queue asks a.auth.Scope(u,"request") and hides the row too'
     ).toBe(false);
+
+    // The control. The area's rows are the queue's longest-waiting first and it
+    // draws only a handful, so "is this row on the page" is not the honest
+    // question for a caller who can see hundreds — the tile is. The narrow caller
+    // is told nothing is waiting; the admin, who holds request=all, is told
+    // otherwise, and the queue confirms the row is genuinely there.
+    await nosy.page.goto('/');
+    expect(
+      Number(await nosy.page.locator('.metric:has(.metric-label:text-is("Approved, unclaimed")) .metric-value').innerText()),
+      'a caller whose scope reaches none of the approved requests is told there are none'
+    ).toBe(0);
+    await adminPage.goto('/');
+    expect(
+      Number(await adminPage.locator('.metric:has(.metric-label:text-is("Approved, unclaimed")) .metric-value').innerText()),
+      'while a caller with request=all is told there are'
+    ).toBeGreaterThan(0);
+    const wideQueue = await probeGet(adminPage, '/accounts-queue?tab=approved');
+    expect(
+      wideQueue.body.includes(number),
+      'and this is the request that makes that true, so the absences above are the scope'
+    ).toBe(true);
 
     await approver.close();
     await owner.close();
@@ -2886,13 +3387,27 @@ test.describe('G · confinement', () => {
   });
 
   /**
-   * `GET /grid` is `RequireLogin` only (internal/app/app.go:377) while
-   * `GET /export.csv` is `RequirePermission("grid","export")` (:394). So the
-   * data is open and only the download of it is gated — a subject holding NO
-   * role at all reads every project's budget and actuals, plus the grid's own
-   * Recent Payments panel with amounts, payees and links into the ledger.
+   * The variance grid is gated, and its Recent Payments panel is gated again.
+   *
+   * `GET /grid` was `RequireLogin` only while `GET /export.csv` — the download of
+   * the very same rows — needed `grid:export`, so the data was open and only
+   * carrying it away was controlled. A subject holding NO role at all read every
+   * project's budget and actuals plus the grid's own Recent Payments panel, with
+   * amounts, payees and live links into a ledger that answered them 403
+   * (F-A-02/F-G-032).
+   *
+   * Two gates, because the screen asks two questions. `grid:view` opens the budget
+   * matrix (internal/app/app.go:439). The payments panel carries amounts, payees
+   * and `/payments/{id}` links, so it is `payment:view` — checked in the HANDLER
+   * (internal/app/app.go:776) rather than trusted to the template, because a
+   * screen must not be relied on to hide data the handler already loaded.
+   *
+   * Both halves are proven with a subject each: nobody, who gets neither, and a
+   * custom role holding `grid:view` and not `payment:view`, who gets the matrix
+   * and no panel. The second subject is the one that would catch the gate being
+   * moved back into the template.
    */
-  test('TC-G-057 — a subject with no role at all reads the whole variance grid and the recent-payments panel', async ({
+  test('TC-G-057 — the grid needs grid:view, and its recent-payments panel needs payment:view as well', async ({
     adminPage,
     browser,
     runId
@@ -2902,7 +3417,7 @@ test.describe('G · confinement', () => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '66000.00', payee });
     await settlePayment(adminPage, request.id, {
       amount: '66000.00',
-      paidOn: '2028-05-06',
+      paidOn: '2026-05-06',
       reference: `UTR-GL-${runId}`,
       remarks: `Grid leak ${runId}`
     });
@@ -2911,60 +3426,92 @@ test.describe('G · confinement', () => {
     const nobody = await asRole(adminPage, browser, runId, [], `nobody-${runId}`);
     expect(nobody.subject.roles, 'the subject holds no role at all').toEqual([]);
 
-    // Every gated screen refuses it, which is the control for what follows.
+    // Every gated screen refuses it — and the grid is one of them now.
     for (const path of ['/requests', '/payments', '/reports/monthly', '/audit', '/users', '/vendors']) {
       expectOutcome(await probeGet(nobody.page, path), [403], `a role-less subject is refused ${path}`);
     }
-
-    // The grid is not gated.
-    const grid = await probeGet(nobody.page, '/grid?month=2028-05');
-    expect(grid.status, 'F-G-032: /grid is RequireLogin only, so a role-less subject reads it').toBe(200);
+    const grid = await probeGet(nobody.page, '/grid?month=2026-05');
+    expectOutcome(grid, [403], 'and the variance grid, which needs grid:view');
     expect(
       grid.body.includes('₹66,000.00'),
-      'F-G-032: including the exact amount of a payment they hold no permission to see'
-    ).toBe(true);
-    expect(grid.body.includes(payee), 'F-G-032: and the payee it was made to').toBe(true);
-    expect(
-      grid.body.includes('Recent Payments'),
-      'F-G-032: the grid carries a Recent Payments panel of its own'
-    ).toBe(true);
-    expect(
-      /href="\/payments\/\d+"/.test(grid.body),
-      'F-G-032: whose rows link into the ledger the same subject is refused'
-    ).toBe(true);
-    // And the seeded budgets of every project, which is the whole company plan.
+      'so the refusal page carries no amount from the screen it refused'
+    ).toBe(false);
+    expect(grid.body.includes(payee), 'nor the payee').toBe(false);
     for (const head of ['Office Rent', 'Payroll', 'Marketing']) {
-      expect(grid.body.includes(head), `F-G-032: and every head, including ${head}`).toBe(true);
+      expect(grid.body.includes(head), `nor any head, including ${head}`).toBe(false);
     }
     const seeded = await probeGet(nobody.page, '/grid?month=2026-06');
+    expectOutcome(seeded, [403], 'the seeded month is no more readable than any other');
     expect(
       seeded.body.includes('₹8,50,000.00'),
-      'F-G-032: and every budget figure — the payroll line is readable by a subject with no role'
-    ).toBe(true);
+      'so the company plan is not readable by a subject with no role'
+    ).toBe(false);
 
-    // Following the link the panel offered IS refused, so the leak is the grid
-    // page itself rather than a hole in the ledger.
+    // The screen and its download are consistent now: the same subject is refused
+    // both, where they used to be refused only the download.
+    expectOutcome(
+      await probeGet(nobody.page, '/export.csv?month=2026-05'),
+      [403],
+      'the CSV of the same data is refused too — one gate, not two different answers'
+    );
     expectOutcome(
       await probeGet(nobody.page, '/payments/1'),
       [403],
-      'the payment detail behind the link is properly gated'
-    );
-    // And the CSV of the same data is gated, which is the inconsistency.
-    expectOutcome(
-      await probeGet(nobody.page, '/export.csv?month=2028-05'),
-      [403],
-      'F-G-032: the CSV of the very data the screen just handed over is gated on grid:export'
+      'and the payment detail the panel used to link to'
     );
 
+    // The second gate. A role holding grid:view and NOT payment:view gets the
+    // budget matrix — which is what grid:view is for — and no payments panel.
+    const gridOnly = await createCustomRole(adminPage, `GridOnly ${runId}`, ['grid:view'], {});
+    const reader = await asCustomRole(adminPage, browser, runId, 'gridonly', gridOnly);
+    const matrix = await probeGet(reader.page, '/grid?month=2026-05');
+    expect(matrix.status, 'grid:view opens the budget matrix').toBe(200);
+    expect(matrix.body.includes('Office Rent'), 'with its heads').toBe(true);
+    expect(
+      matrix.body.includes('₹66,000.00'),
+      'the head-level actual is part of the matrix grid:view entitles them to'
+    ).toBe(true);
+    expect(
+      matrix.body.includes(payee),
+      'but no payee: the payments panel is a second question, gated on payment:view'
+    ).toBe(false);
+    expect(
+      /href="\/payments\/\d+"/.test(matrix.body),
+      'and no link into the ledger the same subject is refused'
+    ).toBe(false);
+    expectOutcome(
+      await probeGet(reader.page, '/payments'),
+      [403],
+      'which is the ledger they are refused, so the panel would have been a way round it'
+    );
+
+    // The control: Accounts holds grid:view AND payment:view, so the panel is
+    // genuinely there for somebody entitled to it.
+    const accounts = await asRole(adminPage, browser, runId, ['Accounts'], `gridall-${runId}`);
+    const full = await probeGet(accounts.page, '/grid?month=2026-05');
+    expect(full.body.includes(payee), 'a caller holding payment:view does get the panel').toBe(true);
+    expect(
+      /href="\/payments\/\d+"/.test(full.body),
+      'with its links into the ledger they may open'
+    ).toBe(true);
+
+    await accounts.close();
+    await reader.close();
     await nobody.close();
   });
 
   /**
    * The scope verdict on all four CSV exports in one place — the question this
-   * audit exists to answer. Two of the four filter, two do not, and the two that
-   * do not are only safe because of who happens to hold their verb today.
+   * audit exists to answer.
+   *
+   * The two that carry rows apply the caller's row scope; the two that carry
+   * aggregates have no per-row owner to scope and are protected by their verb.
+   * `/recoverables/list.csv` used to be the exception — row-level data with no
+   * filter, safe only because of who happened to hold `recoverable_report:export`
+   * — and TC-G-054 is the case about that specifically. Here it is the verdict,
+   * stated against the seeded roles.
    */
-  test('TC-G-058 — two of the four CSV exports apply the caller\'s data scope and two do not', async ({
+  test('TC-G-058 — the two row-level CSV exports apply the caller\'s data scope; the two aggregates have none to apply', async ({
     adminPage,
     browser,
     runId
@@ -3018,19 +3565,21 @@ test.describe('G · confinement', () => {
       expect(aggregate, `the aggregate spans every project — ${head}`).toContain(head);
     }
 
-    // 3 — /recoverables/list.csv does NOT apply the scope. TC-G-054 proves it
-    // with a custom role; here it is stated as the verdict, against the seeded
-    // roles that keep it latent.
+    // 3 — /recoverables/list.csv is row-level data and applies the scope through
+    // `recoverableListOptions`, the one place its screen and its download both
+    // pass through (internal/app/recoverables.go:69-96). The verb still refuses a
+    // Requester outright, which is the seeded arrangement that kept the missing
+    // filter latent for as long as it did.
     expectOutcome(
       await probeGet(other.page, '/recoverables/list.csv'),
       [403],
-      'a Requester is refused the recoverables CSV, which is the only thing containing it'
+      'a Requester does not hold recoverable_report:export at all'
     );
     const accounts = await asRole(adminPage, browser, runId, ['Accounts'], `csvacc-${runId}`);
     const accountsCSV = await csv(accounts.page, '/recoverables/list.csv');
     expect(
       accountsCSV.split('\n')[0],
-      'the recoverables CSV is row-level data, so a missing scope filter is a real leak and not an aggregate'
+      'the recoverables CSV is row-level data — a Requester column, not an aggregate — which is why it needs a row scope'
     ).toContain('Requester');
 
     await approver.close();
@@ -3175,7 +3724,7 @@ test.describe('G · idempotence', () => {
       request_id: String(request.id),
       head_id: headID,
       amount: '3800.00',
-      paid_on: '2027-09-09',
+      paid_on: '2025-09-09',
       payment_mode: 'bank_transfer',
       reference_no: `UTR-D3-${runId}`,
       remarks: `Replay settle ${runId}`,
@@ -3194,7 +3743,7 @@ test.describe('G · idempotence', () => {
       'S9: a double confirm goes to the payment that already exists rather than creating a second'
     ).toBe(first.location);
 
-    await adminPage.goto('/payments?month=2027-09');
+    await adminPage.goto('/payments?month=2025-09');
     await adminPage.getByLabel('Search').fill(`Replay settle ${runId}`);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     expect(await dataRows(adminPage), 'exactly one payment exists for this request').toBe(1);
@@ -3272,17 +3821,31 @@ test.describe('G · idempotence', () => {
 
 test.describe('G · a locked month', () => {
   /**
-   * The lock is a ledger lock. A settlement dated into it is refused, a budget
-   * edit is refused — and a request may still be raised and approved into it,
-   * because `internal/store/requests.go` contains no `IsLocked` call at all.
+   * The lock is a ledger lock, and everything that meets it now says so the same
+   * way and lands somewhere that shows it.
+   *
+   * Three things changed here. Locking and unlocking redirect to `/grid?month=`,
+   * the one screen that renders the lock and its reason — they used to land on
+   * `/?month=`, which was the variance grid before Phase 4 made it the dashboard,
+   * so an operator locked a month and was dropped on a page that confirmed nothing
+   * (F-G-019). A locked-month budget save answers 409 like every other
+   * locked-month refusal, instead of 400 because `budgetSave` rendered its own
+   * status (F-G-026, `reRenderStatus` at internal/app/app.go:1383). And approving
+   * a request whose needed-by falls in a locked month is refused with 409 rather
+   * than manufacturing an obligation nobody can discharge (F-G-021,
+   * `lockedApprovalMonth` at internal/app/requests.go:916).
+   *
+   * A request naming no period is deliberately unaffected — needed_by is the only
+   * date a request carries — and both halves are asserted, because "refuses
+   * everything" would be the wrong fix.
    */
-  test('TC-G-070 — a locked month refuses a settlement and a budget edit, and still accepts a new request', async ({
+  test('TC-G-070 — a locked month refuses a settlement, a budget edit and an approval dated into it', async ({
     adminPage,
     browser,
     runId
   }) => {
     const errors = capturePageErrors(adminPage);
-    const MONTH = '2027-10';
+    const MONTH = '2025-10';
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgrlk-${runId}`);
 
     // Lock the month from the grid's "Month Close" block.
@@ -3299,23 +3862,24 @@ test.describe('G · a locked month', () => {
     const locked = await probePost(adminPage, `/months/${MONTH}/lock`, { reason: `Audit G lock ${runId}` });
     expect(locked.status, 'locking is a 303').toBe(303);
 
-    // F-G-019: the redirect goes to `/?month=`, which is the dashboard now.
+    // The redirect lands on the one screen that renders the lock and its reason.
     expect(
       locked.location,
-      'F-G-019: lock redirects to /?month=, and GET / is the dashboard, which ignores the month'
-    ).toBe(`/?month=${MONTH}`);
+      'lock redirects to /grid?month=, which is where the lock is visible'
+    ).toBe(`/grid?month=${MONTH}`);
     const landing = await probeGet(adminPage, locked.location!);
     expect(landing.status, 'the landing page renders').toBe(200);
     expect(
       landing.body.includes(`Audit G lock ${runId}`),
-      'F-G-019: the operator sees no confirmation of the lock they just applied'
-    ).toBe(false);
+      'and the operator is shown a confirmation of the lock they just applied'
+    ).toBe(true);
     expect(
       landing.body.includes(MONTH),
-      'F-G-019: nor even the month they locked'
-    ).toBe(false);
+      'naming the month they locked'
+    ).toBe(true);
 
-    // The grid, which is where the lock actually shows, does say so.
+    // The same thing through the rendered screen, so the assertion is not only
+    // about a substring in a probe body.
     await adminPage.goto(`/grid?month=${MONTH}`);
     await expect(adminPage.locator('.locked'), 'the grid names the lock and its reason').toContainText(
       `Audit G lock ${runId}`
@@ -3329,10 +3893,20 @@ test.describe('G · a locked month', () => {
       .getByRole('button', { name: 'Take for processing' })
       .click();
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
-    // F-G-020: the entry screen carries no lock affordance at all.
+    // F-G-020, and the precise shape of what is still open. The entry screen DOES
+    // carry a lock affordance — paymentEntry sets Locked and payment_form renders
+    // the banner and disables every fieldset (internal/app/linking.go:308-321,
+    // internal/app/templates.go:200-218) — but it can only test the month the date
+    // field opens on, which is today's. This case locks a different month and then
+    // types that date in, so there is nothing for the server to have warned about
+    // at render time: which month is being written is not known until submit.
+    //
+    // So the assertion below is not "no affordance exists"; it is "the affordance
+    // cannot reach this case", and the refusal at the confirmation is what catches
+    // it. Closing the remaining gap needs the client to re-ask on date change.
     expect(
       (await adminPage.locator('.locked').count()) === 0,
-      'F-G-020: /payments/new shows no lock warning, so the accountant fills the whole form first'
+      'the form opens on an unlocked month, so no banner is expected here — F-G-020 is closed only for the opening month'
     ).toBe(true);
 
     await adminPage.getByLabel('Amount actually paid').fill('5100.00');
@@ -3356,17 +3930,20 @@ test.describe('G · a locked month', () => {
     const anyHead = await adminPage.locator('input[name^="budget_"]').first().getAttribute('name');
     expect(anyHead, 'the budgets form names its inputs budget_<headID>').toMatch(/^budget_\d+$/);
     const budget = await probePost(adminPage, '/budgets', { month: MONTH, [anyHead!]: '100.00' });
-    // F-G-026: `budgetSave` renders its own 400 for every failure rather than
-    // routing through `respondStoreError`, which answers 409 for the same
-    // `ErrLockedMonth` on /payments/{id}/void and /months. One condition, two
-    // status codes, depending only on which handler you reached it through.
+    // One condition, one status code. `budgetSave` used to render its own 400 for
+    // every failure rather than routing the store's error through
+    // `storeErrorStatus`, which answers 409 for the same `ErrLockedMonth` on
+    // /payments/{id}/void and /months — so the answer depended only on which
+    // handler you reached the lock through (F-G-026).
     expect(
       budget.status,
-      'F-G-026: a locked-month budget save answers 400 where every other locked-month refusal answers 409'
-    ).toBe(400);
-    expect(budget.body, 'and it does say the month is locked').toContain('month is locked');
+      'a locked-month budget save answers 409, like every other locked-month refusal'
+    ).toBe(409);
+    expect(budget.body, 'and says the month is locked').toContain('month is locked');
 
-    // But a request may still be raised AND approved into the locked month.
+    // A request that names no period is still accepted and approved into a locked
+    // month, deliberately: needed_by is the only date a request carries, and
+    // without one there is nothing to test against the lock.
     const payee = `Locked Vendor ${runId}`;
     await ensureVendor(adminPage, payee);
     const raised = await raiseVendorRequest(adminPage, {
@@ -3376,20 +3953,54 @@ test.describe('G · a locked month', () => {
       invoiceNo: `INV-LK-${runId}`,
       approverName: approver.subject.name
     });
-    // F-G-021.
-    expect(raised.id, 'F-G-021: a request is accepted into a locked month with no warning').toBeGreaterThan(0);
+    expect(raised.id, 'a request naming no period is unaffected by the lock').toBeGreaterThan(0);
     await approveFor(approver.page, raised.id, '5200.00');
     await adminPage.goto(`/requests/${raised.id}`);
     await expect(
       adminPage.locator('.rh-status'),
-      'F-G-021: and approved, becoming an approved obligation nobody can pay in that month'
+      'and is approved normally'
     ).toContainText('Approved');
+
+    // But a request that DOES name the locked month cannot be approved into it:
+    // an approval is a promise the request can be paid, and validatePayment would
+    // refuse a paid_on inside the lock (F-G-021).
+    const dated = await raiseVendorRequest(adminPage, {
+      amount: '5300.00',
+      vendor: payee,
+      title: `Needed in a locked month ${runId}`,
+      invoiceNo: `INV-LK3-${runId}`,
+      neededBy: `${MONTH}-20`,
+      approverName: approver.subject.name
+    });
+    const refusedApproval = await probePost(approver.page, `/requests/${dated.id}/approve`, {
+      approved_amount: '5300.00'
+    });
+    expect(
+      refusedApproval.status,
+      'approving into a locked month is a 409, the same answer every other locked-month refusal gives'
+    ).toBe(409);
+    expect(
+      refusedApproval.body,
+      'and it names the month and what to do about it, rather than failing at the settlement weeks later'
+    ).toContain(MONTH);
+    await adminPage.goto(`/requests/${dated.id}`);
+    await expect(
+      adminPage.locator('.rh-status'),
+      'so no approved obligation nobody can discharge was created'
+    ).toContainText('Awaiting');
 
     // Unlocking restores the write, which proves the refusal was the lock.
     adminPage.once('dialog', dialog => dialog.accept());
     const unlocked = await probePost(adminPage, `/months/${MONTH}/unlock`, { reason: `Audit G unlock ${runId}` });
     expect(unlocked.status, 'unlocking is a 303').toBe(303);
-    expect(unlocked.location, 'F-G-019: unlock lands on the dashboard too').toBe(`/?month=${MONTH}`);
+    expect(unlocked.location, 'unlock lands on the grid too').toBe(`/grid?month=${MONTH}`);
+
+    // And the approval the lock refused now goes through, which is what makes the
+    // 409 above a lock refusal rather than a broken route.
+    const nowAllowed = await probePost(approver.page, `/requests/${dated.id}/approve`, {
+      approved_amount: '5300.00'
+    });
+    expect(nowAllowed.status, 'the same approval succeeds once the month is open').toBe(303);
 
     // The reservation survived the locked-month refusal, so the request is
     // still `processing` and no longer in the takeable set — `settlePayment`
@@ -3423,11 +4034,25 @@ test.describe('G · a locked month', () => {
 
 test.describe('G · referential integrity', () => {
   /**
-   * `user_roles.role_id` is `ON DELETE CASCADE`
-   * (internal/store/migrations.go:69) and `DeleteRole` has no pre-check, so
-   * deleting an assigned role succeeds and silently strips it from its holders.
+   * A role somebody holds cannot be deleted, and both refusals say why.
+   *
+   * `user_roles.role_id` is `ON DELETE CASCADE`, so deleting an assigned role used
+   * to succeed and strip it from every holder in silence — each of whom lost the
+   * permissions it carried on their very next request, with nothing on screen
+   * connecting cause to effect (F-G-022). `DeleteRole` pre-checks the holder count
+   * inside its transaction now (internal/store/permissions.go:327-334), which is
+   * the same number the roles screen already shows immediately above the Delete
+   * button. R9 permits deleting a non-system role; it does not permit doing so
+   * blind.
+   *
+   * And the message is the store's own. `respondStoreError` replaced every
+   * `ErrForbidden` with "You do not have permission to perform this action.",
+   * which told the holder of all 66 grants that they held none (F-G-023); the
+   * route unwraps it (internal/app/app.go:1799-1802) so a rule with a reason keeps
+   * its reason. Both of this route's refusals are checked, because the generic
+   * sentence would have been indistinguishable from a real permission failure.
    */
-  test('TC-G-080 — deleting a role that is assigned succeeds and silently strips it from its holders', async ({
+  test('TC-G-080 — a role somebody holds cannot be deleted, and the refusal says why', async ({
     adminPage,
     browser,
     runId
@@ -3445,24 +4070,38 @@ test.describe('G · referential integrity', () => {
     expect(before.status, 'and the grant it carries works').toBe(200);
 
     const deleted = await probePost(adminPage, `/roles/${role.id}/delete`, {});
-    // F-G-022 — no pre-check, no warning, no 409.
     expect(
       deleted.status,
-      'F-G-022: an assigned role is deleted with a clean 303 and no warning at all'
-    ).toBe(303);
+      'an assigned role is refused, not deleted from under its holder'
+    ).toBe(403);
+    expect(
+      deleted.body,
+      'and the refusal names the role and counts the people who would have lost it'
+    ).toContain(`Doomed ${runId} is assigned to 1 user`);
+    expect(
+      deleted.body.includes('do not have permission'),
+      'rather than telling an administrator holding every grant that they hold none'
+    ).toBe(false);
 
+    // Nothing happened: the role is still on its holder and still works.
     await adminPage.goto('/users');
     await expect(
       adminPage.locator('tr', { hasText: holder.email }).locator('.pill', { hasText: `Doomed ${runId}` }),
-      'F-G-022: the role vanished from the holder without their or the admin\'s knowledge'
-    ).toHaveCount(0);
+      'the holder still wears the role'
+    ).toHaveCount(1);
     const after = await probeGet(holder.page, '/payments');
     expect(
       after.status,
-      'F-G-022: the holder silently loses the permission on their very next request'
-    ).toBe(403);
+      'and the grant it carries still works on their very next request'
+    ).toBe(200);
 
-    // Deleting a SEEDED role is refused — but with the wrong message.
+    // Doing what the message says makes the delete legal, which is what turns the
+    // refusal into an instruction rather than a wall.
+    await setRolesByLabel(adminPage, holder.email, []);
+    const nowDeleted = await probePost(adminPage, `/roles/${role.id}/delete`, {});
+    expect(nowDeleted.status, 'once nobody holds it, the role is deleted').toBe(303);
+
+    // Deleting a SEEDED role is refused too, and with its own reason.
     await adminPage.goto('/roles');
     const adminRoleHref = await adminPage
       .locator('.segmented a', { hasText: 'Requester' })
@@ -3470,14 +4109,14 @@ test.describe('G · referential integrity', () => {
     const seededID = adminRoleHref!.split('=')[1];
     const seeded = await probePost(adminPage, `/roles/${seededID}/delete`, {});
     expect(seeded.status, 'a system role cannot be deleted').toBe(403);
-    // F-G-023 — ErrForbidden discards the store's own explanation.
     expect(
-      seeded.body.includes('system role'),
-      'F-G-023: the store says "system roles cannot be deleted" and the page says the admin lacks permission'
+      seeded.body.includes('ystem role'),
+      'and the store\'s own explanation reaches the operator'
+    ).toBe(true);
+    expect(
+      seeded.body.includes('do not have permission'),
+      'instead of the sentence that also covers a genuine permission failure'
     ).toBe(false);
-    expect(seeded.body, 'F-G-023: the operator is told the wrong thing').toContain(
-      'do not have permission'
-    );
 
     expectNoRuntimeErrors(errors);
     await holder.close();
@@ -3560,7 +4199,7 @@ test.describe('G · referential integrity', () => {
       .click();
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${raised.id}$`));
     await adminPage.getByLabel('Amount actually paid').fill('6600.00');
-    await adminPage.getByLabel('Paid on').fill('2027-11-11');
+    await adminPage.getByLabel('Paid on').fill('2025-11-11');
     await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-RI-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -3627,7 +4266,7 @@ test.describe('G · referential integrity', () => {
     // not strand the obligation.
     const paymentPath = await settlePayment(adminPage, raised.id, {
       amount: '7700.00',
-      paidOn: '2027-12-12',
+      paidOn: '2025-12-12',
       reference: `UTR-VD-${runId}`,
       remarks: `Retired vendor ${runId}`
     });
@@ -3659,12 +4298,23 @@ test.describe('G · referential integrity', () => {
   });
 
   /**
-   * A user with a pending approval against them can be deactivated, and the
-   * request is stranded: no route reassigns a pending approval, only a
-   * reservation. The app refuses coherently at every touch point rather than
-   * 500ing on the dangling manager.
+   * A user with a pending approval against them can still be deactivated with no
+   * check — but the request is no longer stranded, because there is now a door out.
+   *
+   * This case used to end on a proof of absence: no route reassigned a pending
+   * approval, only a reservation, so a deactivated approver's queue sat there for
+   * ever (F-G-025). `POST /requests/{id}/reassign-approver`
+   * (internal/app/app.go:577, handler at :1629) is that route — `approval:reassign`
+   * over the already-tested `store.ReassignRequest`, which is also the repair for
+   * F-A-06/F-C-02 and F-A-08. The two names probed below were never the route and
+   * the absence they proved was never the point, so the recovery is driven instead.
+   *
+   * What has NOT changed, and is still asserted: the deactivation itself is
+   * allowed with nothing warning the administrator that approvals are waiting on
+   * that person, and every screen that touches the request keeps rendering rather
+   * than 500ing on the dangling manager.
    */
-  test('TC-G-083 — deactivating an approver strands their pending approvals without a 500', async ({
+  test('TC-G-083 — deactivating an approver is unchecked, but their pending approvals can be handed on', async ({
     adminPage,
     browser,
     runId
@@ -3689,8 +4339,8 @@ test.describe('G · referential integrity', () => {
     await edit.getByRole('checkbox', { name: 'Active' }).uncheck();
     await edit.getByRole('button', { name: 'Save user' }).click();
     await expect(adminPage).toHaveURL(/\/users$/);
-    // F-G-025. The row carries a role pill as well as a status pill, so the
-    // assertion is scoped to the Status cell.
+    // F-G-025's open half. The row carries a role pill as well as a status pill,
+    // so the assertion is scoped to the Status cell.
     await expect(
       adminPage
         .locator('tr', { hasText: approver.subject.email })
@@ -3702,33 +4352,72 @@ test.describe('G · referential integrity', () => {
     await adminPage.goto(`/requests/${raised.id}`);
     await expect(
       adminPage.locator('.dl div:has(dt:text-is("Approver")) dd'),
-      'F-G-025: the request still points at a user who can no longer sign in'
+      'the request still points at a user who can no longer sign in'
     ).toHaveText(approver.subject.name);
-    await expect(adminPage.locator('.rh-status'), 'and is still awaiting them, for ever').toContainText('Awaiting');
+    await expect(adminPage.locator('.rh-status'), 'and is still awaiting them').toContainText('Awaiting');
 
-    // They cannot sign in, so nobody can decide it.
+    // They cannot sign in, so they cannot clear their own queue.
     await approver.page.goto('/login');
     await approver.page.getByLabel('Email').fill(approver.subject.email);
     await approver.page.getByLabel('Password').fill(approver.subject.password);
     await approver.page.getByRole('button', { name: 'Login' }).click();
-    await expect(approver.page, 'F-G-025: a deactivated approver cannot sign in to clear their queue').toHaveURL(
-      /\/login$/
-    );
+    await expect(approver.page, 'a deactivated approver cannot sign in').toHaveURL(/\/login$/);
 
-    // Proof of absence: there is no route that reassigns a pending approval.
-    for (const path of [
-      `/requests/${raised.id}/reassign-approval`,
-      `/requests/${raised.id}/approval-reassign`
-    ]) {
-      const probe = await probePost(adminPage, path, { to_user_id: '1' });
-      expectOutcome(probe, [404, 405], `no approval-reassignment route exists (${path})`);
-    }
+    // But somebody else can take the request off them. The reassignment demands a
+    // reason — a silent rerouting of an approval is not something a history should
+    // have to infer — and refuses without one.
+    const rescuer = await asRole(adminPage, browser, runId, ['Manager'], `mgrres-${runId}`);
+    await adminPage.goto(`/requests/${raised.id}`);
+    const newApproverID = await adminPage
+      .locator('select[name="manager_id"] option', { hasText: rescuer.subject.name })
+      .first()
+      .getAttribute('value');
+    expect(newApproverID, 'the reassignment control offers a real approver').not.toBeNull();
+
+    const noReason = await probePost(adminPage, `/requests/${raised.id}/reassign-approver`, {
+      manager_id: newApproverID!
+    });
+    expect(noReason.status, 'a reassignment with no reason is refused').toBe(400);
+
+    const reassigned = await probePost(adminPage, `/requests/${raised.id}/reassign-approver`, {
+      manager_id: newApproverID!,
+      reason: `The approver was deactivated ${runId}`
+    });
+    expect(reassigned.status, 'and with one it goes through').toBe(303);
+
+    // The request now names the new approver, is still awaiting a decision, and
+    // that person can actually make it — which is the whole point of the door.
+    await adminPage.goto(`/requests/${raised.id}`);
+    await expect(
+      adminPage.locator('.dl div:has(dt:text-is("Approver")) dd'),
+      'the request is handed to somebody who can sign in'
+    ).toHaveText(rescuer.subject.name);
+    await rescuer.page.goto('/approvals?bucket=to-approve');
+    await expect(
+      rescuer.page.locator('.req-card', { hasText: raised.number }),
+      'and it is in their queue'
+    ).toHaveCount(1);
+    await approveFor(rescuer.page, raised.id, '8800.00');
+    await adminPage.goto(`/requests/${raised.id}`);
+    await expect(
+      adminPage.locator('.rh-status'),
+      'so the approval a deactivated user was holding is no longer stranded'
+    ).toContainText('Approved');
+
+    // The handover has its own audit action, so the history says who moved it and
+    // why rather than leaving a reader to infer it from a changed column.
+    const rows = await auditRows(adminPage, 'Fervid Admin', 'payment_request', raised.id);
+    expect(
+      rows.some(r => r.action === 'approval_reassign'),
+      'the reassignment is audited as its own event'
+    ).toBe(true);
 
     // Every screen that touches the request still renders. No 500 anywhere.
     for (const path of ['/requests?bucket=all', `/requests/${raised.id}`, '/accounts-queue', '/audit']) {
       const probe = await probeGet(adminPage, path);
       expect(probe.status, `${path} must not 500 over a deactivated approver`).toBeLessThan(500);
     }
+    await rescuer.close();
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -3825,7 +4514,7 @@ test.describe('G · referential integrity', () => {
       request_id: String(request.id),
       head_id: '99999999',
       amount: '1500.00',
-      paid_on: '2028-01-10',
+      paid_on: '2026-01-10',
       payment_mode: 'bank_transfer',
       reference_no: `UTR-FK-${runId}`,
       settlement: 'settled'
@@ -3845,7 +4534,7 @@ test.describe('G · referential integrity', () => {
     ).toContainText(APPROVED_HEAD);
 
     // Hop 2 — and so does the ledger, which reads head_id back out of the row.
-    await adminPage.goto('/payments?month=2028-01');
+    await adminPage.goto('/payments?month=2026-01');
     expect(await dataRows(adminPage), 'exactly the one payment lands in that month').toBe(1);
     await expect(
       adminPage.locator('tbody tr td[data-label="Project / Head"]'),
@@ -3854,15 +4543,23 @@ test.describe('G · referential integrity', () => {
   });
 
   /**
-   * The worst kind of information-flow failure: a fact changing itself.
+   * A head stays where it lives when its own row is saved, retired project or not.
    *
-   * `heads` loads ALL heads but only ACTIVE projects
-   * (internal/app/app.go:1094-1099). A head whose project has been retired
-   * therefore renders a `<select name="project_id">` with no matching option, so
-   * the browser selects the first one, and the row's own Save — which posts that
-   * select — moves the head to a project nobody chose.
+   * This was the worst kind of information-flow failure: a fact changing itself.
+   * `heads` loaded ALL heads but only ACTIVE projects, so a head whose project had
+   * been retired rendered a `<select name="project_id">` with no matching option —
+   * the browser then preselected the first one, and pressing that row's own Save,
+   * changing nothing, posted it and moved the head to a project nobody chose
+   * (F-G-033).
+   *
+   * The screen asks two different questions and now gets two different lists
+   * (`headsPageData`, internal/app/app.go:1461-1475): `Projects` is what a NEW head
+   * may be filed under — active only, per T12 — and `AllProjects` is what an
+   * existing row's select must offer, which has to be every project. Server-side
+   * there is no way to tell "the operator chose this" from "the browser defaulted
+   * to it", which is why the fix is the option list and not a validation rule.
    */
-  test('TC-G-087 — retiring a project makes its heads\' own Save reassign them to a different project', async ({
+  test('TC-G-087 — a head whose project is retired keeps its project when its own row is saved', async ({
     adminPage,
     runId
   }) => {
@@ -3909,47 +4606,59 @@ test.describe('G · referential integrity', () => {
     });
     expect(retired.status, 'a project with a head under it is retired without a warning').toBe(303);
 
-    // The head is still listed, but its select no longer contains its project.
+    // The head is still listed, and its select still contains its own project —
+    // marked retired, because the reader has to be able to tell.
     await adminPage.goto('/heads');
     const orphan = adminPage.locator(`tbody tr:has(input[value="${headName}"])`);
     await expect(orphan, 'the head is still listed — ListHeads(false) returns it').toHaveCount(1);
     const options = await orphan.locator('select[name="project_id"] option').allInnerTexts();
-    // F-G-033.
     expect(
-      options.some(o => o.trim() === projectName),
-      'F-G-033: the row offers no option for the head\'s own project, because /heads loads active projects only'
-    ).toBe(false);
+      options.some(o => o.trim() === `${projectName} (retired)`),
+      'the row offers the head\'s own project, labelled retired'
+    ).toBe(true);
     const preselected = await orphan.locator('select[name="project_id"]').inputValue();
     expect(
       preselected,
-      'F-G-033: with no matching option the browser preselects the first, so the control lies about where the head lives'
-    ).not.toBe(projectID);
+      'and it is the option selected, so the control says where the head actually lives'
+    ).toBe(projectID);
 
-    // Pressing the row's own Save — changing nothing else — moves the head.
+    // Pressing the row's own Save — changing nothing else — changes nothing.
     await orphan.getByRole('button', { name: 'Save' }).click();
     await expect(adminPage).toHaveURL(/\/heads/);
     await adminPage.goto('/heads');
     const moved = adminPage.locator(`tbody tr:has(input[value="${headName}"])`);
     const nowUnder = await moved.locator('select[name="project_id"]').inputValue();
-    // F-G-033 confirmed: silent reassignment.
     expect(
       nowUnder,
-      'F-G-033: pressing Save with no edit reassigned the head to a project nobody chose — silent data corruption'
-    ).not.toBe(projectID);
-    expect(nowUnder, 'and it is the option the browser had preselected').toBe(preselected);
+      'pressing Save with no edit leaves the head under its own project'
+    ).toBe(projectID);
+
+    // The other half of the fix, and the reason it is two lists rather than one:
+    // a NEW head may still not be filed under a retired project, so the create
+    // control at the top of the screen offers active projects only (T12).
+    const createOptions = await adminPage
+      .locator('form.setup-form select[name="project_id"] option')
+      .allInnerTexts();
+    expect(createOptions.length, 'the Add Head control offers projects to file under').toBeGreaterThan(0);
+    expect(
+      createOptions.some(o => o.trim().startsWith(projectName)),
+      'a new head may not be filed under a retired project, so the create control does not offer it'
+    ).toBe(false);
 
     expectNoRuntimeErrors(errors);
     void headID;
   });
 
   /**
-   * `POST /users` runs `UpdateUser`, `SetUserRoles` and
-   * `SetUserDefaultApprover` as three independent transactions with no envelope
-   * (internal/app/app.go:1197-1220). A failure in the second leaves the first
-   * committed, so the operator sees a refusal and the rename has happened
-   * anyway.
+   * One form, one submit, one transaction.
+   *
+   * `POST /users` ran `UpdateUser`, `SetUserRoles` and `SetUserDefaultApprover` as
+   * three independent transactions with no envelope, so a save refused by the
+   * second left the first one's rename committed — and unaudited — while the
+   * operator was shown a refusal (F-G-034). `store.SaveUser` commits all three or
+   * none (internal/app/app.go:1590-1598).
    */
-  test('TC-G-088 — a user save that fails half way leaves the rename committed and the roles not', async ({
+  test('TC-G-088 — a user save refused half way through writes nothing at all', async ({
     adminPage,
     browser,
     runId
@@ -3970,10 +4679,10 @@ test.describe('G · referential integrity', () => {
     const userID = opener!.replace('user-', '');
     expect(userID, 'the row names its own edit sheet, and the sheet is named for the user id').toMatch(/^\d+$/);
 
-    // A save that renames AND assigns a role id that does not exist.
-    // `SetUserRoles` checks existence inside its own transaction
-    // (internal/store/permissions.go:471-479) and refuses — after `UpdateUser`
-    // has already committed the new name.
+    // A save that renames AND assigns a role id that does not exist. The role
+    // check happens inside the same transaction as the rename
+    // (internal/store/permissions.go:502-510), so the whole envelope rolls back.
+    const originalName = subject.subject.name;
     const renamed = `Renamed By A Failure ${runId}`;
     const refused = await probePost(adminPage, '/users', {
       id: userID,
@@ -3987,34 +4696,67 @@ test.describe('G · referential integrity', () => {
     expect(refused.status, 'the save is refused — the role does not exist').toBe(400);
     expect(refused.body, 'and says so').toContain('does not exist');
 
-    // F-G-034: the refusal is partial. The name changed; the roles did not.
+    // The refusal is total. Neither half of the POST happened.
     await adminPage.goto('/users');
     const after = adminPage.locator('tr', { hasText: subject.subject.email });
     await expect(
       after.locator('td[data-label="Name"]'),
-      'F-G-034: UpdateUser committed before SetUserRoles failed, so the rename stuck'
-    ).toHaveText(renamed);
+      'the rename rolled back with the role assignment that refused it'
+    ).toHaveText(originalName);
     await expect(
       after.locator('td[data-label="Roles"] .pill'),
-      'F-G-034: while the role assignment the same POST asked for did not happen'
+      'and the roles are what they were'
     ).toHaveText('Requester');
 
-    // The subject can still sign in and still holds what they held, so the
-    // damage is a half-applied administrative change rather than a lockout.
+    // And the same form with a real role id does apply, both halves together —
+    // which is what makes the rollback above a transaction and not a broken route.
+    await adminPage.goto('/roles');
+    const managerHref = await adminPage
+      .locator('.segmented a', { hasText: 'Manager' })
+      .getAttribute('href');
+    const managerID = managerHref!.split('=')[1];
+    const saved = await probePost(adminPage, '/users', {
+      id: userID,
+      email: subject.subject.email,
+      name: renamed,
+      role: 'data_entry',
+      active: 'on',
+      role_ids: managerID,
+      default_approver_id: '0'
+    });
+    expect(saved.status, 'a save with a role that exists succeeds').toBe(303);
+    await adminPage.goto('/users');
+    const applied = adminPage.locator('tr', { hasText: subject.subject.email });
+    await expect(applied.locator('td[data-label="Name"]'), 'the rename lands').toHaveText(renamed);
+    await expect(
+      applied.locator('td[data-label="Roles"] .pill'),
+      'together with the role assignment from the same press'
+    ).toHaveText('Manager');
+
+    // The subject can still sign in throughout, so nothing about this locked
+    // anybody out of the product.
     const probe = await probeGet(subject.page, '/requests');
-    expect(probe.status, 'the subject keeps the grants their old role carried').toBe(200);
+    expect(probe.status, 'the subject holds request:view through their new role').toBe(200);
 
     await subject.close();
   });
 
   /**
-   * The same missing envelope on the requester's own screen: `requestEdit` runs
-   * `UpdateRequest`, then `AddRequestAttachment`, then `SubmitRequest`
-   * (internal/app/requests.go:657-665). When the third fails the requester is
-   * shown the correction form with an error — and their edit is already in the
-   * database.
+   * The same envelope on the requester's own screen: one press, one transaction.
+   *
+   * `requestEdit` used to run `UpdateRequest`, then `AddRequestAttachment`, then
+   * `SubmitRequest` in a row, so a resubmit that failed its own preconditions left
+   * the edit committed *and audited as done* while the requester was shown a 400 —
+   * the history asserting a change the caller had been told had not happened
+   * (F-G-035/F-C-04). `store.EditRequest` (internal/store/requests.go:865-896)
+   * commits all three or none, and validates the submit against the edited row
+   * rather than the row as it was on entry.
+   *
+   * The audit half is asserted as well as the amount, because a rolled-back write
+   * that still audited would be a forged history — the same property TC-G-023 and
+   * TC-G-024 assert for the approve and settle paths.
    */
-  test('TC-G-089 — a request edit whose resubmit fails still writes the edit', async ({
+  test('TC-G-089 — a request edit whose resubmit is refused writes neither the edit nor an audit row', async ({
     adminPage,
     browser,
     runId
@@ -4048,8 +4790,11 @@ test.describe('G · referential integrity', () => {
     void project;
 
     // A pending request cannot transition to pending (legalTransitions,
-    // internal/store/requests.go:91-101), so `submit_action=resubmit` fails —
-    // after `UpdateRequest` has already written the new amount.
+    // internal/store/requests.go:91-101), so `submit_action=resubmit` fails — and
+    // it fails inside the same transaction that carried the new amount.
+    const before = (await auditRows(adminPage, requester.subject.name, 'payment_request', id)).filter(
+      r => r.action === 'update'
+    ).length;
     const refused = await probePost(requester.page, `/requests/${id}/edit`, {
       type: 'reimbursement',
       treatment: 'budget',
@@ -4065,36 +4810,62 @@ test.describe('G · referential integrity', () => {
     expect(refused.status, 'the resubmit is refused').toBe(400);
     expect(refused.body, 'and the requester is told the transition is illegal').toContain('cannot be submitted');
 
-    // F-G-035: the refusal is partial. The amount they typed is committed.
+    // Nothing was written. The amount is what it was before the refused press.
     await requester.page.goto(`/requests/${id}`);
     await expectMoney(
       requester.page,
       '.rh-amt',
-      '₹31,000.00',
-      'F-G-035: the edit committed even though the POST that carried it was refused'
+      '₹2,000.00',
+      'the edit rolled back with the resubmit that refused it'
     );
-    // And it is in the audit trail as a completed update, so the history claims
-    // a change the requester was told had failed.
-    const rows = await auditRows(adminPage, requester.subject.name, 'payment_request', id);
+    // And the history does not claim a change the caller was told had failed.
+    const after = (await auditRows(adminPage, requester.subject.name, 'payment_request', id)).filter(
+      r => r.action === 'update'
+    ).length;
     expect(
-      rows.some(r => r.action === 'update'),
-      'F-G-035: the audit records the edit as done, while the caller saw a 400'
-    ).toBe(true);
+      after,
+      'a rolled-back transaction that still audited would be a forged history'
+    ).toBe(before);
+
+    // The control: the same edit WITHOUT the illegal resubmit is saved, so the
+    // rollback above is the transaction and not a route that refuses everything.
+    const saved = await probePost(requester.page, `/requests/${id}/edit`, {
+      type: 'reimbursement',
+      treatment: 'budget',
+      project_id: projectID,
+      head_id: headID,
+      short_title: `Atomic edit ${runId}`,
+      amount: '31000.00',
+      expense_date: '2026-07-14',
+      purpose: `Atomic edit purpose ${runId}.`,
+      manager_id: managerID
+    });
+    expect(saved.status, 'saving the correction on its own succeeds').toBe(303);
+    await requester.page.goto(`/requests/${id}`);
+    await expectMoney(requester.page, '.rh-amt', '₹31,000.00', 'and the figure lands');
+    const finally_ = (await auditRows(adminPage, requester.subject.name, 'payment_request', id)).filter(
+      r => r.action === 'update'
+    ).length;
+    expect(finally_, 'with exactly one update row, for the press that worked').toBe(before + 1);
 
     await approver.close();
     await requester.close();
   });
 
   /**
-   * The app layer validates the password's length and nothing else
-   * (internal/app/app.go:1555-1560); `auth.HashPassword` then requires a letter
-   * AND a digit (internal/auth/auth.go:37-58). A 12-character letters-only
-   * password therefore passes the first check and crashes the second.
+   * A password rule the app enforces is refused by the app, before hashing.
    *
-   * `test.fail()` — the honest expectation is a 400 naming the rule.
+   * The app layer validated the password's length and nothing else, and
+   * `auth.HashPassword` then required a letter AND a digit — so a 12-character
+   * letters-only password passed the first check and crashed the second, and the
+   * operator was told "The password could not be secured", a 500 that blames the
+   * machine for a rule they broke (F-A-11/F-G-036). `validatePassword`
+   * (internal/app/app.go:2068-2073) delegates to `auth.ValidatePassword` plus the
+   * 12-character minimum, so every rejection is a 400 naming the rule and the
+   * refusal happens before anything is hashed.
    */
-  test.fail(
-    'TC-G-090 — a 12-character letters-only password must be refused with a 400 naming the rule, not a 500',
+  test(
+    'TC-G-090 — a 12-character letters-only password is refused with a 400 naming the rule',
     async ({ adminPage, runId }) => {
       const email = `pw-${runId}@example.test`.toLowerCase();
       const probe = await probePost(adminPage, '/users', {
@@ -4106,56 +4877,74 @@ test.describe('G · referential integrity', () => {
         password: 'abcdefghijkl'
       });
       expect(probe.status, 'the password is refused, not accepted').not.toBe(303);
-      // F-G-036: it is a 500 "The password could not be secured."
       expect(
         probe.status,
-        `F-G-036: a rule the app itself enforces must be a 4xx, not a server fault — got ${probe.outcome}`
+        `a rule the app itself enforces is a 4xx, not a server fault — got ${probe.outcome}`
       ).toBe(400);
       expect(
-        probe.body.includes('digit') || probe.body.includes('letter'),
-        'F-G-036: and the message must name the rule the operator broke'
+        probe.body.includes('digit') || probe.body.includes('letter') || probe.body.includes('number'),
+        'and the message names the rule the operator broke'
       ).toBe(true);
+      expect(
+        probe.body.includes('could not be secured'),
+        'rather than blaming the machine for a rule the operator broke'
+      ).toBe(false);
     }
   );
 
-  /** The 500 half of F-G-036, asserted positively so the suite records what the
-   *  product does today and no user is created by the crash. */
-  test('TC-G-091 — the letters-only password answers 500 and creates no user', async ({ adminPage, runId }) => {
-    const email = `pw500-${runId}@example.test`.toLowerCase();
+  /** The other half of the same fix: the rules the two layers apply are one set
+   *  now, so every refusal is a 4xx and the one difference between refused and
+   *  accepted is the rule itself. */
+  test('TC-G-091 — every password rule is refused as a 400, and one digit is the whole difference', async ({ adminPage, runId }) => {
+    const email = `pw400-${runId}@example.test`.toLowerCase();
     const probe = await probePost(adminPage, '/users', {
       id: '0',
       email,
-      name: `Password 500 ${runId}`,
+      name: `Password rules ${runId}`,
       role: 'data_entry',
       active: 'on',
       password: 'abcdefghijkl'
     });
     expect(
       probe.status,
-      'F-G-036: the app-layer length check passes and auth.HashPassword then fails, so the response is a 500'
-    ).toBe(500);
+      'validatePassword refuses before hashing, so a broken rule is the caller\'s 400'
+    ).toBe(400);
     expect(
-      probe.body,
-      'F-G-036: with a message that blames the machine rather than naming the missing digit'
-    ).toContain('could not be secured');
+      probe.body.includes('could not be secured'),
+      'and no message blames the machine for it'
+    ).toBe(false);
 
-    // At least nothing was written: the hash is computed before CreateUser.
+    // Nothing was written, and now for the right reason: the refusal happens
+    // before the hash rather than inside it.
     await adminPage.goto('/users');
     await expect(
       adminPage.locator('tr', { hasText: email }),
-      'no user is created by the crash'
+      'no user is created by a refused password'
     ).toHaveCount(0);
+
+    // The length rule the app owns is a 400 too, and names itself — so the two
+    // layers' rules are one set with one answer, which is the actual fix.
+    const short = await probePost(adminPage, '/users', {
+      id: '0',
+      email,
+      name: `Password rules ${runId}`,
+      role: 'data_entry',
+      active: 'on',
+      password: 'ab1'
+    });
+    expect(short.status, 'a too-short password is a 400 as well').toBe(400);
+    expect(short.body, 'naming the rule it broke').toContain('12 characters');
 
     // The same password with one digit is accepted, which pins the real rule.
     const ok = await probePost(adminPage, '/users', {
       id: '0',
       email,
-      name: `Password 500 ${runId}`,
+      name: `Password rules ${runId}`,
       role: 'data_entry',
       active: 'on',
       password: 'abcdefghijk1'
     });
-    expect(ok.status, 'one digit is the whole difference between 303 and 500').toBe(303);
+    expect(ok.status, 'one digit is the whole difference between 400 and 303').toBe(303);
   });
 
   /** A last sanity pass: an unrouted POST is 405 (the catch-all GET / matches

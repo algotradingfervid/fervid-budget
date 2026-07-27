@@ -15,14 +15,17 @@
  * see what the store actually guarantees. This file does all three, and it
  * modifies neither of them.
  *
- * READING THE ANNOTATIONS. A handful of tests still call `test.fail()` as their
- * first statement. Each names the finding it pins in
- * `docs/qa/results/findings-d-linking-settlement.md`. The assertion inside is
- * the assertion the product *should* pass — the day somebody fixes the defect
- * the test goes red with "passed unexpectedly", which is exactly the signal a
- * deleted assertion would have thrown away. When that happens the annotation is
- * removed and its comment rewritten to say what the case now protects; TC-D-058
- * (F-D-01), TC-D-095 (F-D-08) and TC-D-096 (F-D-11) have already made that trip.
+ * READING THE ANNOTATIONS. Not one test here calls `test.fail()` any more, and
+ * that is the point. Every case that once did named a finding in
+ * `docs/qa/results/findings-d-linking-settlement.md` and carried the assertion
+ * the product *should* pass, so that the day somebody fixed the defect the test
+ * went red with "passed unexpectedly" — exactly the signal a deleted assertion
+ * would have thrown away. All of them have now made that trip: TC-D-058
+ * (F-D-01), TC-D-095 (F-D-08), TC-D-096 (F-D-11), TC-D-023 (F-D-02), TC-D-044
+ * (F-D-03), TC-D-090 (F-D-06), TC-D-094 (F-D-07) and TC-D-099 (F-D-12). Each
+ * annotation was removed and its comment rewritten to say what the case now
+ * protects; none of the assertions changed direction, because each was always
+ * written as the truth the product owed.
  *
  * THE SHARED CORPUS. Four approved requests, one of each shape the linkable set
  * has to distinguish (unclaimed · on hold · reserved by somebody else ·
@@ -610,9 +613,9 @@ test.describe('D · reservation entry points and the linkable set', () => {
     const unfiltered = await c.admin.locator('tbody tr').count();
     expect(unfiltered, 'the search has to have something to narrow for this to mean anything').toBeGreaterThan(1);
 
-    // Driven through the query the form posts rather than the form itself: the
-    // queue's only search control is the mobile one, and it is display:none at
-    // this width (F-D-07, pinned by TC-D-094).
+    // Driven through the query the form submits rather than the form itself:
+    // what this case measures is the metric strip, not the control. That the
+    // control exists at desktop width is TC-D-094's own subject (F-D-07).
     await c.admin.goto(`/accounts-queue?tab=approved&q=${encodeURIComponent(c.open.number)}`);
     await expect(c.admin.locator('tbody tr')).toHaveCount(1);
     expect(
@@ -622,12 +625,14 @@ test.describe('D · reservation entry points and the linkable set', () => {
   });
 
   test('TC-D-094 — the queue offers a search control at desktop width', async ({ browser }) => {
-    // FINDING F-D-07. accounts_queue renders only `<form class="m-filters">`,
-    // which fervid-ds.css:3853 sets to display:none outside the 860 px media
-    // query. Every other searchable list — requests, approvals, vendors,
-    // recoverables — ships a `.toolbar` beside its `.m-filters`; the Accounts
-    // queue is the one that does not, so its search box exists only on a phone.
-    test.fail();
+    // Regression guard for F-D-07. accounts_queue used to render only
+    // `<form class="m-filters">`, which fervid-ds.css:3853 sets to display:none
+    // outside the 860 px media query, so the queue's search box existed only on a
+    // phone while every other searchable list — requests, approvals, vendors,
+    // recoverables — shipped a `.toolbar` beside its `.m-filters`. The queue now
+    // ships one too, so #queue-q is on the screen an accountant actually works
+    // from. TC-D-014 still drives the search through the query string, because
+    // what it measures is the metric strip, not the control.
     const c = await corpus(browser);
     expect(c.admin.viewportSize()!.width, 'this case is about desktop width').toBeGreaterThan(860);
     await c.admin.goto('/accounts-queue?tab=approved');
@@ -767,13 +772,28 @@ test.describe('D · the reservation is atomic', () => {
     }
   });
 
-  test('TC-D-020 — reserving a completed request is refused', async ({ browser }) => {
+  test('TC-D-020 — reserving a completed request is refused, and the screen says it is finished rather than held', async ({
+    browser
+  }) => {
+    // Regression guard for the third of F-D-02's three causes. The screen used
+    // to report "Someone else took this request before you" here, which was
+    // false twice over: the request was paid last month, and nobody held it.
+    // The sentinel alone could not tell the truth — RecordPaymentForRequest
+    // leaves processing_by set on a completed request, so ReserveRequest's cause
+    // check still answers ErrAlreadyReserved — so conflictCause now reads the
+    // sentinel and the row together and lets the row win on "does anybody hold
+    // it" (internal/app/linking.go:96-110). The completed case renders the
+    // `not-approved` branch (internal/app/templates.go:823-830).
     const c = await corpus(browser);
     const probe = await reserve(c.admin, c.done.id);
     expect(probe.status, 'a settled request has left the reservable set for good').toBe(409);
-    // The wording is wrong here too — nobody holds a completed request. See
-    // F-D-02; TC-D-023 is the annotated test that pins it.
-    expect(probe.body, 'and it is refused through the conflict screen').toContain('took this request before you');
+    expect(probe.body, 'and the conflict screen names what actually happened').toContain(
+      'is not available to process'
+    );
+    expect(probe.body, 'in as many words: nobody is holding it').toContain('Nobody holds a reservation on it');
+    expect(probe.body, 'so the accountant is never sent to ask a colleague who does not exist').not.toContain(
+      'took this request before you'
+    );
   });
 
   test('TC-D-021 — the reservation POST refuses a missing and a forged CSRF token', async ({ browser }) => {
@@ -804,12 +824,16 @@ test.describe('D · the reservation is atomic', () => {
   test('TC-D-023 — reserving an on-hold request says it is on hold, not that somebody took it', async ({
     browser
   }) => {
-    // FINDING F-D-02. requestRecordPayment funnels every ErrForbidden from
-    // ReserveRequest into reservationConflict, which is written for one cause —
-    // somebody else got there first. An on-hold request has nobody holding it,
-    // so the screen invents "Someone else" and reports a reservation that does
-    // not exist.
-    test.fail();
+    // Regression guard for F-D-02. requestRecordPayment used to funnel every
+    // ErrForbidden from ReserveRequest into one conflict screen written for a
+    // single cause — somebody else got there first — so an on-hold request, which
+    // nobody holds, made the screen invent "Someone else" and report a
+    // reservation that did not exist. ReserveRequest now returns a sentinel per
+    // cause (internal/store/store.go:890-937), conflictCause maps it with the row
+    // (internal/app/linking.go:96-110) and the template branches three ways
+    // (internal/app/templates.go:815-838). This case protects the hold branch:
+    // the accountant is told payment is paused and who is being waited on, which
+    // is the answer that is one click away rather than a colleague to chase.
     const c = await corpus(browser);
     const probe = await reserve(c.admin, c.onHold.id);
     expect(probe.status, 'an on-hold request is not available to process').toBe(409);
@@ -1174,11 +1198,14 @@ test.describe('D · the stale-reservation nudge', () => {
   });
 
   test('TC-D-044 — a non-holding accountant is offered no choice that answers 403', async ({ browser }) => {
-    // FINDING F-D-03. The template's own rule is "a choice the reader could not
-    // take is not shown greyed out — it is not shown". "Put it on hold" is gated
-    // on payment:hold alone, but it links to the release screen, which refuses
-    // anybody who is neither the holder nor able to reassign.
-    test.fail();
+    // Regression guard for F-D-03. The template's own rule is "a choice the
+    // reader could not take is not shown greyed out — it is not shown"
+    // (internal/app/templates.go:1139-1150). "Put it on hold" used to be gated on
+    // payment:hold alone while linking to the release screen, which refuses
+    // anybody who is neither the holder nor able to reassign — so a second
+    // accountant was offered a choice that answered 403. Every choice the nudge
+    // now offers answers 200 for the reader it is offered to, and this drives
+    // each one for a bystander to prove it.
     const c = await corpus(browser);
     const other = await asRole(c.admin, browser, `${c.runId}c`, ['Accounts'], 'bystander');
     try {
@@ -1355,10 +1382,17 @@ test.describe('D · hold and unhold', () => {
 
   test('TC-D-053 — a reserved request cannot be put on hold', async ({ browser }) => {
     const c = await corpus(browser);
-    // The message is the generic permission sentence rather than the state — see
-    // F-D-02 — so this asserts the refusal and the state, not the words.
+    // The refusal used to read as the generic permission sentence, which sent an
+    // accountant who holds payment:hold to an administrator for a grant they
+    // already have (F-D-02/F-A-09). respondStoreError now passes an ErrForbidden
+    // that carries its own reason through friendly (internal/app/http_errors.go:191-198),
+    // so the sentence names the state instead.
     const probe = await probePost(c.admin, `/requests/${c.taken.id}/hold`, { reason: 'too late' });
     expect(probe.status, 'a hold pauses an approved request; this one is already being paid').toBe(403);
+    expect(probe.body, 'and the refusal names the state rather than a permission the caller holds').toContain(
+      'not-already-held request can be held'
+    );
+    expect(probe.body).not.toContain('You do not have permission to perform this action.');
     expect(await statusPill(c.admin, c.taken.id), 'and the reservation is untouched').toContain(RESERVED);
     await c.holder.page.goto(`/requests/${c.taken.id}`);
     await expect(
@@ -1403,14 +1437,25 @@ test.describe('D · the entry screen and its prefill', () => {
       }
       await expect(adminPage.getByLabel(text), `and getByLabel('${text}') resolves it`).toHaveCount(1);
     }
-    // "Processing note" is the exception: its "optional" chip is NOT aria-hidden,
-    // so the accessible name is "Processing note optional" (finding F-D-05).
+    // "Processing note" carries an "optional" chip rather than an asterisk, and
+    // F-D-05 was that the chip alone was not aria-hidden — so a screen reader
+    // announced the field as "Processing note optional" while every required
+    // field beside it announced its own name cleanly. The chip is decoration in
+    // exactly the same sense the asterisk is, and now carries the same attribute
+    // (internal/app/templates.go:452), so the accessible name is the label the
+    // design names and nothing more. Asserted as the computed accessible name,
+    // not as the label's text: getByLabel reads the label's text content and
+    // would pass either way, which is what let this slip through before.
     await expect(adminPage.getByLabel('Processing note')).toHaveCount(1);
     await expect(adminPage.locator('label[for="remarks"]')).toHaveText('Processing note optional');
     await expect(
       adminPage.locator('label[for="remarks"] span.opt'),
-      'unlike the required asterisk, the optional chip joins the accessible name'
-    ).not.toHaveAttribute('aria-hidden', /./);
+      'the optional chip is decoration, so it is aria-hidden exactly as the required asterisk is'
+    ).toHaveAttribute('aria-hidden', 'true');
+    await expect(
+      adminPage.locator('#remarks'),
+      'and the field a screen reader announces is "Processing note", never "Processing note optional"'
+    ).toHaveAccessibleName('Processing note');
 
     const upload = adminPage.locator('input[name="attachment"]');
     await expect(upload, 'the uploader is a hidden nameless input inside label.uploader').toHaveCount(1);
@@ -2026,14 +2071,20 @@ test.describe('D · one request, one payment, never edited', () => {
     expect(noRequest.status, 'X5: free-standing payment entry is gone').toBe(400);
     expect(noRequest.body).toContain('Payments must be linked to an approved request.');
 
-    // Both of the next two are ErrForbidden, which settlementError renders as a
-    // 403 confirmation sheet carrying the generic "Something went wrong"
-    // sentence rather than the store's reason. See F-D-02.
+    // Both of the next two are ErrForbidden, and settlementError renders them as
+    // a 403 confirmation sheet. It used to carry the generic "Something went
+    // wrong" sentence rather than the store's own reason (F-D-02/F-A-09);
+    // friendly now keeps a refusal's reason when it has one
+    // (internal/app/app.go:2173-2184), so the accountant is told what to do next.
     const unreserved = await probePost(adminPage, '/payments', { ...base, request_id: String(request.id) });
     expect(unreserved.status, 'S15: approved is not enough — the payment needs a reservation').toBe(403);
+    expect(unreserved.body, 'and the sheet says what is missing, not that something went wrong').toContain(
+      'eserve this request before recording its payment'
+    );
 
     const notMine = await probePost(adminPage, '/payments', { ...base, request_id: String(c.taken.id) });
     expect(notMine.status, 'and it has to be the caller’s own reservation').toBe(403);
+    expect(notMine.body).toContain('eserve this request before recording its payment');
 
     const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-NOLINK-${runId}`);
     expect(ledger.body, 'none of the three wrote anything').toContain('No payments match these filters');
@@ -2225,10 +2276,13 @@ test.describe('D · tampering with the settlement', () => {
   });
 
   test('TC-D-090 — a payment cannot be dated in the future', async ({ adminPage, runId }) => {
-    // FINDING F-D-06. validatePayment checks the shape of paid_on and the month
-    // lock, and nothing else. A payment dated years ahead is accepted and lands
-    // in a future month's actuals.
-    test.fail();
+    // Regression guard for F-D-06. validatePayment used to check the shape of
+    // paid_on and the month lock and nothing else, so a payment dated years ahead
+    // was accepted and landed in a future month's actuals. It now refuses a
+    // paid_on after the caller's `Now`, and the handler sets it — the store half
+    // shipped one wave before the wiring, deliberately, because the fixtures that
+    // booked payments in 2027-2029 had to move first. 2029-12-31 is this case's
+    // whole point and stays: it is the date that used to be accepted.
     const request = await createApprovedRequest(adminPage, runId, { amount: '8300.00' });
     await reserve(adminPage, request.id);
     const probe = await probePost(adminPage, '/payments', {
@@ -2420,12 +2474,24 @@ test.describe('D · settlements the product cannot complete', () => {
     browser,
     runId
   }) => {
-    // FINDING F-D-12 (the sibling's SD-02, reproduced here because the promise
-    // is made on this audit's screen). templates.go:1042 states "The requester
-    // and the approver are both notified."; requestRelease and requestReassign
-    // call no a.fire at all and internal/notify/events.go declares no release,
-    // reassign or unhold event.
-    test.fail();
+    // Regression guard for F-D-12 (the sibling's SD-02, reproduced here because
+    // the promise is made on this audit's screen). templates.go:1042 states "The
+    // requester and the approver are both notified."; requestRelease called no
+    // a.fire at all and internal/notify/events.go declared no release, reassign
+    // or unhold event, so the sentence was false from the day it shipped.
+    // Migration v9 seeds `reservation_released` with IncludeRequester and
+    // IncludeManager (internal/store/migrations_notifications.go:96-100) and
+    // requestRelease fires it (internal/app/linking.go:712), so both people the
+    // screen names are told.
+    //
+    // Counted off the filter strip rather than by counting rendered rows. The
+    // centre lists at most defaultNotificationLimit = 100 rows
+    // (internal/store/inapp.go:100) and the shared admin of a full run is past
+    // that by the time this case runs, so a rendered-row count stops moving while
+    // NotificationCounts — which the strip prints, and which has no cap — keeps
+    // counting. That disagreement is F-G-037 itself; the screen now names both
+    // numbers, and reading the uncapped one is what makes this case mean the same
+    // thing alone and in a full run.
     const request = await createApprovedRequest(adminPage, runId, { amount: '3700.00' });
     const approver = approverFor(runId);
     await reserve(adminPage, request.id);
@@ -2440,7 +2506,7 @@ test.describe('D · settlements the product cannot complete', () => {
       await login(approverPage, approver.email, approver.password);
       const count = async (page: Page) => {
         await page.goto('/notifications?scope=all');
-        return page.locator('a.notif').count();
+        return Number(await page.locator('.segmented a[href="/notifications?scope=all"] .n').innerText());
       };
       const approverBefore = await count(approverPage);
       const requesterBefore = await count(adminPage);

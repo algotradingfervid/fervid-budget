@@ -5,8 +5,8 @@
  * this file implements one-for-one. Every test is named with its TC ID.
  *
  * This spec drives a browser only: it never reads SMTP and never stands up a
- * mail server. Behaviours only provable at the Go level (the reminder
- * scheduler needs a real calendar-day boundary; SMTP wire format needs a
+ * mail server. Behaviours only provable at the Go level (the reminder scheduler
+ * needs elapsed days a Playwright run cannot wait out; SMTP wire format needs a
  * socket) are listed as NOT RUN in the test-case document, not faked here.
  */
 import { expect, test as base, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -367,11 +367,15 @@ test.describe.serial('TC-F — notifications & reminders', () => {
   });
 
   // Twelve became twenty-one when migration v9 seeded rows for the nine actions
-  // F-F-06 found notifying nobody. v7's twelve keep their order and come first —
-  // v9 appends at sort_order 13-21 and never rewrites an existing row — so this
-  // assertion still pins "the screen shows notify.AllEvents in seeded order", and
-  // it is the test that catches a new event declared but never seeded, or seeded
-  // in the wrong place.
+  // F-F-06 found notifying nobody, and twenty-three when v11 added the two the
+  // repair itself left behind: the approver reassignment whose own sheet promises
+  // "The new approver is told", and the outright cancellation by an approver,
+  // which is a different act from deciding a cancellation somebody asked for.
+  // Each migration only appends — v7's twelve keep their order and come first,
+  // v9 appends at sort_order 13-21, v11 at 22-23, and none rewrites an existing
+  // row — so this assertion still pins "the screen shows notify.AllEvents in
+  // seeded order" (internal/notify/events.go:90-100), and it is the test that
+  // catches a new event declared but never seeded, or seeded in the wrong place.
   test('TC-F-010 — the admin rules screen renders exactly the seeded events, in notify.AllEvents order', async () => {
     await adminPage.goto('/admin/notifications');
     const slugs = await adminPage.locator('.t-cards .t-sub').allTextContents();
@@ -384,7 +388,9 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       'request_withdrawn', 'request_reraised', 'request_unheld',
       'reservation_released', 'reservation_reassigned',
       'payment_partial_accepted', 'payment_partial_concern',
-      'request_cancellation_accepted', 'request_cancellation_declined'
+      'request_cancellation_accepted', 'request_cancellation_declined',
+      // v11 — the two found while reconciling the repair against its own docs
+      'approval_reassigned', 'request_cancelled'
     ]);
   });
 
@@ -399,9 +405,9 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     // request_approved in — only the in-app row is unconditional.
     await adminPage.goto('/admin/notifications');
     const pills = await adminPage.locator('.t-cards tbody tr td[data-label="Email"] .pill').allTextContents();
-    // 21 since v9. Asserted as a count rather than left open because a row that
+    // 23 since v11. Asserted as a count rather than left open because a row that
     // failed to seed would otherwise pass this test silently.
-    expect(pills.length, 'every seeded event has an Email cell').toBe(21);
+    expect(pills.length, 'every seeded event has an Email cell').toBe(23);
     for (const text of pills) {
       expect(text.trim(), 'every seeded event ships with email Off').toBe('Off');
     }
@@ -481,31 +487,40 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     }
   });
 
-  test('TC-F-049 — the notification centre has no desktop entry point (see finding F-F-05)', async ({ browser }) => {
-    // navSpec (internal/app/nav.go:47-...) — the sidebar's only source — has
-    // no item for /notifications anywhere in it (it has one for the ADMIN
-    // rules screen, notif-admin, but none for the user's own centre). The
-    // dashboard template (templates.go:3179) also carries only a "+ New
-    // request" pb-action, unlike the approved mockup's own
-    // dashboard.html:19, which shows a "Notifications" button with an
-    // unread pill. The only link anywhere is the mobile-only .m-topbar
-    // .m-icon (display:none above 860px, fervid-ds.css:3881-3884/4135). A
-    // desktop user (>=861px) has no way to discover or reach their own
-    // notification centre through the UI at all — only a typed URL works.
+  test('TC-F-049 — the notification centre has a desktop entry point carrying the unread count (F-F-05)', async ({ browser }) => {
+    // F-F-05, fixed. navSpec — the sidebar's only source — carried an item for
+    // the ADMIN rules screen (notif-admin) and none for the user's own centre,
+    // so the only link anywhere was the mobile .m-topbar .m-icon, which is
+    // display:none above 860 px (fervid-ds.css:3881-3884/4135). A desktop user
+    // could not discover their own notifications existed; only a typed URL
+    // worked. navSpec now opens with one (internal/app/nav.go:61), carrying no
+    // Resource — every row the screen returns is already scoped to the signed-in
+    // user by the store, which is why the route itself needs no verb either
+    // (TC-F-015) — and a Badge of "notifications", which buildPageShell fills
+    // with the unread count (internal/app/nav.go:169).
     const wide = await signIn(browser, req.subject, { width: 1440, height: 900 });
     try {
       await wide.page.goto('/');
-      // The .m-topbar's own bell anchor is always in the DOM (only display:none
-      // at this width), so the honest check is "the sidebar has none" and
-      // "nothing pointing at /notifications is actually visible" — not a bare
-      // element count, which would count markup nobody at this width can see.
-      await expect(wide.page.locator('.sidebar a[href="/notifications"]'), 'the desktop sidebar has no link to /notifications').toHaveCount(0);
-      await expect(wide.page.locator('a[href="/notifications"]:visible'), 'no visible element at this width links to /notifications').toHaveCount(0);
-      await expect(wide.page.locator('.m-topbar')).toBeHidden();
-      // The route itself still works when typed directly — this is a
-      // discoverability gap, not a routing/permission one.
-      const direct = await probeGet(wide.page, '/notifications');
-      expect(direct.status).toBe(200);
+      await expect(wide.page.locator('.m-topbar'), 'the mobile bell is still hidden at this width').toBeHidden();
+      const item = wide.page.locator('.sidebar a[href="/notifications"]');
+      await expect(item, 'the desktop sidebar links to the centre exactly once').toHaveCount(1);
+      await expect(item, 'and a link nobody can see is no entry point, so it must be visible').toBeVisible();
+      await expect(item).toContainText('Notifications');
+
+      // The badge is the unread count, not decoration: it must equal the number
+      // the centre's own filter strip prints for the same user.
+      const counts = await segmentedCounts(wide.page);
+      expect(counts.unread, 'this subject has unread rows, so the badge has something to say').toBeGreaterThan(0);
+      await wide.page.goto('/');
+      expect(
+        Number(await item.locator('.n').innerText()),
+        'the sidebar badge must equal NotificationCounts.Unread, the same figure the mobile bell dot carries'
+      ).toBe(counts.unread);
+
+      // And it is a real door, not merely a link: following it lands on the centre.
+      await item.click();
+      await expect(wide.page).toHaveURL(/\/notifications$/);
+      await expect(wide.page.locator('h1')).toHaveText('Notifications');
     } finally {
       await wide.close();
     }
@@ -630,30 +645,25 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     expect((await probePost(accA.page, '/admin/notifications/test', {})).status).toBe(403);
   });
 
-  // TC-F-030 through TC-F-033 read and write one event's sheet fields via
-  // .inputValue()/.isChecked() (a DOM property read, which Playwright does
-  // not require actionability/visibility for) and via the real POST route
-  // (probePost) instead of clicking each sheet's own "Edit" trigger and
-  // "Save rule" button.
+  // TC-F-030 through TC-F-033 read one event's sheet fields via
+  // .inputValue()/.isChecked() (a DOM property read, which Playwright does not
+  // require actionability/visibility for) and write them through the real POST
+  // route (probePost) rather than by clicking each sheet's own "Edit" trigger
+  // and "Save rule" button.
   //
-  // That is not a stylistic choice: internal/app/templates.go:3347 renders
-  // every one of the twelve <div class="overlay" id="ev-{event}"> sheets
-  // WITHOUT the `hidden` attribute every other .overlay in the app carries
-  // (contrast approve-sheet/return-sheet/reject-sheet/hold-sheet, all
-  // `hidden` by default, templates.go:2206/2224/2235/2459). All twelve are
-  // therefore simultaneously laid out full-viewport, position:fixed,
-  // z-index:50 on page load, and only the LAST one in DOM order
-  // (reminder_stale_reservation) is reachable by a pointer — every other
-  // Edit button is permanently covered. Confirmed two ways: this suite's own
-  // click on [data-open="ev-request_returned"] times out with Playwright
-  // reporting "<div class=\"overlay\" id=\"ev-reminder_stale_reservation\">
-  // intercepts pointer events", and a standalone script reading
-  // getComputedStyle(...).display / .hidden on all twelve confirms
-  // hidden=false, display="grid" for every one of them on a fresh load.
-  // See finding F-F-01 and the dedicated repro in TC-F-047 below. Testing
-  // the underlying persistence contract via the same POST route the broken
-  // button would otherwise submit to is the honest way to keep this
-  // coverage without pretending the pointer path works.
+  // That was originally forced. internal/app/templates.go rendered every
+  // <div class="overlay" id="ev-{event}"> sheet WITHOUT the `hidden` attribute
+  // every other .overlay in the app carries, so all of them were simultaneously
+  // laid out full-viewport, position:fixed, z-index:50 on load and only the last
+  // in DOM order was reachable by a pointer — every other Edit button was
+  // permanently covered (F-F-01). It is fixed: the per-event overlays carry
+  // `hidden` like approve-sheet/return-sheet/reject-sheet/hold-sheet do
+  // (templates.go:3538), and TC-F-047 below drives the pointer path to prove it.
+  //
+  // These four keep posting to the route because what they are about is the
+  // persistence contract — that a saved rule round-trips, that a rejected one
+  // does not overwrite — and the route is where that contract lives. The button
+  // that reaches it has its own test now, which is the honest division.
 
   interface EventRuleFields {
     emailEnabled: boolean;
@@ -770,21 +780,47 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     await adminPage.goto('/admin/notifications');
     const rows = adminPage.locator('.t-cards tbody tr');
     const count = await rows.count();
-    expect(count, 'one row per seeded event — 21 since migration v9').toBe(21);
+    expect(count, 'one row per seeded event — 23 since migration v11').toBe(23);
     for (let i = 0; i < count; i++) {
       await expect(rows.nth(i).locator('td[data-label="In-app"] .pill')).toHaveText('On');
     }
   });
 
-  test('TC-F-047 — a real click on an events own Edit trigger cannot open its own sheet (see finding F-F-01)', async () => {
-    // Deterministic failure, kept red on purpose: if templates.go:3347 is
-    // ever given the `hidden` attribute the other three sheets already have,
-    // this assertion starts passing ("passed unexpectedly"), which is the
-    // signal to delete this test and drop the finding.
-    test.fail();
+  test('TC-F-047 — a real click on an events own Edit trigger opens that events own sheet (F-F-01)', async () => {
+    // Regression guard for F-F-01. .overlay is position:fixed;inset:0;z-index:50;
+    // display:grid and there is no .overlay[hidden] rule — the author stylesheet
+    // beats the user agent's [hidden]{display:none} whatever the specificity — so
+    // while the per-event sheets were rendered without the attribute every other
+    // overlay in the product carries, all of them laid out full-viewport at once
+    // and only the last in DOM order was reachable by a pointer. Every other
+    // Edit button, and the SMTP form's own Save button, sat underneath the stack.
+    // The attribute is back (internal/app/templates.go:3555); openDialog/closeDialog
+    // already toggled it, so that was the whole fix.
+    //
+    // request_returned is deliberately not the last event in seeded order — that
+    // one was reachable even while the defect stood, so pinning it would have
+    // proved nothing.
     await adminPage.goto('/admin/notifications');
+    await expect(
+      adminPage.locator('#ev-request_returned'),
+      'the sheet starts closed, like every other overlay in the product'
+    ).toBeHidden();
     await adminPage.locator('[data-open="ev-request_returned"]').click();
     await expect(adminPage.locator('#ev-request_returned')).toBeVisible();
+    await expect(
+      adminPage.locator('#ev-request_returned .sh-head b'),
+      'and it is that event\'s own sheet, not whichever one happened to be on top'
+    ).toHaveText('Returned for correction');
+
+    // The stack is gone, not merely re-ordered: nothing else is covering the page.
+    await adminPage.locator('#ev-request_returned .sh-close').click();
+    await expect(adminPage.locator('#ev-request_returned')).toBeHidden();
+    await expect(
+      adminPage.locator('.overlay:not([hidden])'),
+      'with every sheet closed, no overlay is laid out over the screen at all'
+    ).toHaveCount(0);
+    await adminPage.getByRole('button', { name: 'Save email settings' }).click();
+    await expect(adminPage, 'so the SMTP form underneath is clickable again').toHaveURL(/\/admin\/notifications$/);
   });
 
   // -------------------------------------------------------------------------
@@ -792,13 +828,14 @@ test.describe.serial('TC-F — notifications & reminders', () => {
   // -------------------------------------------------------------------------
 
   // TC-F-035 and TC-F-037 also save through probePost rather than clicking
-  // "Save email settings" — that button sits on the very same page as the
-  // twelve un-hidden overlays (see the Section-4 comment above TC-F-030) and
-  // is covered by them exactly the same way, confirmed by this suite's own
-  // first attempt to click it (a 10s timeout reporting the stale-reservation
-  // overlay intercepting the click). This is the same finding (F-F-01), not
-  // a second one — the SMTP form is just further proof the whole page, not
-  // only the twelve sheets, is behind the un-hidden overlay stack.
+  // "Save email settings". That was once forced — the button sat underneath the
+  // same un-hidden overlay stack the Section-4 comment above TC-F-030 describes,
+  // and this suite's first attempt to click it timed out with the
+  // stale-reservation overlay intercepting the click, which is why F-F-01 was
+  // filed against the whole page and not only the sheets. It is fixed, and
+  // TC-F-047 now clicks this very button to prove it. These two keep posting to
+  // the route because what they are about is what persists and what is never
+  // echoed back, not which control reaches it.
 
   test('TC-F-035 — SMTP host/port/username/from-name/from-addr/base URL/management recipients persist and round-trip', async () => {
     const values = {
@@ -925,21 +962,34 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     await expect(trail.first()).toBeVisible();
     const trailText = (await trail.allTextContents()).join(' | ').toLowerCase();
     expect(trailText).toContain('reserved');
-    // Finding: no line here ever says "reminder sent" — MarkReminderSent
-    // (internal/store/reminders.go) never calls recordAuditTx, and
-    // auditPhrase/auditGlyph/auditTone (internal/app/linking.go) have no
-    // reminder-related case, so this trail cannot represent one even when a
-    // reminder has genuinely fired. See findings-f-notifications.md.
+    // F-F-02, fixed: MarkReminderSent now writes an audit row of its own
+    // (internal/store/reminders.go:194-198, action "remind", labelled by which
+    // reminder went out) and auditPhrase falls through to actionText, which
+    // renders it "Reminder sent" (internal/app/linking.go:1042). So the trail
+    // *can* represent a reminder now — which is what makes this assertion worth
+    // making: this reservation was taken moments ago and no reminder has fired,
+    // so no line claims one did.
     expect(trailText).not.toContain('reminder');
 
-    // The banner itself asserts a specific fact unconditionally: templates.go:1091
-    // renders "A reminder went out at the one-day mark" with no `{{if}}` at
-    // all — not tied to whether reminder_stale_days is actually 1 (it is a
-    // second, independent clock from the hardcoded store.StaleReservation =
-    // 24h this screen's own reachability is normally gated behind — see
-    // finding F-F-02), and not tied to whether a reminder has genuinely
-    // fired (this request was reserved moments ago; none has).
-    await expect(accA.page.locator('.banner.warn p')).toContainText('A reminder went out at the one-day mark');
+    // F-F-03, fixed. The banner used to state "A reminder went out at the
+    // one-day mark" with no {{if}} at all — untied to reminder_stale_days, which
+    // is admin-configurable, and untied to whether a reminder had genuinely
+    // fired. It now reads the configured threshold (internal/app/templates.go:1161),
+    // and says "days" rather than "calendar days" because the thresholds are
+    // elapsed days and a calendar boundary needs a timezone this app does not
+    // have. TC-F-043 has just set that threshold, so the sentence is checked
+    // against the live setting rather than a number written twice.
+    await adminPage.goto('/configuration');
+    const staleDays = await adminPage.locator('[name="reminder_stale_days"]').inputValue();
+    expect(staleDays, 'TC-F-043 set this, and the banner has to be reading the same value').toBe('3');
+    await accA.page.goto(`/requests/${requestU.id}/reservation/stale`);
+    await expect(accA.page.locator('.banner.warn p')).toContainText(
+      `A reminder goes out once a reservation has been open ${staleDays} days.`
+    );
+    await expect(
+      accA.page.locator('.banner.warn p'),
+      'and it no longer states a one-day mark the setting can contradict'
+    ).not.toContainText('one-day mark');
   });
 
   // -------------------------------------------------------------------------
@@ -958,17 +1008,20 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     expect(body).not.toContain('name="reminder_pending_days"');
   });
 
-  test('TC-F-048 — the pending-reminder hint on /requests/new reflects the configured reminder_pending_days threshold (see finding F-F-03)', async () => {
-    // Deterministic failure, kept red on purpose: internal/app/templates.go
-    // hardcodes "three calendar days" / "three-day reminder clock" in at
-    // least four places (the new-request form's own Reminders hint, the
-    // edit-request banner, the returned-request banner, and the "What
-    // happens next" thread) instead of reading the admin-configurable
-    // reminder_pending_days threshold (default 3, internal/store/reminders.go:44).
-    // Once the threshold is changed away from its default, every one of
-    // those four sentences becomes wrong. If this is ever fixed to read the
-    // live setting, this assertion starts passing ("passed unexpectedly").
-    test.fail();
+  test('TC-F-048 — the pending-reminder hint on /requests/new reflects the configured reminder_pending_days threshold (F-F-03)', async () => {
+    // Regression guard for F-F-03. internal/app/templates.go hardcoded "three
+    // calendar days" / "three-day reminder clock" in four places — the
+    // new-request form's Reminders hint, the edit-request banner, the
+    // returned-request banner and the "What happens next" thread — instead of
+    // reading the admin-configurable reminder_pending_days threshold (default 3,
+    // internal/store/reminders.go:44), so every one of those sentences became
+    // wrong the moment an administrator changed it. All four now read
+    // .Reminders.PendingAfterDays (templates.go:2122, :2697, :3167).
+    //
+    // "7 days", not "7 calendar days": the thresholds are elapsed days, and
+    // calendar semantics would need a timezone this app does not have — under
+    // them reminder_repeat_days degrades into nightly spam. calendarDaysBetween
+    // was deleted rather than wired up, and the copy follows the code.
     // Preserve the three toggles exactly as they stand — configurationSave
     // treats an absent toggle key as "off" (internal/app/configuration.go:146-149),
     // so posting without them would silently clobber unrelated settings.
@@ -985,25 +1038,29 @@ test.describe.serial('TC-F — notifications & reminders', () => {
 
     await req.page.goto('/requests/new?type=vendor_invoice');
     const hint = await req.page.locator('.hint', { hasText: 'reminder' }).first().innerText();
-    expect(hint).toContain('7 calendar days');
+    expect(hint, 'the hint names the threshold an administrator actually set').toContain('7 days');
+    expect(hint, 'and never the hardcoded default it used to state whatever the setting said').not.toContain('3 days');
   });
 
   // -------------------------------------------------------------------------
-  // Section 9 — coverage gaps in the twelve-event vocabulary (finding F-F-06).
+  // Section 9 — the coverage gaps F-F-06 found in the twelve-event vocabulary,
+  // now closed.
   //
-  // None of the six actions below ever calls a.fire anywhere in
-  // internal/app: grepping every a.fire( call site in the package names
-  // exactly nine events (request_submitted, request_edited, request_returned,
-  // request_rejected, request_approved, request_on_hold,
-  // request_cancellation_requested, payment_settled, payment_partial_review,
-  // plus the urgent event nested inside fire() itself) and no others. Each
-  // test drives the real action and proves the person who arguably should be
-  // told receives nothing more than they already had — a genuine, honest
-  // outcome: there is no seeded event at all for any of these six
-  // transitions, so nothing is "failing to fire an existing rule."
+  // Six real workflow actions called a.fire nowhere in internal/app —
+  // withdraw, re-raise, release, unhold, accept-partial and either cancellation
+  // decision — and there was no seeded event for any of them, so nothing was
+  // even "failing to fire an existing rule". Migration v9 added nine events and
+  // the handlers now fire them (internal/app/requests.go:956,:972,:1069,:1071;
+  // internal/app/linking.go:554,:567,:712,:755,:803). Each test below drives the
+  // same real action it always did and now proves the person the seeded rule
+  // addresses is genuinely told, counted as a delta on their own list so a
+  // colleague's rows can never stand in for theirs.
+  //
+  // TC-F-057 is the one that inverts the other way: F-F-07 was the mirror image
+  // of the same fault — an event fired where the seeded sentence was false.
   // -------------------------------------------------------------------------
 
-  test('TC-F-051 — withdrawing a pending request fires no notification to the manager', async () => {
+  test('TC-F-051 — withdrawing a pending request tells the manager whose queue item vanished', async () => {
     const requestWithdraw = await raiseRequest(req.page, {
       title: `Chain Withdraw ${RUN}`, amount: '900.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
@@ -1011,63 +1068,106 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     const before = (await notificationTitles(mgr.page)).length;
     const probe = await probePost(req.page, `/requests/${requestWithdraw.id}/withdraw`, {});
     expect(probe.status).toBe(303);
-    const after = (await notificationTitles(mgr.page)).length;
-    expect(after, 'withdrawing removes the request from the manager\'s queue with no event telling them it happened').toBe(before);
+    const after = await notificationTitles(mgr.page);
+    expect(
+      after.length,
+      'withdrawing takes the request out of the manager\'s queue, so request_withdrawn tells them it happened'
+    ).toBe(before + 1);
+    expect(
+      after.some(t => t.includes(requestWithdraw.number) && t.toLowerCase().includes('withdrew')),
+      'and the row names the request that left'
+    ).toBe(true);
   });
 
-  test('TC-F-052 — reraising a rejected request fires no notification to the manager (no request_submitted-equivalent)', async () => {
-    // requestA (Section 1) is rejected. Reraising it creates a brand-new
-    // pending request (D1) addressed to the same mgr, who has no way to
-    // learn a new request now needs their attention.
-    const before = (await notificationTitles(mgr.page)).length;
+  test('TC-F-052 — reraising a rejected request tells the manager a second attempt now needs deciding', async () => {
+    // requestA (Section 1) is rejected. Reraising it creates a brand-new pending
+    // request (D1) with its own number addressed to the same mgr, who would
+    // otherwise never learn the second attempt exists. request_reraised fires for
+    // the NEW id (internal/app/requests.go:972), which is why the row names a
+    // number this suite has not seen before rather than requestA's.
+    const before = await notificationTitles(mgr.page);
     const probe = await probePost(req.page, `/requests/${requestA.id}/reraise`, {});
     expect(probe.status).toBe(303);
-    const after = (await notificationTitles(mgr.page)).length;
-    expect(after, 'requestReraise never calls a.fire — internal/app/requests.go:759-766').toBe(before);
+    const after = await notificationTitles(mgr.page);
+    expect(after.length, 'the approver is told the request was raised again').toBe(before.length + 1);
+    const fresh = after.filter(t => !before.includes(t));
+    expect(fresh.length).toBe(1);
+    expect(fresh[0].toLowerCase()).toContain('again');
+    expect(
+      fresh[0].includes(requestA.number),
+      'and it names the new request, not the rejected one it came from'
+    ).toBe(false);
   });
 
-  test('TC-F-053 — releasing a reservation fires no notification to the requester', async () => {
-    // requestU (TC-F-044) is reserved by accA. Releasing it frees it back
-    // to the queue without telling req anything happened.
-    const before = (await notificationTitles(req.page)).length;
+  test('TC-F-053 — releasing a reservation tells the requester and the approver, as the release screen promises', async () => {
+    // requestU (TC-F-044) is reserved by accA. The release screen states in as
+    // many words that "The requester and the approver are both notified", and
+    // reservation_released is seeded with IncludeRequester and IncludeManager
+    // (internal/store/migrations_notifications.go:96-100), so both are.
+    const reqBefore = (await notificationTitles(req.page)).length;
+    const mgrBefore = (await notificationTitles(mgr.page)).length;
     const probe = await probePost(accA.page, `/requests/${requestU.id}/release`, { reason: 'Reassigning workload.', confirm: 'on' });
     expect(probe.status).toBe(303);
-    const after = (await notificationTitles(req.page)).length;
-    expect(after, 'requestRelease never calls a.fire — internal/app/linking.go:623-635').toBe(before);
+    const reqAfter = await notificationTitles(req.page);
+    expect(reqAfter.length, 'the requester is told their invoice is unclaimed again').toBe(reqBefore + 1);
+    expect(reqAfter.some(t => t.includes(requestU.number) && t.toLowerCase().includes('unclaimed'))).toBe(true);
+    expect(
+      (await notificationTitles(mgr.page)).length,
+      'and so is the approver — the screen names both, so both must be'
+    ).toBe(mgrBefore + 1);
   });
 
-  test('TC-F-054 — lifting a hold (unhold) fires no notification to the requester', async () => {
-    // requestE (TC-F-006) is on hold. Lifting it makes it payable again
-    // with no row telling req the block is gone.
+  test('TC-F-054 — lifting a hold tells the requester the block is gone', async () => {
+    // requestE (TC-F-006) is on hold. request_on_hold told the requester the
+    // pause began (TC-F-006); request_unheld is the other half, and without it
+    // the only event in the pair was the bad news.
     const before = (await notificationTitles(req.page)).length;
     const probe = await probePost(accA.page, `/requests/${requestE.id}/unhold`, {});
     expect(probe.status).toBe(303);
-    const after = (await notificationTitles(req.page)).length;
-    expect(after, 'requestUnhold never calls a.fire — internal/app/linking.go:710-720').toBe(before);
+    const after = await notificationTitles(req.page);
+    expect(after.length, 'lifting a hold makes the request payable again, and the requester is told').toBe(before + 1);
+    expect(after.some(t => t.includes(requestE.number) && t.toLowerCase().includes('off hold'))).toBe(true);
   });
 
-  test('TC-F-055 — accepting a partial payment fires no notification to the requester', async () => {
-    // requestG (TC-F-008) is in partial_review. Accepting it closes the
-    // request with no row telling req it is done.
+  test('TC-F-055 — accepting a partial payment tells the requester the balance is not coming', async () => {
+    // requestG (TC-F-008) is in partial_review. Accepting it closes the request
+    // as completed_partial: the requester learns the shortfall is permanent, and
+    // the assigned accountant learns to stop chasing it.
     const before = (await notificationTitles(req.page)).length;
     const probe = await probePost(mgr.page, `/requests/${requestG.id}/accept-partial`, { note: 'Accepted, the shortfall is not worth chasing.' });
     expect(probe.status).toBe(303);
-    const after = (await notificationTitles(req.page)).length;
-    expect(after, 'requestAcceptPartial never calls a.fire — internal/app/linking.go:477-484').toBe(before);
+    const after = await notificationTitles(req.page);
+    expect(after.length, 'the request is closed against the requester\'s figure, so they are told').toBe(before + 1);
+    expect(after.some(t => t.includes(requestG.number) && t.toLowerCase().includes('closed'))).toBe(true);
   });
 
-  test('TC-F-056 — deciding a cancellation request fires no notification to the requester who asked', async () => {
-    // requestH (TC-F-009) is cancellation_requested. Declining it returns
-    // the request to Approved — awaiting payment with no row telling req
-    // their ask was declined.
+  test('TC-F-056 — declining a cancellation tells the requester who asked', async () => {
+    // requestH (TC-F-009) is cancellation_requested. Declining it returns the
+    // request to Approved — awaiting payment. The two decisions are two events
+    // rather than one because the sentences are opposites ("nothing will be
+    // paid" / "the payment is unfrozen"); this drives the decline half.
     const before = (await notificationTitles(req.page)).length;
     const probe = await probePost(mgr.page, `/requests/${requestH.id}/cancellation`, { decision: 'decline', note: 'Payment is already in motion.' });
     expect(probe.status).toBe(303);
-    const after = (await notificationTitles(req.page)).length;
-    expect(after, 'requestCancellationDecide never calls a.fire — internal/app/requests.go:850-858').toBe(before);
+    const after = await notificationTitles(req.page);
+    expect(after.length, 'the person who asked is told the answer').toBe(before + 1);
+    expect(
+      after.some(t => t.includes(requestH.number) && t.toLowerCase().includes('stands')),
+      'and the row says the request stands rather than that it was cancelled'
+    ).toBe(true);
   });
 
-  test('TC-F-057 — saving corrections on a returned request without resubmitting still fires request_edited, wrongly claiming it was re-sent for approval', async () => {
+  test('TC-F-057 — saving corrections on a returned request without resubmitting fires nothing (F-F-07)', async () => {
+    // F-F-07, fixed. requestEdit fired EventRequestEdited unconditionally, and
+    // that event's seeded template says the request "was edited and re-sent for
+    // approval" — false for exactly one case, "Save corrections" on a *returned*
+    // request, the button whose whole purpose is staying put without re-sending.
+    // The approver was told something was back in their queue while the status
+    // was still `returned`. The fire is now conditional on `resubmitting ||
+    // req.Status == "pending"` (internal/app/requests.go:842), so editing a
+    // pending request still re-notifies — the figures the approver is about to
+    // decide on have changed — and this one does not. TC-F-003 covers the
+    // resubmit half, so both branches are pinned.
     const requestSaveOnly = await raiseRequest(req.page, {
       title: `Chain SaveOnly ${RUN}`, amount: '1100.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
@@ -1081,10 +1181,13 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     await expect(req.page).toHaveURL(new RegExp(`/requests/${requestSaveOnly.id}$`));
 
     const after = await notificationTitles(mgr.page);
-    expect(after.length, 'requestEdit fires EventRequestEdited unconditionally (internal/app/requests.go:663-676), even when submit_action=save').toBe(before.length + 1);
-    expect(after.some(t => t.toLowerCase().includes('edited')), 'the new row claims it was edited and re-sent, though nothing was resubmitted').toBe(true);
+    expect(
+      after.length,
+      'nothing was re-sent, so nothing may claim it was — the approver\'s list must not move'
+    ).toBe(before.length);
 
-    // The request itself really did stay "returned" — nothing was resubmitted.
+    // The request itself really did stay "returned" — nothing was resubmitted,
+    // which is what makes the silence correct rather than a missed event.
     await req.page.goto(`/requests/${requestSaveOnly.id}`);
     await expect(req.page.locator('body')).toContainText('sent this back');
   });

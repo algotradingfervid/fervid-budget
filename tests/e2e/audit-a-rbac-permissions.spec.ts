@@ -5,7 +5,7 @@
  * Workflow meaning belongs to the sibling suites; here every assertion is about
  * a gate opening or refusing.
  *
- * THREE THINGS THAT SHAPE EVERY TEST BELOW, all read out of the code first:
+ * FOUR THINGS THAT SHAPE EVERY TEST BELOW, all read out of the code first:
  *
  * 1. `RequirePermission` wraps `RequireLogin` (internal/auth/auth.go:141), so an
  *    anonymous caller is **redirected 303 → /login** and never 403s. The
@@ -20,16 +20,38 @@
  *      - signed in, no grant      → 403 "You do not have permission to perform this action."
  *      - signed in, grant held    → 403 "Your form session expired. Refresh the page and try again."
  *    The third outcome is the proof the gate opened, and nothing was mutated.
- *    The two messages come from different places (auth.go:143 vs app.go:573) and
- *    are the only way to tell a gate refusal from a store's ownership refusal,
- *    because `respondStoreError` renders `ErrForbidden` with the *same* wording
- *    as the middleware (http_errors.go:191-192).
+ *    The two messages come from different places (auth.go:143 vs app.go's
+ *    `withCSRF`) and telling them apart is what makes the POST half readable.
+ *
+ *    A store's own refusal is now a third message again. It used to be a
+ *    fourth outcome indistinguishable from the first: `respondStoreError`
+ *    rendered every `ErrForbidden` with the middleware's exact wording, so a
+ *    caller who simply had not reserved a request was told they lacked a
+ *    permission they held (F-A-09/F-G-023). It renders `friendly(err)` now
+ *    (http_errors.go), which keeps the sentence a wrapped ErrForbidden was
+ *    written with — "Reserve this request before recording its payment",
+ *    "System roles cannot be deleted" — and falls back to the permission
+ *    wording only for a bare one. So a body carrying GATE_REFUSAL really does
+ *    mean the gate refused, and TC-A-102 and TC-A-120 lean on that.
  *
  * 3. Every subject holds **exactly one** role, via `asRole`. `fixtures.
  *    createApproverUser` cannot be used here: `store.CreateUser` →
  *    `assignDefaultRoleTx` (internal/store/migrations.go:501) gives every new
  *    user the Accounts role, so ticking "Manager" yields Accounts + Manager and
  *    every refusal under test turns into a 200.
+ *
+ * 4. **A row outside the caller's data scope answers 404, not 403.** This is why
+ *    so many cells below expect a status that reads like "missing" on an object
+ *    the fixture certainly created. `loadViewableRequest` (requests.go:335-348),
+ *    `notFoundAttachment` (app.go:1054-1062) and `requestAttachmentDownload` all
+ *    refuse that way on purpose: request and attachment ids are consecutive
+ *    integers, and a 403 that can be told apart from a 404 lets a caller who may
+ *    read nothing still map everything the system holds (F-G-002). The rule is
+ *    therefore that the ROUTE IS NOT AN EXISTENCE ORACLE, and 404 here is a
+ *    stronger refusal than 403, never a weaker one. Ownership rules layered
+ *    ABOVE the scope — "only the raiser may edit", "only the person holding this
+ *    reservation" — still answer 403 with their own sentence, because by then
+ *    the caller has already been told the row exists.
  *
  * Row IDs `RT-nn` and caller IDs `C-xxx` are the ones in
  * docs/qa/uml/05-route-permission-matrix.md. TC IDs are in
@@ -286,9 +308,12 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   matrixTest('TC-A-M01', 'RequireLogin only — session, no verb', () => [
     { id: 'RT-05', method: 'GET', path: () => '/', gate: 'login' },
     { id: 'RT-08', method: 'GET', path: () => '/dashboard', gate: 'login' },
-    // RT-07 is the finding: the nav gates the variance grid on grid:view
-    // (nav.go:70) and the route does not (app.go:377). See F-A-02.
-    { id: 'RT-07', method: 'GET', path: () => '/grid', gate: 'login' },
+    // RT-07 used to sit here, and that was the finding: the nav gated the
+    // variance grid on grid:view while the route was RequireLogin only, so the
+    // screen the sidebar hid opened to anybody with a session (F-A-02). The
+    // route now carries the verb the nav always claimed for it
+    // (app.go:439), so the row is no longer a session-only row — it is
+    // TC-A-M58 below.
     { id: 'RT-30', method: 'GET', path: () => '/notifications', gate: 'login' },
     { id: 'RT-31', method: 'POST', path: () => '/notifications/read', gate: 'login' },
     // The catch-all: RequireLogin fires before notFound, so a 404 probe needs a
@@ -303,12 +328,19 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       id: 'RT-32', method: 'GET', path: () => '/notifications/999999/open', gate: 'login',
       over: { 'C-req': 404, 'C-mgr': 404, 'C-acc': 404, 'C-adm': 404, 'C-none': 404 }
     },
-    // RT-60 is gated on a session, then on ownership: release-if-yours OR
-    // reassign (linking.go:531-538). A2 holds the reservation, so of the five
-    // callers only the Admin — the only holder of reservation:reassign — opens it.
+    // RT-60 is gated on a session, then on the request's data scope, then on
+    // ownership: release-if-yours OR reassign (`reservationForm`,
+    // internal/app/linking.go). A2 holds the reservation, so of the five callers
+    // only the Admin — the only holder of reservation:reassign — opens it.
+    //
+    // The Requester answers 404, not 403, and the order is why: the screen loads
+    // through `loadViewableRequest` (requests.go:335-348), and a request outside
+    // the caller's data scope is not-found rather than forbidden, so the route
+    // cannot be used to discover which ids exist (F-G-002). A Requester whose
+    // scope is `own` never reaches the reservation rule at all.
     {
       id: 'RT-60', method: 'GET', path: () => `/requests/${W.tProc}/reservation`, gate: 'login',
-      over: { 'C-req': 403, 'C-mgr': 403, 'C-acc': 403, 'C-adm': 200, 'C-none': 403 }
+      over: { 'C-req': 404, 'C-mgr': 403, 'C-acc': 403, 'C-adm': 200, 'C-none': 404 }
     }
   ]);
 
@@ -360,10 +392,21 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   matrixTest('TC-A-M13', 'attachment:create', () => [
     { id: 'RT-19', method: 'POST', path: () => `/payments/${W.payId}/attachments`, gate: 'attachment:create' }
   ]);
-  // RT-20 has no ownership check of any kind (app.go:881-911). A Requester holds
-  // attachment:view, so it answers 200 for somebody else's bank advice. F-A-01.
+  // RT-20 serves *payment* documents and nothing else, and it resolves the
+  // attachment to its payment before serving it: `canReadPayment`
+  // (app.go:1028-1039) applies the request's own row scope, which is the same
+  // rule `paymentDetail` runs — "or payment:view becomes a way around Q5/R6".
+  // A Requester holds attachment:view, so the gate opens and the ownership check
+  // is the thing doing the work: the bank advice on somebody else's request is
+  // refused. It is refused as **404**, deliberately: attachment ids are small
+  // sequential integers and a distinguishable refusal turns the route into an
+  // enumeration oracle over the whole table (`notFoundAttachment`,
+  // app.go:1054-1062). F-A-01.
   matrixTest('TC-A-M14', 'attachment:view', () => [
-    { id: 'RT-20', method: 'GET', path: () => `/attachments/${W.payAttId}`, gate: 'attachment:view' }
+    {
+      id: 'RT-20', method: 'GET', path: () => `/attachments/${W.payAttId}`, gate: 'attachment:view',
+      over: { 'C-req': 404 }
+    }
   ]);
 
   matrixTest('TC-A-M15', 'grid:export', () => [
@@ -427,19 +470,25 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-51', method: 'GET', path: () => '/requests', gate: 'request:view' },
     { id: 'RT-52', method: 'GET', path: () => '/requests/export.csv', gate: 'request:view' },
     // Every id row below targets a request C-req did not raise: scope own then
-    // refuses it at loadViewableRequest (requests.go:236-239) even though the
+    // refuses it at `loadViewableRequest` (requests.go:335-348) even though the
     // verb is held. That is Q5/R6.
+    //
+    // The refusal is **404**, not 403. Holding request:view and being told
+    // "forbidden" is an answer — it says the row exists — and these ids are
+    // consecutive integers, so a caller could map every request in the system
+    // without reading one. A row outside the data scope now answers exactly as a
+    // row that was never written does (F-G-002).
     {
       id: 'RT-70', method: 'GET', path: () => `/requests/${W.tPending}`, gate: 'request:view',
-      over: { 'C-req': 403 }
+      over: { 'C-req': 404 }
     },
     {
       id: 'RT-57', method: 'GET', path: () => `/requests/${W.tPending}/submitted`, gate: 'request:view',
-      over: { 'C-req': 403 }
+      over: { 'C-req': 404 }
     },
     {
       id: 'RT-67', method: 'GET', path: () => `/requests/${W.tPartial}/partial-review`, gate: 'request:view',
-      over: { 'C-req': 403 }
+      over: { 'C-req': 404 }
     }
   ]);
   matrixTest('TC-A-M33', 'request:create', () => [
@@ -449,11 +498,16 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-56', method: 'POST', path: () => '/requests', gate: 'request:create' }
   ]);
   matrixTest('TC-A-M34', 'request:edit', () => [
-    // Only the raiser may edit (requests.go:592-595), so both holders of the
-    // verb are refused on a request neither raised — 403, but not the gate's.
+    // Only the raiser may edit (`loadEditableRequest`, requests.go:739-752), so
+    // both holders of the verb are refused on a request neither raised — and
+    // they are refused differently, which is the point of listing both.
+    // `loadEditableRequest` calls `loadViewableRequest` first: the Requester's
+    // scope is `own`, so the row is 404 before "only the raiser may edit" is
+    // ever asked. The administrator's scope is `all`, so the row resolves and
+    // the ownership rule is what refuses them — 403, but never the gate's 403.
     {
       id: 'RT-71', method: 'GET', path: () => `/requests/${W.tPending}/edit`, gate: 'request:edit',
-      over: { 'C-req': 403, 'C-adm': 403 }
+      over: { 'C-req': 404, 'C-adm': 403 }
     },
     { id: 'RT-72', method: 'POST', path: () => `/requests/${W.tPending}/edit`, gate: 'request:edit' }
   ]);
@@ -468,10 +522,14 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   ]);
   matrixTest('TC-A-M38', 'request:cancel', () => [
     // Asking for a cancellation is the raiser's act, so an administrator holding
-    // every verb is still refused here (requests.go:802-806).
+    // every verb is still refused here (`requestCancelForm`,
+    // requests.go:1005-1023) — 403, and its own sentence rather than the gate's.
+    // The Requester is 404 for the same reason RT-71 is: the screen loads
+    // through `loadViewableRequest`, and a request outside the data scope is
+    // not-found before any ownership rule is consulted.
     {
       id: 'RT-79', method: 'GET', path: () => `/requests/${W.tApproved}/cancel`, gate: 'request:cancel',
-      over: { 'C-req': 403, 'C-adm': 403 }
+      over: { 'C-req': 404, 'C-adm': 403 }
     },
     { id: 'RT-80', method: 'POST', path: () => `/requests/${W.tApproved}/cancel-request`, gate: 'request:cancel' }
   ]);
@@ -535,6 +593,18 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-97', method: 'POST', path: () => '/backups', gate: 'backup:create' }
   ]);
 
+  // A row and an ID that did not exist at the audit, because the gate did not.
+  // RT-07 was probed under TC-A-M01 as a RequireLogin row and that WAS the
+  // finding — the sidebar gated the variance grid on grid:view and the route
+  // gated it on nothing, so a Requester who typed the URL read every budget,
+  // every actual, and a Recent Payments table (F-A-02/F-G-032). The route now
+  // names the verb (`RequirePermission("grid","view")`, app.go:439), which makes
+  // it an ordinary matrix row for the first time: Manager, Accounts and Admin
+  // hold grid:view and open it, Requester does not and is refused by the gate.
+  matrixTest('TC-A-M58', 'grid:view', () => [
+    { id: 'RT-07', method: 'GET', path: () => '/grid', gate: 'grid:view' }
+  ]);
+
   // =========================================================================
   // 2. Menu hiding is not enforcement — and the converse.
   // =========================================================================
@@ -574,21 +644,31 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
             .soft(probe.status, `${caller} is offered "${item.label}" in the sidebar, so ${item.href} must answer 200`)
             .toBe(200);
         } else {
-          // The one exception the code makes is /grid, and it is a finding, not
-          // a rule — asserted honestly below in TC-A-63.
-          const allowed = item.href === '/grid' ? [200] : [403];
+          // No exceptions. /grid used to be one — the sidebar hid it and the
+          // route opened it to any session — and the exception is gone because
+          // the hole is (F-A-02, app.go:439). Every screen the sidebar withholds
+          // is now a screen the route withholds, with no route allowed to be
+          // more generous than the menu that advertises it.
           expect
             .soft(
-              allowed.includes(probe.status),
+              probe.status,
               `${caller}'s sidebar hides "${item.label}", so ${item.href} must refuse — got ${probe.outcome}`
             )
-            .toBe(true);
+            .toBe(403);
         }
       }
     });
   }
 
-  test('TC-A-63 — the variance grid is hidden from a Requester and reachable anyway', async () => {
+  test('TC-A-63 — the variance grid is hidden from a Requester and refused to them too', async () => {
+    // What this protects, in two halves. The grid is a budget screen carrying a
+    // Recent Payments panel — amounts, payees, and live links into
+    // /payments/{id} — so it discloses two different things and needs two
+    // different verbs. Both were missing (F-A-02/F-G-032):
+    //   (a) the route was RequireLogin only while the nav gated it on grid:view,
+    //       so the screen the sidebar hid opened to anybody who typed the URL;
+    //   (b) the payments panel rode along with the budget matrix, handing a
+    //       ledger to a caller /payments answered 403.
     const req = W.callers['C-req'];
     await req.page.goto('/');
     await expect(
@@ -596,44 +676,79 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'a Requester holds no grid:view, so nav.go hides the Variance grid entry'
     ).toHaveCount(0);
 
-    // Verified behaviour, not an aspiration: GET /grid is RequireLogin only
-    // (app.go:377), so the screen the sidebar hides opens anyway. F-A-02.
+    // Half (a). The route names the verb the menu always claimed for it
+    // (app.go:439), so the menu and the URL now say the same thing.
     const probe = await probeGet(req.page, '/grid');
-    expect(probe.status, 'GET /grid is gated on a session alone, so a Requester reaches the variance grid').toBe(200);
-    expect(
-      probe.body.includes('Variance') || probe.body.includes('variance'),
-      'and what they reach is the variance grid itself, not a stub'
-    ).toBe(true);
-    // What is actually leaked is the point: the screen carries a Recent Payments
-    // table with amounts, payees and links into /payments/{id} — a ledger a
-    // Requester holds no payment verb for.
-    expect(
-      probe.body.includes('Recent Payments'),
-      'and it carries the recent-payments table, which is payment data by another name'
-    ).toBe(true);
+    expect(probe.status, 'GET /grid is gated on grid:view, which a Requester does not hold').toBe(403);
+    expect(probe.body.includes(GATE_REFUSAL), 'and the refusal comes from the permission gate').toBe(true);
     expect(
       /href="\/payments\/\d+"/.test(probe.body),
-      'with live links into the payments ledger the same caller is refused at /payments'
-    ).toBe(true);
+      'and nothing of the screen is rendered on the way out — no payment link survives the refusal'
+    ).toBe(false);
     const ledger = await probeGet(req.page, '/payments');
-    expect(ledger.status, 'while /payments itself refuses them — the two screens disagree').toBe(403);
+    expect(ledger.status, 'while /payments refuses them as it always did — the two screens now agree').toBe(403);
 
-    // Second reading of the same defect: the mobile tab bar links there for the
-    // very caller the sidebar hides it from (nav.go:228-232).
+    // The mobile tab bar agrees as well, and it has to: on a phone the bar is
+    // the only navigation there is, so a tab that 403s is worse than no tab
+    // (resolveTabs, nav.go:262-291).
     await expect(
       req.page.locator('.tabbar a[href="/grid"]'),
-      'the tab bar offers /grid to a caller with no grid:view, contradicting the sidebar'
-    ).toHaveCount(1);
+      'the tab bar offers no /grid to a caller with no grid:view either'
+    ).toHaveCount(0);
+
+    // Half (b): grid:view opens the budget matrix and buys nothing else. The
+    // panel is filtered in the handler (app.go:775-784) rather than hidden in
+    // the template, because a screen must not be trusted to withhold data the
+    // handler already loaded.
+    const roleName = `gridonly-${W.runId}`;
+    const roleId = await createCustomRole(W.adminPage, roleName);
+    await grantMatrix(W.adminPage, roleId, roleName, { perms: ['grid:view'] });
+    const subject = await createUserWithExactRoles(W.adminPage, `gridonly-${W.runId}`, W.runId, []);
+    await setRolesByLabel(W.adminPage, subject.email, [new RegExp(`^${roleName}`)]);
+    const session = await signIn(W.adminPage.context().browser()!, subject, W.adminPage.viewportSize());
+    try {
+      const grid = await probeGet(session.page, `/grid?month=${W.today.slice(0, 7)}`);
+      expect(grid.status, 'grid:view alone opens the variance grid').toBe(200);
+      expect(grid.body.includes('Variance'), 'and what opens is the grid itself, not a stub').toBe(true);
+      expect(
+        /href="\/payments\/\d+"/.test(grid.body),
+        'but the Recent Payments panel is empty without payment:view — no amount, no payee, no link'
+      ).toBe(false);
+
+      // The control, so the emptiness above is the gate and not an empty month:
+      // the same panel, the same month, a caller who does hold payment:view.
+      const withVerb = await probeGet(W.callers['C-acc'].page, `/grid?month=${W.today.slice(0, 7)}`);
+      expect(withVerb.status, 'Accounts holds grid:view too').toBe(200);
+      expect(
+        withVerb.body.includes(`href="/payments/${W.payId}"`),
+        'and holding payment:view is what fills the panel — this month really does have a payment in it'
+      ).toBe(true);
+    } finally {
+      await session.close();
+    }
   });
 
-  test('TC-A-64 — a role-less user is offered no screen at all and refused every one', async () => {
+  test('TC-A-64 — a role-less user is offered nothing but the two ungated screens, and refused every other', async () => {
     const none = W.callers['C-none'];
     await none.page.goto('/');
+    // Two, not one. `navItemVisible` shows an item with no Resource to everyone
+    // (nav.go), and the Notifications entry has none — every row that screen can
+    // return is already scoped to the signed-in user by the store, which is why
+    // its route needs no verb either. It was added because the .m-topbar bell is
+    // display:none on every desktop, so above 860px a user had no way to reach
+    // their own notifications at all (F-F-05, nav.go:61). The rule this case
+    // pins is unchanged: the sidebar offers exactly the screens the route layer
+    // will open, and both of these are RequireLogin-only screens asserted as
+    // reachable in the second loop below.
     await expect(
       none.page.locator('.sidebar .side-nav a:not(.soon)'),
-      'the only linked sidebar item a role-less user may have is Home'
+      'a role-less user is offered only the screens that need no verb: Home and Notifications'
+    ).toHaveCount(2);
+    await expect(none.page.locator('.sidebar a[href="/"]'), 'the first is Home').toHaveCount(1);
+    await expect(
+      none.page.locator('.sidebar a[href="/notifications"]'),
+      'the second is the notification centre, which is scoped to the reader by the store'
     ).toHaveCount(1);
-    await expect(none.page.locator('.sidebar a[href="/"]'), 'and that item is Home').toHaveCount(1);
 
     for (const path of ['/requests', '/payments', '/users', '/roles', '/configuration', '/audit', '/approvals',
       '/accounts-queue', '/recoverables', '/budgets', '/months', '/reports/monthly', '/vendors', '/projects',
@@ -675,10 +790,27 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toBe(false);
   });
 
-  test('TC-A-67 — a Requester cannot open another requester’s request by id', async () => {
+  test('TC-A-67 — a Requester cannot open another requester’s request by id, and cannot tell it exists', async () => {
     const probe = await probeGet(W.callers['C-req'].page, `/requests/${W.tPending}`);
-    expect(probe.status, 'holding request:view somewhere is not permission to read this row').toBe(403);
-    expect(probe.body.includes('permission to view this request'), 'and the refusal says so in words').toBe(true);
+    // Holding request:view somewhere is not permission to read this row — and
+    // the refusal must not say which of the two it is. A 403 on a real id and a
+    // 404 on an unused one is an existence oracle over consecutive integers, so
+    // `loadViewableRequest` answers a row outside the data scope exactly as it
+    // answers a row that was never written (requests.go:343-346, F-G-002).
+    expect(probe.status, 'a request outside the caller’s data scope is not-found, not forbidden').toBe(404);
+    expect(
+      probe.body.includes('The requested record was not found'),
+      'and the wording gives nothing away either'
+    ).toBe(true);
+
+    // The proof that it is an oracle no longer: an id that certainly does not
+    // exist answers identically, byte for byte in the part that matters.
+    const missing = await probeGet(W.callers['C-req'].page, '/requests/99999999');
+    expect(missing.status, 'an id nobody ever raised answers the same status').toBe(probe.status);
+    expect(
+      missing.body.includes('The requested record was not found'),
+      'and the same sentence — so the two cases are indistinguishable to the caller'
+    ).toBe(true);
   });
 
   test('TC-A-68 — a Manager with request=all sees every request but decides only their own', async () => {
@@ -759,16 +891,19 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     }
   });
 
-  test('TC-A-72 — the payment data scope is declared and grantable but never enforced', async () => {
-    // F-A-04: `payment` is in scopedResources (permissions.go:185), the roles
-    // screen offers Own / Assigned / All for it, and nothing ever calls
-    // Scope(u, "payment"). test.fail() keeps the assertion honest without
-    // weakening it: the day the scope is wired up this test goes red saying
-    // "passed unexpectedly", which is exactly the signal a suite should give.
-    test.fail();
+  test('TC-A-72 — the payment data scope is declared, grantable AND enforced', async () => {
+    // F-A-04, and the annotation is gone because the defect is. `payment` is in
+    // scopedResources (permissions.go:185) and the roles screen offers
+    // Own / Assigned / All for it, but nothing ever called Scope(u, "payment") —
+    // so a role built as "Payments · Own" received the whole ledger, and the
+    // control on the roles screen was decoration. `ListPayments` now takes
+    // Scope/ViewerID and filters on `entered_by` (app.go:812-818), and
+    // `paymentScopeReaches` (app.go:1042-1049) mirrors that filter exactly so a
+    // payment invisible in the ledger is invisible by id too.
+    //
     // Only Accounts and Admin hold payment:view, and both carry payment=all, so
-    // the gap needs a custom role to see. This is the roles screen doing exactly
-    // what it offers: payment:view with scope "own".
+    // the rule needs a custom role to see at all. This is the roles screen doing
+    // exactly what it offers: payment:view with scope "own".
     const roleName = `payments-own-${W.runId}`;
     const roleId = await createCustomRole(W.adminPage, roleName);
     await grantMatrix(W.adminPage, roleId, roleName, { cells: ['payments:view'], scopes: { payment: 'own' } });
@@ -779,12 +914,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     try {
       const probe = await probeGet(session.page, `/payments?month=${W.today.slice(0, 7)}&status=all`);
       expect(probe.status, 'payment:view opens the ledger').toBe(200);
-      // The rule: `payment` is in scopedResources (permissions.go:185) and the
-      // matrix offers Own/Assigned/All for it, so scope=own must narrow the
-      // ledger to the holder's own payments — they entered none.
+      // The rule: scope=own narrows the ledger to the holder's own payments —
+      // and this holder has entered none, so the ledger is empty of A2's.
       expect(
         probe.body.includes(`/payments/${W.payId}`),
-        'scope payment=own must hide a payment this user did not enter (R3) — F-A-04'
+        'scope payment=own hides a payment this user did not enter (R3) — F-A-04'
       ).toBe(false);
     } finally {
       await session.close();
@@ -872,8 +1006,17 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     const manager = await probeGet(W.callers['C-mgr'].page, `/requests/${W.tProc}/reservation`);
     expect(manager.status, 'a manager holds no reservation verb at all').toBe(403);
 
+    // A requester who cannot read the request is refused before the reservation
+    // rule is reached at all, and refused as not-found: `reservationForm` loads
+    // through `loadViewableRequest`, which will not tell a caller outside the
+    // data scope that the row exists (requests.go:343-346, F-G-002). The two
+    // refusals above say "this reservation is not yours"; this one says nothing.
     const stranger = await probeGet(W.callers['C-req'].page, `/requests/${W.tProc}/reservation`);
-    expect(stranger.status, 'and a requester who cannot even read the request is refused first').toBe(403);
+    expect(stranger.status, 'and a requester who cannot even read the request is refused first, as not-found').toBe(404);
+    expect(
+      stranger.body.includes('Only the person holding this reservation'),
+      'and is never told there is a reservation to be refused'
+    ).toBe(false);
   });
 
   test('TC-A-77 — releasing a reservation you do not hold needs reservation:reassign', async () => {
@@ -906,11 +1049,21 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     const own = await probeGet(req.page, `/requests/${W.ownPending}/edit`);
     expect(own.status, 'the raiser edits their own pending request').toBe(200);
 
+    // Never anybody else's — and the two refusals differ, which is the whole
+    // shape of `loadEditableRequest` (requests.go:739-752). It asks the data
+    // scope first: a Requester's scope is `own`, so a request they did not raise
+    // is not-found before "only the raiser may edit" is ever reached (F-G-002).
     const foreign = await probeGet(req.page, `/requests/${W.tPending}/edit`);
-    expect(foreign.status, 'and never anybody else’s (requests.go:592)').toBe(403);
+    expect(foreign.status, 'and never anybody else’s — outside the scope, so not-found').toBe(404);
 
+    // The administrator's scope is `all`, so the row resolves and the ownership
+    // rule is what refuses them, in its own words rather than the gate's.
     const adminEdit = await probeGet(W.callers['C-adm'].page, `/requests/${W.ownPending}/edit`);
     expect(adminEdit.status, 'an administrator holding request:edit is refused too — editing is the raiser’s act').toBe(403);
+    expect(
+      adminEdit.body.includes('Only the person who raised a request may edit it'),
+      'and the refusal names the rule rather than claiming they lack the verb'
+    ).toBe(true);
 
     const adminAsk = await probeGet(W.callers['C-adm'].page, `/requests/${W.ownApproved}/cancel`);
     expect(adminAsk.status, 'and so is asking for a cancellation (requests.go:802)').toBe(403);
@@ -1028,18 +1181,44 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(probe.status, 'a Requester holds no payment verb of any kind').toBe(403);
   });
 
-  test('TC-A-92 — a Requester can download any payment attachment by id', async () => {
-    // GET /attachments/{id} checks attachment:view and then only that the file is
-    // inside AttachmentDir (app.go:881-911). There is no ownership check, and a
-    // Requester holds attachment:view. F-A-01.
+  test('TC-A-92 — a Requester cannot download a payment attachment they have no business with', async () => {
+    // F-A-01 was the worst finding in this area: GET /attachments/{id} checked
+    // attachment:view and then only that the file sat inside AttachmentDir — no
+    // ownership check at all — and attachment:view is a seeded **Requester**
+    // grant, so any signed-in user read every bank advice in the system by
+    // walking ids from 1.
+    //
+    // `attachmentDownload` now resolves the attachment to its payment and runs
+    // `canReadPayment` (app.go:1105-1120), which is the same row scope
+    // `paymentDetail` applies — the check whose own comment says "or
+    // payment:view becomes a way around Q5/R6". This route was the hole that
+    // comment was written about.
     const probe = await probeGet(W.callers['C-req'].page, `/attachments/${W.payAttId}`);
+    // 404 and not 403, deliberately: these ids are small consecutive integers,
+    // and a refusal you can tell apart from a miss is an enumeration oracle over
+    // the whole table (`notFoundAttachment`, app.go:1054-1062).
     expect(
       probe.status,
-      'observed behaviour: the bank advice for a payment on somebody else’s request is served — F-A-01'
-    ).toBe(200);
+      'the bank advice for a payment on somebody else’s request is refused, as not-found — F-A-01'
+    ).toBe(404);
     expect(
       probe.body.includes(`bank-advice-${W.runId}`),
-      'and it is the real file, not an empty response'
+      'and no part of the file comes back with the refusal'
+    ).toBe(false);
+    // The refusal is indistinguishable from an id that was never written.
+    const missing = await probeGet(W.callers['C-req'].page, '/attachments/99999999');
+    expect(missing.status, 'an id nobody ever wrote answers the same way').toBe(404);
+
+    // The control, so the 404 above is the ownership check and not a broken
+    // route: the accountant whose request scope reaches that payment gets the
+    // file, over the same URL, with the same verb.
+    const holder = await W.a2.page.request.get(new URL(`/attachments/${W.payAttId}`, W.baseURL).toString(), {
+      maxRedirects: 0, failOnStatusCode: false
+    });
+    expect(holder.status(), 'while a caller the payment’s request is visible to is served').toBe(200);
+    expect(
+      (holder.headers()['content-disposition'] ?? '').includes(`bank-advice-${W.runId}`),
+      'and served the real bank advice — so the route works, and it is the reader that was refused'
     ).toBe(true);
   });
 
@@ -1048,43 +1227,70 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(probe.status, 'the only thing standing between a reader and every attachment is the verb').toBe(403);
   });
 
-  test('TC-A-94 — the Download link on a request document does not resolve to that document', async () => {
-    // Request documents live in `request_attachments`; GET /attachments/{id}
-    // reads `payment_attachments` (store/store.go:1353). Both tables have their
-    // own autoincrement sequence, and `request_detail` links request-attachment
-    // ids at that route (templates.go:2393), so the two id spaces are crossed.
-    // F-A-05. Two halves, both asserted:
-    //   (a) the requester's own document is never what comes back;
-    //   (b) where the ids collide, a stranger's payment file comes back instead.
-    const response = await W.callers['C-req'].page.request.get(
+  test('TC-A-94 — the Download link on a request document resolves to that document and nothing else', async () => {
+    // F-A-05, and this is the case that pins its fix. One download route used to
+    // serve two tables: `AttachmentByID` reads `payment_attachments`, three
+    // templates rendered **request** attachments through it, and both sequences
+    // start at 1 — so pressing Download on your own invoice could hand you a
+    // stranger's bank advice, filed under your own document's name.
+    //
+    // The tables now have a route each. A request document is served by
+    // `GET /requests/{id}/attachments/{attachmentID}` (app.go:468), which checks
+    // the document really belongs to the request in the path and then scopes it
+    // by that request; `GET /attachments/{id}` serves payment documents only.
+    // Three halves, because the fix has three parts:
+    const own = W.callers['C-req'];
+    const link = `/requests/${W.ownPending}/attachments/${W.ownReqAttId}`;
+
+    // (a) The raiser's own Download link returns the raiser's own invoice.
+    const mine = await own.page.request.get(new URL(link, W.baseURL).toString(), {
+      maxRedirects: 0, failOnStatusCode: false
+    });
+    expect(mine.status(), 'half (a): the requester’s own Download link answers with a file').toBe(200);
+    expect(
+      (mine.headers()['content-disposition'] ?? '').includes(`invoice-${W.runId}`),
+      'half (a): and the file is the invoice that link is under — F-A-05'
+    ).toBe(true);
+
+    // (b) The id spaces no longer cross. Asking the *payment* route for the
+    // request document's id gets a payment document or nothing — never the
+    // invoice — whichever way the two sequences happen to line up this run.
+    const crossed = await own.page.request.get(
       new URL(`/attachments/${W.ownReqAttId}`, W.baseURL).toString(),
       { maxRedirects: 0, failOnStatusCode: false }
     );
-    const disposition = response.headers()['content-disposition'] ?? '';
     expect(
-      disposition.includes(`invoice-${W.runId}`),
-      'half (a): the requester’s own invoice is never what comes back from its own Download link — F-A-05'
+      (crossed.headers()['content-disposition'] ?? '').includes(`invoice-${W.runId}`),
+      `half (b): /attachments/${W.ownReqAttId} reads payment_attachments, so it can never answer with a ` +
+        'request document whatever the id collision — F-A-05'
     ).toBe(false);
+    expect(
+      [404, 200].includes(crossed.status()),
+      `half (b): and it answers as the payment route: the id either names a payment attachment this ` +
+        `caller may read, or nothing — got ${crossed.status()}`
+    ).toBe(true);
 
-    if (W.ownReqAttId === W.payAttId) {
-      // Half (b), and it is not hypothetical: both sequences start at 1, so the
-      // first request document and the first bank advice share an id.
-      expect(
-        response.status(),
-        `half (b): request_attachments id ${W.ownReqAttId} collides with payment_attachments id ` +
-          `${W.payAttId}, so the link answers with a file rather than 404 — F-A-05`
-      ).toBe(200);
-      expect(
-        disposition.includes(`bank-advice-${W.runId}`),
-        'half (b): and the file served is the accountant’s bank advice, under the requester’s own filename column'
-      ).toBe(true);
-    } else {
-      expect(
-        [404, 200].includes(response.status()),
-        `half (b): no id collision this run (request att ${W.ownReqAttId} vs payment att ${W.payAttId}), ` +
-          `so the link answers 404 — got ${response.status()}`
-      ).toBe(true);
-    }
+    // (c) The {id} in the path is a check, not decoration. The same attachment
+    // id under a different request is refused, or the longer URL would be
+    // /attachments/{id} again under another name.
+    const wrongParent = await own.page.request.get(
+      new URL(`/requests/${W.ownApproved}/attachments/${W.ownReqAttId}`, W.baseURL).toString(),
+      { maxRedirects: 0, failOnStatusCode: false }
+    );
+    expect(
+      wrongParent.status(),
+      'half (c): a document asked for under a request it does not belong to is not-found — F-A-05'
+    ).toBe(404);
+
+    // And the route is scoped like every other request read: a stranger holding
+    // attachment:view is refused the raiser's invoice, as not-found (F-A-01).
+    const stranger = await W.r2.page.request.get(new URL(link, W.baseURL).toString(), {
+      maxRedirects: 0, failOnStatusCode: false
+    });
+    expect(
+      stranger.status(),
+      'and another requester, holding the same attachment:view, cannot read it at all'
+    ).toBe(404);
   });
 
   test('TC-A-95 — posting another user’s id to /users is refused without user:edit', async () => {
@@ -1191,12 +1397,19 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // because this accountant does not hold its reservation.
     const entry = await probeGet(W.a2.page, `/payments/new?request=${W.tApproved}`);
     expect(entry.status, 'and the entry screen for a request you do not hold is a conflict, not a form').toBe(409);
-    // Observed: friendly() has no ErrForbidden branch (app.go:1628-1641), so the
-    // accountant is told "Something went wrong" instead of "reserve it first". F-A-09.
+    // F-A-09: the refusal now carries its own reason. `friendly` keeps the
+    // sentence a wrapped ErrForbidden was written with and falls back to the
+    // permission wording only for a bare one (app.go:2172-2182) — so an
+    // accountant who simply has not reserved the request is told to reserve it,
+    // instead of being sent to an administrator for a grant they already hold.
+    expect(
+      probe.body.includes('Reserve this request before recording its payment'),
+      'the state conflict says what to do about it, not "something went wrong" — F-A-09'
+    ).toBe(true);
     expect(
       probe.body.includes('Something went wrong while processing your request'),
-      'observed: the reason for the refusal is replaced by a generic message — F-A-09'
-    ).toBe(true);
+      'and the generic server-fault sentence is nowhere near it'
+    ).toBe(false);
   });
 
   test('TC-A-103 — a forged settlement value is refused', async () => {
@@ -1285,8 +1498,15 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-110 — a Requester cannot comment on a request they cannot see', async () => {
-    const probe = await probePost(W.callers['C-req'].page, `/requests/${W.tPending}/comment`, { body: 'hello' });
-    expect(probe.status, 'request:comment is held, but loadViewableRequest refuses the row first').toBe(403);
+    const marker = `intruded-${W.runId}`;
+    const probe = await probePost(W.callers['C-req'].page, `/requests/${W.tPending}/comment`, { body: marker });
+    // request:comment is held and the gate opens; `requestComment` then loads
+    // through `loadViewableRequest`, which refuses the row — as 404, so a write
+    // route cannot be used to find out which ids exist either (F-G-002).
+    expect(probe.status, 'request:comment is held, but loadViewableRequest refuses the row first').toBe(404);
+    // Nothing was written: the request's own manager sees no such comment.
+    const detail = await probeGet(W.m2.page, `/requests/${W.tPending}`);
+    expect(detail.body.includes(marker), 'and the refused comment left no trace on the request').toBe(false);
   });
 
   test('TC-A-111 — a Requester cannot withdraw or re-raise somebody else’s request', async () => {
@@ -1444,63 +1664,109 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toBeChecked();
   });
 
-  test('TC-A-119 — eleven granted verbs are named by no route gate, nine of them by nothing at all', async () => {
-    // Transcribed from `RequirePermission(...)` across internal/app/app.go and
+  test('TC-A-119 — seven granted verbs are named by no route gate, four of them by nothing at all', async () => {
+    // Transcribed from the permission gates across internal/app/app.go and
     // cross-checked against templates. A verb an administrator can grant, and
     // that nothing consumes, is a promise the product does not keep.
+    //
+    // WHY THE PINNED NUMBERS MOVED, 55 → 59 and 9 → 4. Four verbs acquired a
+    // route gate during the repair, and each is a finding closing, not a
+    // transcription being tidied:
+    //   · grid:view              — GET /grid was RequireLogin only (F-A-02),
+    //                              app.go:439.
+    //   · approval:reassign      — A7 had no door at all; POST
+    //                              /requests/{id}/reassign-approver is it
+    //                              (F-A-06/F-C-02), app.go:577.
+    //   · recoverable_category:delete — the category could be created and edited
+    //                              but never removed (F-E-06), app.go:614.
+    //   · user:create            — the ＋ Add user control was gated on it while
+    //                              its POST asked for user:edit (F-A-07). The
+    //                              route now takes BOTH through `requireAnyOf`
+    //                              (app.go:598) and `userSave` demands whichever
+    //                              one the press actually needs, which is why
+    //                              user:create and user:edit both count here even
+    //                              though neither appears in a RequirePermission
+    //                              call any more.
+    // Nothing was removed from the set. If a future change deletes a gate this
+    // list will fail on the size, which is the point of pinning it.
     const routeGates = new Set([
       'month:view', 'month:create', 'month:lock',
       'payment:view', 'payment:create', 'payment:edit', 'payment:void', 'payment:process',
       'payment:settle', 'payment:hold',
       'attachment:view', 'attachment:create',
-      'grid:export', 'report:view', 'report:export',
-      'recoverable_report:view', 'recoverable_report:export', 'recoverable_category:edit',
+      'grid:view', 'grid:export', 'report:view', 'report:export',
+      'recoverable_report:view', 'recoverable_report:export',
+      'recoverable_category:edit', 'recoverable_category:delete',
       'notification:view', 'notification:edit',
       'budget:view', 'budget:edit', 'project:view', 'project:edit', 'head:view', 'head:edit',
       'vendor:view', 'vendor:create', 'vendor:edit',
       'request:view', 'request:create', 'request:edit', 'request:withdraw', 'request:reraise',
       'request:comment', 'request:cancel',
-      'approval:approve', 'approval:reject', 'approval:return', 'approval:accept_partial', 'approval:cancel',
+      'approval:approve', 'approval:reject', 'approval:return', 'approval:reassign',
+      'approval:accept_partial', 'approval:cancel',
       'reservation:reserve', 'reservation:release', 'reservation:reassign',
-      'user:view', 'user:edit', 'role:view', 'role:edit', 'role:create', 'role:delete',
+      'user:view', 'user:create', 'user:edit', 'role:view', 'role:edit', 'role:create', 'role:delete',
       'config:view', 'config:edit', 'audit:view', 'backup:view', 'backup:create'
     ]);
-    expect(routeGates.size, 'routes() names 55 distinct pairs').toBe(55);
+    expect(routeGates.size, 'routes() names 59 distinct pairs').toBe(59);
 
     const all = Object.entries(VOCABULARY).flatMap(([r, acts]) => acts.map(a => `${r}:${a}`));
     const unconsumed = all.filter(p => !routeGates.has(p)).sort();
     expect(unconsumed, 'the pairs no route gate names — F-A-06').toEqual([
-      'approval:reassign',
-      'grid:view',
       'head:create',
       'payment:mark_partial',
       'project:create',
       'recoverable_category:create',
-      'recoverable_category:delete',
       'recoverable_category:view',
-      'user:create',
       'vendor_bank:edit',
       'vendor_bank:view'
     ]);
-    // Two of the eleven are enforced *below* the route: the store leaves the bank
-    // columns out of its SELECT without vendor_bank:view (store/vendors.go) and
-    // the vendor form disables them without vendor_bank:edit (templates.go:1469).
-    // grid:view and user:create are consulted by the shell and the users screen
-    // but never by a route, which is what makes them a lie the screen tells.
-    const enforcedBelowTheRoute = ['vendor_bank:view', 'vendor_bank:edit'];
+    // Three of the seven are enforced *below* the route, which is the right place
+    // for each of them: the store leaves the bank columns out of its SELECT
+    // without vendor_bank:view (store/vendors.go:16,48) and the vendor form
+    // disables them without vendor_bank:edit; and payment:mark_partial cannot be
+    // a route gate at all, because it applies to one value of one field —
+    // `paymentCreate` checks it when settlement=partial (app.go:847, F-D-10).
+    // The remaining four are consulted by nothing: no route, no handler, no
+    // template. They are still a lie the roles screen tells.
+    const enforcedBelowTheRoute = ['payment:mark_partial', 'vendor_bank:view', 'vendor_bank:edit'];
     const enforcedNowhere = unconsumed.filter(p => !enforcedBelowTheRoute.includes(p));
-    expect(enforcedNowhere.length, 'nine pairs are enforced by nothing at all — F-A-06').toBe(9);
+    expect(enforcedNowhere.length, 'four pairs are enforced by nothing at all — F-A-06').toBe(4);
     // Every gate a route does name has to be inside the vocabulary, or an
     // administrator could never grant it and the route would be dead.
     const outsideVocabulary = [...routeGates].filter(p => !all.includes(p));
     expect(outsideVocabulary, 'no route may be gated on a pair outside resourceActions').toEqual([]);
   });
 
-  test('TC-A-120 — approval:reassign is granted to Manager and Admin and can never be used', async () => {
-    // store.ReassignRequest exists and has no HTTP caller, so A7 — "Admin
-    // reassign with reason and history" — has no door. F-A-06.
+  test('TC-A-120 — approval:reassign is granted to Manager and Admin, and now has a door', async () => {
+    // `store.ReassignRequest` existed, was tested, and had no HTTP caller — so
+    // A7, "reassign with reason and history", was a verb two seeded roles held
+    // and nobody could exercise (F-A-06/F-C-02). `POST /requests/{id}/
+    // reassign-approver` (app.go:577) is that door, gated on approval:reassign,
+    // taking `manager_id` and `reason`. It is also the recovery path F-A-08 and
+    // F-G-025 need: the way out when a request is routed to the wrong approver.
+    //
+    // First, the gate, probed with no CSRF token so nothing is written. A holder
+    // of the verb reaches withCSRF — which is the proof the permission gate
+    // opened — and a non-holder is stopped at the gate itself.
+    const opened = await probePost(W.callers['C-mgr'].page, `/requests/${W.tPending}/reassign-approver`, {}, {
+      csrf: 'omit'
+    });
+    expect(opened.status, 'a Manager holds approval:reassign, so the route is reachable at all').toBe(403);
+    expect(
+      opened.body.includes(CSRF_REFUSAL),
+      'and the refusal is CSRF, not permission — the gate opened and nothing was written'
+    ).toBe(true);
+
+    const refused = await probePost(W.callers['C-acc'].page, `/requests/${W.tPending}/reassign-approver`, {}, {
+      csrf: 'omit'
+    });
+    expect(refused.status, 'Accounts holds no approval:reassign').toBe(403);
+    expect(refused.body.includes(GATE_REFUSAL), 'and is stopped by the permission gate').toBe(true);
+
+    // The route is exactly one path, not three: the two names the audit guessed
+    // at while looking for it still resolve to nothing.
     for (const path of [
-      `/requests/${W.tPending}/reassign-approver`,
       `/requests/${W.tPending}/reassign-manager`,
       `/requests/${W.tPending}/approver`
     ]) {
@@ -1509,19 +1775,52 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
         .soft([404, 405].includes(probe.status), `${path} must not exist — got ${probe.outcome}`)
         .toBe(true);
     }
-    // The one /reassign route that does exist is the reservation's, not the
-    // approver's, and it is gated on reservation:reassign.
+
+    // And it works, on a request of this case's own — the shared fixtures are
+    // read by too many rows to have their approver moved out from under them.
+    const managerId = await managerIdFor(W.r2.page, W.m2.subject.name);
+    const target = await raiseRequest(W.r2.page, {
+      title: `Reassigned ${W.runId}-${Date.now()}`, managerId, amount: '121.00'
+    });
+    const newApprover = await userIdOf(W.adminPage, W.callers['C-mgr'].subject.email);
+    const done = await probePost(W.m2.page, `/requests/${target}/reassign-approver`, {
+      manager_id: newApprover, reason: `Handed over for the audit ${W.runId}`
+    });
+    expect(done.status, 'the holder of the verb reassigns the request').toBe(303);
+    // Reproduced where it matters: the new approver can now decide it, and the
+    // old one cannot. That is what "reassigned" has to mean.
+    await W.callers['C-mgr'].page.goto('/approvals');
+    await expect(
+      W.callers['C-mgr'].page.locator(`a.req-card[href="/requests/${target}"]`),
+      'and the request is in the new approver’s queue'
+    ).toHaveCount(1);
+    const oldApprover = await probePost(W.m2.page, `/requests/${target}/approve`, { approved_amount: '121.00' });
+    expect(oldApprover.status, 'while the approver it was taken from can no longer decide it').toBe(403);
+
+    // Two verbs, two routes, and they are not the same verb: the reservation's
+    // /reassign is gated on reservation:reassign, which a Manager does not hold.
     const reservation = await probePost(W.callers['C-mgr'].page, `/requests/${W.tProc}/reassign`, {});
     expect(
       reservation.status,
-      'a Manager holds approval:reassign and not reservation:reassign, and the only /reassign route is the latter'
+      'a Manager holds approval:reassign and not reservation:reassign — the two /reassign routes stay distinct'
     ).toBe(403);
+    expect(
+      reservation.body.includes(GATE_REFUSAL),
+      'and the reservation route refuses them at its own gate'
+    ).toBe(true);
   });
 
-  test('TC-A-121 — user:create is offered on the screen and enforced nowhere', async () => {
-    // The "＋ Add user" button is gated on user:create (templates.go:1195) while
-    // POST /users is gated on user:edit (app.go:510). A role holding create but
-    // not edit therefore sees a button whose submit answers 403. F-A-07.
+  test('TC-A-121 — user:create is offered on the screen and honoured by the route', async () => {
+    // F-A-07: the "＋ Add user" button was gated on user:create while POST /users
+    // was gated on user:edit, so a role holding create but not edit saw a control
+    // whose submit answered 403 — the button and the route disagreeing about
+    // which verb the press needs.
+    //
+    // One handler still serves both presses, so the route cannot name a single
+    // verb: `requireAnyOf("user", ["create","edit"])` (app.go:598) establishes
+    // that the caller has business here at all, and `userSave` then demands the
+    // verb the press actually needs — create when `id` is 0, edit otherwise
+    // (app.go, F-A-07). This case pins both directions.
     const roleName = `usercreate-${W.runId}`;
     const roleId = await createCustomRole(W.adminPage, roleName);
     await grantMatrix(W.adminPage, roleId, roleName, { perms: ['user:view', 'user:create'] });
@@ -1536,50 +1835,89 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
         'user:create renders the ＋ Add user control'
       ).toBeVisible();
 
+      const created = `late-${W.runId}@example.test`;
       const probe = await probePost(session.page, '/users', {
-        id: '0', email: `late-${W.runId}@example.test`, name: 'Late', password: fixturePassword, active: 'on',
+        id: '0', email: created, name: 'Late', password: fixturePassword, active: 'on',
         role: 'data_entry'
       });
       expect(
         probe.status,
-        'observed: the control is offered and its POST is refused, because the route asks for user:edit — F-A-07'
-      ).toBe(403);
+        'the control is offered and its POST is honoured, because the route asks for the verb it renders — F-A-07'
+      ).toBe(303);
+      // Reproduced a second way: the user really exists.
+      await W.adminPage.goto('/users');
+      await expect(
+        W.adminPage.locator('tr', { hasText: created }),
+        'and the row is on the users screen'
+      ).toHaveCount(1);
+
+      // The other direction, which is what makes this a permission and not a
+      // formality: user:create is not user:edit, so the same subject cannot
+      // rewrite somebody who already exists.
+      const victim = await userIdOf(W.adminPage, W.m2.subject.email);
+      const edit = await probePost(session.page, '/users', {
+        id: victim, name: 'Renamed by a creator', active: 'on', role: 'data_entry'
+      });
+      expect(edit.status, 'while editing an existing user needs user:edit, which this role does not hold').toBe(403);
+      expect(edit.body.includes(GATE_REFUSAL), 'and says so in the permission gate’s own words').toBe(true);
+      await W.adminPage.goto('/users');
+      await expect(
+        W.adminPage.locator('tr', { hasText: W.m2.subject.email }),
+        'and the victim row still carries its own name'
+      ).toContainText(W.m2.subject.name);
     } finally {
       await session.close();
     }
   });
 
   test('TC-A-123 — nobody may plant a file on a linked payment, whatever they hold', async () => {
-    // THIS CASE CHANGED SUBJECT, and the change is itself a finding.
+    // Two rules stand between a caller and the evidence on a payment, and this
+    // case pins both, in the order the handler asks them.
     //
-    // It was written for F-A-03: POST /payments/{id}/attachments checks
-    // attachment:create and nothing else (app.go:861-879), and a Requester holds
-    // attachment:create, so a stranger could append to the evidence on a payment
-    // whose request they cannot even read. `attachmentUpload` STILL asks nothing
-    // about ownership — F-A-03's own fix is not in yet — but F-D-08's fix took the
-    // route away from every payment this product can create. `store.AddAttachment`
-    // refuses a payment whose request_id is set (store/store.go:1403-1405), and
-    // `paymentCreate` refuses a payment without a request (app.go:690-694), so
-    // every payment is linked and this route is a 400 for all callers. The
-    // ownership hole is unreachable rather than closed: the day a free-standing
-    // payment becomes creatable again, F-A-03 comes back with it.
+    // F-A-03 was the original subject: POST /payments/{id}/attachments checked
+    // attachment:create and nothing else, and attachment:create is a seeded
+    // Requester grant — so a stranger could append to the proof on a payment
+    // whose request they cannot even read. `attachmentUpload` now resolves the
+    // payment and runs `canReadPayment` FIRST (app.go:1072-1083), the same row
+    // scope the download route runs, and refuses with the same 404 so the write
+    // route is not an enumeration oracle either.
     //
-    // What the case protects now: the refusal, from the whole range of callers,
-    // and the proof list staying exactly as the settlement left it.
+    // F-D-08 is the second rule and applies to everyone who gets past the first:
+    // `store.AddAttachment` refuses a payment whose request_id is set, joining
+    // edit and void in treating a linked payment as the request's immutable
+    // outcome, and `paymentCreate` refuses a payment without a request — so
+    // every payment this product can create is linked, and the route is a 400.
+    //
+    // That ordering is why the fix was made anyway rather than declared
+    // unreachable (repair decision 4): the day a free-standing payment becomes
+    // creatable again, F-D-08 stops covering for F-A-03, and the ownership check
+    // is already there.
     const before = await W.a2.page.request.get(new URL(`/payments/${W.payId}`, W.baseURL).toString());
     const beforeBody = await before.text();
     const beforeCount = (beforeBody.match(/href="\/attachments\/\d+"/g) ?? []).length;
     expect(beforeCount, 'the settlement wrote its own bank advice and nothing else').toBe(1);
 
-    // Three callers who all hold attachment:create: the stranger F-A-03 was about,
-    // the accountant who entered the payment, and an administrator. The gate opens
-    // for each of them and the store refuses each of them.
-    const planters: Array<[string, Session]> = [
-      ['a Requester who cannot even read the request', W.callers['C-req']],
-      ['the Accounts caller whose role entered it', W.a2],
-      ['an administrator holding every grant', W.callers['C-adm']]
+    // Three callers who all hold attachment:create: the stranger F-A-03 was
+    // about, the accountant who entered the payment, and an administrator. Every
+    // one of them is refused, and the two who are refused differently is the
+    // whole point — the Requester never reaches the linked-payment rule, because
+    // the ownership check turns them away first, and turns them away without
+    // admitting the payment is there to be refused.
+    const planters: Array<[string, Session, number, string]> = [
+      [
+        'a Requester who cannot even read the request', W.callers['C-req'], 404,
+        'The requested attachment was not found'
+      ],
+      [
+        'the Accounts caller whose role entered it', W.a2, 400,
+        'a payment linked to a request cannot receive a new attachment'
+      ],
+      [
+        'an administrator holding every grant', W.callers['C-adm'], 400,
+        'a payment linked to a request cannot receive a new attachment'
+      ]
     ];
-    for (const [who, session] of planters) {
+    for (const [who, session, want, sentence] of planters) {
       const token = await csrfToken(session.context);
       const response = await session.page.request.post(
         new URL(`/payments/${W.payId}/attachments`, W.baseURL).toString(),
@@ -1598,11 +1936,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       );
       expect(
         response.status(),
-        `${who}: a linked payment is the request's outcome and takes no new document — got ${response.status()}`
-      ).toBe(400);
+        `${who}: the upload is refused — got ${response.status()}`
+      ).toBe(want);
       expect(
-        (await response.text()).includes('a payment linked to a request cannot receive a new attachment'),
-        `${who}: and the refusal names the rule rather than blaming the file`
+        (await response.text()).includes(sentence),
+        `${who}: and the refusal is "${sentence}" — the rule that actually stopped them`
       ).toBe(true);
     }
 
@@ -1627,14 +1965,19 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toBe(400);
   });
 
-  test('TC-A-124 — a 12-character letters-only password answers 500, not 400', async () => {
-    // Two password rules disagree. The app layer checks length alone
-    // (`validatePassword`, app.go:1555-1560: ">= 12 characters"). `userSave` then
-    // calls `auth.HashPassword`, which calls `auth.ValidatePassword`
-    // (auth.go:47-60) and demands a letter AND a digit. A 12-character
-    // letters-only password therefore passes the first gate, fails the second,
-    // and is reported as a server fault: `respondError(500, "The password could
-    // not be secured.")` (app.go:1178). F-A-11.
+  test('TC-A-124 — a 12-character letters-only password is a 400 naming the rule it broke', async () => {
+    // F-A-11: two password rules disagreed about who owned the refusal. The app
+    // layer checked length alone (">= 12 characters"), then `userSave` called
+    // `auth.HashPassword` → `auth.ValidatePassword` (auth.go), which demands a
+    // letter AND a digit. A 12-character letters-only password passed the first
+    // rule, failed the second, and came back as `respondError(500, "The password
+    // could not be secured.")` — a server fault reported for input the server
+    // understood perfectly, telling the administrator nothing about the missing
+    // digit and implying the fault was the product's.
+    //
+    // `validatePassword` now delegates to `auth.ValidatePassword` and adds the
+    // 12-character minimum on top (app.go), so both rules are checked in the
+    // one place that can still answer 400, and every rejection names its rule.
     const lettersOnly = 'abcdefghijkl';
     const create = await probePost(W.callers['C-adm'].page, '/users', {
       id: '0', email: `pw500-${W.runId}@example.test`, name: `PW ${W.runId}`,
@@ -1642,19 +1985,24 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     });
     expect(
       create.status,
-      'observed: valid-length input the second rule rejects is reported as a server fault, not a 400 — F-A-11'
-    ).toBe(500);
+      'input the server understood and refused is a 400, not a server fault — F-A-11'
+    ).toBe(400);
+    expect(
+      create.body.includes('must include a letter and a number'),
+      'and the message names the rule that was broken, so the administrator can fix it'
+    ).toBe(true);
     expect(
       create.body.includes('The password could not be secured'),
-      'and the message tells the administrator nothing about the missing digit'
-    ).toBe(true);
+      'and never blames the hasher for input it never reached'
+    ).toBe(false);
 
     // The same on the reset path, which is the one an administrator uses daily.
     const victim = await userIdOf(W.adminPage, W.callers['C-req'].subject.email);
     const reset = await probePost(W.callers['C-adm'].page, '/users', {
       id: victim, name: W.callers['C-req'].subject.name, password: lettersOnly, active: 'on', role: 'data_entry'
     });
-    expect(reset.status, 'and resetting an existing user’s password behaves the same way — F-A-11').toBe(500);
+    expect(reset.status, 'and resetting an existing user’s password behaves the same way — F-A-11').toBe(400);
+    expect(reset.body.includes('must include a letter and a number'), 'with the same usable message').toBe(true);
 
     // The control: eleven characters is caught by the app's own rule, correctly.
     const tooShort = await probePost(W.callers['C-adm'].page, '/users', {
@@ -1669,26 +2017,59 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(stillWorks.status, 'the refused reset left the victim’s session and credentials intact').toBe(200);
   });
 
-  test('TC-A-122 — a request may be routed to an approver who cannot approve it', async () => {
-    // ListApprovers only offers users holding approval:approve
-    // (store/requests.go:551-557), but validateRequestInput never re-checks it,
-    // so a hand-rolled manager_id strands the request. F-A-08.
+  test('TC-A-122 — a request cannot be routed to an approver who cannot approve it', async () => {
+    // F-A-08 was a request that could be created and then decided by nobody.
+    // `ListApprovers` only offers users holding approval:approve, so the form
+    // could not produce a bad manager_id — but the form's narrowed <select> was
+    // the ONLY enforcement, and a hand-rolled POST walked past it. The result was
+    // a stranded request: the named "approver" refused by the route gate because
+    // they hold no approval:approve, and every real manager refused by the
+    // ownership check because they are not this request's manager. Withdrawal
+    // was the only exit, and only the raiser could take it.
+    //
+    // `requireApprover` (store/requests.go:414-426) now re-runs ListApprovers'
+    // own query against the id that was actually submitted, from
+    // `validateRequestRefs` — so the guard is in the store, where a forged form
+    // cannot reach around it.
     const strandedManager = await userIdOf(W.adminPage, W.callers['C-req'].subject.email);
     const requester = W.r2;
     const title = `Stranded ${W.runId}`;
-    const created = await raiseRequest(requester.page, {
+    const probe = await probePost(requester.page, '/requests', requestForm({
       title, managerId: strandedManager, amount: '113.00'
-    });
-    expect(created, 'observed: the request is created and routed to a person with no approval verb — F-A-08').toBeGreaterThan(0);
+    }));
+    expect(probe.status, 'a manager_id holding no approval:approve is refused on create — F-A-08').toBe(400);
+    expect(
+      probe.body.includes('that person cannot approve requests'),
+      'and the refusal names the reason, rather than a generic validation failure'
+    ).toBe(true);
 
-    // Nobody can decide it: not the named "approver", not a real manager.
-    const named = await probePost(W.callers['C-req'].page, `/requests/${created}/approve`, { approved_amount: '113.00' });
-    expect(named.status, 'the named approver holds no approval:approve, so the route refuses them').toBe(403);
-    const realManager = await probePost(W.m2.page, `/requests/${created}/approve`, { approved_amount: '113.00' });
-    expect(realManager.status, 'and a real manager is not this request’s manager, so they are refused too').toBe(403);
-    // The requester can still withdraw it, which is the only way out.
-    const withdraw = await probePost(requester.page, `/requests/${created}/withdraw`, {});
-    expect(withdraw.status, 'withdrawal is the only remaining exit').toBe(303);
+    // Nothing was created, so there is no stranded request to rescue.
+    await requester.page.goto('/requests?bucket=all');
+    await expect(
+      requester.page.getByText(title, { exact: false }),
+      'and no request was raised — the refusal is the whole outcome'
+    ).toHaveCount(0);
+
+    // The same guard on the edit path, which is the other way in: rerouting a
+    // request by editing it strands it exactly as raising it that way did
+    // (store/requests.go:915-918). `tPending` is R2's own pending request, so R2
+    // may edit it — and this edit is refused, so it stays exactly as it was.
+    const reroute = await probePost(requester.page, `/requests/${W.tPending}/edit`, requestForm({
+      title: W.foreignTitle, managerId: strandedManager, amount: '101.00'
+    }));
+    expect(reroute.status, 'and rerouting an existing request to a non-approver is refused too').toBe(400);
+    expect(
+      reroute.body.includes('that person cannot approve requests'),
+      'for the same named reason'
+    ).toBe(true);
+
+    // Reproduced where it counts: the request's approver is unchanged, so its
+    // own manager can still decide it — which is what "not stranded" means.
+    await W.m2.page.goto('/approvals');
+    await expect(
+      W.m2.page.locator(`a.req-card[href="/requests/${W.tPending}"]`),
+      'the request is still in its own approver’s queue, undamaged by the attempt'
+    ).toHaveCount(1);
   });
 });
 
@@ -1994,6 +2375,17 @@ async function paymentAttachmentId(page: Page, paymentId: number, filename: stri
 /**
  * Puts a document on a request through the real edit screen and returns the id
  * the detail screen's Download link carries — a `request_attachments` id.
+ *
+ * THE LINK IS SCOPED TO THE REQUEST, and must be read that way. F-A-05's fix
+ * split one download route into two: `GET /attachments/{id}` reads
+ * `payment_attachments` and now serves payment documents only, while a request
+ * document is served by `GET /requests/{id}/attachments/{attachmentID}`
+ * (internal/app/app.go:467-468), which checks the document really belongs to the
+ * request in the path. `request_detail` renders the request's own route
+ * accordingly (internal/app/templates.go:319), so an `a[href^="/attachments/"]`
+ * selector finds nothing here — and on a screen that also lists payment proofs
+ * it would find the wrong table's id, which is the very confusion the split
+ * exists to end.
  */
 async function requestAttachmentId(page: Page, requestId: number, filename: string): Promise<number> {
   await page.goto(`/requests/${requestId}/edit`);
@@ -2004,7 +2396,10 @@ async function requestAttachmentId(page: Page, requestId: number, filename: stri
   });
   await page.getByRole('button', { name: /^Save and notify/ }).click();
   await page.waitForURL(new RegExp(`/requests/${requestId}$`));
-  const href = await page.locator('a[href^="/attachments/"]').first().getAttribute('href');
+  const href = await page
+    .locator(`a[href^="/requests/${requestId}/attachments/"]`)
+    .first()
+    .getAttribute('href');
   const id = Number(/\/attachments\/(\d+)/.exec(href ?? '')?.[1] ?? 0);
   if (!id) throw new Error(`no document rendered on request ${requestId} after upload`);
   return id;

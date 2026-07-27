@@ -120,43 +120,50 @@ behaviour, never deleted.
 
 ---
 
+## Wave 4 — templates and the remaining handlers · `709dfa6` · `629925e`
+
+| Finding | Outcome |
+|---|---|
+| F-G-016 · F-E-03 **critical** | **Fixed — the last critical.** The register was a second view over `payment_requests` that never asked who was reading it, so `recoverable_report:view` alone returned every category, counterparty, amount, requester and repayment note in the company. The rows, the CSV and the detail screen were scoped in `709dfa6`; the **summary aggregates** were still company-wide and were closed in `629925e`, which matters because the counterparty rollup names the other party outright. The predicate lives in SQL — `recoverableScope`, applied by `RecoverableReport` and taken as a parameter by `RecoverableMetrics` and `RecoverableRollups` — because aggregates cannot be filtered row-by-row after the fact. An unrecognised scope returns `AND 0`, so it fails closed. |
+| F-A-05 · F-G-033 **critical** (template halves) | **Fixed.** The three request-document links point at `GET /requests/{id}/attachments/{attachmentID}`; the heads row selects range over `AllProjects`, marking retired ones, so a row's own Save cannot move a head. |
+| F-G-035 · F-C-04 **high** | **Fixed, and then finished.** Wave 4 hoisted every submit precondition ahead of the write, which closed the observable defect but left a window between three transactions. `629925e` replaced them with `store.EditRequest`: the edit, the document and the transition commit together or not at all. The attachment had to move *inside* that transaction, because the attachment policy counts rows and the document must exist before the submit is validated. |
+| F-F-01 **critical** | **Fixed.** The per-event sheets and the SMTP form carry `hidden`, so they stop rendering full-viewport at once with only the last one clickable. |
+| F-F-06 · F-D-12 **high** | **Fixed, wiring half.** Nine events fire from withdraw, re-raise, unhold, release, reassign, partial accept, partial concern and both cancellation decisions. |
+| F-F-07 · F-F-05 · F-F-03 | **Fixed.** "Save corrections" no longer claims a re-send; the notification centre has a desktop entry; the reminder copy reads the configured threshold and says "days". |
+| F-G-018 · F-G-006 · F-G-007 · F-G-008 · F-G-012 | **Fixed.** The dashboard uses the caller's scope, and each tile counts the bucket its own link points at. |
+| F-G-002 medium | **Fixed.** `loadViewableRequest` answers 404, so the route is not an existence oracle. |
+| F-G-029 · F-G-019 · F-G-020 · F-G-021 | **Fixed**, with one edge left: the grid filter form posts to `/grid`, lock/unlock lands somewhere that confirms it, and a request cannot be approved into a locked month. The payment form warns on the month it **opens** on; a month typed in afterwards is still only caught at submit, because which month is being written is not known until then. |
+| F-D-02 · F-D-03 · F-D-05 · F-D-07 | **Fixed.** The conflict screen decides its wording from the row rather than the sentinel — the store reports "already reserved" for a *completed* request whose `processing_by` was never cleared, so the screen was claiming somebody holds a request nobody holds. |
+| F-E-02 · F-B-17 · F-E-04 · F-E-07 · F-E-08 · F-B-02 | **Fixed.** The category `<select>` is the table; the CSV and its screen carry the same columns. |
+| F-B-16 · F-B-13 · F-B-08 · F-G-014 · F-G-005 · F-G-013 · F-G-030 · F-G-031 | **Fixed.** The 200-row cap is visible with a pager; `?status=` is honoured; CSV amounts are numbers, not `₹`-formatted strings. |
+
+---
+
+## Wave 5 — the tail, the documents, and the spec repair · `4a01506` · `96ba6e1`
+
+| Finding | Outcome |
+|---|---|
+| F-G-009 · F-G-010 low | **Fixed.** Migration **v10** gives `payments` a `vendor_id`, back-filled from the request each payment settles. "Paid this year" matched payee *text* against the vendor name — v2's own comment promised "Phase 2 adds vendor_id" and Phase 2 never did — and "Open requests" was declared, scanned nowhere, and rendered as a hard `0` that looked like a count. The exact payee match survives as a fallback for historical rows that settle no request. |
+| F-D-06 low | **Fixed — the guard now fires.** It had shipped inert: `validatePayment` refused a `paid_on` after `in.Now` and no production caller ever set `Now`, so the rule was enforced against nobody. It defaults to `time.Now().UTC()` now, because forgetting to inject a clock must mean *enforce*, never *skip*. The nine shipped fixtures booking payments in 2027–2029 moved to 2025/2024; those months were only ever private namespaces stopping tests colliding. |
+| F-E-06 low | **Fixed.** `recoverable_category:delete` has a door: `POST /configuration/recoverable-categories/{id}/delete`, over `DeleteRecoverableCategory`, which pre-checks usage inside a `beginWriteTx` and refuses by naming the count. |
+| F-G-037 informational | **Fixed.** `ListNotificationsPage` returns `Total`/`Truncated` and the centre reads "100 of 105 shown" with a pager. Not theoretical: an area-D test passed alone and failed in a full run purely because the admin had crossed the cap. |
+| F-C-08 low | **Fixed.** The status enum listed seven of eleven, on the strength of a comment saying Phase 3 would append the rest; Phase 3 shipped them and never came back for the comment. |
+| F-D-14 low | **Fixed at the handler, reported at the store.** `/requests/new?type=` naming no card answers **400** with the chooser and the reason, instead of bouncing the caller silently. A fifth card was rejected deliberately: "recoverable" is a *treatment* on this form, so the card would render a form whose treatment radio had one legal position. |
+| — | `UpdateUser`, `SetUserRoles`, `SetUserDefaultApprover` keep their exports and gain comments naming who calls them and what they do not do. `go mod tidy` dropped casbin, doublestar and govaluate — declared, and imported by nothing. |
+
+---
+
 ## Still open
 
-**Wave 5** (the tail, the stale documents, full verification). See `FIX-PLAN.md`.
-It has begun landing: **F-E-06** now has its door —
-`POST /configuration/recoverable-categories/{id}/delete`
-(`internal/app/app.go:614`), handler `recoverableCategoryDelete`
-(`internal/app/configuration.go:166`) over a new `DeleteRecoverableCategory`
-(`internal/store/recoverables.go:260`), which pre-checks holders inside a
-`beginWriteTx`. `recoverable_category:delete` was one of the verbs the audit
-found granted and enforced nowhere; the wave chose the door over removing the
-verb. **This file still has no Wave 4 or Wave 5 section** — the waves are
-recorded only through the corrections above and this note, which is a gap in the
-log rather than in the repair.
+Nothing rated critical or high. What remains, each verified against source rather than inferred from a green test:
 
-**Wave 4 has landed** — commits `709dfa6` (templates, nav, and the app-layer
-handlers) and `629925e` (the summary aggregates and the one-press-one-transaction
-fix). This line used to name it as still open. Spot-checked from source rather
-than taken on trust: the per-event overlays carry `hidden` (F-F-01,
-`internal/app/templates.go:3535`); `/notifications` has a `navSpec` entry with an
-unread badge, so the centre is reachable above 860 px (F-F-05,
-`internal/app/nav.go:61`); the recoverable category `<select>` ranges over
-`.Categories` instead of six hardcoded options (F-E-02 · F-B-17,
-`templates.go:1826-1830`); and the register's scope is settled above.
-
-Wave 4 is not, however, a clean close: two notification gaps it left — one of
-them *introduced* by Wave 3 — are recorded immediately below, and neither is
-fixed.
-
-**C4 · F-G-016/F-E-03 is no longer outstanding.** This section used to name it as
-the critical still open; Wave 4 landed it. The register, its CSV, its detail
-screen and the summary aggregates all carry the caller's `request` scope, and the
-predicate lives in the SQL rather than a handler-side filter — `recoverableScope`
-(`internal/store/recoverables.go:347`), applied in `RecoverableReport` (`:401`)
-and taken as a parameter by `RecoverableMetrics` (`:488`) and
-`RecoverableRollups` (`:532`); viewer built once at
-`internal/app/recoverables.go:117-120`. An unrecognised scope returns `AND 0`, so
-it fails closed.
+| Finding | Why it is still open |
+|---|---|
+| F-G-011 | `/requests/export.csv` has no approved-amount column. |
+| F-G-020, remaining edge | The payment form cannot warn about a locked month the accountant types in *after* it renders. Closing it needs the client to re-ask on date change. |
+| F-G-024 | A head with an approved request against it can be deactivated with no check and no warning. The resulting refusal is coherent — a 400 with a sentence, never a 5xx. |
+| F-G-025, open half | Deactivating a user is not pre-checked against the approvals waiting on them. The *recovery* is now possible (A7's route exists); the *warning* is not. |
+| Coverage matrix **V6**, **A8** re-notify half | Marked `UNVERIFIED` rather than ticked: the tests they cited no longer exist and no replacement was found. |
 
 ### Found during the Wave 5 documentation pass, not by the audit
 
@@ -164,17 +171,47 @@ Both verified from source while correcting the stale documents. Neither is an
 audit finding — the audit could not have raised the first, because Wave 3
 introduced it. Recorded here so they cannot quietly disappear.
 
+> **Both are now fixed** (`96ba6e1`). Migration **v11** seeds their rules and the
+> two handlers fire them: `notify.EventApproverReassigned` from
+> `requestReassignApprover`, `notify.EventRequestCancelled` from
+> `requestCancelOutright`. `request_cancelled` files under **mention** rather than
+> activity, with `request_rejected`: both end the request against the requester's
+> wishes and neither leaves them anything to do — it is the finality that earns the
+> stronger filter, not an outstanding action. Proved by
+> `TestReassignmentAndOutrightCancellationNotifyTheirSubject`, which was verified
+> to fail without the two `a.fire` calls. The catalogue is now **23** events, and
+> three pinned count tests were updated deliberately rather than absorbed.
+>
+> The rows below are left as written, because they are the record of what was
+> found and how it was proved — which is the whole point of this file.
+
 | # | What | Evidence |
 |---|---|---|
 | 1 | **The approver-reassignment sheet promises a notification nothing sends.** The overlay Wave 3 added tells the actor *"The new approver is told, and the reminder clock starts again."* The clock half is true — `ReassignRequest` sets `reminder_last_sent=NULL`. The notification half is not: `requestReassignApprover` contains no `a.fire`, and `notify.AllEvents` has no approver-reassignment event at all. This is a fresh instance of **F-D-12**, the exact defect Wave 4 fixed for release/reassign/unhold — reintroduced one screen over by the A7 repair. | Copy at `internal/app/templates.go:2601`; handler `internal/app/app.go:1615-1647` (no fire); vocabulary `internal/notify/events.go:71-79`. |
 | 2 | **F-F-06's cancellation fix covers three paths of four.** Both cancellation *decisions* now fire (`EventCancellationAccepted` / `EventCancellationDeclined`, `internal/app/requests.go:1029`,`:1031`) and the ask already did. An **outright cancel** still fires nothing, and there is no event for it in the vocabulary. The finding is closed for the decision paths and open for this one. | `requestCancelOutright` (`internal/app/requests.go:1036-1043`) — no `a.fire`; `notify.AllEvents` (`internal/notify/events.go:71-79`). |
 
-Both are notification gaps, not data-integrity or permission gaps: nothing is
-mis-scoped or mis-written, somebody is simply not told. Whoever picks them up
-should decide whether each deserves its own admin-editable event or folds into
-an existing one — the same question decision 2 settled for reminders.
+Both were notification gaps, not data-integrity or permission gaps: nothing was
+mis-scoped or mis-written, somebody was simply not told. Each got its own
+admin-editable event rather than folding into an existing one, for the reason the
+vocabulary already applies: two events exist where the sentences are opposites, and
+"you have a request to approve" and "your request was cancelled" are addressed to
+different people about different obligations.
+
+### Found during the spec-repair pass
+
+| # | What | Evidence |
+|---|---|---|
+| 3 | **`/payments/{id}` was an existence oracle where `/requests/{id}` is not.** `paymentDetail` answered **403** for a payment whose request is outside the caller's scope, while a payment that does not exist answers 404 — so the pair distinguished "exists but not yours" from "does not exist", letting a caller walk `payments.id`. That is precisely the shape **F-G-002** was raised about, one route over. Wave 3 fixed the request routes and both attachment routes; this one was never in that finding's scope, so nobody looked at it until **two spec agents reached it independently, from opposite directions**. | `internal/app/app.go:913-915`; contrast `loadViewableRequest` and `attachmentDownload`, both 404. |
+
+> **Fixed.** The refusal is now 404 carrying the same sentence a missing payment
+> gets, with the real cause logged. `TestPaymentDetailRefusesTheRequestBehindItOutOfScope`
+> additionally asserts the refusal is byte-comparable to a missing id and does not
+> name the payee or amount of the payment it is withholding.
 
 ## Deliberately not fixed
 
-Nothing yet. Anything a wave decides to leave belongs here with its reason, so a
-finding cannot quietly disappear.
+| What | Why |
+|---|---|
+| **F-D-14, the store half.** `requestTypes` keeps a fifth type the product's chooser does not offer. | The type is not dead code. `POST /requests` reaches the store with whatever the body carried, and that branch is what gives a hand-rolled `recoverable` submission its real refusal — the category's project rule — instead of an unvalidated write or a refusal for a type the store had just accepted. F-E-08's error message depends on it. The reconciliation was therefore made on the handler side, where the silence actually was. |
+| **The over-fetch in the notification pager.** The handler asks for `offset+pageSize` rows and drops the ones already shown. | `store.NotificationFilter` has no `Offset`, and the wave that wrote the handler did not own the store. Correct but wasteful; adding `Offset` would let the handler drop the slice. Recorded so it is a known trade rather than an accident. |
+| **Drifted `file:line` citations across `docs/qa/`** outside the seven facts the sweep corrected. | `internal/store/migrations.go` alone moved ~165 lines across v8–v11. Fixing a handful while leaving the rest would imply the rest had been checked. One honest note is better than partial repair that reads as complete. |
