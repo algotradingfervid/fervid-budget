@@ -146,6 +146,17 @@ func (a *App) buildPageShell(r *http.Request, user store.User, perms store.Permi
 		badges = map[string]int{}
 	}
 	shell.Badges = badges
+	// The bell is the one count that is not permission-derived: every row is
+	// already addressed to this user, so there is nothing to gate. A failure
+	// here must not cost the page its chrome — the badge just stays absent.
+	if unread, err := a.st.UnreadNotificationCount(r.Context(), user.ID); err != nil {
+		a.log.WarnContext(r.Context(), "unread notification count unavailable",
+			"request_id", requestID(r),
+			"error", err,
+		)
+	} else {
+		shell.Unread = unread
+	}
 	return shell
 }
 

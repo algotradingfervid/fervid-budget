@@ -164,6 +164,15 @@ type PageData struct {
 	Recoverable      store.RecoverableRow
 	RecPayment       store.Payment
 	HasPayment       bool
+
+	// Notifications (Phase 5). Notifs is the user's own centre; NotifSettings
+	// and MailCfg are the admin rules screen.
+	Notifs        []store.Notification
+	NotifCounts   store.NotificationCounts
+	NotifScope    string
+	NotifSettings []store.NotificationSetting
+	MailCfg       store.MailSettings
+	NotifFields   []string
 }
 
 type ReportSummary struct {
@@ -251,6 +260,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 				return "none"
 			}
 		},
+		"notifGlyph":   notifGlyph,
 		"pillClass":    pillClass,
 		"reqStatus":    requestStatusText,
 		"typeLabel":    typeLabel,
@@ -386,6 +396,13 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /recoverables/list", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverablesList)))
 	mux.Handle("GET /recoverables/list.csv", a.auth.RequirePermission("recoverable_report", "export", http.HandlerFunc(a.exportRecoverable)))
 	mux.Handle("GET /recoverables/{id}", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverableDetail)))
+
+	// The user's own notification centre (Phase 5). Authenticated session only:
+	// every row is already scoped to the caller by the store, so a permission
+	// verb would add nothing.
+	mux.Handle("GET /notifications", a.auth.RequireLogin(http.HandlerFunc(a.notificationCentre)))
+	mux.Handle("POST /notifications/read", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.notificationsMarkAllRead))))
+	mux.Handle("POST /notifications/{id}/read", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.notificationMarkRead))))
 	mux.Handle("GET /budgets", a.auth.RequirePermission("budget", "view", http.HandlerFunc(a.budgets)))
 	mux.Handle("POST /budgets", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.withCSRF(a.budgetSave))))
 	mux.Handle("POST /months/{month}/lock", a.auth.RequirePermission("month", "lock", http.HandlerFunc(a.withCSRF(a.lockMonth))))

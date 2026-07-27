@@ -3246,6 +3246,51 @@ const templates = `
 {{template "bottom" .}}
 {{end}}
 
+{{/* The user's notification centre — mockups/screens/notifications.html.
+
+     Every row here is already addressed to the signed-in user, so the screen
+     carries no permission gate. Each .notif is a real POST that marks the row
+     read and then redirects to where it points, so the centre works with no
+     JavaScript and a click can never lose the read state. */}}
+{{define "notifications"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Your activity</div>
+    <h1>Notifications</h1>
+    <p class="sub">{{if .NotifCounts.Unread}}{{.NotifCounts.Unread}} unread of {{.NotifCounts.All}}{{else}}Everything here is read{{end}}</p>
+  </div>
+  <div class="pb-actions">{{if .NotifCounts.Unread}}
+    <form method="post" action="/notifications/read"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn outline" type="submit">Mark all read</button></form>
+  {{end}}</div>
+</section>
+
+<div class="segmented">
+  <a class="{{if eq .NotifScope "all"}}is-active{{end}}" href="/notifications?scope=all">All <span class="n">{{.NotifCounts.All}}</span></a>
+  <a class="{{if eq .NotifScope "unread"}}is-active{{end}}" href="/notifications?scope=unread">Unread <span class="n">{{.NotifCounts.Unread}}</span></a>
+  <a class="{{if eq .NotifScope "mentions"}}is-active{{end}}" href="/notifications?scope=mentions">Mentions <span class="n">{{.NotifCounts.Mentions}}</span></a>
+  <a class="{{if eq .NotifScope "reminders"}}is-active{{end}}" href="/notifications?scope=reminders">Reminders <span class="n">{{.NotifCounts.Reminders}}</span></a>
+</div>
+
+<div class="card">
+  <ul class="notif-list">
+    {{range .Notifs}}
+    <li class="notif{{if not .ReadAt}} unread{{end}}">
+      <span class="n-ico" aria-hidden="true">{{notifGlyph .Kind}}</span>
+      <form class="n-main" method="post" action="/notifications/{{.ID}}/read">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="href" value="{{.Href}}">
+        <button type="submit"><b>{{.Title}}</b>{{if .Body}}<span>{{.Body}}</span>{{end}}<time>{{date .CreatedAt}}</time></button>
+      </form>
+    </li>
+    {{else}}
+    <li class="notif"><span class="n-ico" aria-hidden="true">·</span><div class="n-main"><b>Nothing here yet</b><span>You will be told when something needs you.</span></div></li>
+    {{end}}
+  </ul>
+</div>
+{{template "bottom" .}}
+{{end}}
+
 {{/* Recoverables dashboard — mockups/screens/recoverables-dashboard.html.
 
      The mockup's by-counterparty "Type" column ("Government body", "Client", …)
