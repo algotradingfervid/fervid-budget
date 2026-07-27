@@ -119,6 +119,41 @@ var auditNotificationSettings = []NotificationSetting{
 		BodyTemplate:    "{{approver}} declined the ask to cancel {{number}}. It is approved again for {{approved_amount}} to {{payee}} and the payment is no longer frozen.\n\nOpen it: {{link}}"},
 }
 
+// reassignmentNotificationSettings are the two events migration v11 adds.
+//
+// They are the audit's repair auditing itself: both were found while checking
+// the QA documents against the code four waves had just written, and both are
+// the fault F-F-06 was about — a transition that changes what a specific other
+// person must do next, firing nothing.
+//
+// The first is the sharper of the two, because the product was not merely
+// silent, it was wrong: the reassignment sheet says "The new approver is told",
+// and the route Wave 3 built to make reassignment reachable at all fired
+// nothing. A screen that states a notification happens is a promise, and this
+// is what keeps it.
+//
+// Same conventions as v9's nine: email off by default so delivery stays opt-in
+// per event, and the management recipient list untouched.
+var reassignmentNotificationSettings = []NotificationSetting{
+	{Event: "approval_reassigned", Label: "Sent to a different approver", Audience: "The new approver", IncludeManager: true,
+		SubjectTemplate: "{{number}} needs your approval — it was reassigned to you",
+		BodyTemplate:    "{{number}} ({{amount}} to {{payee}}) was moved to you for approval.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"},
+	{Event: "request_cancelled", Label: "Cancelled by the approver", Audience: "Requester", IncludeRequester: true,
+		SubjectTemplate: "{{number}} was cancelled by {{approver}}",
+		BodyTemplate:    "{{approver}} cancelled {{number}} ({{amount}} to {{payee}}). Nothing will be paid against it, and it needs nothing further from you.\n\nOpen it: {{link}}"},
+}
+
+// UpReassignmentNotificationEvents is migration v11.
+//
+// Rows only, ON CONFLICT DO NOTHING, so it is idempotent by construction and an
+// administrator's edits to the twenty-one events already seeded are untouched.
+// The sort order continues where v9 stopped, which is why the offset is the two
+// earlier sets added together rather than a literal.
+func UpReassignmentNotificationEvents(tx *sql.Tx) error {
+	return seedNotificationSettings(tx, reassignmentNotificationSettings,
+		len(defaultNotificationSettings)+len(auditNotificationSettings))
+}
+
 // seedNotificationSettings inserts event rules without ever overwriting one.
 //
 // ON CONFLICT DO NOTHING, never DO UPDATE: an installed database has an

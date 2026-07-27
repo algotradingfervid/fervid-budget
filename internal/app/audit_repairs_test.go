@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -988,5 +990,389 @@ func TestCSVAmountIsANumber(t *testing.T) {
 		if got := csvAmount(tc.paise); got != tc.want {
 			t.Errorf("csvAmount(%d) = %q, want %q", tc.paise, got, tc.want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Wave 5 — the vendor totals, the category delete door, the notification cap,
+// and the fifth request type
+// ---------------------------------------------------------------------------
+
+// tableCell pulls one <td> out of the <tr> whose text contains rowKey. The
+// vendor list renders its footer totals with the same data-label as the row
+// cells, so a cell is only unambiguous when it is taken from a named row.
+func tableCell(t *testing.T, body, rowKey, label string) string {
+	t.Helper()
+	cell := regexp.MustCompile(`data-label="` + regexp.QuoteMeta(label) + `">([^<]*)<`)
+	for _, row := range strings.Split(body, "<tr") {
+		if !strings.Contains(row, rowKey) {
+			continue
+		}
+		if m := cell.FindStringSubmatch(row); m != nil {
+			return strings.TrimSpace(m[1])
+		}
+	}
+	t.Fatalf("no %q cell in a row containing %q: %s", label, rowKey, firstLines(body))
+	return ""
+}
+
+// F-G-009 / F-G-010 — the vendor list has carried a "Paid this year" column that
+// joined payments to vendors by payee TEXT, and an "Open requests" column that
+// no query ever filled in, so it rendered Go's zero for every vendor and for the
+// footer total. Migration v10's payments.vendor_id and the open-request
+// sub-select are the store halves; this is the screen end to end.
+//
+// The rename is the decisive step: it is what used to zero the figure, because
+// the only link between a payment and its vendor was a copy of the name.
+func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("VendorTotals")
+	const vendorName = "Sundaram Electricals Pvt Ltd"
+	reqID, vendorID := s.seedVendorRequest(1, admin.ID, admin.ID, headID, 910000, vendorName)
+	// A second request against the same vendor, left pending, so the open count
+	// still has something to count once the first one is paid.
+	projectID := projectOf(t, s, headID)
+	if _, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,project_id,head_id,amount,purpose,short_title,vendor_id,vendor_payee,requester_id,manager_id,submitted_at)
+		VALUES('PR-2026-000002','pending','budget','vendor_invoice',?,?,?,?,?,?,'',?,?,CURRENT_TIMESTAMP)`,
+		projectID, headID, 250000, "Switchgear", "Switchgear", vendorID, admin.ID, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// Before any payment: two open requests, nothing paid.
+	body := responseBody(t, s.request(http.MethodGet, "/vendors", nil, ""))
+	if got := tableCell(t, body, vendorName, "Open requests"); got != "2" {
+		t.Fatalf("Open requests = %q before settlement, want 2", got)
+	}
+	if got := tableCell(t, body, vendorName, "Paid this year"); got != "₹0.00" {
+		t.Fatalf("Paid this year = %q before settlement, want ₹0.00", got)
+	}
+
+	// Settle one of them through the real screens, which is what writes
+	// payments.vendor_id from the request.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	settle := url.Values{
+		"request_id": {itoa64(reqID)}, "head_id": {itoa64(headID)},
+		"paid_on": {time.Now().Format("2006-01-02")}, "amount": {"9100.00"},
+		"settlement": {"settled"},
+	}
+	resp := s.postForm("/payments", settle)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	body = responseBody(t, s.request(http.MethodGet, "/vendors", nil, ""))
+	if got := tableCell(t, body, vendorName, "Paid this year"); got != "₹9,100.00" {
+		t.Fatalf("Paid this year = %q after settlement, want ₹9,100.00", got)
+	}
+	// The settled request left the open bucket; the pending one is still in it.
+	if got := tableCell(t, body, vendorName, "Open requests"); got != "1" {
+		t.Fatalf("Open requests = %q after settlement, want 1", got)
+	}
+	// The footer totals the rows above it rather than reporting a hard zero.
+	if got := tableCell(t, body, "shown of", "Paid this year"); got != "₹9,100.00" {
+		t.Fatalf("footer Paid this year = %q, want ₹9,100.00", got)
+	}
+	if got := tableCell(t, body, "shown of", "Open"); got != "1" {
+		t.Fatalf("footer Open = %q, want 1", got)
+	}
+
+	// F-G-009 itself: rename the vendor, touch no payment, and the money stays
+	// with it. Under the old payee-text join this cell became ₹0.00.
+	const renamed = "Sundaram Electricals and Controls Pvt Ltd"
+	resp = s.postForm("/vendors/"+itoa64(vendorID), url.Values{
+		"name": {renamed}, "vendor_type": {"company"}, "status": {"active"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	body = responseBody(t, s.request(http.MethodGet, "/vendors", nil, ""))
+	if strings.Contains(body, vendorName) {
+		t.Fatal("the rename did not apply")
+	}
+	if got := tableCell(t, body, renamed, "Paid this year"); got != "₹9,100.00" {
+		t.Fatalf("Paid this year = %q after the rename, want ₹9,100.00", got)
+	}
+	if got := tableCell(t, body, renamed, "Open requests"); got != "1" {
+		t.Fatalf("Open requests = %q after the rename, want 1", got)
+	}
+
+	// The detail screen renders neither figure, so there is no second place
+	// quietly showing a zero: Vendor() does not compute them and nothing on the
+	// record page claims to.
+	detail := responseBody(t, s.request(http.MethodGet, "/vendors/"+itoa64(vendorID), nil, ""))
+	for _, banned := range []string{"Paid this year", "Open requests"} {
+		if strings.Contains(detail, banned) {
+			t.Fatalf("the vendor detail screen renders %q, which Vendor() never fills in", banned)
+		}
+	}
+}
+
+// F-E-06 — recoverable_category:delete has been grantable since Phase 4 with no
+// route, no control and no store function behind it. This is the door: the
+// control, the verb it is gated on, and the refusal that names the reason rather
+// than reporting a permission problem the caller does not have.
+func TestRecoverableCategoryDeleteHasADoorAndNamesItsRefusal(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// The control exists, in its own form, on the row.
+	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	if !strings.Contains(body, `action="/configuration/recoverable-categories/`) {
+		t.Fatalf("the Configuration screen offers no delete control: %s", firstLines(body))
+	}
+	if !strings.Contains(body, `<button class="btn small danger" type="submit">Delete`) {
+		t.Fatalf("the delete control is not the approved button: %s", firstLines(body))
+	}
+	// A browser confirm() blocks a whole automated session, and the guard is the
+	// server's in any case.
+	if strings.Contains(body, "confirm(") {
+		t.Fatal("the Configuration screen raises a JS confirm dialog")
+	}
+
+	// A category nobody has named goes.
+	resp := s.postForm("/configuration/recoverable-categories", url.Values{
+		"name": {"Retention deposit"}, "requires": {"none"}, "active": {"on"},
+	})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	newID := recoverableCategoryID(t, s, "Retention deposit")
+	resp = s.postForm(fmt.Sprintf("/configuration/recoverable-categories/%d/delete", newID), url.Values{})
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	if id := recoverableCategoryID(t, s, "Retention deposit"); id != 0 {
+		t.Fatalf("the category survived its delete (id %d)", id)
+	}
+
+	// One a request still points at is refused, with the count, on the screen
+	// that prints that same count in its "In use" column.
+	approver := seedSecondApprover(t, s)
+	s.seedRecoverableRequest(9, admin.ID, approver, "icd", "Harbour Logistics", 500000)
+	icdID := recoverableCategoryID(t, s, "ICD")
+	if icdID == 0 {
+		t.Fatal("the seeded ICD category is missing")
+	}
+	resp = s.postForm(fmt.Sprintf("/configuration/recoverable-categories/%d/delete", icdID), url.Values{})
+	requireStatus(t, resp, http.StatusForbidden)
+	refused := responseBody(t, resp)
+	if strings.Contains(refused, "do not have permission") {
+		t.Fatalf("the refusal reports a permission problem to the holder of every grant: %s", firstLines(refused))
+	}
+	for _, want := range []string{"used by 1 request", "deactivate it instead", `data-label="In use"`} {
+		if !strings.Contains(refused, want) {
+			t.Fatalf("the refusal is missing %q: %s", want, firstLines(refused))
+		}
+	}
+	if recoverableCategoryID(t, s, "ICD") != icdID {
+		t.Fatal("a refused delete removed the category anyway")
+	}
+
+	// The route is gated on delete, not on edit: a caller who may retire a
+	// category by unticking Active may not remove the row.
+	s.seedUserWithGrants("cat-editor@example.test", "CatEditorPass1234", "Category Editor", []store.Grant{
+		{Resource: "config", Action: "view"},
+		{Resource: "recoverable_category", Action: "view"},
+		{Resource: "recoverable_category", Action: "edit"},
+	})
+	editor := newAppTestClient(t, s)
+	editor.login("cat-editor@example.test", "CatEditorPass1234")
+	screen := responseBody(t, editor.request(http.MethodGet, "/configuration", nil, ""))
+	if strings.Contains(screen, "/delete") {
+		t.Fatal("a caller without recoverable_category:delete is offered the control")
+	}
+	denied := editor.postForm(fmt.Sprintf("/configuration/recoverable-categories/%d/delete", icdID), url.Values{})
+	requireStatus(t, denied, http.StatusForbidden)
+	_ = responseBody(t, denied)
+}
+
+func recoverableCategoryID(t *testing.T, s *appTestServer, name string) int64 {
+	t.Helper()
+	rows, err := s.st.ListRecoverableCategoriesWithUsage(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Name == name {
+			return r.ID
+		}
+	}
+	return 0
+}
+
+// F-G-037 — the centre listed at most 100 rows while the count on the filter
+// strip directly above them had no cap at all, so a user past the cap read a
+// total the list could not account for and nothing said which rows were missing.
+func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = 105
+	for i := 1; i <= total; i++ {
+		seedNotification(t, s, admin.ID, "request_approved", "activity",
+			fmt.Sprintf("Notice %03d", i), fmt.Sprintf("/requests/%d", i))
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	first := responseBody(t, s.request(http.MethodGet, "/notifications", nil, ""))
+	if n := strings.Count(first, `<a class="notif`); n != notificationPageSize {
+		t.Fatalf("the first page drew %d rows, want %d", n, notificationPageSize)
+	}
+	for _, want := range []string{
+		"100 of 105 shown",
+		"Showing 1–100 of 105",
+		`href="/notifications?scope=all&amp;offset=100"`,
+		"Older",
+	} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("the centre does not admit its cap: %q missing from %s", want, firstLines(first))
+		}
+	}
+	if strings.Contains(first, "Newer") {
+		t.Fatal("the first page offers a newer page")
+	}
+	// Ordered newest first, so the five oldest are the ones held back.
+	if strings.Contains(first, "Notice 001") || !strings.Contains(first, "Notice 105") {
+		t.Fatal("the first page is not the newest 100")
+	}
+
+	rest := responseBody(t, s.request(http.MethodGet, "/notifications?scope=all&offset=100", nil, ""))
+	if n := strings.Count(rest, `<a class="notif`); n != 5 {
+		t.Fatalf("the second page drew %d rows, want 5", n)
+	}
+	for _, want := range []string{"Showing 101–105 of 105", "Notice 001", "Notice 005", "Newer"} {
+		if !strings.Contains(rest, want) {
+			t.Fatalf("the second page is missing %q: %s", want, firstLines(rest))
+		}
+	}
+	if strings.Contains(rest, "Older") {
+		t.Fatal("the last page offers an older page")
+	}
+	// The scope rides along, so a page boundary never widens the filter. Every
+	// row seeded here is activity, so mentions has none of them and says so
+	// without a pager at all.
+	mentions := responseBody(t, s.request(http.MethodGet, "/notifications?scope=mentions", nil, ""))
+	if strings.Contains(mentions, "Showing ") {
+		t.Fatalf("an uncapped list rendered a pager: %s", firstLines(mentions))
+	}
+}
+
+// F-D-14 — the store has five request types and the chooser four, and
+// `/requests/new?type=recoverable` used to answer the chooser with no
+// explanation at all. The reconciliation is the refusal, not a fifth card:
+// recoverable is a TREATMENT on this form, and the type is kept in the store so
+// a hand-rolled POST is refused for its real reason (F-E-08).
+func TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// No ?type= at all is step 1 of 2, unchanged and not an error.
+	chooser := s.request(http.MethodGet, "/requests/new", nil, "")
+	requireStatus(t, chooser, http.StatusOK)
+	if body := responseBody(t, chooser); strings.Contains(body, "alert error") {
+		t.Fatalf("the plain chooser reports an error: %s", firstLines(body))
+	}
+
+	for _, kind := range []string{"recoverable", "mystery"} {
+		resp := s.request(http.MethodGet, "/requests/new?type="+kind, nil, "")
+		requireStatus(t, resp, http.StatusBadRequest)
+		body := responseBody(t, resp)
+		if !strings.Contains(body, "not a request type this system raises") {
+			t.Fatalf("?type=%s was bounced without an explanation: %s", kind, firstLines(body))
+		}
+		if !strings.Contains(body, "marked recoverable on the next screen") {
+			t.Fatalf("?type=%s does not say where the treatment lives: %s", kind, firstLines(body))
+		}
+		// It is still the chooser: the reader lands on the four cards they can
+		// actually use, with the reason above them.
+		if !strings.Contains(body, `class="type-grid"`) || strings.Count(body, `class="type-card"`) != 4 {
+			t.Fatalf("?type=%s did not render the four-card chooser: %s", kind, firstLines(body))
+		}
+	}
+
+	// The fifth type is deliberately still the store's, so a submission that
+	// reaches it is refused for the rule it broke rather than for its type.
+	// TestARefusedUnlabelledTypeKeepsItsRealReason pins that half; this only
+	// proves the chooser did not grow a card for it.
+	if _, offered := requestTypeLabels["recoverable"]; offered {
+		t.Fatal("the chooser grew a recoverable card; the refusal above is now unreachable")
+	}
+}
+
+// The `search` half of `class="field search"` had no rule anywhere in
+// fervid-ds.css — the only match was `.gridhead .toolbar .search-label`, a
+// different class — so five toolbars carried a token that rendered as nothing.
+// PROGRESS.md records this failure mode as a standing trap, and it is invisible
+// to every other test in this repository: markup with a dead class renders
+// perfectly, just not as designed. The rule is the approved stylesheet's own
+// (mockups/mockup.css), ported.
+func TestToolbarSearchTokenHasARuleBehindIt(t *testing.T) {
+	css, err := os.ReadFile(filepath.Join("..", "..", "web", "static", "fervid-ds.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(templates, `class="field search"`) {
+		t.Skip("no template uses the search token any more")
+	}
+	// Comments are stripped first, or the comment ABOVE the rule — which quotes
+	// the selector it is explaining — satisfies the search all by itself. That
+	// false pass was observed while writing this test, not guessed at.
+	live := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAll(css, nil)
+	if !regexp.MustCompile(`\.toolbar\s+\.search\s*\{`).Match(live) {
+		t.Fatal("templates carry `class=\"field search\"` and the stylesheet has no `.toolbar .search` rule")
+	}
+}
+
+// The two events the repair's own documentation pass found still firing nothing.
+//
+// Both are the fault F-F-06 was about — a transition that changes what a specific
+// other person must do next, telling nobody — and the first is worse than silence:
+// the reassignment sheet states that "The new approver is told", so the route Wave
+// 3 built to make reassignment possible at all was shipping a false promise.
+func TestReassignmentAndOutrightCancellationNotifyTheirSubject(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Reassign")
+	requester := s.seedRequester("reassignee@example.test", "Reassign Requester", "ReassignPass12345")
+
+	// A second approver to hand the request to. Manager alone, not Manager +
+	// Accounts, so "who was told" cannot be satisfied by some other role's rule.
+	second := s.seedRequester("secondapprover@example.test", "Second Approver", "SecondPass12345")
+	s.assignRole(second.ID, "Manager")
+
+	id := s.seedPendingRequest(931, requester.ID, admin.ID, headID, 140000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", id), url.Values{
+		"manager_id": {fmt.Sprint(second.ID)},
+		"reason":     {"Original approver is on leave"},
+	}), http.StatusSeeOther)
+
+	if !hasEvent(notificationTitles(t, s, second.ID), notify.EventApproverReassigned) {
+		t.Error("the sheet promises the new approver is told, and they were not")
+	}
+	// The person it must NOT go to: the approver it was taken away from has
+	// nothing left to do, and IncludeManager reads the row after the store moved
+	// it, so a row here would mean the event fired against the stale manager_id.
+	if hasEvent(notificationTitles(t, s, admin.ID), notify.EventApproverReassigned) {
+		t.Error("the outgoing approver was told to approve a request that is no longer theirs")
+	}
+
+	// Cancelling outright is the fourth cancellation path and the only one nobody
+	// asked for, which makes it the one the requester is least able to guess at.
+	// It is legal only from `approved` (legalTransitions, internal/store/requests.go:191),
+	// so the request is approved first — this is the manager killing money they
+	// had already agreed to, which is exactly why the requester needs telling.
+	cancelled := s.seedPendingRequest(932, requester.ID, admin.ID, headID, 150000)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/approve", cancelled),
+		url.Values{"approved_amount": {"1500.00"}}), http.StatusSeeOther)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel", cancelled), url.Values{
+		"reason": {"Duplicate of PR-2026-000931"},
+	}), http.StatusSeeOther)
+
+	if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventRequestCancelled) {
+		t.Error("the approver cancelled the request outright and the requester was never told")
 	}
 }

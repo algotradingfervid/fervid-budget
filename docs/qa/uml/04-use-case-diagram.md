@@ -15,6 +15,29 @@ from this map): `UC-A-nn` platform, RBAC and admin; `UC-B-nn` requests and
 approvals; `UC-C-nn` settlement, recoverables and notifications. Coverage IDs
 in parentheses point at `docs/superpowers/specs/2026-07-25-payment-requests-coverage.md`.
 
+> **Correction — the route count is 100, not 97, and it is still moving.** This document was read
+> out of commit `30edd6a`. The audit repair waves have added **three** registrations so far:
+>
+> - `GET /requests/{id}/attachments/{attachmentID}` (`app.go:460`, `attachment:view`, handler
+>   `requestAttachmentDownload` at `app.go:1115`) — request documents got their own download route,
+>   because `GET /attachments/{id}` was serving both `payment_attachments` and `request_attachments`
+>   off one id space (F-A-05/F-B-09, **critical**).
+> - `POST /requests/{id}/reassign-approver` (`app.go:569`, `approval:reassign`, handler
+>   `requestReassignApprover` at `app.go:1615`) — coverage requirement **A7** finally got a door
+>   (F-A-06/F-C-02), inventoried below as **UC-B-14**. It is a different route from
+>   `POST /requests/{id}/reassign`, which is and remains the *reservation* handler of UC-C-06.
+> - `POST /configuration/recoverable-categories/{id}/delete` (`recoverable_category:delete`, handler
+>   `recoverableCategoryDelete` at `internal/app/configuration.go:166`, store
+>   `DeleteRecoverableCategory` at `internal/store/recoverables.go:260`) — Wave 5, the door for
+>   F-E-06, a grant §4.1 below records as consuming nothing.
+>
+> Every "of 97" running total in §4 is therefore three short, and every `app.go:NNN` cite below is
+> against `30edd6a` and has shifted. The route rows are annotated where they are wrong rather than
+> renumbered. **Do not treat 100 as final** — this count went 97 → 99 → 100 during the documentation
+> pass itself, as the repair landed underneath it; recount from `App.routes` rather than trusting a
+> number written here. The "of 99" figures further down were written mid-pass and are one short.
+> See `docs/qa/results/REPAIR-LOG.md`.
+
 ---
 
 ## 1. Actor catalogue
@@ -251,6 +274,7 @@ flowchart LR
         UCB11((View the approvals queue - UC-B-11))
         UCB12((Decide a pending cancellation - UC-B-12))
         UCB13((Cancel an approved request outright - UC-B-13))
+        UCB14((Reassign to a different approver - UC-B-14))
     end
 
     MG --> UCB10
@@ -261,6 +285,8 @@ flowchart LR
     AD --> UCB12
     MG --> UCB13
     AD --> UCB13
+    MG --> UCB14
+    AD --> UCB14
     RQ --> UCB12
 
     UCB11 -.->|include| UCB10
@@ -275,6 +301,13 @@ self-approval refusal at 692-694), `decideRequest` for return/reject
 /approvals` hardcodes `Scope: "assigned"` regardless of the caller's own
 `request` scope grant (`internal/app/requests.go:896`). Admin holding every
 grant does not widen this: see §5 footnotes.
+
+**UC-B-14 is the one exception, and it was added after this document was written.** The approver
+reassignment route (`POST /requests/{id}/reassign-approver`, `internal/app/app.go:569`, Wave 3) is
+gated on `approval:reassign` plus the caller's `request` **data scope**, deliberately *not* on being
+the named `manager_id` — an administrator rescuing a request whose approver cannot act is the case
+that needs the door (`internal/app/app.go:1610-1614`). The store still applies G8 and `pending`-only
+(`internal/store/requests.go:780-782`, `:776`). See the correction under §4.2.
 
 ### 3.5 Linking and settlement
 
@@ -359,6 +392,22 @@ flowchart LR
 Requester and Manager hold no `recoverable_report` grant at all (§1 grant
 lists), so neither reaches any of the three routes behind
 `recoverable_report:{view,export}` (`internal/app/app.go:403-406`).
+
+> **Correction — the three routes carry a data scope now (F-G-016/F-E-03, critical, Wave 4).**
+> `recoverable_report:view` used to be the whole answer: the register was a second view over
+> `payment_requests` that never asked who was reading it, so a custom role holding it with
+> `request=own` read every category, counterparty, amount and repayment note in the company —
+> including rows the same caller was refused on `/requests/{id}`. All four readers now resolve a
+> `store.RecoverableViewer` from the caller's **`request`** scope through `recoverableViewer`
+> (`internal/app/recoverables.go:117-120`): `recoverablesList` (`:122`), `exportRecoverable`
+> (`:145`, so the CSV cannot drift from the screen), `recoverableDetail` (`:180`) and the dashboard's
+> aggregates. The predicate lives in the SQL — `recoverableScope`
+> (`internal/store/recoverables.go:335-357`), applied by `RecoverableReport` (`:401`),
+> `RecoverableMetrics` (`:509`) and `RecoverableRollups` (`:548`) — because the summary tiles cannot
+> be filtered row-by-row after the fact. Nothing is exposed under the *seeded* roles, since Accounts
+> and Admin both hold `request=all`, which is exactly why it survived the original build unnoticed.
+> `recoverableDetail` additionally answers **404**, not 403, for a row out of scope
+> (`recoverables.go:195-198`). See `docs/qa/results/REPAIR-LOG.md`, Wave 4.
 
 ### 3.7 Notifications and reminders
 
@@ -454,6 +503,10 @@ visible. A route with **no** use case is flagged inline as **GAP**; the
 reverse case this audit also found — a *grant* with no route — is called out
 in the note after §4.2.
 
+**Since the audit the count is 99** (`internal/app/app.go:405-603`); UC-A-15b and UC-B-14 below are
+the two additions, and each subsection's tally carries the revised figure alongside the original.
+See the correction at the top of this document.
+
 ### 4.1 Platform, RBAC and admin (UC-A)
 
 | UC ID | Name | Primary actor | Supporting actors | Route(s) | Permission gate(s) | Coverage IDs |
@@ -473,8 +526,9 @@ in the note after §4.2.
 | UC-A-12 | Manage projects | Admin | — | `GET /projects`, `POST /projects` (425-426) | `project:view` / `project:edit` | — |
 | UC-A-13 | Manage budget heads | Admin | — | `GET /heads`, `POST /heads` (427-428) | `head:view` / `head:edit` | — |
 | UC-A-14 | Manage the vendor master | Admin | — | `GET /vendors`, `/vendors/new`, `/vendors/search`, `/vendors/{id}`, `POST /vendors`, `POST /vendors/{id}` (431-436) | `vendor:view`/`create`/`edit` (+`vendor_bank:view`/`edit` narrows the bank block) | — |
-| UC-A-15 | Download an attachment | Requester, Accounts, Admin | — | `GET /attachments/{id}` (393) | `attachment:view` — **unscoped**, no ownership check against the parent payment/request (see §Suspected defects in the report) | — |
-| UC-A-16 | Upload a payment attachment | Accounts, Admin | — | `POST /payments/{id}/attachments` (392) | `attachment:create` — same unscoped gap as UC-A-15 | — |
+| UC-A-15 | Download an attachment | Requester, Accounts, Admin | — | `GET /attachments/{id}` (393) | `attachment:view` — **unscoped**, no ownership check against the parent payment/request (see §Suspected defects in the report). **Corrected: this route now serves `payment_attachments` only and applies the same request-scope check `paymentDetail` runs, refusing with 404 (`app.go:459`, handler `attachmentDownload` `app.go:1091`)** | — |
+| **UC-A-15b** | **Download a request document** | **Requester, Accounts, Admin** | — | **`GET /requests/{id}/attachments/{attachmentID}` (`app.go:460`)** | **`attachment:view` — which Manager does **not** hold (`migrations.go`, `systemRoleDefaults`) — plus a check that the attachment really belongs to the request in the path, plus the caller's request scope (`requestAttachmentDownload`, `app.go:1115-1150`). Added in Wave 3 for F-A-05/F-B-09: before it, one route served two tables whose id sequences both start at 1** | — |
+| UC-A-16 | Upload a payment attachment | Accounts, Admin | — | `POST /payments/{id}/attachments` (392) | `attachment:create` — same unscoped gap as UC-A-15. **Corrected: `attachmentUpload` applies the ownership check too (F-A-03, Wave 3)** | — |
 | UC-A-17 | Manage users and role assignment | Admin | — | `GET /users`, `POST /users` (509-510) | `user:view` / `user:edit` | R1, R4 |
 | UC-A-18 | Manage roles and permissions | Admin | — | `GET /roles`, `POST /roles`, `/roles/new`, `/roles/{id}/copy`, `/roles/{id}/delete` (511-515) | `role:view`/`edit`/`create`/`delete` | R1, R2, R3, R5, R7, R8, R9 |
 | UC-A-19 | Manage system configuration | Admin | — | `GET /configuration`, `POST /configuration` (516-517) | `config:view` / `config:edit` | T10 |
@@ -483,7 +537,8 @@ in the note after §4.2.
 | UC-A-22 | Create and list backups | Admin | — | `GET /backups`, `POST /backups` (522-523) | `backup:view` / `backup:create` | — |
 
 Routes accounted for in §4.1: 363-366, 375-377, 381-383, 392-398, 421-428,
-431-436, 509-523 = **44 of 97**.
+431-436, 509-523 = **44 of 97** (**45 of 99** with UC-A-15b's
+`GET /requests/{id}/attachments/{attachmentID}`, `app.go:460` — see the correction at the top).
 
 ### 4.2 Requests, approvals and cancellation (UC-B)
 
@@ -529,8 +584,24 @@ holds the payment-processing reservation, not who approves). A Manager or
 Admin cannot hand a pending request to a different approver through any
 screen; the capability is exercised only by `internal/store/requests_test.go:815,818`.
 
-Routes accounted for in §4.2: 441-447, 488-496, 501-505, 508 = **22 of 97**.
-Running total: 44 + 22 = **66 of 97**.
+> **Correction — the gap is closed, and it is a use case now.** Wave 3 (`1fac147`, F-A-06/F-C-02)
+> added `POST /requests/{id}/reassign-approver` (`internal/app/app.go:569`), gated on
+> `approval:reassign`, handler `requestReassignApprover` (`app.go:1615-1647`), taking `manager_id`
+> and `reason` and writing through the same `store.ReassignRequest`. Read it as:
+>
+> | UC ID | Name | Primary actor | Supporting actors | Route(s) | Permission gate(s) | Coverage IDs |
+> |---|---|---|---|---|---|---|
+> | **UC-B-14** | **Reassign a pending request to a different approver** | **Manager, Admin** | **the incoming approver (not notified — see below)** | **`POST /requests/{id}/reassign-approver` (`app.go:569`)** | **`approval:reassign`; blank `manager_id` or `reason` → 400; a request outside the caller's data scope → 404 (`app.go:1622-1627`); the store re-checks G8 and `status='pending'`** | **A7** |
+>
+> Two things a tester should know. The path is deliberately **not** `/reassign` — that one is still
+> UC-C-06's reservation handler — and `app.go:565-566` records why. And the reassignment fires no
+> notification: there is no `approval_reassign` event in `notify.AllEvents`
+> (`internal/notify/events.go:71-79`), so the incoming approver learns about it only by looking.
+> See `docs/qa/results/REPAIR-LOG.md`, Wave 3.
+
+Routes accounted for in §4.2: 441-447, 488-496, 501-505, 508 = **22 of 97**
+(**23 of 99** with UC-B-14's `POST /requests/{id}/reassign-approver`, `app.go:569`).
+Running total: 44 + 22 = **66 of 97** (**68 of 99**).
 
 ### 4.3 Settlement, recoverables and notifications (UC-C)
 
@@ -559,6 +630,13 @@ Routes accounted for in §4.3: 384-391, 403-406, 411-413, 417-420, 451, 454,
 **Grand total: 44 + 22 + 29 = 97 of 97 registered routes covered.** No route
 in `App.routes` is without a use case above; the one gap this audit found
 runs the other way (§4.2's `approval:reassign` note).
+
+> **Correction — the grand total is 99 now.** 45 + 23 + 29 = **99 of 99**, the two additions being
+> UC-A-15b (`GET /requests/{id}/attachments/{attachmentID}`, `app.go:460`) and UC-B-14
+> (`POST /requests/{id}/reassign-approver`, `app.go:569`), both from Wave 3. §4.2's grant-without-a-
+> route gap — `approval:reassign` — is closed with it; the remaining doorless grants are
+> `recoverable_category:{view,create,delete}`, enumerated in
+> `docs/qa/uml/05-route-permission-matrix.md` §5.
 
 ---
 
@@ -591,6 +669,7 @@ narrows a `P`/`S` further than the raw grant would suggest.
 | UC-A-13 | — | — | — | P |
 | UC-A-14 | — | — | — | P |
 | UC-A-15 | P² | — | P² | P² |
+| **UC-A-15b** | **P²** | **—** | **P²** | **P²** |
 | UC-A-16 | — | — | P² | P² |
 | UC-A-17 | — | — | — | P |
 | UC-A-18 | — | — | — | P |
@@ -614,6 +693,19 @@ area including the admin links block (`dashboard.go:101,111-127`).
 *parent* payment or request. Holding the flat grant is holding the grant for
 every attachment in the system — see the report's Suspected defects.
 
+> **Correction — F-A-01/F-B-11 and F-A-05/F-B-09, both critical, fixed in Wave 3 (`1fac147`).**
+> `attachment:view` is still unscoped in `scopedResources`, but the two handlers no longer trust it
+> alone. `attachmentDownload` (`internal/app/app.go:1091-1107`) resolves the attachment to its
+> payment via `store.AttachmentWithPayment` and applies `canReadPayment` — the same request-scope
+> check `paymentDetail` runs — refusing with **404** through the same path as a missing id, so the
+> route is not an enumeration oracle. `attachmentUpload` (`app.go:1050-1070`) applies the same check
+> on the write path (F-A-03). And request documents no longer travel this route at all: they have
+> their own, `GET /requests/{id}/attachments/{attachmentID}` (UC-A-15b, `app.go:460`, handler at
+> `:1115-1150`), which additionally refuses an attachment whose `request_id` is not the `{id}` in
+> the path. The old shared route served two tables whose id sequences both start at 1, so Download
+> on your own invoice could serve a stranger's bank advice. See `docs/qa/results/REPAIR-LOG.md`,
+> Wave 3.
+
 ### 5.2 Requests, approvals and cancellation
 
 | UC ID | Requester | Manager | Accounts | Admin |
@@ -631,6 +723,13 @@ every attachment in the system — see the report's Suspected defects.
 | UC-B-11 | — | P⁸ | — | P⁸ |
 | UC-B-12 | S⁹ | P⁷ | — | P⁷ |
 | UC-B-13 | — | P⁷ | — | P⁷ |
+| **UC-B-14** | **—** | **P** | **—** | **P** |
+
+UC-B-14 (approver reassignment) is added by the correction under §4.2. Manager and Admin are the two
+seeded holders of `approval:reassign` (`migrations.go:371,399`) and, unlike UC-B-10/12/13, the route
+does **not** require the caller to be the request's own `manager_id` — an administrator rescuing a
+request whose named approver cannot act is precisely the case that needs rescuing, which
+`internal/app/app.go:1610-1614` states as the reason.
 
 ³ Admin holds `request:create`, so an Admin account can raise a request —
 but `CreateRequest`'s G8 check (`internal/store/requests.go:142-143`) still

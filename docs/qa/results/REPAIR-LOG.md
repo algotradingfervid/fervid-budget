@@ -122,10 +122,57 @@ behaviour, never deleted.
 
 ## Still open
 
-Wave 4 (`internal/app` — templates and the remaining handlers) and Wave 5 (the
-tail, the stale documents, full verification). See `FIX-PLAN.md`. The critical
-still outstanding when this file was written is **C4 · F-G-016/F-E-03** — the
-recoverables register and its CSV apply no data scope — which is Wave 4's.
+**Wave 5** (the tail, the stale documents, full verification). See `FIX-PLAN.md`.
+It has begun landing: **F-E-06** now has its door —
+`POST /configuration/recoverable-categories/{id}/delete`
+(`internal/app/app.go:614`), handler `recoverableCategoryDelete`
+(`internal/app/configuration.go:166`) over a new `DeleteRecoverableCategory`
+(`internal/store/recoverables.go:260`), which pre-checks holders inside a
+`beginWriteTx`. `recoverable_category:delete` was one of the verbs the audit
+found granted and enforced nowhere; the wave chose the door over removing the
+verb. **This file still has no Wave 4 or Wave 5 section** — the waves are
+recorded only through the corrections above and this note, which is a gap in the
+log rather than in the repair.
+
+**Wave 4 has landed** — commits `709dfa6` (templates, nav, and the app-layer
+handlers) and `629925e` (the summary aggregates and the one-press-one-transaction
+fix). This line used to name it as still open. Spot-checked from source rather
+than taken on trust: the per-event overlays carry `hidden` (F-F-01,
+`internal/app/templates.go:3535`); `/notifications` has a `navSpec` entry with an
+unread badge, so the centre is reachable above 860 px (F-F-05,
+`internal/app/nav.go:61`); the recoverable category `<select>` ranges over
+`.Categories` instead of six hardcoded options (F-E-02 · F-B-17,
+`templates.go:1826-1830`); and the register's scope is settled above.
+
+Wave 4 is not, however, a clean close: two notification gaps it left — one of
+them *introduced* by Wave 3 — are recorded immediately below, and neither is
+fixed.
+
+**C4 · F-G-016/F-E-03 is no longer outstanding.** This section used to name it as
+the critical still open; Wave 4 landed it. The register, its CSV, its detail
+screen and the summary aggregates all carry the caller's `request` scope, and the
+predicate lives in the SQL rather than a handler-side filter — `recoverableScope`
+(`internal/store/recoverables.go:347`), applied in `RecoverableReport` (`:401`)
+and taken as a parameter by `RecoverableMetrics` (`:488`) and
+`RecoverableRollups` (`:532`); viewer built once at
+`internal/app/recoverables.go:117-120`. An unrecognised scope returns `AND 0`, so
+it fails closed.
+
+### Found during the Wave 5 documentation pass, not by the audit
+
+Both verified from source while correcting the stale documents. Neither is an
+audit finding — the audit could not have raised the first, because Wave 3
+introduced it. Recorded here so they cannot quietly disappear.
+
+| # | What | Evidence |
+|---|---|---|
+| 1 | **The approver-reassignment sheet promises a notification nothing sends.** The overlay Wave 3 added tells the actor *"The new approver is told, and the reminder clock starts again."* The clock half is true — `ReassignRequest` sets `reminder_last_sent=NULL`. The notification half is not: `requestReassignApprover` contains no `a.fire`, and `notify.AllEvents` has no approver-reassignment event at all. This is a fresh instance of **F-D-12**, the exact defect Wave 4 fixed for release/reassign/unhold — reintroduced one screen over by the A7 repair. | Copy at `internal/app/templates.go:2601`; handler `internal/app/app.go:1615-1647` (no fire); vocabulary `internal/notify/events.go:71-79`. |
+| 2 | **F-F-06's cancellation fix covers three paths of four.** Both cancellation *decisions* now fire (`EventCancellationAccepted` / `EventCancellationDeclined`, `internal/app/requests.go:1029`,`:1031`) and the ask already did. An **outright cancel** still fires nothing, and there is no event for it in the vocabulary. The finding is closed for the decision paths and open for this one. | `requestCancelOutright` (`internal/app/requests.go:1036-1043`) — no `a.fire`; `notify.AllEvents` (`internal/notify/events.go:71-79`). |
+
+Both are notification gaps, not data-integrity or permission gaps: nothing is
+mis-scoped or mis-written, somebody is simply not told. Whoever picks them up
+should decide whether each deserves its own admin-editable event or folds into
+an existing one — the same question decision 2 settled for reminders.
 
 ## Deliberately not fixed
 

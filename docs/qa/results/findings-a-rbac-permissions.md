@@ -1,5 +1,13 @@
 # Findings — permission and authorisation enforcement (area A)
 
+> **Frozen evidence, not current status.** This document records what was found
+> at commit `30edd6a` and is **not** updated as defects are fixed — the same rule
+> `AUDIT-REPORT.md` states for itself. Its present-tense claims describe the
+> audited commit, so a statement here that something "is" broken means it was
+> broken then; several have since been repaired, and a few of the `file:line`
+> citations have shifted. For what was actually **done** about each finding, read
+> [`REPAIR-LOG.md`](REPAIR-LOG.md).
+
 **Source.** `tests/e2e/audit-a-rbac-permissions.spec.ts` — 124 executed tests,
 475 route × caller matrix cells, run on port 4301 against a fresh database:
 **`124 passed (16.4s)`, 0 failed.** Test cases:

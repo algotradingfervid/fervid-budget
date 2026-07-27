@@ -65,13 +65,53 @@ var requestTypeLabels = func() map[string]string {
 	return out
 }()
 
-// requestNew is both steps of the new-request flow on one route. With no
-// ?type= — or an unrecognised one — it is the chooser; with a known type it is
-// the form for that type and nothing else (A16).
+// unofferedRequestType is what `/requests/new?type=` says when the type names no
+// card. It is F-D-14's reconciliation, and the decision behind it is this:
+//
+// The store has five request types and this chooser offers four. The fifth,
+// `recoverable`, is kept deliberately — `internal/store/requests.go`'s comment
+// above `requestTypes` explains that `POST /requests` reaches the store with
+// whatever type the body carried, so the type and its validation branch are what
+// give a hand-rolled `recoverable` submission its real refusal instead of an
+// unvalidated write, and F-E-08's fix depends on that branch existing. The
+// reconciliation was therefore always on this side of the line: a fifth card, or
+// an explicit refusal here.
+//
+// It is the refusal, because a fifth card would be a second way to say something
+// the form already says better. "Recoverable" is a TREATMENT on this product's
+// form — the radio every one of the four types carries — and the recoverable
+// category, the return date and the repayment terms all hang off that radio, not
+// off the type. A "Recoverable" card would ask a requester to choose between
+// "Employee advance, usually recoverable" and "Recoverable" for the same money,
+// and the store's own branch for the type requires `treatment=recoverable`
+// anyway, so the card would render a form whose treatment radio had one legal
+// position. It would also have to invent a payee rule the type does not have:
+// `forcesRequesterPayee` covers reimbursement and employee advance, and a
+// `recoverable`-typed request names nobody unless it carries a vendor.
+//
+// So four cards stay four cards, and the silence goes. The chooser is still the
+// screen the reader lands on — it is the nearest useful thing, and its own info
+// banner is the guidance they need — but it now arrives with the reason and a
+// 400, rather than pretending the URL said nothing.
+//
+// The message does not echo the requested type and does not name the store's
+// vocabulary: re-typing that list here is how the two drift, which is the defect
+// this comment sits on top of.
+const unofferedRequestType = "That is not a request type this system raises. Pick one below — money you expect back is one of these four, marked recoverable on the next screen."
+
+// requestNew is both steps of the new-request flow on one route. With no ?type=
+// it is the chooser; with a known type it is the form for that type and nothing
+// else (A16). A type with no card is refused on the chooser, above.
 func (a *App) requestNew(w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("type")
 	label, known := requestTypeLabels[kind]
 	if !known {
+		if kind != "" {
+			a.renderStatus(w, r, http.StatusBadRequest, "request_new_type", PageData{
+				Title: "New request", Error: unofferedRequestType,
+			})
+			return
+		}
 		a.render(w, r, "request_new_type", PageData{Title: "New request"})
 		return
 	}
@@ -1039,6 +1079,11 @@ func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The fourth cancellation path, and the one F-F-06's repair missed. The
+	// other three tell the requester what became of their ask; this one ends the
+	// request without their having asked at all, which is the case they are
+	// least able to guess at.
+	a.fire(r, notify.EventRequestCancelled, id)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
 }
 

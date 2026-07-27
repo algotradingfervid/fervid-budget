@@ -353,6 +353,14 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "payments_vendor_id",
 		Up:      upPaymentsVendorID,
 	},
+	// The two events the repair's own documentation pass found still firing
+	// nothing — including the approver reassignment, whose screen promises in
+	// as many words that the new approver is told.
+	{
+		Version: 11,
+		Name:    "notification_events_reassignment",
+		Up:      UpReassignmentNotificationEvents,
+	},
 }
 
 // upPaymentsVendorID gives a payment the vendor it was made to, so the vendor

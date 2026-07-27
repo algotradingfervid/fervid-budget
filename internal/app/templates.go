@@ -3290,7 +3290,7 @@ const templates = `
 <fieldset>
   <legend>Recoverable categories</legend>
   <div class="table-wrap" style="margin-bottom:10px"><table class="t-cards">
-    <thead><tr><th>Category</th><th>Requires</th><th class="c">Active</th><th class="c">In use</th></tr></thead>
+    <thead><tr><th>Category</th><th>Requires</th><th class="c">Active</th><th class="c">In use</th>{{if .Perms.Can "recoverable_category" "delete"}}<th>Actions</th>{{end}}</tr></thead>
     <tbody>{{range .CategoryUsage}}<tr>
       <td class="t-lead" data-label="Category">{{.Name}}</td>
       <td data-label="Requires">{{.Requires}}</td>
@@ -3306,7 +3306,27 @@ const templates = `
         </form>
       {{else}}{{if .Active}}<span class="pill good no-dot">On</span>{{else}}<span class="pill neutral no-dot">Off</span>{{end}}{{end}}</td>
       <td class="c" data-label="In use">{{.InUse}}</td>
-    </tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No recoverable categories yet.</td></tr>{{end}}</tbody>
+      {{/* F-E-06's control. Its own form, a sibling of the Active toggle's and
+           never nested inside it: the parser drops a nested form silently, which
+           is the same reason this whole fieldset sits outside the settings form.
+
+           No confirm() dialog — the guard is the server's. store.DeleteRecoverableCategory
+           counts the requests pointing at the category inside the DELETE's own
+           transaction and refuses with that count, so the "In use" figure beside
+           this button is a forecast of the answer, never the gate. The button is
+           offered on every row for that reason: a reader who presses it on a
+           category in use is told how many and that deactivating is the way to
+           retire it, which is worth more than a control that quietly is not
+           there. */}}
+      {{if $.Perms.Can "recoverable_category" "delete"}}
+      <td class="actions-cell" data-label="Actions">
+        <form method="post" action="/configuration/recoverable-categories/{{.ID}}/delete">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button class="btn small danger" type="submit">Delete<span class="sr-only"> {{.Name}}</span></button>
+        </form>
+      </td>
+      {{end}}
+    </tr>{{else}}<tr><td colspan="{{if .Perms.Can "recoverable_category" "delete"}}5{{else}}4{{end}}" class="empty" data-label="">No recoverable categories yet.</td></tr>{{end}}</tbody>
   </table></div>
   {{if .Perms.Can "recoverable_category" "edit"}}
   <form method="post" action="/configuration/recoverable-categories">
@@ -3576,7 +3596,10 @@ const templates = `
   <div>
     <div class="eyebrow">Your activity</div>
     <h1>Notifications</h1>
-    <p class="sub">{{if .NotifCounts.Unread}}{{.NotifCounts.Unread}} unread of {{.NotifCounts.All}}{{else}}Everything here is read{{end}}</p>
+    {{/* The sub-line names both numbers when they differ. The row query stopped
+         at 100 while the "All" count beside it had no cap, so a user past the cap
+         read a number the list below could not account for (F-G-037). */}}
+    <p class="sub">{{if or .NotifPage.Truncated .NotifOffset}}{{len .Notifs}} of {{.NotifPage.Total}} shown · {{end}}{{if .NotifCounts.Unread}}{{.NotifCounts.Unread}} unread of {{.NotifCounts.All}}{{else}}Everything here is read{{end}}</p>
   </div>
   <div class="pb-actions">{{if .NotifCounts.Unread}}
     <form method="post" action="/notifications/read"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn outline" type="submit">Mark all read</button></form>
@@ -3604,6 +3627,19 @@ const templates = `
   </div>
   {{end}}
 </div>
+
+{{/* Paging, the same shape /requests uses: the cap is real, and it now says so
+     and offers the rest rather than dropping rows in silence (F-G-037). Both
+     links carry the scope, so crossing a page boundary never widens the filter
+     the reader is standing in. */}}
+{{if or .NotifPage.Truncated .NotifOffset}}
+<div class="cluster" style="margin-top:14px">
+  <span class="muted small">Showing {{if .Notifs}}{{add .NotifOffset 1}}–{{add .NotifOffset (len .Notifs)}}{{else}}0{{end}} of {{.NotifPage.Total}}</span>
+  <span class="row-end"></span>
+  {{if .NotifOffset}}<a class="btn outline" href="/notifications?scope={{.NotifScope}}&amp;offset={{sub0 .NotifOffset .NotifPage.Limit}}">← Newer</a>{{end}}
+  {{if .NotifPage.Truncated}}<a class="btn outline" href="/notifications?scope={{.NotifScope}}&amp;offset={{add .NotifOffset (len .Notifs)}}">Older →</a>{{end}}
+</div>
+{{end}}
 {{template "bottom" .}}
 {{end}}
 

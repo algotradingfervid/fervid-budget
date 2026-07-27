@@ -2,7 +2,9 @@
 
 Audit area **F** (`notifications`). Covers the in-app notification centre (`/notifications`),
 the admin rules screen (`/admin/notifications`), SMTP/password handling, reminder
-configuration, and the twelve-event vocabulary in `internal/notify`.
+configuration, and the event vocabulary in `internal/notify` — **twelve events when this
+suite ran, twenty-one now**; see the correction under "A load-bearing fact" below, which
+governs every "twelve" in this document.
 
 ## Sources read in full
 
@@ -28,9 +30,23 @@ The **phase-5-notifications-spec.md is stale** and was **superseded** by
 (`design-system-adoption-spec.md:38-40`): the phase-5 spec explicitly lists "a persistent in-app
 `notifications` table" as **out of scope** and seeds only **six** events; the shipped code has
 exactly that table (`internal/store/migrations_notifications.go:89-100`) and seeds **twelve**
-events, because G19/G20 record a later decision to close those two gaps inside Phase 5's own
-delivery. The code is authoritative (per `AGENT-BRIEF.md` source-of-truth order); every place this
+events in v7 (**twenty-one** since v9 — see the correction below), because G19/G20 record a later
+decision to close those two gaps inside Phase 5's own delivery. The code is authoritative (per `AGENT-BRIEF.md` source-of-truth order); every place this
 document says "spec says X, code does Y" below is this same root cause, not a new one each time.
+
+**Correction — the vocabulary is twenty-one events, not twelve.** Migration **v7** seeds twelve,
+which is what this suite measured and what every "twelve" below records. Migration **v9** adds nine
+more with `ON CONFLICT(event) DO NOTHING`, so an administrator's edits to v7's twelve survive — that
+is why it is a migration and never a re-seed (`internal/store/migrations.go:344-346`,
+`internal/store/migrations_notifications.go:146-155`). `notify.AllEvents` is therefore v7's twelve
+followed by v9's nine, twenty-one in all (`internal/notify/events.go:71-79`; the nine constants at
+`:37`, `:41`, `:44`, `:48`, `:52`, `:56`, `:60`, `:65`, `:66`). The added events are
+`request_withdrawn`, `request_reraised`, `request_unheld`, `reservation_released`,
+`reservation_reassigned`, `payment_partial_accepted`, `payment_partial_concern`,
+`request_cancellation_accepted` and `request_cancellation_declined`. This is finding **F-F-06**,
+fixed in REPAIR-LOG.md Wave 2, commit `25411b8` (the vocabulary and the migration) and Wave 4,
+commit `709dfa6` (the handler wiring). Every recorded expected/actual/verdict below is the frozen
+`30edd6a` measurement and stands as run; it is the *count* that has moved.
 
 ## Environment constraints that shape what "executed" means here
 
@@ -192,6 +208,7 @@ document says "spec says X, code does Y" below is this same root cause, not a ne
 - **Expected:** exactly `["request_submitted","request_edited","request_returned","request_rejected","request_approved","request_urgent","request_on_hold","request_cancellation_requested","payment_settled","payment_partial_review","reminder_pending","reminder_stale_reservation"]` — the same order `notify.AllEvents` declares (`internal/notify/events.go:23-27`) and `AllNotificationSettings` returns (`ORDER BY sort_order,event`, `internal/store/notifications.go:97-98`, and `sort_order` is seeded `i+1` in that same array order, `migrations_notifications.go:105-114`). This is the highest-value check in the whole document: comparing seeded events (12) against fireable events (traced below) against rendered events (this test) is how a silently-orphaned event would be caught.
 - **Actual:** the twelve slugs appeared, in the exact order listed above. Cross-checked against fire sites read in the Go source: `request_submitted` (`requests.go:172`), `request_edited` (`requests.go:676`), `request_returned` (`requests.go:735`), `request_rejected` (`requests.go:744`), `request_approved` (`requests.go:726`), `request_urgent` (`notifications.go:46-51`, fired from inside `fire()` on top of submit/approve when `req.Urgent`), `request_on_hold` (`linking.go:703`), `request_cancellation_requested` (`requests.go:824`), `payment_settled` (`app.go:724`), `payment_partial_review` (`app.go:726`), `reminder_pending` and `reminder_stale_reservation` (both only from `Service.RunReminders` via the hourly `Scheduler`, `reminders.go:19-22`). **All twelve seeded events are fireable, all fireable events are seeded, and all are rendered** — no orphan in either direction. This is a clean bill of health, not a defect, and is reported as such in the findings.
 - **Verdict:** PASS
+- **Since the run:** the screen renders **twenty-one** rows, not twelve. Migration **v9** seeds nine more (`internal/store/migrations_notifications.go:146-155`) and `notify.AllEvents` lists v7's twelve followed by v9's nine (`internal/notify/events.go:71-79` — the citation `events.go:23-27` above is where `AllEvents` sat at `30edd6a`). The twelve slugs above are still the first twelve, in the same order, because `sort_order` is append-only and v9 adds rows without touching v7's. The no-orphan property still holds in both directions: all nine new events fire — `request_withdrawn` (`internal/app/requests.go:916`), `request_reraised` (`:932`), `request_cancellation_accepted`/`_declined` (`:1029`, `:1031`), `payment_partial_accepted` (`internal/app/linking.go:554`), `payment_partial_concern` (`:567`), `reservation_released` (`:712`), `reservation_reassigned` (`:755`), `request_unheld` (`:803`). F-F-06, fixed REPAIR-LOG.md Wave 2 (`25411b8`) and Wave 4 (`709dfa6`).
 
 #### TC-F-010b — Email is disabled by default for every one of the twelve seeded events
 - **Preconditions:** none of TC-F-001–010 touch admin settings; run before Section 4 (which does).
@@ -199,6 +216,7 @@ document says "spec says X, code does Y" below is this same root cause, not a ne
 - **Expected:** every one reads "Off" — `defaultNotificationSettings` (`migrations_notifications.go`) never sets `EmailEnabled` on any of the twelve struct literals, so it is Go's zero value (`false`/`0`) for all twelve on a freshly-migrated database. Consequence for N3: "approval email to Accounts + requester + management" does not happen on a fresh install until an admin opts `request_approved` in — only the in-app row is unconditional.
 - **Actual:** all twelve pills read "Off".
 - **Verdict:** PASS
+- **Since the run:** there are twenty-one pills, and the rule still holds for all of them. None of the nine `auditNotificationSettings` struct literals sets `EmailEnabled` either (`internal/store/migrations_notifications.go:87-120`), so `seedNotificationSettings` writes `boolInt(false)` = 0 for each (`:132-144`) — the same zero value, by the same route, as v7's twelve.
 
 ---
 
@@ -307,6 +325,10 @@ miscounted setup step.
 ---
 
 ### Section 4 — the admin rules screen (N2, N8) — RBAC, the twelve-row matrix, persistence
+
+**The matrix is twenty-one rows now, not twelve** — migration v9's nine events render through the
+same `range` as v7's twelve (`internal/notify/events.go:71-79`). Every count in this section is the
+`30edd6a` measurement and is left as measured.
 
 **A defect discovered while writing TC-F-030, that changes how TC-F-030–035/037 had to be driven —
 see finding F-F-01 for the full writeup.** Every one of the twelve `<div class="overlay"
@@ -490,12 +512,20 @@ already had. This is a genuine, honest outcome — there is no seeded event at a
 six transitions, so nothing here is "an existing rule failing to fire" (Section 1/8 above already
 established the twelve seeded events are completely consistent with what fires).
 
+**Every gap in this section is Fixed** — the vocabulary in REPAIR-LOG.md Wave 2, commit `25411b8`,
+the wiring in Wave 4, commit `709dfa6` (F-F-06, with F-D-12). Migration **v9** seeds nine new event
+rules and `notify.AllEvents` now holds twenty-one (`internal/notify/events.go:71-79`), and each of
+the six transitions below fires one of them. The six cases keep their recorded `PASS` verdicts,
+because each asserted the observed silence honestly rather than a wish; what is stale is the claim
+that no event exists.
+
 #### TC-F-051 — Withdrawing a pending request fires no notification to the manager
 - **Preconditions:** a fresh pending request naming `mgr` as approver.
 - **Steps:** capture the manager's notification count; the requester posts `/requests/{id}/withdraw` with a valid CSRF token; re-read the manager's count.
 - **Expected:** unchanged — `requestWithdraw` (`requests.go:748-754`) never calls `a.fire`.
 - **Actual:** unchanged (303 on the withdraw POST; count identical before/after).
 - **Verdict:** PASS
+- **Since the run:** `requestWithdraw` fires `EventRequestWithdrawn` (`internal/app/requests.go:916`; the constant at `internal/notify/events.go:37`, its rule seeded by v9). The approver whose queue item vanished without a decision is now told.
 
 #### TC-F-052 — Reraising a rejected request fires no notification to the manager (no request_submitted-equivalent)
 - **Preconditions:** requestA (Section 1), rejected.
@@ -503,6 +533,7 @@ established the twelve seeded events are completely consistent with what fires).
 - **Expected:** unchanged — `requestReraise` (`requests.go:759-766`) creates a brand-new pending request (D1) but never calls `a.fire`, so the manager has no way to learn a new request now needs their attention.
 - **Actual:** unchanged (303 redirect to the new request's `/submitted` page; manager's count identical before/after).
 - **Verdict:** PASS
+- **Since the run:** `requestReraise` fires `EventRequestReraised` for the **new** id (`internal/app/requests.go:932`; the constant at `internal/notify/events.go:41`). D1 makes a re-raise a new request with its own number, which is exactly why it needs its own event rather than `request_submitted`.
 
 #### TC-F-053 — Releasing a reservation fires no notification to the requester
 - **Preconditions:** requestU (TC-F-044), reserved by `accA`.
@@ -510,6 +541,7 @@ established the twelve seeded events are completely consistent with what fires).
 - **Expected:** unchanged — `requestRelease` (`linking.go:623-635`) never calls `a.fire`.
 - **Actual:** unchanged (303 redirect to `/accounts-queue`; requester's count identical before/after).
 - **Verdict:** PASS
+- **Since the run:** `requestRelease` fires `EventReservationReleased` (`internal/app/linking.go:712`; the constant at `internal/notify/events.go:48`), whose seeded rule carries both `IncludeRequester` and `IncludeManager` — the release screen states in as many words that "the requester and the approver are both notified", so both are. This also closes F-D-12 (TC-D-099).
 
 #### TC-F-054 — Lifting a hold (unhold) fires no notification to the requester
 - **Preconditions:** requestE (TC-F-006), on hold.
@@ -517,6 +549,7 @@ established the twelve seeded events are completely consistent with what fires).
 - **Expected:** unchanged — `requestUnhold` (`linking.go:710-720`) never calls `a.fire`.
 - **Actual:** unchanged (303 redirect to the request page; requester's count identical before/after).
 - **Verdict:** PASS
+- **Since the run:** `requestUnhold` fires `EventRequestUnheld` (`internal/app/linking.go:803`; the constant at `internal/notify/events.go:44`). `request_on_hold` already told the requester the hold was placed; this is the other half.
 
 #### TC-F-055 — Accepting a partial payment fires no notification to the requester
 - **Preconditions:** requestG (TC-F-008), in `partial_review`.
@@ -524,6 +557,7 @@ established the twelve seeded events are completely consistent with what fires).
 - **Expected:** unchanged — `requestAcceptPartial` (`linking.go:477-484`) never calls `a.fire`.
 - **Actual:** unchanged (303 redirect to the request page; requester's count identical before/after).
 - **Verdict:** PASS
+- **Since the run:** `requestAcceptPartial` fires `EventPaymentPartialAccepted` (`internal/app/linking.go:554`; the constant at `internal/notify/events.go:56`), and the concern branch fires `EventPaymentPartialConcern` (`linking.go:567`, constant at `events.go:60`). The requester learns the balance is never coming; the assigned accountant learns to stop chasing it.
 
 #### TC-F-056 — Deciding a cancellation request fires no notification to the requester who asked
 - **Preconditions:** requestH (TC-F-009), `cancellation_requested`.
@@ -531,6 +565,7 @@ established the twelve seeded events are completely consistent with what fires).
 - **Expected:** unchanged — `requestCancellationDecide` (`requests.go:850-858`) never calls `a.fire`.
 - **Actual:** unchanged (303 redirect to `/approvals?bucket=cancellations`; requester's count identical before/after).
 - **Verdict:** PASS
+- **Since the run:** `requestCancellationDecide` fires whichever half the decision was — `EventCancellationAccepted` or `EventCancellationDeclined` (`internal/app/requests.go:1029`, `:1031`; the constants at `internal/notify/events.go:65-66`). They are two events and not one because the sentences are opposites — *"nothing will be paid"* against *"payment is unfrozen"* — and each is an admin-editable template in its own right. This is also the silence TC-C-097B recorded.
 
 #### TC-F-057 — "Save corrections" without resubmitting still fires `request_edited`, wrongly claiming it was re-sent
 - **Preconditions:** a fresh request, returned by `mgr`.
@@ -570,7 +605,7 @@ by a named, passing Go test.
 (TC-F-010, 010b, 024–034, 045–047), **N3** (TC-F-005, 010b, 031, 050), **N4**/**N5** (TC-F-043, 048,
 plus NR-1/NR-2/NR-3), **N6** (TC-F-038–042), **N8** (TC-F-035–037), **S8** (TC-F-044, plus NR-2).
 **G8** (approval-authority boundary, TC-F-040). **G19** (in-app centre + bell, TC-F-015, 016, 049).
-**G20** (twelve events, TC-F-010, 032, 051–056). **A8** (edit-while-pending re-notification,
+**G20** (twelve events at the time of this run, twenty-one since migration v9 — TC-F-010, 032, 051–056). **A8** (edit-while-pending re-notification,
 TC-F-057). **D6** (Configuration screen ownership, TC-F-046). **N7** (conversation thread visible to
 viewers) is out of this document's scope — it belongs to the requests/approvals thread, not
 notifications.

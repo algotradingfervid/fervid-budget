@@ -1,5 +1,13 @@
 # Findings — Recoverables (TC-E)
 
+> **Frozen evidence, not current status.** This document records what was found
+> at commit `30edd6a` and is **not** updated as defects are fixed — the same rule
+> `AUDIT-REPORT.md` states for itself. Its present-tense claims describe the
+> audited commit, so a statement here that something "is" broken means it was
+> broken then; several have since been repaired, and a few of the `file:line`
+> citations have shifted. For what was actually **done** about each finding, read
+> [`REPAIR-LOG.md`](REPAIR-LOG.md).
+
 Nine findings. Ranked by severity. Every one is confirmed by at least two
 independent methods (live reproduction through `tests/e2e/audit-e-recoverables.spec.ts`
 plus direct reading of the Go source), per the audit protocol.

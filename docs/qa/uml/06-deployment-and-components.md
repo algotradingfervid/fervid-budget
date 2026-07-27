@@ -143,7 +143,7 @@ sequenceDiagram
     Main->>DB: store.Open DBPath
     Note over DB: DSN carries pragma busy_timeout 5000 and pragma foreign_keys 1
     DB->>DB: db.Exec schemaSQL for base tables
-    DB->>DB: migrate db runs v1 through v7 in order then sets PRAGMA user_version
+    DB->>DB: migrate db runs v1 through v10 in order then sets PRAGMA user_version
     DB-->>Main: Store
 
     alt seed flag set
@@ -180,6 +180,14 @@ sequenceDiagram
         Main->>DB: deferred db.Close
     end
 ```
+
+> **Correction — the migration chain grew after this document was written.** At commit `30edd6a`
+> the chain ended at v7 and the line above read *"v1 through v7"*. The audit repair waves appended
+> v8 `payments_head_nullable` (`internal/store/migrations.go:336`), v9 `notification_events_audit`
+> (`:344`) and v10 `payments_vendor_id` (`:352`); the reserved-sequence comment at
+> `internal/store/migrations.go:15-33` is the authority for the numbering and is where a v11 will
+> appear. `migrate` itself is unchanged — it still applies every version above `PRAGMA user_version`
+> in order inside one transaction each. See `docs/qa/results/REPAIR-LOG.md`.
 
 Points confirmed against the code:
 
@@ -518,16 +526,30 @@ evidence. Reported only — no remediation proposed, per the brief.
    untested, on first deploy.** `docs/superpowers/PROGRESS.md:396-398`: "It is
    still on the initial commit at `user_version = 0`, so it will run v1→v5 in
    full on first deploy." That sentence is itself now stale by the project's
-   own later history — the migration chain has since grown to v7
-   (`internal/store/migrations.go:18-30`, and confirmed live in the file:
-   `Version: 1` through `Version: 7` at lines 39, 96, 147, 269, 301, 317, 324)
-   — so the real exposure is larger than PROGRESS.md's own "Known gaps"
-   section currently states: a first production start runs **v1 through v7**
-   in one process lifetime, not v1 through v5. Every migration is written to
-   be idempotent (`internal/store/migrations.go:32-36`, "re-applying it after
-   a `user_version` reset is safe"), but idempotent-in-isolation is not the
-   same claim as "the whole chain has been proven end-to-end against a
-   database that has never seen any of it," which per PROGRESS.md it has not.
+   own later history — the migration chain has since grown to v10
+   (`internal/store/migrations.go:18-29`, and confirmed live in the file:
+   `Version: 1` through `Version: 10` at lines 42, 99, 150, 272, 304, 320,
+   327, 336, 344, 352) — so the real exposure is larger than PROGRESS.md's own
+   "Known gaps" section currently states: a first production start runs
+   **v1 through v10** in one process lifetime, not v1 through v5. Every
+   migration is written to be idempotent (`internal/store/migrations.go:35-39`,
+   "re-applying it after a `user_version` reset is safe"), but
+   idempotent-in-isolation is not the same claim as "the whole chain has been
+   proven end-to-end against a database that has never seen any of it," which
+   per PROGRESS.md it has not.
+
+   **Correction — the chain is three longer than when this was written.** At
+   commit `30edd6a` this paragraph read "grown to v7 … runs v1 through v7",
+   citing `Version: 1` through `Version: 7` at lines 39, 96, 147, 269, 301,
+   317, 324. The audit repair waves appended v8 (`migrations.go:336`,
+   `payments.head_id` nullable), v9 (`:344`, nine further notification rows)
+   and v10 (`:352`, `payments.vendor_id`); the version cites above have been
+   restated against the current file and the three older ones have all shifted
+   by three lines. v8 is the one that matters operationally: it is the only
+   **table rebuild** in the chain — create/copy/drop/rename of `payments` with
+   `payment_attachments` stashed and restored around it
+   (`internal/store/migrations.go:435-495`) — so it is the migration a first
+   production start has the most to lose on. See `docs/qa/results/REPAIR-LOG.md`.
 2. **SQLite single-writer characteristic under concurrent reservation.**
    `store.Open` sets `busy_timeout(5000)` (`internal/store/store.go:36`), so a
    losing writer waits up to 5 seconds rather than failing immediately — but

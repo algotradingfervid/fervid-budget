@@ -65,7 +65,7 @@ grants; the broadest data scope wins (`all > assigned > own`,
 | RT02 | `POST /logout` | CSRF only | UC-A-03 |
 | RT03 | `GET /{$}` · `GET /dashboard` | session | UC-A-07 |
 | RT04 | `GET /` (catch-all) | session | UC-A-06 |
-| RT05 | `GET /grid` | **session only** | UC-A-42 |
+| RT05 | `GET /grid` | `grid:view` — **session only at `30edd6a`**; gated by Wave 3, `1fac147` (`internal/app/app.go:431`, F-A-02/F-G-032). See 09.e1. | UC-A-42 |
 | RT06 | `GET /export.csv` | `grid:export` | UC-A-43 |
 | RT07 | `GET /reports/monthly` · `/reports/projects` · `/reports/heads` | `report:view` | UC-A-44 |
 | RT08 | `GET /reports/ytd.csv` | `report:export` | UC-A-45 |
@@ -653,7 +653,7 @@ All route registrations: `internal/app/app.go:362-524`.
 
 **Exception flows**
 
-- **09.e1** `GET /grid` answers **200** for a Requester, because the route is `RequireLogin` only and never consults `grid:view` (`internal/app/app.go:377`). Recorded as expected in `tests/e2e/audit-smoke.spec.ts:27-29`: *"grid is RequireLogin only, so a Requester reaches it"*. Every project's budget and actuals for the month are therefore readable by anyone with a session.
+- **09.e1** — **fixed.** At `30edd6a`, `GET /grid` answered **200** for a Requester because the route was `RequireLogin` only and never consulted `grid:view` (`internal/app/app.go:377`), recorded as expected behaviour in `tests/e2e/audit-smoke.spec.ts:27-29` (F-A-02/F-G-032). As of the 2026-07-27 repair, Wave 3, commit `1fac147` (`docs/qa/results/REPAIR-LOG.md`), the route is `a.auth.RequirePermission("grid", "view", …)` (`internal/app/app.go:431`) and a Requester — who holds no `grid` grant at all — is refused. The Recent Payments panel the grid also carried is gated separately, on `payment:view`, in the handler rather than the template, so `grid:view` alone cannot see payment data.
 - **09.e2** `GET /notifications` and `POST /notifications/read` are session-only by design — every row is already scoped to the caller (`internal/app/app.go:408-413`). Not a hole; owned by UC-C.
 - **09.e3** `GET /requests/{id}/reservation` is session-only, with the real gate inside `reservationForm` (`internal/app/app.go:456-464`). Owned by UC-B/UC-C.
 
@@ -669,8 +669,8 @@ All route registrations: `internal/app/app.go:362-524`.
 
 **Open questions**
 
-- **09.e1 is a genuine permission hole measured against R6.** `grid:view` is granted, revoked and displayed on the roles matrix (`internal/app/permmap.go:142-146`) and consulted by the nav (`internal/app/nav.go:70`) and the dashboard tile — but by nothing that guards data. Either the route should be `RequirePermission("grid","view", …)` or `grid:view` should be documented as a nav-only flag.
-- Eight canonical pairs have **no enforcement point anywhere**: `approval:reassign`, `payment:mark_partial`, `project:create`, `head:create`, `user:create`, `recoverable_category:{view,create,delete}` — plus `grid:view` as above. `user:create` is the sharpest: the **＋ Add user** button is gated on it (`internal/app/templates.go:1195`) while the route it posts to requires `user:edit` (`internal/app/app.go:510`), so the button and the gate disagree in both directions.
+- **09.e1 was a genuine permission hole measured against R6, now closed.** `grid:view` is granted, revoked and displayed on the roles matrix (`internal/app/permmap.go:142-146`) and consulted by the nav (`internal/app/nav.go:70`) and the dashboard tile, and as of Wave 3 (`1fac147`) it also guards the route: `RequirePermission("grid","view", …)` (`internal/app/app.go:431`).
+- **As of `30edd6a`, eight canonical pairs had no enforcement point anywhere: `approval:reassign`, `payment:mark_partial`, `project:create`, `head:create`, `user:create`, `recoverable_category:{view,create,delete}` — plus `grid:view` as above.** The 2026-07-27 repair (`docs/qa/results/REPAIR-LOG.md`, Wave 3, commit `1fac147`) closed four of the eight: `grid:view` now gates `GET /grid` (`internal/app/app.go:431`, F-A-02/F-G-032); `payment:mark_partial` is checked inside the settlement handler when `settlement=partial` (`app.go:833`, F-D-10); `user:create` gates `POST /users` alongside `user:edit` via `a.requireAnyOf("user", []string{"create","edit"}, …)` (`app.go:590`, F-A-07) — the button/route disagreement described below is resolved, not merely described; and `approval:reassign` now gates the new `POST /requests/{id}/reassign-approver` (`app.go:569`, F-A-06/F-C-02, coverage requirement A7). A fifth closed shortly after: **`recoverable_category:delete`** now gates `POST /configuration/recoverable-categories/{id}/delete` (`internal/app/app.go:614`, handler `internal/app/configuration.go:166`, store `DeleteRecoverableCategory` at `internal/store/recoverables.go:260`) — F-E-06, Wave 5. **Still unenforced:** `project:create` and `head:create` (both projects and heads are created through the same `POST /projects`/`POST /heads` the edit form posts to, gated only on `project:edit`/`head:edit`), and `recoverable_category:{view,create}` — only `edit` and now `delete` gate anything, so creating a category still travels the `edit` route at `app.go:608`.
 
 ---
 

@@ -10,6 +10,73 @@ The gate implementations are `internal/auth/auth.go:87-200`. The refusal
 rendering is `internal/app/http_errors.go:158-212`. The seeded role grants are
 `internal/store/migrations.go:351-402`.
 
+> **Correction — the route inventory is short by two, and the line range has
+> moved.** This matrix was read out of commit `30edd6a`. The audit repair waves
+> registered two routes that did not exist then, both in Wave 3 (`1fac147`):
+> `GET /requests/{id}/attachments/{attachmentID}` (`internal/app/app.go:460`,
+> RT-20a below) and `POST /requests/{id}/reassign-approver`
+> (`internal/app/app.go:569`, RT-78a below). `(*App).routes` now begins at
+> `internal/app/app.go:405`, not `:362`. The "97 registrations" figure is
+> therefore **stale**; a raw `grep -c 'mux.Handle('` over
+> `internal/app/app.go` returns **96** today, which does not reconcile with 97
+> plus two, so the original count is not re-derived here — reconciling it
+> against every `mux.Handle` call is a separate job. What is settled: the two
+> routes named above are new since this document was written, and every §1
+> route table, §2 status matrix and §4 grant map below predates them.
+>
+> **The count reconciles, and it is still moving.** `mux.Handle` is not the only
+> registrar: three routes go through `mux.HandleFunc` instead — `GET /login`,
+> `POST /login` and `POST /logout` — which is RT-02, RT-03 and RT-04. At
+> `30edd6a` the arithmetic was `94 + 3 = 97`, matching the "97 rows" of §1.
+> `git diff 30edd6a -- internal/app/app.go` on the registration lines shows
+> **additions only, no removals** — the four `-` lines it reports are the
+> pre-repair versions of registrations that still exist (`GET /grid`,
+> `POST /payments`, `POST /users`, `POST /login`), re-gated rather than dropped.
+>
+> Three routes have been **added** since, one per repair:
+> `GET /requests/{id}/attachments/{attachmentID}` (F-A-05, Wave 3),
+> `POST /requests/{id}/reassign-approver` (F-A-06 · A7, Wave 3) and
+> `POST /configuration/recoverable-categories/{id}/delete` (F-E-06, Wave 5 —
+> the door for the `recoverable_category:delete` grant §4 records as consuming
+> nothing; handler `internal/app/configuration.go:166`, store
+> `DeleteRecoverableCategory` at `internal/store/recoverables.go:260`). That
+> makes **100** registrations as this line is written, and §1 short by three.
+>
+> **Do not treat 100 as final.** `internal/app/app.go` is being edited as the
+> repair lands; this count went 97 → 99 → 100 during the documentation pass
+> itself. Count it with `grep -c 'mux\.Handle(' internal/app/app.go` plus the
+> three `HandleFunc` registrations rather than trusting any number written here.
+>
+> **Four more repairs this matrix predates**, all Wave 3 (`1fac147`) and all
+> changing what a caller is *allowed* rather than only what a handler renders,
+> so they belong here rather than in a footnote:
+>
+> - **`GET /grid` is gated on `grid:view`** (F-A-02/F-G-032, **high**). It asked
+>   for a session alone, so a caller holding no role at all read every budget
+>   and actual plus a Recent Payments table with amounts, payees and live
+>   payment links, while `/payments` answered them 403. Recent Payments is
+>   gated separately on `payment:view` **in the handler**, not trusted to a
+>   template (`internal/app/app.go:426-431`). Falsifies **RT-07**, **RT-21**'s
+>   asymmetry note, **GR-43** and its dead-grant entry in §5.
+> - **`POST /payments` is double-gated `payment:create` *and* `payment:settle`**,
+>   and `settlement=partial` additionally requires `payment:mark_partial`
+>   (F-D-10, **high**) — the settlement write was gated more weakly than its own
+>   pure preview. `mark_partial` is checked in the handler and not as a route
+>   gate because it applies only to that one form value, which
+>   `internal/app/app.go:441-445` says in as many words; the check itself is at
+>   `:831-835`. Falsifies **RT-14**, **GR-19**, **GR-20** and GR-20's dead-grant
+>   entry in §5.
+> - **`POST /users` demands `user:create` when it is creating** (F-A-07). The
+>   route gate stays `user:edit`; the handler asks for the verb the pressed
+>   control is gated on, because one handler serves both
+>   (`internal/app/app.go:1523-1535`). Falsifies **RT-86**, **GR-54** and the
+>   "`user:edit` alone lets a caller mint a new user" line in §5's F-09.
+> - **The `payment` data scope is enforced now** (F-A-04/F-G-003), in two halves:
+>   Wave 1 (`633997b`) gave `PaymentListOptions` a `Scope`/`ViewerID` and made
+>   `ListPayments` filter on `entered_by` (`internal/store/store.go:1501`), and
+>   Wave 3 passed them (`internal/app/app.go:793-805`). Falsifies **RT-13**,
+>   **OS-05** and **F-04**.
+
 ---
 
 ## 0. How to read this document
@@ -104,7 +171,11 @@ v1** (`migrations.go:75`). The grants in §0.3 are therefore the defaults a
 ## 1. Complete route inventory
 
 97 rows, in registration order. `RT-nn` is stable; the matrix in §2 uses the same
-`nn`.
+`nn`. Two rows were appended after this document was written and are numbered
+off their neighbours rather than at the end, so the `nn` order still tracks
+registration order: **RT-20a** (`GET /requests/{id}/attachments/{attachmentID}`)
+and **RT-78a** (`POST /requests/{id}/reassign-approver`). See the correction in
+§0 for why "97" is no longer the count.
 
 ### 1.1 Public and session-only routes
 
@@ -116,7 +187,7 @@ v1** (`migrations.go:75`). The grants in §0.3 are therefore the defaults a
 | RT-04 | POST | `/logout` | **none** (not even `RequireLogin`) | yes | `logoutPost` | tolerates `u.ID == 0` (`app.go:621-624`) | `app.go:366, 620-627`. Anonymous caller with a `fervid_csrf` cookie and matching token → 303→`/login`. Without the cookie → 403. |
 | RT-05 | GET | `/{$}` | `RequireLogin` | n/a | `dashboard` | per-area `Can` checks (`dashboard.go:70,82,94,101`) | `app.go:375`. `{$}` matches **only** `/`. Home is the dashboard. |
 | RT-06 | GET | `/` | `RequireLogin` | n/a | `notFound` | none | `app.go:376`, `http_errors.go:158-160`. The **catch-all**: in Go 1.22+ ServeMux, `GET /` matches every unclaimed GET path, and this handler answers a rendered 404 page. It exists precisely so an unbuilt screen admits it is missing instead of silently rendering the dashboard (`app.go:367-374`). |
-| RT-07 | GET | `/grid` | **`RequireLogin` only** | n/a | `grid` | **none** | `app.go:377, 629-649`. **No `grid:view` gate.** Any signed-in caller gets the whole budget-vs-actuals matrix *and* the "Recent Payments" table with amounts, payees and `/payments/{id}` links (`templates.go`, `grid` define, "Recent Payments for"). See F-02. |
+| RT-07 | GET | `/grid` | ~~**`RequireLogin` only**~~ **`grid:view`** | n/a | `grid` | ~~**none**~~ Recent Payments gated separately on `payment:view` **in the handler** | `app.go:377, 629-649`. ~~**No `grid:view` gate.** Any signed-in caller gets the whole budget-vs-actuals matrix *and* the "Recent Payments" table with amounts, payees and `/payments/{id}` links.~~ **Fixed after this document was written (Wave 3, `1fac147`, F-A-02/F-G-032): the route asks for `grid:view` (`app.go:431`) and the panel asks for `payment:view` rather than trusting a template (`app.go:426-430`).** See F-02, and the correction in §0. |
 | RT-08 | GET | `/dashboard` | `RequireLogin` | n/a | `dashboard` | same as RT-05 | `app.go:381`. A second address for the same handler; the comment at `app.go:378-380` says it is ungated by design because every area inside is gated. |
 | RT-30 | GET | `/notifications` | `RequireLogin` | n/a | `notificationCentre` | store scopes every row to `user.ID` (`inapp.go:39`) | `app.go:411`. Ungated by design (`app.go:408-410`). |
 | RT-31 | POST | `/notifications/read` | `RequireLogin` | yes | `notificationsMarkAllRead` | acts on `user.ID` only (`inapp.go:56`) | `app.go:412`. |
@@ -146,6 +217,7 @@ v1** (`migrations.go:75`). The grants in §0.3 are therefore the defaults a
 | RT-76 | POST | `/requests/{id}/approve` | `approval:approve` | yes | `requestApprove` | `ParsePaise(approved_amount)` → 400 **first** (`requests.go:717-721`); store: `ManagerID != actor` → 403; **G8 `RequesterID == actor` → 403** (`store/requests.go:687-694`) | `app.go:494`. |
 | RT-77 | POST | `/requests/{id}/return` | `approval:return` | yes | `requestReturn` | store `decideRequest`: empty comment → 400 **first**, then `ManagerID != actor` → 403 (`store/requests.go:714-733`) | `app.go:495`. |
 | RT-78 | POST | `/requests/{id}/reject` | `approval:reject` | yes | `requestReject` | same as RT-77 | `app.go:496`. |
+| RT-78a | POST | `/requests/{id}/reassign-approver` | **`approval:reassign`** | yes | `requestReassignApprover` | **Route added after this document was written.** Fields `manager_id`, `reason`. Order: out-of-scope → **404**; `manager_id==0` → 400 *"Choose the approver this request should go to."*; blank `reason` → 400 *"Give a reason for the reassignment."*; then store `ReassignRequest` — status must be `pending`, G8 forbids the requester as target (`app.go:1615-1647`, `store/requests.go:759-801`) | `app.go:569`. The path is deliberately **not** `/reassign` — that is RT-62, the *reservation* handler on `reservation:reassign` (`app.go:564-568`). Closes GR-11 and F-09. |
 | RT-79 | GET | `/requests/{id}/cancel` | `request:cancel` | n/a | `requestCancelForm` | `loadViewableRequest`; **`RequesterID != actor` → 403**; status ≠ `approved` → 400 (`requests.go:797-815`) | `app.go:501`. |
 | RT-80 | POST | `/requests/{id}/cancel-request` | `request:cancel` | yes | `requestCancelAsk` | store `RequestCancellation`: empty reason → 400 first, then `RequesterID != actor` → 403 (`store/requests.go:861-880`) | `app.go:502`. |
 | RT-81 | POST | `/requests/{id}/cancel` | `approval:cancel` | yes | `requestCancelOutright` | store `CancelRequest`: reason → 400 first, then `ManagerID != actor` → 403 (`store/requests.go:962-981`) | `app.go:503`. Same path as RT-79 on a different method — ServeMux gates each method on its own verb (`app.go:497-500`). |
@@ -172,14 +244,36 @@ v1** (`migrations.go:75`). The grants in §0.3 are therefore the defaults a
 |---|---|---|---|---|---|---|---|
 | RT-11 | GET | `/payments/new` | `payment:create` | n/a | `paymentForm` | no `?request=` → picker, scoped by `Scope(u,"request")` (`linking.go:171-185`); with `?request=` → `paymentEntry`, `!heldByCaller` → **409** (`linking.go:233-243`) | `app.go:384`. |
 | RT-12 | GET | `/payments/new/options` | `payment:create` | n/a | `paymentPickerOptions` | same picker scope | `app.go:385`. htmx fragment. |
-| RT-13 | GET | `/payments` | `payment:view` | n/a | `payments` | **none** — `ListPayments` takes no scope argument (`app.go:669-685`, `store/store.go:1256`) | `app.go:386`. The declared `payment` data scope is never consulted. See F-04. |
-| RT-14 | POST | `/payments` | `payment:create` | yes | `paymentCreate` | `request_id==0` → 400; store `RecordPaymentForRequest` requires `status='processing' AND processing_by = actor` → ErrForbidden; `amount > approved` → 400 (G13) (`app.go:690-729`, `store/store.go:866-957`) | `app.go:387`. On any error, if a payment already exists for the request it redirects there (double-submit tolerance, `app.go:713-716`). |
+| RT-13 | GET | `/payments` | `payment:view` | n/a | `payments` | ~~**none** — `ListPayments` takes no scope argument~~ **`Scope(u,"payment")` + `ViewerID` are passed to `ListPayments`, which filters on `entered_by` for `own`/`assigned` (`app.go:793-805`, `store/store.go:1501`)** | `app.go:386`. ~~The declared `payment` data scope is never consulted.~~ **Fixed after this document was written (Waves 1 and 3 — the store filter and the handler that passes it are separate halves).** See F-04. |
+| RT-14 | POST | `/payments` | `payment:create` **+ `payment:settle`** | yes | `paymentCreate` | `request_id==0` → 400; **`settlement=partial` without `payment:mark_partial` → 403 (`app.go:831-835`)**; store `RecordPaymentForRequest` requires `status='processing' AND processing_by = actor` → ErrForbidden; `amount > approved` → 400 (G13) (`app.go:690-729`, `store/store.go:866-957`) | `app.go:387`. On any error, if a payment already exists for the request it redirects there (double-submit tolerance, `app.go:713-716`). **Second gate added after this document was written (Wave 3, `1fac147`, F-D-10): the write was gated more weakly than its own pure preview RT-59, so the route is now wrapped twice (`app.go:446-447`).** |
 | RT-15 | GET | `/payments/{id}` | `payment:view` | n/a | `paymentDetail` | **linked payment: `canViewRequest(Scope(u,"request"), u, req)` → 403** (`app.go:757-762`). Unlinked historical payment: no extra check. | `app.go:388`. |
 | RT-16 | GET | `/payments/{id}/edit` | `payment:edit` | n/a | `paymentEditForm` | `RequestID != nil` → **303→`/payments/{id}`** (S12, `app.go:803-806`) | `app.go:389`. |
 | RT-17 | POST | `/payments/{id}/edit` | `payment:edit` | yes | `paymentEdit` | store: linked → ErrValidation → **400**; voided → 400; locked month → 409 (`store/store.go:607-617`) | `app.go:390`. |
 | RT-18 | POST | `/payments/{id}/void` | `payment:void` | yes | `paymentVoid` | store: linked → ErrValidation → **400**; already voided → no-op 303; empty reason → 400; locked → 409 (`store/store.go:648-660`) | `app.go:391`. `next` is prefix-checked against `/payments` (`app.go:854-857`). |
 | RT-19 | POST | `/payments/{id}/attachments` | `attachment:create` | yes | `attachmentUpload` | **no ownership check of any kind**; store `AddAttachment` checks existence, not-voided, month-unlocked only (`store/store.go:1310-1334`) | `app.go:392`. See F-03. |
-| RT-20 | GET | `/attachments/{id}` | `attachment:view` | n/a | `attachmentDownload` | **no ownership check**; only a path-traversal guard (`app.go:892-897`) and existence (`app.go:898-905`). Store comment: *"Authorization is intentionally left to the app's permission layer"* (`store/store.go:1351-1352`) | `app.go:393`. See F-01. |
+| RT-20 | GET | `/attachments/{id}` | `attachment:view` | n/a | `attachmentDownload` | ~~**no ownership check**; only a path-traversal guard (`app.go:892-897`) and existence (`app.go:898-905`)~~ **Fixed after this document was written — see the correction below.** | `app.go:393`. See F-01. |
+| RT-20a | GET | `/requests/{id}/attachments/{attachmentID}` | `attachment:view` | n/a | `requestAttachmentDownload` | **Route added after this document was written.** Reads `request_attachments`; `att.RequestID != pathID(r)` → 404; then `canViewRequest(Scope(u,"request"), u, req)` → 404 (`app.go:1115-1150`) | `app.go:460`. See the correction below. |
+
+> **Correction — RT-20 split in two and both halves now check ownership.** At
+> `30edd6a` a single route served both attachment tables and checked nothing but
+> the path and existence, which is what F-01 below records. Wave 3 (`1fac147`)
+> fixed it as F-A-01/F-B-11 and F-A-05/F-B-09:
+>
+> - **RT-20**, `GET /attachments/{id}`, now serves **payment** attachments only.
+>   It reads `AttachmentWithPayment` and refuses unless `canReadPayment`
+>   (`internal/app/app.go:1091-1113`).
+> - **RT-20a**, `GET /requests/{id}/attachments/{attachmentID}`, is new and
+>   serves **request** documents from `request_attachments`. It refuses an
+>   attachment that does not belong to the `{id}` in the path, then applies the
+>   request data scope (`internal/app/app.go:1115-1150`).
+>
+> Both refusals are **404**, not 403, and both are logged: `notFoundAttachment`
+> emits *"The requested attachment was not found."* with a `WARN attachment
+> refused` line carrying the reason (`internal/app/app.go:1044-1048`). The two
+> tables were split because their id sequences are unrelated, so one URL space
+> handed one reader another reader's bank advice — the route comment says so at
+> `internal/app/app.go:453-458`. Consequences below: **PE-01**, **PM-20** and
+> **F-01** all describe the pre-fix behaviour.
 
 ### 1.5 Budget, grid, reports, recoverables
 
@@ -192,10 +286,10 @@ v1** (`migrations.go:75`). The grants in §0.3 are therefore the defaults a
 | RT-23 | GET | `/reports/projects` | `report:view` | n/a | `report` | as RT-22 | `app.go:396`. |
 | RT-24 | GET | `/reports/heads` | `report:view` | n/a | `report` | as RT-22 | `app.go:397`. |
 | RT-25 | GET | `/reports/ytd.csv` | `report:export` | n/a | `exportYTD` | none | `app.go:398`. |
-| RT-26 | GET | `/recoverables` | `recoverable_report:view` | n/a | `recoverablesDashboard` | none | `app.go:403`. |
-| RT-27 | GET | `/recoverables/list` | `recoverable_report:view` | n/a | `recoverablesList` | `ageing`/`order` allow-lists (`recoverables.go:48-71`) | `app.go:404`. |
-| RT-28 | GET | `/recoverables/list.csv` | `recoverable_report:export` | n/a | `exportRecoverable` | none; writes an `export` audit row | `app.go:405`. Literal segment beats `{id}` (`app.go:400-402`). |
-| RT-29 | GET | `/recoverables/{id}` | `recoverable_report:view` | n/a | `recoverableDetail` | `treatment != "recoverable"` → 404. **No `canViewRequest`** — it loads the full request, its payment and its whole thread with `a.st.Request` (`recoverables.go:130-172`) | `app.go:406`. See F-05. |
+| RT-26 | GET | `/recoverables` | `recoverable_report:view` | n/a | `recoverablesDashboard` | ~~none~~ → the caller's `request` scope is applied to every aggregate: `recoverableViewer` (`recoverables.go:117-120`) into `RecoverableMetrics` and both `RecoverableRollups` (`recoverables.go:31-42`) | `app.go:403`. |
+| RT-27 | GET | `/recoverables/list` | `recoverable_report:view` | n/a | `recoverablesList` | `ageing`/`order` allow-lists (`recoverables.go:48-71`); ~~no scope~~ → rows filtered by `recoverableScope` in SQL (`recoverables.go:122`, `store/recoverables.go:347,401`) | `app.go:404`. |
+| RT-28 | GET | `/recoverables/list.csv` | `recoverable_report:export` | n/a | `exportRecoverable` | ~~none~~ → same scope as RT-27 (`recoverables.go:145`); writes an `export` audit row | `app.go:405`. Literal segment beats `{id}` (`app.go:400-402`). |
+| RT-29 | GET | `/recoverables/{id}` | `recoverable_report:view` | n/a | `recoverableDetail` | `treatment != "recoverable"` → 404. ~~**No `canViewRequest`** — it loads the full request, its payment and its whole thread with `a.st.Request` (`recoverables.go:130-172`)~~ → `canViewRequest` → **404** (`recoverables.go:192-198`) | `app.go:406`. See F-05. |
 | RT-37 | GET | `/budgets` | `budget:view` | n/a | `budgets` | none | `app.go:421`. |
 | RT-38 | POST | `/budgets` | `budget:edit` | yes | `budgetSave` | invalid month → 400; per-head parse errors → 400; locked month → 409 | `app.go:422`. |
 | RT-39 | POST | `/months/{month}/lock` | `month:lock` | yes | `lockMonth` | store `LockMonth` | `app.go:423`. |
@@ -225,7 +319,7 @@ v1** (`migrations.go:75`). The grants in §0.3 are therefore the defaults a
 | RT-35 | POST | `/admin/notifications/events/{event}` | `notification:edit` | yes | `adminNotificationEventSave` | `notify.ValidateTemplate` on subject + body → 400 (`notifications.go:109-114`) | `app.go:419`. |
 | RT-36 | POST | `/admin/notifications/test` | `notification:edit` | yes | `adminNotificationsTest` | send failure → re-render at **502** (`notifications.go:146`) | `app.go:420`. Sends to `test_to`, defaulting to the caller's own address. |
 | RT-85 | GET | `/users` | `user:view` | n/a | `users` | none | `app.go:509`. |
-| RT-86 | POST | `/users` | **`user:edit`** | yes | `userSave` | `id==0` → **create** (needs a password, 400 without); ≥12-char password rule (`app.go:1555-1560`); self-demotion refused → 400 (`app.go:1192-1196`); `SetUserRoles`, `SetUserDefaultApprover` (self-approver refused, `store/permissions.go:517-519`) | `app.go:510`. `user:create` is never checked. |
+| RT-86 | POST | `/users` | **`user:edit`** (route) **+ `user:create` in the handler when `id==0`** | yes | `userSave` | **`id==0` → the handler demands `user:create`, else `user:edit`, → 403 (`app.go:1523-1535`)**; `id==0` → **create** (needs a password, 400 without); ≥12-char password rule, delegated to `auth.ValidatePassword` so every refusal names the rule (`app.go:1555-1560`); self-demotion refused → 400 (`app.go:1192-1196`); `SetUserRoles`, `SetUserDefaultApprover` (self-approver refused, `store/permissions.go:517-519`) — **all three writes now run in one `beginWriteTx` envelope, `store.SaveUser` (F-G-034)** | `app.go:510`. ~~`user:create` is never checked.~~ **Fixed after this document was written (Wave 3, `1fac147`, F-A-07 · F-A-11/F-G-036 · F-G-034).** |
 | RT-87 | GET | `/roles` | `role:view` | n/a | `rolesPage` | none | `app.go:511`. |
 | RT-88 | POST | `/roles` | `role:edit` | yes | `rolesSave` | pre-screens every expanded grant with `store.ValidGrant` → 400 (`app.go:1321-1326`); `UpdateRole` refuses renaming a system role → 403; `UpdateRolePermissions` re-validates (`store/permissions.go:366-376`) | `app.go:512`. `expandCells` cannot invent a grant (`permmap.go:274-295`). |
 | RT-89 | POST | `/roles/new` | `role:create` | yes | `roleCreate` | empty name → 400; duplicate name → 400 | `app.go:513`. |
@@ -286,7 +380,7 @@ own.
 | PM-04 | `POST /logout` | 403 ᵇ | 303→/login | 303→/login | 303→/login | 303→/login |
 | PM-05 | `GET /` (dashboard) | 303→/login | 200* ᶜ | 200* ᶜ | 200* ᶜ | 200* ᶜ |
 | PM-06 | `GET /anything-unrouted` | 303→/login | 404 | 404 | 404 | 404 |
-| PM-07 | `GET /grid` | 303→/login | **200** ᵈ | 200 | 200 | 200 |
+| PM-07 | `GET /grid` | 303→/login | ~~**200**~~ **403** ᵈ | 200* ᵈ | 200 | 200 |
 | PM-08 | `GET /dashboard` | 303→/login | 200* ᶜ | 200* ᶜ | 200* ᶜ | 200* ᶜ |
 | PM-30 | `GET /notifications` | 303→/login | 200* ᵉ | 200* ᵉ | 200* ᵉ | 200* ᵉ |
 | PM-31 | `POST /notifications/read` | 303→/login | 303→/notifications ᶠ | 303 ᶠ | 303 ᶠ | 303 ᶠ |
@@ -303,12 +397,22 @@ is 303→`/login`.
 gates each area on `request:create`, `approval:approve`, `payment:process` and
 the four `adminLinks` verbs. C-req sees 2 areas, C-mgr 2, C-acc 1, C-adm all + the
 admin block. An area with a zero count is not rendered at all.
-ᵈ **Defect F-02.** No `grid:view` gate. C-req has no `grid:view` and still
+ᵈ ~~**Defect F-02.** No `grid:view` gate. C-req has no `grid:view` and still
 receives the full budget matrix plus a "Recent Payments" table with amounts,
-payees and links into `/payments/{id}`.
+payees and links into `/payments/{id}`.~~ **Fixed after this document was
+written (Wave 3, `1fac147`, F-A-02/F-G-032).** `GET /grid` is gated on
+`grid:view` (`app.go:431`), which C-req does not hold → **403**. C-mgr, C-acc
+and C-adm all hold it → 200. Recent Payments is a second gate inside the
+handler, on `payment:view` (`app.go:426-430`): C-mgr holds `grid:view` but not
+`payment:view`, so a Manager gets 200 with the matrix and **without** the
+payments panel — the one cell in this column where 200 does not mean "the whole
+page". See F-02.
 ᵉ Rows filtered to `UserID` by the store (`inapp.go:39`).
 ᶠ Marks only the caller's own rows read.
-ᵍ `loadViewableRequest` → scope `own`, `T.requester_id ≠ caller` → 403
+ᵍ `loadViewableRequest` → scope `own`, `T.requester_id ≠ caller` → ~~403~~ **404**
+(changed after this document was written — F-G-002, see the §3 correction; every
+403 in this table that is a *scope* refusal is now a 404, while the ownership and
+route-gate 403s below are unchanged)
 (`requests.go:236-239`).
 ʰ Scope `all` passes; then `!(mine && release) && !reassign` → 403
 (`linking.go:534-537`). C-mgr holds neither reservation verb.
@@ -438,7 +542,7 @@ is visible. Unknown `?tab=` → **400** (`linking.go:154`).
 | PM-17 | `POST /payments/{OBJ-PAY}/edit` | 303→/login | 403 | 403 | **400** ᵃᵐ | **400** ᵃᵐ |
 | PM-18 | `POST /payments/{OBJ-PAY}/void` | 303→/login | 403 | 403 | **400** ᵃᵐ | **400** ᵃᵐ |
 | PM-19 | `POST /payments/{OBJ-PAY}/attachments` | 303→/login | **303** ᵃⁿ | 403 | 303 | 303 |
-| PM-20 | `GET /attachments/{OBJ-ATT}` | 303→/login | **200** ᵃᵒ | 403 | 200 | 200 |
+| PM-20 | `GET /attachments/{OBJ-ATT}` | 303→/login | ~~**200**~~ **404** ᵃᵒ | 403 | 200 | 200 |
 | PM-21 | `GET /export.csv` | 303→/login | 403 | 403 | **403** ᵃᵖ | 200 |
 
 ᵃⁱ Without `?request=`: the picker, rows filtered by `Scope(u,"request")`. With
@@ -462,8 +566,13 @@ Requester grant and the handler applies no ownership check whatsoever. The 303
 target is `/payments/{id}`, which C-req then cannot read (403) — but the file and
 the `attach` audit row are already committed. 400 if no file is sent; 409 if the
 payment's month is locked; 400 if the payment is voided.
-ᵃᵒ **Defect F-01. The file is served.** `attachment:view` is a seeded Requester
-grant and `attachmentDownload` checks only path safety and existence.
+ᵃᵒ ~~**Defect F-01. The file is served.** `attachment:view` is a seeded Requester
+grant and `attachmentDownload` checks only path safety and existence.~~
+**Fixed after this document was written (Wave 3, `1fac147`).** `attachment:view`
+is still a seeded Requester grant, but `attachmentDownload` now refuses a payment
+the caller cannot read (`app.go:1102-1104`), so this cell is **404** for an
+`OBJ-ATT` outside C-req's scope and 200 only for one inside it. Request documents
+moved to RT-20a entirely.
 ᵃᵖ C-acc holds `report:export` but **not** `grid:export`.
 
 ### 2.5 Budget, reports, recoverables, masters, administration
@@ -516,11 +625,15 @@ says otherwise, and every refusal is a route-gate 403.
 | PM-97 | `POST /backups` | 303→/login | 403 | 403 | 403 | 303→/backups |
 
 ‡ Invalid target month → months page at **400** (`app.go:983`).
-ᵃʳ **Defect F-05.** `recoverableDetail` applies no `canViewRequest`; a caller
+ᵃʳ ~~**Defect F-05.** `recoverableDetail` applies no `canViewRequest`; a caller
 holding `recoverable_report:view` with a *narrow* `request` scope still reads the
 full request, its payment and its whole thread. Both seeded holders happen to
-have scope `all`, so this is only exploitable through a custom role. A
-non-recoverable request id → **404**.
+have scope `all`, so this is only exploitable through a custom role.~~
+**Fixed after this document was written (Wave 4).** `recoverableDetail` now
+applies `canViewRequest` and refuses with **404**
+(`app/recoverables.go:192-198`); the register, its CSV and the summary
+aggregates are scoped in SQL rather than per row — see the correction at the end
+of §5. A non-recoverable request id → **404**.
 ᵃˢ Bad month → 400; per-head amount parse failure → 400; locked month → 409.
 ᵃᵗ The `Accounts` role holds **no** `vendor` grant (`migrations.go:382-393`), so
 an accountant cannot open the vendor master. Worth a product question, not a
@@ -551,11 +664,11 @@ The rules a grant alone does not express. `OS-nn` is stable.
 
 | ID | Rule | Constrains | Enforced at | Observable symptom |
 |---|---|---|---|---|
-| OS-01 | `request` data scope: `own` → `requester_id = me`; `assigned` → `manager_id = me` **or** `requester_id = me`; `all` → everything; **empty → nothing** | every caller on every single-request read | `canViewRequest` (`app/requests.go:332-343`) via `loadViewableRequest` (`requests.go:229-241`) | 403 *"You do not have permission to view this request."* on RT-57, 67, 70, 71, 72, 73, 60, 61, 62, 63, 64, 65, 79, 82 |
+| OS-01 | `request` data scope: `own` → `requester_id = me`; `assigned` → `manager_id = me` **or** `requester_id = me`; `all` → everything; **empty → nothing** | every caller on every single-request read | `canViewRequest` (`app/requests.go:399-410`) via `loadViewableRequest` (`requests.go:295-308`) | ~~403 *"You do not have permission to view this request."*~~ → **404 *"The requested record was not found."*** on RT-57, 67, 70, 71, 72, 73, 60, 61, 62, 63, 64, 65, 79, 82. **Changed after this document was written — see the correction below.** |
 | OS-02 | The broadest scope wins across multiple roles: `all` > `assigned` > `own` > none | a user holding two or more roles | `mergeScope` + `scopeRank` (`store/permissions.go:117-137`), unioned per user by `EffectivePermissions` (`permissions.go:583-596`) | Requester + Manager on one account reads *every* request, not just their own. Grants union too (`permissions.go:565-581`) — there is no deny rule and no precedence. |
 | OS-03 | A URL may only **narrow** the caller's list scope | `?scope=` on RT-51 / RT-52 | `effectiveScope` (`app/requests.go:347-354`) | `?scope=own` works for an admin; `?scope=all` posted by a Requester is silently ignored, still `own` |
 | OS-04 | The scoped list SQL is the same for the rows and for every tab count | RT-51 tab counts, RT-84 | `requestWhere` (`store/requests.go:1206-1269`), reused by `ListRequests` and `CountRequests` | A tab can never promise a number the list does not show |
-| OS-05 | `payment` data scope is **declared, grantable and never read** | nothing | `scopedResources` includes `payment` (`store/permissions.go:185`); `Scope(u,"payment")` appears **nowhere** in `internal/app` | RT-13 returns the whole ledger to any `payment:view` holder. Setting the matrix's Payments scope radio to `own` changes nothing observable. **Defect F-04.** |
+| OS-05 | ~~`payment` data scope is **declared, grantable and never read**~~ **`payment` data scope: `own`/`assigned` → `payments.entered_by = me`; `all` → the whole ledger** | RT-13 | ~~`Scope(u,"payment")` appears **nowhere** in `internal/app`~~ **`a.auth.Scope(u,"payment")` → `PaymentListOptions.Scope` → the `entered_by` filter (`app.go:793-805`, `store/store.go:1501`)** | ~~RT-13 returns the whole ledger to any `payment:view` holder. Setting the matrix's Payments scope radio to `own` changes nothing observable.~~ **Defect F-04, fixed after this document was written (Waves 1 and 3): the radio now narrows the ledger. See the correction under F-04.** |
 | OS-06 | **G8 — nobody approves their own request** | the approver on RT-76, and reassignment | three layers: `ListApprovers` excludes the requester (`store/requests.go:551-557`); `validateRequestInput` rejects `ManagerID == RequesterID` (`store/requests.go:143`); `ApproveRequest` refuses `RequesterID == actor` (`store/requests.go:692-694`); `ReassignRequest` refuses a requester target (`requests.go:780-782`) | 403 on approve; 400 *"you cannot approve your own request"* on create; 400 on reassign-to-requester |
 | OS-07 | Only `T.manager_id` may decide the partial | RT-68, RT-69 — **including an Admin holding every grant** | `AcceptPartial` (`store/store.go:980-982`), `RaiseConcern` (`store.go:1021-1023`) | 403. Confirmed as a deliberate decision in PROGRESS.md:355-357 and in the e2e selector notes (PROGRESS.md:324-325) |
 | OS-08 | Only `T.manager_id` may approve, return, reject, cancel outright, or decide a cancellation | RT-76, 77, 78, 81, 82, 83 | `ApproveRequest` (`requests.go:687-688`), `decideRequest` (`requests.go:728-729`), `CancelRequest` (`requests.go:976-977`), `DecideCancellation` (`requests.go:931-932`), `requestCancellationForm` (`app/requests.go:837-841`) | 403 |
@@ -571,10 +684,37 @@ The rules a grant alone does not express. `OS-nn` is stable.
 | OS-18 | `on_hold=1` implies `status='approved'` | RT-64, RT-65, and every exit from approved | conditional UPDATEs (`store/store.go:1047`, `store.go:1070`); every exit clears it (`requests.go:889`, `requests.go:941`, `requests.go:985`) | Hold on a non-approved request → 403; unhold on an unheld request → 403 |
 | OS-19 | Vendor bank details are withheld by **not selecting the columns** | RT-45, 46, 47, 48, 49, 50 | `canSeeBank`/`canEditBank` (`store/vendors.go:130-141`); `vendorSelect` (`vendors.go:144-149`); form read gated at `app/vendors.go:172` | `Vendor.Bank == nil`, so a stray template expression has nothing to print. `SearchVendors` never selects bank at all |
 | OS-20 | The Approvals queue ignores the caller's scope and always asks `manager_id = me` | RT-84 | `approvals` (`app/requests.go:896`) | An Admin with scope `all` still sees only requests routed to them |
-| OS-21 | Attachments have **no** ownership rule | RT-19, RT-20 | absent by design decision (`store/store.go:1351-1352`) and never supplied by the handler | Any holder of `attachment:view` reads any payment attachment; any holder of `attachment:create` writes to any payment. **Defects F-01, F-03** |
+| OS-21 | ~~Attachments have **no** ownership rule~~ | RT-19, RT-20, RT-20a | ~~absent by design decision (`store/store.go:1351-1352`) and never supplied by the handler~~ | **Fixed after this document was written.** The handler now supplies the rule the store deliberately left to it: read is `canReadPayment` (`app/app.go:1091-1113`, `:1014`) or the request scope (`app.go:1115-1150`), write is `canReadPayment` on the parent payment (`app.go:1067-1070`). Refusal is **404** (`app.go:1044-1048`). See the correction below |
 | OS-22 | Notifications are scoped by making "not yours" indistinguishable from "gone" | RT-32 | `st.Notification(ctx, user.ID, id)` → `ErrNotFound` (`app/inapp.go:76-81`) | 404, never 403 — no enumeration oracle |
+| OS-23 | **Requests are now scoped the same way** — an out-of-scope request is indistinguishable from one that does not exist | every route in OS-01 | `loadViewableRequest` (`app/requests.go:295-308`) | 404 *"The requested record was not found."* **Added after this document was written** — see the correction below |
 
 ---
+
+> **Correction — an out-of-scope request answers 404, not 403.** Every
+> "expected status" in §2 and §3 that reads **403** *because the caller's data
+> scope does not reach the row* is now **404** *"The requested record was
+> not found."* The change is in one place, `loadViewableRequest`
+> (`internal/app/requests.go:295-308`), so it applies to every route OS-01
+> lists. It was fixed in Wave 3 (`1fac147`) as finding F-G-002: a row that
+> existed but was out of scope answered 403 while a row that did not exist
+> answered 404, which made the status code an **existence oracle** — a
+> requester could walk the id space and learn which request ids exist, and by
+> extension how many requests the company raises. The handler comment says so
+> at `internal/app/requests.go:288-294`. The refusal is still logged.
+>
+> **What did *not* change**, and is still 403:
+>
+> - Ownership refusals that fire *after* the scope check passes —
+>   `loadEditableRequest`'s `RequesterID != actor`
+>   (`app/requests.go:704-707`), and the store-level `ManagerID != actor` /
+>   `RequesterID != actor` checks behind OS-06 through OS-09. Scope decides
+>   whether you may *see* the row; these decide whether you may *act* on it,
+>   and by then the row's existence is already known to the caller.
+> - **OS-17 / RT-15**, reading a linked payment out of scope, which still
+>   answers 403 *"You cannot see the request behind this payment."*
+>   (`internal/app/app.go:899-900`). This is the same enumeration oracle one
+>   resource over and F-G-002's fix did not reach it; recorded here as an open
+>   divergence, not as fixed.
 
 ## 4. Grant → route reverse index
 
@@ -595,7 +735,7 @@ non-route consumers are noted separately.
 | GR-08 | `approval:approve` | RT-76, 84 | nav `approvals` (`nav.go:62`); dashboard (`dashboard.go:82`); tab-bar centre; `ListApprovers` selects users holding it (`store/requests.go:556`) | M, D |
 | GR-09 | `approval:reject` | RT-78 | — | M, D |
 | GR-10 | `approval:return` | RT-77 | — | M, D |
-| **GR-11** | **`approval:reassign`** | **NONE** | **none** | M, D |
+| **GR-11** | **`approval:reassign`** | ~~**NONE**~~ → **RT-78a** | ~~**none**~~ → route gate on `POST /requests/{id}/reassign-approver` (`app.go:569`) | M, D |
 | GR-12 | `approval:accept_partial` | RT-68, 69 | — | M, D |
 | GR-13 | `approval:cancel` | RT-81, 82, 83 | — | M, D |
 | GR-14 | `payment:view` | RT-13, 15 | nav `payments` (`nav.go:67`); tab bar (`nav.go:228`) | A, D |
@@ -603,8 +743,8 @@ non-route consumers are noted separately.
 | GR-16 | `payment:edit` | RT-16, 17 | — | A, D |
 | GR-17 | `payment:void` | RT-18 | — | A, D |
 | GR-18 | `payment:process` | RT-63, 66 | nav `accounts-queue` (`nav.go:63`); dashboard (`dashboard.go:94`); `canWorkTheQueue` (`linking.go:595`) | A, D |
-| GR-19 | `payment:settle` | RT-59 | — | A, D |
-| **GR-20** | **`payment:mark_partial`** | **NONE** | none — the string appears only as an *audit action name* (`store/store.go:943`) and a display key (`linking.go:856,875,937`) | A, D |
+| GR-19 | `payment:settle` | RT-59 **and RT-14** | — | A, D |
+| ~~**GR-20**~~ GR-20 | `payment:mark_partial` | ~~**NONE**~~ **RT-14, when `settlement=partial`** | ~~none — the string appears only as an *audit action name* (`store/store.go:943`) and a display key (`linking.go:856,875,937`)~~ **Consumed after this document was written (Wave 3, `1fac147`, F-D-10): `paymentCreate` refuses the partial branch without it (`app.go:831-835`). It is a handler check and not a route gate because it applies to one form value only (`app.go:444-445`).** | A, D |
 | GR-21 | `payment:hold` | RT-64, 65 | — | A, D |
 | GR-22 | `reservation:reserve` | RT-58 | — | A, D |
 | GR-23 | `reservation:release` | RT-61 | `reservationForm` (`linking.go:532`) | A, D |
@@ -627,18 +767,18 @@ non-route consumers are noted separately.
 | GR-40 | `month:view` | RT-09 | nav `monthly-plans` (`nav.go:72`) | D |
 | GR-41 | `month:create` | RT-10 | — | D |
 | GR-42 | `month:lock` | RT-39, 40 | the grid's Month Close block (`templates.go`, `{{if .Perms.Can "month" "lock"}}`) | D |
-| **GR-43** | **`grid:view`** | **NONE** | nav `variance-grid` (`nav.go:70`); tab bar (`nav.go:219,231`) — **visibility only**. RT-07 is `RequireLogin`. | M, A, D |
+| ~~**GR-43**~~ GR-43 | `grid:view` | ~~**NONE**~~ **RT-07** | nav `variance-grid` (`nav.go:70`); tab bar (`nav.go:219,231`) — ~~**visibility only**. RT-07 is `RequireLogin`.~~ **Consumed after this document was written (Wave 3, `1fac147`, F-A-02/F-G-032): `GET /grid` is gated on it (`app.go:431`), and the Recent Payments panel inside is gated separately on `payment:view` (`app.go:426-430`).** | M, A, D |
 | GR-44 | `grid:export` | RT-21 | — | D |
 | GR-45 | `report:view` | RT-22, 23, 24 | nav `reports` (`nav.go:75`) | M, A, D |
 | GR-46 | `report:export` | RT-25 | — | A, D |
 | **GR-47** | **`recoverable_category:view`** | **NONE** | none — the list renders on RT-92, gated `config:view` | D |
 | **GR-48** | **`recoverable_category:create`** | **NONE** | none — RT-94 (`recoverable_category:edit`) creates when `id==0` | D |
 | GR-49 | `recoverable_category:edit` | RT-94 | — | D |
-| **GR-50** | **`recoverable_category:delete`** | **NONE** | none — no delete path exists anywhere in `internal/app` or `internal/store` | D |
+| **GR-50** | **`recoverable_category:delete`** | ~~**NONE**~~ → `POST /configuration/recoverable-categories/{id}/delete` | ~~none — no delete path exists anywhere in `internal/app` or `internal/store`~~ **Closed after this document was written** (F-E-06, Wave 5): route at `internal/app/app.go:614`, handler `recoverableCategoryDelete` (`internal/app/configuration.go:166`), store `DeleteRecoverableCategory` (`internal/store/recoverables.go:260`), which pre-checks holders inside a `beginWriteTx` | D |
 | GR-51 | `recoverable_report:view` | RT-26, 27, 29 | nav `recoverables` (`nav.go:64`) | A, D |
 | GR-52 | `recoverable_report:export` | RT-28 | — | A, D |
 | GR-53 | `user:view` | RT-85 | nav `users` (`nav.go:83`); dashboard link (`dashboard.go:119`) | D |
-| **GR-54** | **`user:create`** | **NONE** | none — RT-86 (`user:edit`) creates when `id==0` | D |
+| ~~**GR-54**~~ GR-54 | `user:create` | ~~**NONE**~~ **RT-86, when `id==0`** | ~~none — RT-86 (`user:edit`) creates when `id==0`~~ **Consumed after this document was written (Wave 3, `1fac147`, F-A-07): `userSave` demands `user:create` when `id==0` and `user:edit` otherwise, in the handler because one handler does both (`app.go:1523-1535`).** | D |
 | GR-55 | `user:edit` | RT-86 | — | D |
 | GR-56 | `role:view` | RT-87 | nav `roles` (`nav.go:84`); dashboard link (`dashboard.go:118`) | D |
 | GR-57 | `role:create` | RT-89, 90 | — | D |
@@ -654,17 +794,28 @@ non-route consumers are noted separately.
 
 ### 4.1 Pairs no route consumes — 9 of 66
 
+> **Correction — five of the nine, not nine.** Four of the rows below were closed by the audit
+> repair waves, all in Wave 3 (`1fac147`): **GR-11** `approval:reassign` (F-A-06/F-C-02),
+> **GR-20** `payment:mark_partial` (F-D-10), **GR-43** `grid:view` (F-A-02/F-G-032) and **GR-54**
+> `user:create` (F-A-07). Each row carries its own note. §4.2's arithmetic moves with them:
+> **59** distinct pairs are now used as route or handler gates, 59 + the remaining 5 unconsumed +
+> the 2 `vendor_bank` pairs = 66, so the vocabulary still closes exactly. Note that three of the
+> four are enforced **in the handler** rather than as a route gate — `mark_partial` because it
+> applies to one form value, `user:create` because one handler serves create and edit — so
+> "pairs no *route* consumes" is now a narrower question than "pairs nothing enforces". See
+> `docs/qa/results/REPAIR-LOG.md`.
+
 | ID | Pair | Character of the gap |
 |---|---|---|
-| GR-11 | `approval:reassign` | **A capability with no door.** `store.ReassignRequest` exists and is tested (`store/requests.go:759-801`; coverage A7), but nothing in `internal/app` calls it and no route is registered. Granting or revoking this cell changes nothing observable. |
-| GR-20 | `payment:mark_partial` | **Dead as a permission.** A partial settlement is performed by RT-14 (`payment:create`) with `settlement=partial`; the string only ever appears afterwards as an audit action. Revoking the cell does not stop anybody marking a payment partial. |
+| GR-11 | `approval:reassign` | ~~**A capability with no door.** `store.ReassignRequest` exists and is tested (`store/requests.go:759-801`; coverage A7), but nothing in `internal/app` calls it and no route is registered. Granting or revoking this cell changes nothing observable.~~ **Fixed after this document was written.** Wave 3 (`1fac147`) gave it the door: `POST /requests/{id}/reassign-approver` (`app.go:569`, handler `app.go:1615-1647`), RT-78a. The cell now gates a real route and coverage A7 is shipped. |
+| GR-20 | `payment:mark_partial` | ~~**Dead as a permission.** A partial settlement is performed by RT-14 (`payment:create`) with `settlement=partial`; the string only ever appears afterwards as an audit action. Revoking the cell does not stop anybody marking a payment partial.~~ **Fixed after this document was written.** Wave 3 (`1fac147`, F-D-10) made `paymentCreate` refuse the partial branch without it (`app.go:831-835`). Revoking the cell now stops a caller marking a payment partial while still letting them settle one in full. |
 | GR-33 | `project:create` | Folded into `project:edit` by the upsert handler. |
 | GR-36 | `head:create` | Same. |
-| GR-54 | `user:create` | Same, and the sharpest of the three: `user:edit` alone lets a caller mint a new user (RT-86, `app.go:1185-1190`). |
-| GR-43 | `grid:view` | **The dangerous one.** Nothing but nav visibility depends on it, and RT-07 is gated on a session alone. |
+| GR-54 | `user:create` | ~~Same, and the sharpest of the three: `user:edit` alone lets a caller mint a new user (RT-86, `app.go:1185-1190`).~~ **Fixed after this document was written.** Wave 3 (`1fac147`, F-A-07): `userSave` asks for `user:create` when `id==0` and `user:edit` otherwise (`app.go:1523-1535`), so the button and the route agree. |
+| GR-43 | `grid:view` | ~~**The dangerous one.** Nothing but nav visibility depends on it, and RT-07 is gated on a session alone.~~ **Fixed after this document was written.** Wave 3 (`1fac147`, F-A-02/F-G-032) gated RT-07 on it (`app.go:431`); the Recent Payments panel inside the grid is gated separately on `payment:view` in the handler (`app.go:426-430`), because that is the part that leaked beyond budgets. |
 | GR-47 | `recoverable_category:view` | The list is rendered by RT-92 behind `config:view`. |
 | GR-48 | `recoverable_category:create` | Folded into `recoverable_category:edit`. |
-| GR-50 | `recoverable_category:delete` | No delete exists at all. `V4` claims "admin-configurable categories" via `TestRecoverableCategoryCRUD`; the HTTP surface offers upsert only. |
+| GR-50 | `recoverable_category:delete` | ~~No delete exists at all. `V4` claims "admin-configurable categories" via `TestRecoverableCategoryCRUD`; the HTTP surface offers upsert only.~~ **Closed** (F-E-06, Wave 5) — see GR-50 above. The HTTP surface now offers delete as well as upsert, so `V4`'s claim holds. |
 
 `vendor_bank:view` and `vendor_bank:edit` (GR-30/31) are **not** in this list:
 they carry no route by design and are enforced at the store and form-read
@@ -680,6 +831,13 @@ vocabulary exactly. There is no misspelled or invented verb. `permmap_test.go` s
 proves the presentation map's coverage of the vocabulary is total and
 unambiguous, and `TestPermissionVocabularyIsCanonical` pins the 21/66 counts.
 
+> **Correction — 59, not 55, and four of the nine are gone.** Wave 3 (`1fac147`) consumed
+> `approval:reassign` as a route gate (RT-78a) and `payment:mark_partial`, `grid:view` and
+> `user:create` as gates in one place or another — `grid:view` on the route (`app.go:431`), the
+> other two in their handlers (`app.go:831-835`, `app.go:1523-1535`). The arithmetic still closes:
+> 59 + 5 + 2 = 66. `TestPermissionVocabularyIsCanonical` and the 21/66 counts are untouched — the
+> vocabulary did not grow, only its consumption. See the correction under §4.1.
+
 ---
 
 ## 5. Privilege-escalation probe list
@@ -690,9 +848,9 @@ probe is about CSRF itself.
 
 | ID | Probe | Exact request | Expected | Fails if |
 |---|---|---|---|---|
-| PE-01 | Read any payment attachment as a Requester | `GET /attachments/1` … `/attachments/50` as C-req | **200 + file bytes** — this is the *current* behaviour, and it is the defect. The *correct* behaviour is 403/404. | Assert the finding, not a pass: record that 200 is returned and file it as F-01 |
+| PE-01 | Read any payment attachment as a Requester | `GET /attachments/1` … `/attachments/50` as C-req | ~~**200 + file bytes** — this is the *current* behaviour, and it is the defect. The *correct* behaviour is 403/404.~~ **Fixed (Wave 3, `1fac147`).** Now **404** for every attachment whose payment is outside C-req's scope; 200 only for one inside it. The probe is still worth running — it is now a regression test rather than a finding | a 200 on an out-of-scope attachment |
 | PE-02 | Write a file onto a stranger's payment as a Requester | `POST /payments/{OBJ-PAY}/attachments`, multipart, `attachment=@probe.pdf`, `csrf=<token>` as C-req | **303→/payments/{id}** and a new `payment_attachments` row + `attach` audit row | Same — 303 confirms F-03. A hardened build would 403 |
-| PE-03 | Read the variance grid and the recent-payments table with no `grid:view` | `GET /grid` as C-req | **200**, page contains `Recent Payments for` and `/payments/` links | Confirms F-02 |
+| PE-03 | Read the variance grid and the recent-payments table with no `grid:view` | `GET /grid` as C-req | ~~**200**, page contains `Recent Payments for` and `/payments/` links~~ **403** — fixed in Wave 3 (F-A-02/F-G-032), `app.go:431`. Run it again as **C-mgr**, who holds `grid:view` but not `payment:view`: expect **200 without** `Recent Payments for`, which is the second half of the fix (`app.go:775-776`) | a 200 as C-req, or `Recent Payments for` present as C-mgr |
 | PE-04 | Approve your own request | as C-mgr, raise nothing — instead take a request where `requester_id == manager_id == me` (only reachable by tampering, see PE-16) and `POST /requests/{id}/approve` with `approved_amount=100&csrf=…` | **403** (`store/requests.go:692-694`) | any 2xx/3xx |
 | PE-05 | Approve a request assigned to a different manager | `POST /requests/{OBJ-REQ}/approve`, `approved_amount=1000&note=x&csrf=…` as C-mgr | **403**. Send a *valid* amount — an empty one 400s first and masks the check | 303→/approvals |
 | PE-06 | Approve as an Admin who is not the manager | same request as C-adm | **403** — holding every grant is not being the manager | 303 |
@@ -704,7 +862,7 @@ probe is about CSRF itself.
 | PE-12 | Strand a reservation on someone who cannot work the queue | as C-adm, `POST /requests/{OBJ-REQ}/reassign`, `to_user_id=<a Requester-only user>&confirm=on&reason=x&csrf=…` | **400** *"That person cannot work the Accounts queue."* (`linking.go:665-668`) | 303 — the request is now stranded in `processing` |
 | PE-13 | Read another user's request by id | `GET /requests/{OBJ-REQ}` as C-req | **403** (`requests.go:236-239`) | 200 |
 | PE-14 | Same, through every sibling path | as C-req: `GET /requests/{OBJ-REQ}/submitted`, `/partial-review`, `/reservation`, `/reservation/stale`, `/cancel`, `/cancellation`, `/edit` | **403** on all seven. `/reservation/stale`, `/cancellation` and `/edit` should 403 at the *route gate* (no `payment:process`, no `approval:cancel`) — a 200 anywhere is a scope break | any 200 |
-| PE-15 | Read a request by id through the recoverables side door | `GET /recoverables/{OBJ-REQ}` as a **custom** role holding only `recoverable_report:view` with `request` scope `own` (build it via `POST /roles/new` + `POST /roles`) | **403** would be correct. The code returns **200** with the full request, payment and thread — F-05 | 200 confirms the finding |
+| PE-15 | Read a request by id through the recoverables side door | `GET /recoverables/{OBJ-REQ}` as a **custom** role holding only `recoverable_report:view` with `request` scope `own` (build it via `POST /roles/new` + `POST /roles`) | ~~**403** would be correct. The code returns **200** with the full request, payment and thread — F-05~~ **Fixed (Wave 4).** Now **404** — `recoverableDetail` applies `canViewRequest` and answers the same way `/requests/{id}` does, so the register is not an existence oracle either (`app/recoverables.go:192-198`) | 200 is now the regression |
 | PE-16 | Tamper `manager_id` to yourself on create | `POST /requests`, full valid body, `manager_id=<my own id>&csrf=…` as C-req | **400** *"you cannot approve your own request — choose another approver"* (`store/requests.go:143`) | 303 — G8's first layer is gone |
 | PE-17 | Tamper `vendor_id` on a type that forbids a vendor | `POST /requests`, `type=reimbursement&vendor_id=<V>&…` as C-req | **303**, and the stored row has `vendor_id` NULL and `vendor_payee = my name` — `UpdateRequest`/`CreateRequest` force it (`store/requests.go:579-582`) | the vendor survives on a reimbursement |
 | PE-18 | Tamper the `settlement` field to close a request that was under-paid | `POST /payments`, `request_id=<a request I hold>&amount=<less than approved>&settlement=settled&paid_on=…&head_id=…&csrf=…` | **303** and status `completed` — S10 says a "settled" declaration completes even when paid < approved. Then `POST /payments` again → **303 to the existing payment** (double-submit guard) and no second row (`idx_payments_request`, S9) | a second payment row appears |
@@ -760,6 +918,20 @@ route is the one hole in that pattern.
 **The natural fix** (do not apply): resolve `payment_id → request_id` and run the
 same `canViewRequest` the payment detail runs, or 404 when it fails.
 
+> **Fixed after this document was written — Wave 3, commit `1fac147`**
+> (F-A-01/F-B-11 and F-A-05/F-B-09). Close to the natural fix above, and it
+> answers **404**, not 403. `attachmentDownload` resolves the attachment
+> together with its payment (`AttachmentWithPayment`) and refuses unless
+> `canReadPayment` (`internal/app/app.go:1091-1113`, `:1014`). The route was
+> also **split**: it now serves `payment_attachments` only, and request
+> documents get their own route, `GET
+> /requests/{id}/attachments/{attachmentID}` (`app.go:460`, handler
+> `app.go:1115-1150`), which checks the document belongs to the request in the
+> path *before* applying that request's scope. The split is itself a fix — the
+> two tables have unrelated id sequences, so one URL space was handing one
+> reader another reader's file regardless of any ownership check
+> (`app.go:453-458`). See RT-20/RT-20a and PM-20.
+
 ### F-02 — `GET /grid` is gated on a session only; `grid:view` is never checked, and the page leaks payment data · **High**
 
 `app.go:377` registers `GET /grid` under `RequireLogin`, not
@@ -781,6 +953,16 @@ most recent payments (`grid` handler `app.go:643`; template block quoted in
 the only thing that keeps an ordinary user off this page, and nav hiding is not
 authorization.
 
+> **Fixed after this document was written — Wave 3, commit `1fac147`** (F-A-02/F-G-032). The
+> registration reads `mux.Handle("GET /grid", a.auth.RequirePermission("grid", "view", …))`
+> (`internal/app/app.go:431`), and the comment above it (`:427-430`) names this finding. The Recent
+> Payments panel is gated **separately** on `payment:view` **in the handler**, not trusted to a
+> template condition, because that panel is the part that leaked beyond budgets — a caller with
+> `grid:view` but no `payment:view` gets the matrix and not the payments. The asymmetry with
+> `GET /export.csv` this finding calls stark is now the ordinary one: view and export are two verbs
+> on one resource. GR-43 is no longer an unconsumed pair. See `docs/qa/results/REPAIR-LOG.md`,
+> Wave 3.
+
 ### F-03 — `POST /payments/{id}/attachments` has no ownership check; a Requester can write onto any payment · **High**
 
 `attachmentUpload` (`app/app.go:861-879`) stages the file and calls
@@ -796,6 +978,15 @@ file becomes part of another department's payment evidence. Combined with F-01
 the same account can then read it back. The redirect target 403s, which makes the
 attack *quieter*, not weaker. This is an integrity attack on the audit trail:
 S12 works hard to make a linked payment immutable, and this route writes to it.
+
+> **Fixed after this document was written — Wave 3, commit `1fac147`** (F-A-03). `attachmentUpload`
+> now loads the payment first and applies `canReadPayment` — the same request-scope check the read
+> path uses — refusing with 404 (`internal/app/app.go:1050-1070`). The repair log records this one
+> as *"unreachable, not fixed-by-removal — so it was fixed anyway"* (decision 4): F-D-08's fix means
+> every payment this product can create is linked and `AddAttachment` refuses a linked payment, so
+> the route cannot be reached today. The check was added regardless, because the hole returns the
+> day a free-standing payment becomes creatable. `TC-A-123` was rewritten from *"upload is
+> unchecked"* to a proof of the refusal. See `docs/qa/results/REPAIR-LOG.md`, Wave 3 and decision 4.
 
 ### F-04 — the `payment` data scope is declared, grantable and never enforced · **Medium-High**
 
@@ -819,6 +1010,16 @@ ledger and `GET /payments/{id}` is limited only by the *request*-side check
 silent policy failure: the UI promises a control the engine ignores. R3 ("data
 scope per resource") is only half-implemented.
 
+> **Fixed after this document was written — Waves 1 and 3** (F-A-04/F-G-003). It took two halves,
+> which is why the repair log lists it twice. Wave 1 (`633997b`) gave `PaymentListOptions` a `Scope`
+> and a `ViewerID` and made `ListPayments` filter on `entered_by`, mirroring `requestWhere` — only
+> `own` and `assigned` narrow (`internal/store/models.go:342`, `internal/store/store.go:1501`).
+> Wave 3 (`1fac147`) actually passed them: `a.st.ListPayments(…, Scope: a.auth.Scope(u, "payment"),
+> ViewerID: u.ID)` (`internal/app/app.go:793-805`, and the comment at `:797-800` names this
+> finding). Without the second half the roles-screen control still did nothing, so neither wave
+> closes it alone. RT-13's *"the declared `payment` data scope is never consulted"* is the row this
+> falsifies. See `docs/qa/results/REPAIR-LOG.md`, Waves 1 and 3.
+
 ### F-05 — `GET /recoverables/{id}` bypasses the request data scope · **Medium**
 
 `recoverableDetail` (`app/recoverables.go:130-172`) loads the request with
@@ -837,6 +1038,28 @@ Both seeded holders of `recoverable_report:view` happen to carry
 it will survive unnoticed. A custom role with `recoverable_report:view` and
 `request=own` (an entirely reasonable "recoverables analyst") reads every
 recoverable request in the company. Probe PE-15.
+
+> **Fixed after this document was written — Wave 4**, and wider than the
+> finding. F-05 was raised against the detail screen alone; the audit's own
+> F-G-016/F-E-03 established that the **whole register** leaked the same way,
+> so the scope was pushed into the SQL rather than added to one handler:
+>
+> - `recoverableViewer` derives `{Scope, ViewerID}` from the caller's `request`
+>   scope (`internal/app/recoverables.go:117-120`) and is passed to the
+>   register (`recoverables.go:122`), the CSV export (`:145`) and the summary
+>   dashboard (`:31-42`).
+> - `recoverableScope` is the row predicate
+>   (`internal/store/recoverables.go:347`), consumed by `RecoverableReport`
+>   (`:401`), `RecoverableMetrics` (`:509`) and `RecoverableRollups` (`:548`).
+>   An unrecognised or empty scope returns `AND 0` — no rows — so it fails
+>   closed.
+> - `recoverableDetail` applies `canViewRequest` and answers **404**
+>   (`internal/app/recoverables.go:192-198`).
+>
+> The reason it is SQL and not a handler-side filter is recorded at
+> `internal/app/recoverables.go:108-116`: the summary aggregates cannot be
+> filtered row-by-row after the fact at all, and a post-query filter silently
+> breaks any `LIMIT` the query later grows.
 
 ### F-06 — the reservation-conflict and settlement-preview paths read a request without a scope check · **Low-Medium**
 
@@ -891,15 +1114,24 @@ Decide it deliberately and add the test either way.
 
 Full list and character in §4.1. The two that matter:
 
-- **`approval:reassign` (GR-11)** — `store.ReassignRequest` is implemented,
+- **`approval:reassign` (GR-11)** — ~~`store.ReassignRequest` is implemented,
   audited under its own action name and tested (`store/requests.go:759-801`;
   coverage A7 "Admin reassign (reason + history)"). No handler calls it and no
   route registers it. **A7 is verified at the store and absent from the
   product.** Ticking or clearing the Approve cell's reassign checkbox on the
-  roles screen changes nothing a user can do.
-- **`payment:mark_partial` (GR-20)** — a partial settlement is authorized by
+  roles screen changes nothing a user can do.~~ **Fixed after this document was
+  written — Wave 3, commit `1fac147`.** `POST /requests/{id}/reassign-approver`
+  (`app.go:569`, handler `app.go:1615-1647`, RT-78a) gates on this cell, so it
+  is now a live grant and A7 is shipped. So the count in this heading is now
+  **eight** unreachable verbs, and **one** capability with no door, not two.
+- **`payment:mark_partial` (GR-20)** — ~~a partial settlement is authorized by
   `payment:create` (RT-14). Revoking `mark_partial` does not prevent it. The
-  verb survives only as an audit action string (`store/store.go:943`).
+  verb survives only as an audit action string (`store/store.go:943`).~~
+  **Fixed after this document was written — Wave 3, commit `1fac147`** (F-D-10).
+  `paymentCreate` refuses `settlement=partial` without it (`app.go:831-835`), so
+  revoking the cell now prevents exactly what it names while leaving a full
+  settlement alone. It is checked in the handler and not as a route gate because
+  it applies to one form value only (`app.go:444-445`).
 
 The remaining seven (`project:create`, `head:create`, `user:create`,
 `recoverable_category:{view,create,delete}`, `grid:view`) are either folded into
@@ -907,6 +1139,17 @@ a sibling `edit` verb by an upsert handler or, in `grid:view`'s case, F-02.
 `user:create` deserves its own note: **`user:edit` alone is enough to mint a new
 user account** (`app.go:1185-1190`), so a role granted "edit users but not create
 users" can create users.
+
+> **Correction — five unreachable verbs, and none of them a capability with no door.** Wave 3
+> (`1fac147`) closed four of the nine: `approval:reassign` (GR-11), `payment:mark_partial` (GR-20),
+> `grid:view` (GR-43, via F-02) and **`user:create` (GR-54)** — the last as F-A-07, by making
+> `userSave` demand the verb the *pressed control* is gated on rather than whichever one happened to
+> be on the route: `create` when `id==0`, `edit` otherwise, checked in the handler because one
+> handler does both (`internal/app/app.go:1523-1535`). So the paragraph above is wrong about
+> `user:create` specifically: `user:edit` alone can no longer mint a user. What is left is the
+> upsert-folding family — `project:create`, `head:create`,
+> `recoverable_category:{view,create,delete}` — which is a naming problem, not an authorization
+> hole. See `docs/qa/results/REPAIR-LOG.md`, Wave 3.
 
 ### F-10 — `GET /notifications/{id}/open` mutates on a read · **Informational**
 
@@ -955,10 +1198,10 @@ not evidence of authorization. Encode the field values, not just the paths.
 |---|---|---|---|
 | DV-1 | anonymous refusal status | brief: `302→/login` | **303** `http.StatusSeeOther` (`auth/auth.go:90`), asserted by `app/http_safety_test.go:126` |
 | DV-2 | `unbuiltPrefixes` contents | PROGRESS.md:228 — *"It now holds exactly one line, `/admin/notifications` (Phase 5)"* | **empty** (`app/nav.go:250`), with a comment saying every navigable screen is built. The brief is right, PROGRESS.md is stale |
-| DV-3 | `grid:view` governs the variance grid | `nav.go:70` gates the nav entry on it; `permmap.go:143` draws it; Manager and Accounts are seeded it | **no route consumes it** — `GET /grid` is `RequireLogin` (`app.go:377`). F-02 |
-| DV-4 | A7 "Admin reassign (reason + history)" is delivered | coverage matrix marks A7 verified by `TestReassignAndReraise` | store-only; no route, no handler, no screen. F-09 |
-| DV-5 | V4 "Admin-configurable categories" incl. delete | `recoverable_category:delete` is in the vocabulary (`permissions.go:164`) and drawn as the Recoverables *Cancel* cell (`permmap.go:114`) | no delete path exists anywhere. F-09 |
-| DV-6 | R3 "data scope per resource (own/assigned/all)" | coverage matrix, verified by `TestEffectivePermissionsUnionAndBroadestScope` | true for `request`, **inert for `payment`**. F-04 |
+| DV-3 | `grid:view` governs the variance grid | `nav.go:70` gates the nav entry on it; `permmap.go:143` draws it; Manager and Accounts are seeded it | ~~**no route consumes it** — `GET /grid` is `RequireLogin` (`app.go:377`). F-02~~ **Divergence closed after this document was written** — Wave 3 (`1fac147`, F-A-02/F-G-032) gated `GET /grid` on it (`app.go:431`). The document was right and the code has caught up |
+| DV-4 | A7 "Admin reassign (reason + history)" is delivered | coverage matrix marks A7 verified by `TestReassignAndReraise` | ~~store-only; no route, no handler, no screen. F-09~~ **Divergence closed after this document was written** — Wave 3 (`1fac147`) added `POST /requests/{id}/reassign-approver` (`app.go:569`, handler `app.go:1615-1647`, RT-78a). The coverage matrix's claim is now true |
+| DV-5 | V4 "Admin-configurable categories" incl. delete | `recoverable_category:delete` is in the vocabulary (`permissions.go:164`) and drawn as the Recoverables *Cancel* cell (`permmap.go:114`) | ~~no delete path exists anywhere. F-09~~ **Divergence closed after this document was written** — F-E-06, Wave 5: `POST /configuration/recoverable-categories/{id}/delete` (`app.go:614`), handler `configuration.go:166`, store `DeleteRecoverableCategory` (`recoverables.go:260`). V4's delete claim is now true |
+| DV-6 | R3 "data scope per resource (own/assigned/all)" | coverage matrix, verified by `TestEffectivePermissionsUnionAndBroadestScope` | ~~true for `request`, **inert for `payment`**. F-04~~ **Divergence closed after this document was written** — F-A-04/F-G-003, Waves 1 and 3: `ListPayments` filters on `entered_by` (`store/store.go:1501`) and the handler passes the caller's scope (`app.go:793-805`). R3 now holds for both scoped resources |
 | DV-7 | L1 "Draft (private)" | coverage matrix keeps L1 | D1 removed drafts; `payment_requests.status` carries `CHECK (status <> 'draft')` (`migrations.go:156`). L1 is unreachable by construction |
 
 ### 7.2 Coverage IDs this document exercises

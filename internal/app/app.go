@@ -201,9 +201,17 @@ type PageData struct {
 
 	// Notifications (Phase 5). Notifs is the user's own centre; NotifSettings
 	// and MailCfg are the admin rules screen.
-	Notifs        []store.Notification
-	NotifCounts   store.NotificationCounts
-	NotifScope    string
+	Notifs      []store.Notification
+	NotifCounts store.NotificationCounts
+	NotifScope  string
+	// NotifPage is what the centre is not showing, and NotifOffset is where the
+	// window it *is* showing starts. The row query stopped at 100 while the count
+	// on the filter strip directly above it had no cap at all, so a user past the
+	// cap read "All 137" over 100 rows and nothing said which 37 were missing
+	// (F-G-037) — the same defect, and now the same treatment, as the requests
+	// list's Page.
+	NotifPage     store.NotificationPage
+	NotifOffset   int
 	NotifSettings []store.NotificationSetting
 	MailCfg       store.MailSettings
 	NotifFields   []string
@@ -598,6 +606,12 @@ func (a *App) routes(mux *http.ServeMux) {
 	// The screen is gated on config{view}; the category mutation keeps its own
 	// Phase-1 verb, which is what the store audits against.
 	mux.Handle("POST /configuration/recoverable-categories", a.auth.RequirePermission("recoverable_category", "edit", http.HandlerFunc(a.withCSRF(a.recoverableCategorySave))))
+	// Delete is its own verb and its own route: edit may retire a category by
+	// unticking Active, and removing the row outright is a different power over
+	// the same table (F-E-06). Registered after the collection POST so the
+	// literal path keeps its own handler; ServeMux prefers the more specific
+	// pattern either way.
+	mux.Handle("POST /configuration/recoverable-categories/{id}/delete", a.auth.RequirePermission("recoverable_category", "delete", http.HandlerFunc(a.withCSRF(a.recoverableCategoryDelete))))
 	mux.Handle("GET /audit", a.auth.RequirePermission("audit", "view", http.HandlerFunc(a.auditLog)))
 	mux.Handle("GET /backups", a.auth.RequirePermission("backup", "view", http.HandlerFunc(a.backups)))
 	mux.Handle("POST /backups", a.auth.RequirePermission("backup", "create", http.HandlerFunc(a.withCSRF(a.backupCreate))))
@@ -1643,6 +1657,10 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, status, friendly(err), err)
 		return
 	}
+	// The sheet says "The new approver is told". Fired after the store call, so
+	// the notification addresses the manager_id ReassignRequest has just written
+	// rather than the one it replaced.
+	a.fire(r, notify.EventApproverReassigned, req.ID)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 

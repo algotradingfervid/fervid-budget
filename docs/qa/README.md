@@ -165,6 +165,19 @@ the login page, turning a refusal into an apparent success.
 
 ## How a known defect is represented in code
 
+> **This section describes the audit pass, which is over.** The instruction
+> *report, do not repair* was reversed, and four repair waves have since changed
+> application code — so "no application code changed" is true of `30edd6a` and
+> false of the working tree. As each defect is fixed its annotation is
+> **removed**, which is the whole point of the scheme below. The count has
+> therefore fallen from roughly 35 at the audit to **15 `test.fail()` and 3
+> `test.fixme()`** across `tests/e2e/audit-*.spec.ts` as of this writing, and it
+> is still falling — count them rather than trusting this figure, and read
+> [`results/REPAIR-LOG.md`](results/REPAIR-LOG.md) for what is actually fixed.
+> Note also that areas A and G are **red on purpose** right now: assertions there
+> recorded defective behaviour as truth without `test.fail()`, so they fail
+> because the product improved.
+
 The audit was instructed to report, not repair, so no application code changed.
 A confirmed defect keeps its honest assertion and is annotated:
 
@@ -174,4 +187,5 @@ A confirmed defect keeps its honest assertion and is annotated:
 - `test.fixme()` — the case hangs, flakes, or is blocked by another defect.
 
 No assertion was weakened, loosened or deleted to force a pass. Roughly 35 of the
-~564 new cases are annotated; each names its finding ID in a comment.
+~564 new cases were annotated at the audit; each names its finding ID in a
+comment. See the note above for the current count.

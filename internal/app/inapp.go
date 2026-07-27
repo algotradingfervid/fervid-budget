@@ -30,16 +30,52 @@ func notifGlyph(kind string) string {
 	}
 }
 
+// notificationPageSize is how many rows the centre draws at once. It is the
+// store's own default limit, so the page boundary and the cap are one number.
+const notificationPageSize = 100
+
+// maxNotificationOffset bounds how deep the pager will walk. The window is
+// fetched as offset+notificationPageSize rows (see below), so an unbounded
+// offset from the query string would be an unbounded read — of the caller's own
+// notifications, so not a disclosure, but a way to make one request expensive.
+// A hundred pages is far past any real inbox.
+const maxNotificationOffset = 10000
+
 func (a *App) notificationCentre(w http.ResponseWriter, r *http.Request) {
 	user := auth.CurrentUser(r)
 	scope := r.URL.Query().Get("scope")
 	if !notificationScopes[scope] {
 		scope = "all"
 	}
-	rows, err := a.st.ListNotifications(r.Context(), store.NotificationFilter{UserID: user.ID, Scope: scope})
+	offset := int(parseID(r.URL.Query().Get("offset")))
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > maxNotificationOffset {
+		offset = maxNotificationOffset
+	}
+	// ListNotificationsPage, not ListNotifications: the rows were capped at 100
+	// and the counts on the filter strip were not, so the strip promised more
+	// than the list drew and nothing said so (F-G-037). Total and Truncated are
+	// what let the screen admit it; the window is what makes the rest reachable.
+	//
+	// NotificationFilter carries a Limit and no Offset, so the window is taken by
+	// asking for offset+one page and dropping the rows already shown. The read is
+	// bounded by maxNotificationOffset, and page.Truncated still means exactly
+	// "the fetch did not reach the end", which is exactly the condition for an
+	// older page existing.
+	page, err := a.st.ListNotificationsPage(r.Context(), store.NotificationFilter{
+		UserID: user.ID, Scope: scope, Limit: offset + notificationPageSize,
+	})
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
+	}
+	rows := page.Notifications
+	if offset < len(rows) {
+		rows = rows[offset:]
+	} else {
+		rows = nil
 	}
 	counts, err := a.st.NotificationCounts(r.Context(), user.ID)
 	if err != nil {
@@ -48,6 +84,11 @@ func (a *App) notificationCentre(w http.ResponseWriter, r *http.Request) {
 	}
 	a.render(w, r, "notifications", PageData{
 		Title: "Notifications", Notifs: rows, NotifCounts: counts, NotifScope: scope,
+		NotifPage: store.NotificationPage{
+			Notifications: rows, Total: page.Total,
+			Limit: notificationPageSize, Truncated: page.Truncated,
+		},
+		NotifOffset: offset,
 	})
 }
 

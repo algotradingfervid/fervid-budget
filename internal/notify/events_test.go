@@ -19,6 +19,9 @@ func TestAllEventsIsTheFullCatalogueInSeededOrder(t *testing.T) { // G20, F-F-06
 		"reservation_released", "reservation_reassigned",
 		"payment_partial_accepted", "payment_partial_concern",
 		"request_cancellation_accepted", "request_cancellation_declined",
+		// v11 — the two the repair's own documentation pass found still firing
+		// nothing, one of them behind a screen that promised otherwise.
+		"approval_reassigned", "request_cancelled",
 	}
 	if len(AllEvents) != len(want) {
 		t.Fatalf("AllEvents = %d events, want %d", len(AllEvents), len(want))

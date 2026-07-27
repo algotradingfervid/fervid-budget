@@ -64,7 +64,11 @@ func notificationKind(event string) string {
 	switch event {
 	case "reminder_pending", "reminder_stale_reservation":
 		return "reminder"
-	case "request_returned", "request_on_hold", "request_rejected", "payment_partial_concern":
+	// request_cancelled sits with rejected rather than with the activity feed:
+	// both end the request against the requester's wishes, and neither leaves
+	// them anything to do — it is the finality that earns the stronger filter,
+	// not an outstanding action.
+	case "request_returned", "request_on_hold", "request_rejected", "payment_partial_concern", "request_cancelled":
 		return "mention"
 	default:
 		return "activity"

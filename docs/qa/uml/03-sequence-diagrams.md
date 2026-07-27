@@ -286,9 +286,20 @@ three shapes that check takes.
 
 | ID | Shape | Drawn gate | Route gate | Data-path gate | Cite |
 |----|-------|-----------|------------|----------------|------|
-| SD2-X1 | row scope on a single record | nav item `request:view` | `RequirePermission("request","view")` | `loadViewableRequest` → `canViewRequest(scope, u, req)` → **403** for `all`/`assigned`/`own`/none | `internal/app/nav.go:61`, `internal/app/app.go:488`, `internal/app/requests.go:229-241`, `332-343` |
+| SD2-X1 | row scope on a single record | nav item `request:view` | `RequirePermission("request","view")` | `loadViewableRequest` → `canViewRequest(scope, u, req)` → ~~**403**~~ **404** for `all`/`assigned`/`own`/none | `internal/app/nav.go:61`, `internal/app/app.go:488`, `internal/app/requests.go:229-241`, `332-343`; correction: `internal/app/requests.go:288-308` |
 | SD2-X2 | scope on a list | same nav item | same route gate | `effectiveScope` may only *narrow* — `?scope=all` cannot widen an `own` holder — then `requestWhere` adds `r.requester_id=?` or `r.manager_id=?` | `internal/app/requests.go:347-354`, `internal/store/requests.go:1206-1219` |
 | SD2-X3 | ownership beyond a verb | action bar requires `.User.ID == .Request2.ManagerID` **and** `approval:accept_partial` | `RequirePermission("approval","accept_partial")` only | `store.AcceptPartial` and `store.RaiseConcern` both reject `before.ManagerID != actor.ID` with `ErrForbidden` | `internal/app/templates.go:901`, `internal/app/app.go:483-484`, `internal/store/store.go:980-982`, `1021-1023` |
+
+> **Correction to SD2-X1 — the row-scope refusal is 404 now, not 403.** F-G-002, fixed in Wave 3
+> (`1fac147`). A row that existed but was out of scope answered 403 while a row that did not exist
+> answered 404, so the status code was an existence oracle: a requester could walk the id space and
+> count the company's requests. `loadViewableRequest` now answers **404** *"The requested record was
+> not found."* through the same path as a missing id, and says why in its own comment
+> (`internal/app/requests.go:288-308`). The same change was made at the two other sites that
+> re-implement the check: `requestReassignApprover` (`internal/app/app.go:1622-1627`) and
+> `recoverableDetail` (`internal/app/recoverables.go:195-198`). Every "→ 403" for an out-of-scope
+> *request* elsewhere in this document should be read as **404**; the 403s for a missing *verb*
+> are unchanged. See `docs/qa/results/REPAIR-LOG.md`, Wave 3.
 
 Worked examples of a control that disappears while the route stays gated:
 
@@ -538,7 +549,7 @@ sequenceDiagram
 | SD4-F2 | `approved_amount` may be **less** than `amount`; it may not be zero or negative. Nothing caps it *above* `amount` — an approver may approve **more** than was asked. | `internal/store/requests.go:675-677`, `698` |
 | SD4-F3 | The audit row carries the full before/after `store.Request` as JSON, which is what feeds `diffRequestAudit` and the `.tl-change` lines in the thread. | `internal/store/requests.go:705-710`, `1100-1117` |
 | SD4-F4 | Seeded audience for `request_approved` is requester + Accounts. The **manager is not** a recipient. Management recipients are Cc on **email only** and never receive an in-app row. | `internal/store/migrations_notifications.go:41-43`, `internal/notify/service.go:133-163`, `216-218` |
-| SD4-F5 | `email_enabled` defaults to `0` for all twelve events, so a fresh install delivers in-app rows only. | `internal/store/migrations_notifications.go:79`, `28-68` |
+| SD4-F5 | `email_enabled` defaults to `0` for all twelve events, so a fresh install delivers in-app rows only. **Still true of the twenty-one the vocabulary now has** — migration v9's nine rows leave `EmailEnabled` unset, so `seedNotificationSettings` writes `email_enabled=0` for them too (`internal/store/migrations_notifications.go:87-129`, `132-144`). | `internal/store/migrations_notifications.go:79`, `28-68`; correction: `internal/notify/events.go:22-79` |
 | SD4-F6 | Approval does **not** clear `reminder_last_sent`; only `SubmitRequest`, `UpdateRequest` and `ReassignRequest` do. | `internal/store/requests.go:483`, `622`, `783` |
 
 ---
@@ -551,7 +562,7 @@ sequenceDiagram
 |----|-------|------|--------------|---------------|--------------|--------------|
 | SD5-R1 | `POST /requests/{id}/return` | `approval:return` + `withCSRF` | `ReturnRequest` → `decideRequest(to=returned)` | form field **`comment`**, message `a comment is required to return a request` | **unchanged** | `return` |
 | SD5-R2 | `POST /requests/{id}/reject` | `approval:reject` + `withCSRF` | `RejectRequest` → `decideRequest(to=rejected)` | form field **`reason`**, message `a reason is required to reject a request` | **unchanged** | `reject` |
-| SD5-R3 | *approval reassignment* | `approval:reassign` is a grantable cell | `ReassignRequest` | `reason` + `newManagerID` | **overwritten**, `reminder_last_sent` cleared | `approval_reassign` |
+| SD5-R3 | *approval reassignment* | `approval:reassign` is a grantable cell — **and, since Wave 3, the gate on `POST /requests/{id}/reassign-approver` (`internal/app/app.go:569`)** | `ReassignRequest` | `reason` + `manager_id` | **overwritten**, `reminder_last_sent` cleared | `approval_reassign` |
 
 Cites: `internal/app/app.go:495-496`, `internal/app/requests.go:730-746`,
 `internal/store/requests.go:714-757`, `759-801`, `internal/app/permmap.go:69`.
@@ -567,6 +578,15 @@ Cites: `internal/app/app.go:495-496`, `internal/app/requests.go:730-746`,
 > approver cannot hand an approval to a colleague through the UI. The two audit
 > action names are deliberately distinct so trails do not confuse them
 > (`internal/store/requests.go:791-795`).
+>
+> **Closed — F-A-06 / F-C-02, Wave 3 (`1fac147`).** `POST /requests/{id}/reassign-approver` was
+> added at `internal/app/app.go:569`, gated on `approval:reassign`, over the same tested
+> `store.ReassignRequest`. Handler `requestReassignApprover` (`internal/app/app.go:1615-1647`)
+> takes `manager_id` and `reason`, refuses either when blank with a 400, and answers **404** for a
+> request outside the caller's scope (`:1622-1627`). The path is deliberately **not** `/reassign`,
+> and `app.go:565-566` says so: that one is still the reservation handler of SD10-R5. The two audit
+> action names stay distinct, which is what makes the trails readable. See
+> `docs/qa/results/REPAIR-LOG.md`, Wave 3.
 
 ```mermaid
 sequenceDiagram
@@ -876,7 +896,7 @@ sequenceDiagram
     else settlement partial with a blank reason
         ST-->>HD: ErrValidation a reason is required for a partial settlement
     end
-    ST->>DB: validatePayment — amount above zero valid paid_on head_id not zero month not locked head and project active
+    ST->>DB: validatePayment — amount above zero valid paid_on head_id not zero unless the request is recoverable month not locked head and project active
     Note over ST,DB: BEGIN
     ST->>DB: SELECT status processing_by amount approved_amount FROM payment_requests WHERE id = ?
     alt status is not processing or processing_by is not the actor
@@ -930,7 +950,7 @@ sequenceDiagram
 | SD8-F3 | G13 ceiling is `COALESCE(approved_amount, amount)`; the browser's `#diff-banner` previews the refusal but enforces nothing. | `internal/store/store.go:901-910`, `web/static/fervid-app.js:494-527` |
 | SD8-F4 | The preview is genuinely pure — no `BeginTx`, no staging, no writes — which is what lets the sheet say *Not saved yet* honestly. | `internal/app/linking.go:275-309`, `internal/app/templates.go:533` |
 | SD8-F5 | `PaymentInput.HeadID` comes from the **hidden** `head_id` input seeded from `req.HeadID`, which is `0` when the request has no head. | `internal/app/templates.go:389`, `internal/app/linking.go:244-247` |
-| SD8-F6 | `payment:settle` and `payment:mark_partial` are enforced **only** on the pure preview route. `POST /payments` is gated on `payment:create`, and the store checks only that the caller holds the reservation — so the two settle verbs never gate the write. | `internal/app/app.go:387`, `454`, `internal/store/store.go:866-900`, `internal/app/permmap.go:89-92` |
+| SD8-F6 | `payment:settle` and `payment:mark_partial` are enforced **only** on the pure preview route. `POST /payments` is gated on `payment:create`, and the store checks only that the caller holds the reservation — so the two settle verbs never gate the write. **No longer true — fixed as F-D-10 in Wave 3 (`1fac147`): the write is double-gated `payment:create` + `payment:settle`, and `settlement=partial` additionally requires `payment:mark_partial` in the handler.** | `internal/app/app.go:387`, `454`, `internal/store/store.go:866-900`, `internal/app/permmap.go:89-92`; correction: `internal/app/app.go:441-447`, `831-835` |
 | SD8-F7 | `settlementError` echoes the raw typed characters back even when the amount was what failed to parse. | `internal/app/linking.go:341-364` |
 | SD8-F8 | A linked payment can never afterwards be edited or voided — `UpdatePayment` and `VoidPayment` both refuse `before.RequestID != nil`, and `GET /payments/{id}/edit` redirects to the detail rather than serving a form whose save can only fail (S12). | `internal/store/store.go:607-611`, `648-651`, `internal/app/app.go:803-806` |
 
@@ -946,6 +966,20 @@ sequenceDiagram
 > it. Test: raise `employee_advance` / `recoverable` / category `other`, approve,
 > reserve, POST `/payments` — expect 400 `valid head, date, and positive amount
 > are required`.
+>
+> **Confirmed and fixed — F-D-11 / F-E-01 / F-G-001, Wave 1 (`633997b`).** The head became
+> **optional** rather than collected: migration **v8** rebuilds `payments` with `head_id INTEGER
+> REFERENCES heads(id)` and no `NOT NULL` (`internal/store/migrations.go:173`, the rebuild at
+> `:435-495`), and `validatePayment` grew a `headOptional bool` parameter
+> (`internal/store/store.go:1922-1923`) that `RecordPaymentForRequest` passes as `treatment ==
+> "recoverable"` (`store.go:1115`). The other two call sites — the free-standing ledger writers —
+> still pass `false` (`store.go:701`, `:744`), so a budget or reimbursement payment still requires a
+> head. Four payment readers that inner-joined `heads` would have dropped a NULL-head row on the
+> floor and are now `LEFT JOIN` + `COALESCE(py.head_id,0)` (`store.go:830-838`, `:846-856`,
+> `:1483`, `:1509`), which is why `Payment.HeadID` is still a plain `int64` in Go and reads `0` for
+> a recoverable settlement. `TC-E-031` and `TC-E-042` came back from `fixme` on this fix — both
+> needed a *paid* recoverable, which v8 made possible for the first time. See
+> `docs/qa/results/REPAIR-LOG.md`, Wave 1 and decision 1.
 
 ---
 
@@ -1204,7 +1238,7 @@ sequenceDiagram
 | SD10-F6 | Reassignment never returns the request to the open queue: `status` stays `processing` and only `processing_by` moves, so no third party can slip in between — G11. The `WHERE … processing_by = <old>` clause is the compare-and-swap. | `internal/store/store.go:840-850` |
 | SD10-F7 | `confirmed` is a store parameter for release and a **handler** check for reassign, because `ReassignReservation` has no `confirmed` parameter — one screen asks the same question for both branches. | `internal/store/store.go:762-764`, `internal/app/linking.go:653-656`, `637-641` |
 | SD10-F8 | `canWorkTheQueue` is an app-layer rule with real consequences: a reservation parked on somebody without `payment:process` strands the request — the new holder gets 403 on `/accounts-queue`, and anybody re-reserving gets 409. | `internal/app/linking.go:580-596` |
-| SD10-F9 | Neither release nor reassign fires a notification, although the reservation form promises *The requester and the approver are both notified.* | `internal/app/linking.go:623-675`, `internal/app/templates.go:1042` |
+| SD10-F9 | Neither release nor reassign fires a notification, although the reservation form promises *The requester and the approver are both notified.* **Fixed as F-D-12 / F-F-06 in Wave 4 (`709dfa6`): release fires `reservation_released` and reassign fires `reservation_reassigned`, two of the nine events migration v9 added, so the form's promise is true now. Unhold fires `request_unheld` on the same pass.** | `internal/app/linking.go:623-675`, `internal/app/templates.go:1042`; correction: `internal/app/linking.go:712`, `755`, `803`, `internal/notify/events.go:22-67` |
 | SD10-F10 | Release is first in DOM order and last on screen via `order: 2`, because HTML makes the first submit button the form default and `hidden` does not exempt it. | `internal/app/templates.go:1045-1052` |
 
 ---
@@ -1367,7 +1401,7 @@ sequenceDiagram
 | SD12-H6 | payment write | form `amount` → `PaymentInput.Amount` → `payments.amount`, ceiling `COALESCE(approved_amount, amount)` | `int64` | `internal/app/app.go:1499-1515`, `internal/store/store.go:901-913` |
 | SD12-H7 | grid actual | `SUM(CASE WHEN py.voided_at IS NULL AND COALESCE(pr.treatment,'') <> 'recoverable' THEN py.amount ELSE 0 END)` | `int64` | `internal/store/store.go:1387-1400` |
 | SD12-H8 | report actual | `Report` loops months and re-runs `Grid`, then folds rows / projects / totals | `int64` | `internal/store/store.go:1480-1511` |
-| SD12-H9 | recoverable register | `COALESCE(py.amount, COALESCE(pr.approved_amount, pr.amount))` over `treatment='recoverable' AND status NOT IN (rejected, cancelled, withdrawn)` | `int64` | `internal/store/recoverables.go:254-258` |
+| SD12-H9 | recoverable register | `COALESCE(py.amount, COALESCE(pr.approved_amount, pr.amount))` over `treatment='recoverable' AND status NOT IN (rejected, cancelled, withdrawn)` — **plus, since Wave 4, the caller's `request` data scope, added to the same `WHERE` by `recoverableScope`** | `int64` | `internal/store/recoverables.go:254-258`; correction: `internal/store/recoverables.go:335-357`, applied at `:401`, `:509`, `:548` |
 | SD12-H10 | display | `money.FormatPaise` (**includes `₹`**), `money.FormatShort` (L / Cr), `money.Percent`, `money.InWords`, `app.amountValue` (strips the `₹` for an input whose `.cur` prefix draws its own), `app.approvedOf`, `app.subPaise`, `app.threadValue` | string | `internal/money/money.go:36-79`, `101-119`, `173-178`, `internal/app/requests.go:1051-1058`, `1113-1130`, `internal/app/linking.go:812-821` |
 
 ```mermaid

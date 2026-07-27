@@ -146,7 +146,7 @@ administrator holding every grant from acting in someone else's place.
 | E-14 | `processing` → `partial_review` | same method with `settlement="partial"` `store/store.go:872,923` | same route · same verb | as E-13 **plus** `partialReason` required `:872-874`. **Not in `legalTransitions`** |
 | E-15 | `partial_review` → `completed_partial` | `AcceptPartial` `store/store.go:964` | `POST /requests/{id}/accept-partial` · `approval:accept_partial` `app/app.go:483` | **manager-only, not merely verb-holder** `:980`; conditional UPDATE `status='partial_review'` `:983`; 0 rows → `ErrForbidden` `:990`. Note optional `:965`. **Not in `legalTransitions`** — see DV-04 |
 | E-16 | `rejected` → new `pending` row | `ReraiseRequest` `store/requests.go:805` | `POST /requests/{id}/reraise` · `request:reraise` `app/app.go:493` | requester-only `:815`; `status=="rejected"` `:818`; new number `:825`; source row unchanged |
-| E-17 | `pending` → `pending` (approver swap) | `ReassignRequest` `store/requests.go:759` | **none — U-01** | reason required `:761`; `newManagerID>0` `:764`; `status=="pending"` `:776`; G8 holds for the new manager `:780`; resets `reminder_last_sent` `:783`; audit action deliberately `approval_reassign`, not `reassign` `:795` |
+| E-17 | `pending` → `pending` (approver swap) | `ReassignRequest` `store/requests.go:759` | ~~**none — U-01**~~ → `POST /requests/{id}/reassign-approver` · `approval:reassign` `app/app.go:569` (**added after this document was written** — see U-01) | reason required `:761`; `newManagerID>0` `:764`; `status=="pending"` `:776`; G8 holds for the new manager `:780`; resets `reminder_last_sent` `:783`; audit action deliberately `approval_reassign`, not `reassign` `:795` |
 | E-18 | `processing` → `processing` (holder swap) | `ReassignReservation` `store/store.go:802` | `POST /requests/{id}/reassign` · `reservation:reassign` `app/app.go:466` | see §3.4 |
 | E-19 | `partial_review` → `partial_review` | `RaiseConcern` `store/store.go:1004` | `POST /requests/{id}/raise-concern` · `approval:accept_partial` `app/app.go:484` | comment required `:1006`; **manager-only** `:1021`; `status=="partial_review"` `:1024`; writes a comment row + a `concern` audit row, **no status change** `:1027-1030` |
 | E-20 | `cancellation_requested` → `approved` (second path) | `ApproveRequest` `store/requests.go:674` | `POST /requests/{id}/approve` · `approval:approve` | **The guard permits this.** `legalTransitions["cancellation_requested"]["approved"]` is `true` (`:97`), and `ApproveRequest` only asks `canTransition(status,"approved")` (`:695`). No screen offers it (the approve sheet is rendered only for `pending`, `app/templates.go:2425-2429,2472`), but a hand-rolled POST succeeds. See U-04 |
@@ -531,7 +531,7 @@ stateDiagram-v2
 | SE-01 | entry | `GET /payments/new?request={id}` · `payment:create` `app/app.go:384` | **no** | `paymentForm` `app/app.go:655-667` branches on `?request=`; `paymentEntry` `app/linking.go:233` refuses unless `heldByCaller` `:240-243` → 409 conflict screen, not 403. Prefills amount from `approvedOf(req)` `:256` and payee from `req.Vendor`, never the raw snapshot `:260` |
 | SE-02 | preview | `POST /requests/{id}/settlement-preview` · `payment:settle` `app/app.go:454` | **no — D8** | `settlementPreview` `app/linking.go:280-309`: no `BeginTx`, no attachment staging, no `INSERT`. Re-checks `heldByCaller` `:290-293`. Computes `Approved`, `Paid`, `Difference`, `Match` and returns them in a throw-away view model (`SettlementPreview`, `:111-121`). It is a POST only because it carries the form (`app/app.go:452-453`). Proven by `TestSettlementPreviewWritesNothingAndRendersTheSheet` `app/linking_test.go:458` |
 | SE-03 | the settled/partial choice | rendered in `settlement_sheet` `app/templates.go:486-505` | n/a | Two radios, `settled` default; `partial_reason` is `aria-required` only, because a hidden `required` control makes the form unsubmittable in Chrome (`:500-501`) — the store re-enforces it |
-| SE-04 | commit | `POST /payments` · `payment:create` `app/app.go:387` | **yes — the only writer** | `paymentCreate` `app/app.go:690-729`: refuses `request_id==0` `:693-696`; then `RecordPaymentForRequest` `store/store.go:866` |
+| SE-04 | commit | `POST /payments` · `payment:create` `app/app.go:387` (**now `payment:create` + `payment:settle`, `app.go:446-447` — see §5.4's correction**) | **yes — the only writer** | `paymentCreate` `app/app.go:690-729`: refuses `request_id==0` `:693-696`; then `RecordPaymentForRequest` `store/store.go:866` |
 | SE-05 | manager accepts the shortfall | `POST /requests/{id}/accept-partial` · `approval:accept_partial` `app/app.go:483` | yes | `AcceptPartial` `store/store.go:964`; **manager-only** `:980` |
 | SE-06 | manager raises a concern | `POST /requests/{id}/raise-concern` · `approval:accept_partial` `app/app.go:484` | yes, a comment | `RaiseConcern` `store/store.go:1004`; **manager-only** `:1021`; status must be `partial_review` `:1024`; **no status change** |
 
@@ -610,6 +610,14 @@ read-only card (`internal/app/templates.go:823-…`).
   `payment:create`. The string `"mark_partial"` appears elsewhere only as an
   *audit action name* (`internal/store/store.go:943`) and in display switches
   (`internal/app/linking.go:856,875,937`).
+
+> **Correction — both observations were repaired as F-D-10 in Wave 3 (`1fac147`).** `POST /payments`
+> is now wrapped twice, `payment:create` **and** `payment:settle`
+> (`internal/app/app.go:446-447`), so the write is gated at least as tightly as its own preview; the
+> comment at `app.go:441-445` records the reasoning. `payment:mark_partial` is now consulted, in the
+> handler rather than as a route gate, because it applies only when `settlement=partial`
+> (`internal/app/app.go:831-835`). SE-04 in §5.1 therefore reads `payment:create` **+
+> `payment:settle`**, and U-09 in §8 is closed. See `docs/qa/results/REPAIR-LOG.md`, Wave 3.
 
 ---
 
@@ -716,6 +724,33 @@ accept-partial, raise-concern. Twelve events are declared
 transitions above are silent. Most consequential: a manager who declines a
 cancellation unfreezes payment and clears a hold with nobody told (§2.3).
 
+> **Correction — the vocabulary is 21 events and most of that silent list now fires.** F-F-06 was
+> repaired in two halves: Wave 2 (commit `25411b8`) declared nine further events
+> (`internal/notify/events.go:22-67`) and seeded their `notification_settings` rows in migration
+> **v9** with `ON CONFLICT(event) DO NOTHING`, so an administrator's edits to v7's twelve survive;
+> Wave 4 (commit `709dfa6`) wired the handlers. `notify.AllEvents` is now **21**
+> (`internal/notify/events.go:71-79`), ordered v7's twelve then v9's nine. Nine new fire sites,
+> extending the NR table above:
+>
+> | ID | Event | Fired at |
+> |----|-------|----------|
+> | NR-16 | `request_withdrawn` | `internal/app/requests.go:916` |
+> | NR-17 | `request_reraised` | `internal/app/requests.go:932` |
+> | NR-18 | `request_unheld` | `internal/app/linking.go:803` |
+> | NR-19 | `reservation_released` | `internal/app/linking.go:712` |
+> | NR-20 | `reservation_reassigned` | `internal/app/linking.go:755` |
+> | NR-21 | `payment_partial_accepted` | `internal/app/linking.go:554` |
+> | NR-22 | `payment_partial_concern` | `internal/app/linking.go:567` |
+> | NR-23 | `request_cancellation_accepted` | `internal/app/requests.go:1029` |
+> | NR-24 | `request_cancellation_declined` | `internal/app/requests.go:1031` |
+>
+> So the paragraph's closing sentence is closed: declining a cancellation now notifies
+> (NR-24). **Three transitions remain silent** — *outright cancel*
+> (`requestCancelOutright`, `internal/app/requests.go:1036-1043`, fires nothing), *reserve*
+> (`ReserveRequest`), and the *approver* reassignment of E-17, which has a route since Wave 3
+> (`internal/app/app.go:1615-1647`) but no event of its own in `notify.AllEvents`. See
+> `docs/qa/results/REPAIR-LOG.md`, Waves 2 and 4.
+
 ### 6.4 In-app read/unread state
 
 ```mermaid
@@ -812,7 +847,7 @@ processing→{completed,partial_review}; partial_review→completed.
 | DV-06 | store method signatures | `ReleaseRequest(ctx,actor,id,confirmed,authorized)`; `AcceptPartial(ctx,actor,id)` (spec §8 `:292`) | `ReleaseRequest(..., reason string, confirmed, authorized bool)` `internal/store/store.go:761`; `AcceptPartial(..., note string)` `internal/store/store.go:964` | **Spec stale.** G12 added the mandatory reason after §8 was written |
 | DV-07 | staleness threshold | spec S8/N5: *"after 1 calendar day"* | two clocks: hard-coded `24 * time.Hour` for the queue (`internal/store/models.go:410`) and the admin-set `reminder_stale_days` for the nudge (`internal/store/reminders.go:79`); route/handler comments call it *"the 26-hour nudge"* (`internal/app/app.go:467`, `internal/app/linking.go:722`) | **Code internally inconsistent**, comments wrong |
 | DV-08 | "calendar days" | spec §6 `:261` and coverage N4/S8 | elapsed-day arithmetic: `now.UTC().AddDate(0,0,-N)` `internal/store/reminders.go:94-95,116-117`; the calendar helper `calendarDaysBetween` `:52` has no production caller | **Code does not implement the stated semantics** |
-| DV-09 | notification event names | spec §6 `:261`: `request_submitted_urgent`, `request_approved_urgent`, `reminder_processing_stale` | one `request_urgent` event that resolves its audience from `status` (`internal/notify/service.go:204`); `reminder_stale_reservation` (`internal/notify/events.go:20`) | **Spec stale.** Shipped vocabulary is the twelve in `internal/notify/events.go:8-27` |
+| DV-09 | notification event names | spec §6 `:261`: `request_submitted_urgent`, `request_approved_urgent`, `reminder_processing_stale` | one `request_urgent` event that resolves its audience from `status` (`internal/notify/service.go:204`); `reminder_stale_reservation` (`internal/notify/events.go:20`) | **Spec stale.** Shipped vocabulary is the twelve in `internal/notify/events.go:8-27` — **now twenty-one**: migration v9 added nine more (`internal/notify/events.go:22-67`; `AllEvents` at `:71-79`), which widens this divergence rather than closing it. See §6.3's correction |
 | DV-10 | terminal set | `rejected`, `withdrawn`, `completed` | those three **plus** `cancelled` and `completed_partial` | **Spec incomplete** |
 
 ---
@@ -823,7 +858,7 @@ Deliberately hunted. Each entry names what proves it dead.
 
 | ID | Thing | Status | Proof |
 |----|-------|--------|-------|
-| U-01 | **`ReassignRequest` — the approver swap (coverage A7) has no route.** | **Store-only. Unreachable from the web application.** | `internal/store/requests.go:759-801` is a complete, tested writer (`internal/store/requests_test.go:815-819`) with its own audit action `approval_reassign` deliberately distinguished from reservation reassignment (`:790-795`). No route reaches it: `POST /requests/{id}/reassign` (`internal/app/app.go:466`) is bound to `requestReassign` — the **reservation** handler (`internal/app/linking.go:642`). Grep for `ReassignRequest` across `internal/app` returns nothing outside tests. Correspondingly, `approval:reassign` is declared (`internal/store/permissions.go:152`) and rendered on the permission map (`internal/app/permmap.go:69`) but **gates no route** — the five `approval:*` routes are approve, return, reject, accept_partial, cancel. A7 is not shipped. |
+| U-01 | **`ReassignRequest` — the approver swap (coverage A7) has no route.** | **~~Store-only. Unreachable from the web application.~~ Fixed after this document was written — see the correction below.** | `internal/store/requests.go:759-801` is a complete, tested writer (`internal/store/requests_test.go:815-819`) with its own audit action `approval_reassign` deliberately distinguished from reservation reassignment (`:790-795`). No route reaches it: `POST /requests/{id}/reassign` (`internal/app/app.go:466`) is bound to `requestReassign` — the **reservation** handler (`internal/app/linking.go:642`). Grep for `ReassignRequest` across `internal/app` returns nothing outside tests. Correspondingly, `approval:reassign` is declared (`internal/store/permissions.go:152`) and rendered on the permission map (`internal/app/permmap.go:69`) but **gates no route** — the five `approval:*` routes are approve, return, reject, accept_partial, cancel. A7 is not shipped. |
 | U-02 | `legalTransitions["partial_review"]` | **Dead guard entry.** | `canTransition` is called from exactly seven sites (`internal/store/requests.go:469,658,695,731,878,934,979`). None can be entered with `from="partial_review"` and a `to` that this entry covers, because none of them passes `to="completed"` or `to="completed_partial"`. `AcceptPartial` uses a raw conditional UPDATE instead (`internal/store/store.go:983`). |
 | U-03 | `partial_review` → `completed` | **Permitted, never performed.** | `legalTransitions` allows it (`internal/store/requests.go:100`) and spec §6 asserts it (`:248`), but no writer emits `completed` from `partial_review`: `AcceptPartial` writes `completed_partial` (`internal/store/store.go:983`) and `RecordPaymentForRequest` only writes from `processing` (`:925`). Proven by `TestAcceptPartialAndRaiseConcern` asserting `completed_partial` and refusing a second accept (`internal/store/linking_test.go:570-576`). |
 | U-04 | `cancellation_requested` → `approved` via `POST /requests/{id}/approve` | **Reachable by hand-rolled POST; no screen offers it.** | The guard permits it (`internal/store/requests.go:97,695`), the route exists and is gated `approval:approve` (`internal/app/app.go:494`), and the store's only other checks are manager-only and G8 — both of which the request's own manager passes. The approve sheet renders only for `pending` (`internal/app/templates.go:2425-2429,2472`), so no UI path exists. Effect if driven: status → `approved`, `approved_amount`/`approved_by`/`approved_at`/`decision_reason` **overwritten**, audit action `approve`, and the pending cancellation vanishes with **no `cancel_decline` record and no mandatory explanation** — the requester is never told why their cancellation request disappeared. |
@@ -831,10 +866,21 @@ Deliberately hunted. Each entry names what proves it dead.
 | U-06 | `requestStatuses` map | **Dead and stale.** | `internal/store/requests.go:86-89`. Referenced only by tests (`internal/store/requests_test.go:215,220,318`). It is not consulted by any write path — the schema `CHECK` and `legalTransitions` are the real enforcement. It is also out of date: its own comment promises *"Phase 3 appends on_hold, processing, completed and completed_partial"* (`:84-85`) and Phase 3 never did, so the map is missing four of the eleven live statuses. |
 | U-07 | `ResetReminder` | **Dead in production.** | `internal/store/reminders.go:138-141`. The three production resets are inline SQL (`internal/store/requests.go:483,622,783`). Only caller is `internal/store/reminders_test.go:112`. |
 | U-08 | `calendarDaysBetween` | **Dead in production.** | `internal/store/reminders.go:52-58`. Only caller is `internal/store/reminders_test.go:35,39`. Both reminder queries use `AddDate` instead. See DV-08. |
-| U-09 | `payment:mark_partial` | **Gates nothing.** | Declared `internal/store/permissions.go:153`, granted `internal/store/migrations.go:385`, shown `internal/app/permmap.go:91`. No route, no template condition, no store method reads it. The partial settlement is authorised by `payment:create` alone. |
+| U-09 | `payment:mark_partial` | ~~**Gates nothing.**~~ **Fixed in Wave 3 — it gates the partial settlement now.** | Declared `internal/store/permissions.go:153`, granted `internal/store/migrations.go:385`, shown `internal/app/permmap.go:91`. No route, no template condition, no store method reads it. The partial settlement is authorised by `payment:create` alone. **Correction (F-D-10, commit `1fac147`): `paymentCreate` refuses `settlement=partial` without it (`internal/app/app.go:831-835`); it is checked in the handler and not as a route gate because it applies only to that one form value, as `app.go:444-445` says.** |
 | U-10 | `allow_direct_payments` app setting | **Read by nothing but its own editor.** | Seeded `internal/store/migrations.go:247`, rendered as a toggle on the Configuration screen `internal/app/configuration.go:70`. No code consults it — X5 is absolute (`paymentCreate` refuses `request_id==0`, `internal/app/app.go:693-696`; `RecordPaymentForRequest` refuses without a held reservation, `internal/store/store.go:898`). Toggling it changes nothing, which the picker's own comment acknowledges (`internal/app/templates.go:564-566`). |
 | U-11 | `SubmitRequest` from `pending` | **Correctly refused, but a route can attempt it.** | `POST /requests/{id}/edit` with `submit_action=resubmit` calls `SubmitRequest` (`internal/app/requests.go:663-665`) for any editable status, and `editableStatuses` includes `pending` (`internal/store/requests.go:575`). `canTransition("pending","pending")` is false (`:93`), so the store answers *"a pending request cannot be submitted"* (`:470`) — but the edit **has already committed** in the preceding `UpdateRequest` call, and the handler then re-renders the form with an error (`internal/app/requests.go:666-675`). The resubmit button is only rendered on the returned-correction screen (`internal/app/templates.go:2755`), so the UI does not trigger it. Behaviourally noisy rather than broken. |
 | U-12 | `processing` and `partial_review` in the requests-list buckets | **Neither `open` nor `closed`.** | `requestBuckets` is `open = {pending, returned, approved, cancellation_requested}` and `closed = {rejected, withdrawn, cancelled}` (`internal/store/requests.go:1201-1204`). `processing`, `partial_review`, `completed` and `completed_partial` appear in **no bucket** — they are visible only under the `all` tab, and `CountRequests` for `open`+`closed` will not sum to the `all` count. `TestListRequestsBuckets` (`internal/store/requests_test.go:1159-1210`) exercises only Phase-2 statuses, so nothing catches it. Ranked as SD-1. |
+
+> **Correction to U-01 — A7 now has a door.** The finding above is the audit record and stays as
+> written; what it describes is no longer true of the shipped product. `POST
+> /requests/{id}/reassign-approver` was added in repair Wave 3 (commit `1fac147`, F-A-06/F-C-02):
+> registered at `internal/app/app.go:569` gated on `approval:reassign`, handler
+> `requestReassignApprover` at `internal/app/app.go:1615-1647`, fields `manager_id` and `reason`,
+> writing through the same `store.ReassignRequest` U-01 called unreachable. The path is deliberately
+> **not** `/reassign` — that one is still the *reservation* handler of E-18 — and `app.go:565-566`
+> says so in as many words. `approval:reassign` therefore gates a route now, so the U-01 corollary
+> ("gates no route") and SD-3 below are both closed. E-17 has been annotated with the route. See
+> `docs/qa/results/REPAIR-LOG.md`, Wave 3.
 
 ---
 
@@ -856,10 +902,10 @@ Every `DV-*` row in §7.3 plus:
 |----|----------|--------|------------------|
 | SD-1 | **high** | `processing`, `partial_review`, `completed` and `completed_partial` belong to no requests-list bucket (`internal/store/requests.go:1201-1204`, U-12). | A requester raises a request, it is approved, Accounts reserves it. It now shows in neither the Open tab nor the Closed tab of `/requests`. Once paid, the same is true of `completed`. The tab counts stop summing: with one completed request, Open + Closed = 0 while All = 1. A requester looking for "what happened to my payment" finds it only by switching to All. |
 | SD-2 | **high** | A hold is destroyed by a cancellation request and never restored by a decline (§2.3; `internal/store/requests.go:889,941`). | Accounts holds PR-2026-000123 asking *"which site is this for?"*. The requester, instead of answering, asks for cancellation. The manager declines with *"vendor already dispatched"*. The request is now `approved`, unheld, and the very next accountant to open the queue can reserve and pay it — the site question is gone from the row, and nobody was notified that the hold lifted. `DecideCancellation` fires no event at all. |
-| SD-3 | **medium** | Coverage A7 — admin reassignment of the approver — is store-only and unreachable (U-01). | A manager goes on leave with eleven pending requests routed to them. There is no screen, no route and no permission-gated path to move those requests to another approver. `approval:reassign` can be granted to a role and confers nothing. The only in-product remedy is for each requester to edit their own pending request and change the approver (`UpdateRequest`, `internal/store/requests.go:618-630`), which requires eleven separate people to act. |
+| SD-3 | ~~**medium**~~ **fixed** | Coverage A7 — admin reassignment of the approver — is store-only and unreachable (U-01). | A manager goes on leave with eleven pending requests routed to them. There is no screen, no route and no permission-gated path to move those requests to another approver. `approval:reassign` can be granted to a role and confers nothing. The only in-product remedy is for each requester to edit their own pending request and change the approver (`UpdateRequest`, `internal/store/requests.go:618-630`), which requires eleven separate people to act. **Closed by `POST /requests/{id}/reassign-approver` (`internal/app/app.go:569`), Wave 3 — see the correction under U-01.** |
 | SD-4 | **medium** | Two staleness clocks that can disagree (RS-14 / RS-15, DV-07). | An admin sets Configuration → `reminder_stale_days` to 3, intending "leave people alone for three days". The queue still paints the warn banner and switches every Resume link to the nudge screen at 24 hours (`internal/app/linking.go:798-800`), so accountants are pushed to a screen that says *"A reminder went out at the one-day mark"* (`internal/app/templates.go:1091`) when no reminder went out at all. |
 | SD-5 | **low** | `cancel_decline` is undecorated and unphrased on the two-entity trails (§4.3). | A request whose cancellation was declined later reaches partial review. The partial-review trail renders the line as *"Manav Manager cancel_decline"* with a grey untinted dot, in the middle of a decision screen where every other line reads as a sentence. |
-| SD-6 | **low** | `payment:settle` gates only the pure preview while `payment:create` performs the write (§5.4). | A role granted `payment:create` but not `payment:settle` cannot open the confirmation sheet (403 on `POST /requests/{id}/settlement-preview`) yet can `POST /payments` and drive a request to `completed` or `partial_review`. The verb reads like an authority over settling and is not one. |
+| SD-6 | ~~**low**~~ **fixed** | `payment:settle` gates only the pure preview while `payment:create` performs the write (§5.4). | A role granted `payment:create` but not `payment:settle` cannot open the confirmation sheet (403 on `POST /requests/{id}/settlement-preview`) yet can `POST /payments` and drive a request to `completed` or `partial_review`. The verb reads like an authority over settling and is not one. **Closed as F-D-10 in Wave 3 (`1fac147`): `POST /payments` is now double-gated `payment:create` **and** `payment:settle` (`internal/app/app.go:446-447`, comment at `:441-445`), and `settlement=partial` additionally requires `payment:mark_partial` inside the handler (`app.go:831-835`) — which also closes U-09.** |
 | SD-7 | **low** | U-04 — `POST /requests/{id}/approve` on a `cancellation_requested` request. | A manager (or any script with their session) re-approves a request whose cancellation is pending. The pending cancellation disappears, `approved_amount` and `approved_at` are silently overwritten with the new figures, and the requester who asked for cancellation gets no `cancel_decline` line and no mandatory explanation — the two things `DecideCancellation` exists to guarantee (`internal/store/requests.go:911-913,950`). |
 | SD-8 | **low** | U-11 — a resubmit attempt on a `pending` request commits the edit and then errors. | A hand-rolled or replayed `POST /requests/{id}/edit` with `submit_action=resubmit` against a pending request writes the update, fails `SubmitRequest`, and re-renders the form with *"a pending request cannot be submitted"*. The user sees an error over a change that was in fact saved. |
 
@@ -868,7 +914,7 @@ Every `DV-*` row in §7.3 plus:
 ## 11. Coverage IDs this document models
 
 **Lifecycle:** L1 (inverted — no draft), L2, L3, L4, L5, L6, L7, L8, L9, L10, L11.
-**Approvals:** A2, A3, A4, A7 (**not shipped — U-01**), A8.
+**Approvals:** A2, A3, A4, A7 (~~**not shipped — U-01**~~ — shipped in Wave 3 as `POST /requests/{id}/reassign-approver`, `internal/app/app.go:569`), A8.
 **Requester:** Q1, Q2, Q3, Q4, Q6.
 **Settlement / reservation:** S2, S3, S5, S6, S7, S8, S9, S10, S11, S12, S13, S15.
 **Notifications:** N1, N4, N5, N6.

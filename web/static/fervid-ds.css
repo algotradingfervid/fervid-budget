@@ -323,6 +323,25 @@ h3 {
   flex: 1 1 auto;
 }
 
+/* The toolbar's search box takes the width nothing else claimed, so the one
+   control a person types a sentence into is not the same size as a three-option
+   <select>.
+
+   `class="field search"` has been on five toolbars since Phase 0 — requests,
+   vendors, the accounts queue, approvals and the recoverables register — with no
+   rule for the bare `search` token anywhere in this file, so the token rendered
+   as nothing. It is not a token somebody invented: the approved stylesheet
+   carries `.toolbar .search { flex: 1 1 200px; }` (mockups/mockup.css:934), and
+   Phase 0 ported its two `.m-search` neighbours (see the 860px block) and
+   dropped this one. Ported verbatim, the same omission a80e18f fixed for four
+   other classes.
+
+   Growing only ever spends free space, and flex-shrink stays at 1, so this
+   cannot widen a toolbar or push a page sideways. */
+.toolbar .search {
+  flex: 1 1 200px;
+}
+
 .summary-strip,
 .metric-strip,
 .stats-grid {

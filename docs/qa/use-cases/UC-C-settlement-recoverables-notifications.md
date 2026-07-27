@@ -44,7 +44,7 @@ Every route this document exercises, with the gate `routes()` actually registers
 | RT-03 | `GET /payments/new/options` | `paymentPickerOptions` | `payment:create` | — | `app.go:385`, `linking.go:266` |
 | RT-04 | `POST /requests/{id}/record-payment` | `requestRecordPayment` | `reservation:reserve` | atomic reserve; 409 on loss | `app.go:451`, `linking.go:82` |
 | RT-05 | `POST /requests/{id}/settlement-preview` | `settlementPreview` | `payment:settle` | must be held by caller; **writes nothing** | `app.go:454`, `linking.go:280` |
-| RT-06 | `POST /payments` | `paymentCreate` | `payment:create` | `request_id` required; store re-checks reservation | `app.go:387`, `app.go:690` |
+| RT-06 | `POST /payments` | `paymentCreate` | `payment:create` **+ `payment:settle`** | `request_id` required; `payment:mark_partial` when `settlement=partial`; store re-checks reservation | `app.go:446-447`, `app.go:822-837` |
 | RT-07 | `GET /payments/{id}` | `paymentDetail` | `payment:view` | linked → also request row-scope | `app.go:388`, `app.go:759` |
 | RT-08 | `GET /payments` | `payments` | `payment:view` | — | `app.go:386`, `app.go:669` |
 | RT-09 | `GET /payments/{id}/edit` | `paymentEditForm` | `payment:edit` | linked → 303 to `/payments/{id}` | `app.go:389`, `app.go:803` |
@@ -60,10 +60,10 @@ Every route this document exercises, with the gate `routes()` actually registers
 | RT-19 | `POST /requests/{id}/accept-partial` | `requestAcceptPartial` | `approval:accept_partial` | **must be the request's own manager** | `app.go:483`, `store.go:980` |
 | RT-20 | `POST /requests/{id}/raise-concern` | `requestRaiseConcern` | `approval:accept_partial` | own manager; comment required | `app.go:484`, `store.go:1021` |
 | RT-21 | `POST /requests/{id}/comment` | `requestComment` | `request:comment` | any viewable status, incl. on hold | `app.go:491`, `requests.go:768` |
-| RT-22 | `GET /recoverables` | `recoverablesDashboard` | `recoverable_report:view` | — | `app.go:403` |
-| RT-23 | `GET /recoverables/list` | `recoverablesList` | `recoverable_report:view` | filter allow-lists | `app.go:404`, `recoverables.go:48` |
-| RT-24 | `GET /recoverables/list.csv` | `exportRecoverable` | `recoverable_report:export` | audits `export` | `app.go:405`, `recoverables.go:97` |
-| RT-25 | `GET /recoverables/{id}` | `recoverableDetail` | `recoverable_report:view` | 404 unless `treatment='recoverable'` | `app.go:406`, `recoverables.go:138` |
+| RT-22 | `GET /recoverables` | `recoverablesDashboard` | `recoverable_report:view` | **summary aggregates scoped to caller, fixed F-G-016/F-E-03** | `app.go:403`, `recoverables.go:117-120` |
+| RT-23 | `GET /recoverables/list` | `recoverablesList` | `recoverable_report:view` | filter allow-lists; **rows scoped to caller's request scope, fixed F-G-016** | `app.go:404`, `recoverables.go:48`, `recoverables.go:117-120` |
+| RT-24 | `GET /recoverables/list.csv` | `exportRecoverable` | `recoverable_report:export` | audits `export`; **same scope as RT-23** | `app.go:405`, `recoverables.go:97` |
+| RT-25 | `GET /recoverables/{id}` | `recoverableDetail` | `recoverable_report:view` | 404 unless `treatment='recoverable'`; **also 404 outside the caller's request scope, fixed F-G-016/F-G-002** | `app.go:406`, `recoverables.go:138`, `recoverables.go:195-198` |
 | RT-26 | `POST /configuration/recoverable-categories` | `recoverableCategorySave` | `recoverable_category:edit` | `requires` allow-list | `app.go:520`, `configuration.go:113` |
 | RT-27 | `GET /configuration` | `configuration` | `config:view` | — | `app.go:516` |
 | RT-28 | `POST /configuration` | `configurationSave` | `config:edit` | only registered keys written | `app.go:517`, `configuration.go:142` |
@@ -96,7 +96,7 @@ Every route this document exercises, with the gate `routes()` actually registers
 | AF-11 | The payment-entry file input is `hidden` with **no accessible name** — reach it as `input[name="attachment"]`, never `getByLabel('Attachment')`. | `templates.go:429`, `fixtures.ts:297-300` |
 | AF-12 | "Take for processing" is a **submit button inside a POST form**, not a link, because reserving mutates. | `templates.go:722`, `fixtures.ts:262-265` |
 | AF-13 | `.metric-foot` **now has a rule** (`fervid-ds.css:367`), added by Phase 6 commit `a80e18f`, together with `.metric.warn`, `.metric.good` and `.btn.approve`. `PROGRESS.md`'s "Known gaps" entry is stale. | `fervid-ds.css:364-405`, `PROGRESS.md:368-375` |
-| AF-14 | The unread bell lives in `.m-topbar .m-icon .dot`, which is `display:none` above 860 px. There is no `/notifications` entry in `navSpec`. **On desktop the notification centre has no link and no unread indicator.** | `templates.go:74`, `fervid-ds.css:3881-3884`, `fervid-ds.css:4398`, `nav.go:82-92` |
+| AF-14 | The unread bell lives in `.m-topbar .m-icon .dot`, which is `display:none` above 860 px. At audit time there was no `/notifications` entry in `navSpec`, so **on desktop the notification centre had no link and no unread indicator** — SD-08. **Fixed in Wave 4 (F-F-05):** `navSpec` now carries `{Key: "notifications", Label: "Notifications", Href: "/notifications", Icon: "✉", Badge: "notifications"}` and the shell fills that badge from `UnreadNotificationCount` (`nav.go:61`, `nav.go:162-169`). The bell's mobile-only CSS is unchanged; the desktop entry is a second door, not a change to the first. See REPAIR-LOG.md Wave 4. | `templates.go:74`, `fervid-ds.css:3881-3884`, `fervid-ds.css:4398`, `nav.go:57-61`, `nav.go:162-169` |
 | AF-15 | `initMoneyFields` stamps `data-money-bound="1"` on a money input once it owns it. Filling before that lands in a different field. | `fervid-app.js:536`, `regression-issues.spec.ts:68-71` |
 | AF-16 | The payment-detail mockup's `Bank` row (`HDFC ····4471 · IFSC …`) is **not built** — the `dl.dl` on `payment_detail` has no such row. | `templates.go:277-287`, `PROGRESS.md:376-379` |
 
@@ -501,7 +501,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Non-functional / UX notes** — a test must wait for `data-money-bound="1"` on **Amount actually paid** before filling it (AF-15). At 390 px `.span-4.m-half` fields pair up and `.action-bar` is sticky above the tab bar. `required` is used here (not `aria-required`) because none of these fields is inside a `data-when`-hidden container.
 
-**Open questions** — the entry screen offers no control for project/head, payee or invoice; a recoverable request with no project therefore submits `head_id=0`. See UC-C-36 exception 36.e1 and divergence DV-01.
+**Open questions** — none. The entry screen still offers no control for project/head, payee or invoice, and a recoverable request with no project still submits `head_id=0`, but this is no longer a defect: `RecordPaymentForRequest` (F-D-01, `store.go:1110-1114`) ignores the form's `head_id`/`vendor_payee`/`invoice_no` entirely and re-derives all three from the request row it already holds open, and `payments.head_id` is nullable since migration v8 (`migrations.go:453`). A zero head_id is stored as SQL NULL, never as a foreign key to nothing (`store.go:1128-1130`). See UC-C-36 exception 36.e1 and the correction on divergence DV-01/SD-07.
 
 ---
 
@@ -557,7 +557,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 - **07.e1 — unparseable amount.** `settlementError` re-renders the sheet with `Nothing has been saved. Correct it and confirm again.` in a `.banner.bad`, echoing the characters typed (`linking.go:294-298`, `linking.go:341-364`, `templates.go:473`). Status is `400` (`storeErrorStatus` on `ErrValidation`).
 - **07.e2 — reservation lost in the meantime.** 409 conflict screen (`linking.go:288-293`).
-- **07.e3 — no `payment:settle`.** `403` from the middleware. Note that the *writer*, `POST /payments`, is gated on `payment:create` instead — see UC-C-28 alternate 28.b and divergence DV-04.
+- **07.e3 — no `payment:settle`.** `403` from the middleware — **and now from the writer too.** At audit time `POST /payments` was gated on `payment:create` alone, so this reader could skip the preview and post the settlement anyway (divergence DV-04, UC-C-28 alternate 28.b). **Fixed in Wave 3 (F-D-10):** `POST /payments` is wrapped in both gates, `payment:create` then `payment:settle` (`app.go:446-447`). See REPAIR-LOG.md Wave 3.
 - **07.e4 — CSRF absent.** `withCSRF` refuses (`app.go:454`).
 
 **Business rules**
@@ -584,7 +584,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | **Scope / level** | system · user-goal |
 | **Trigger** | Choosing **Fully settled** and pressing **Confirm and save payment** |
 | **Route(s)** | `POST /payments` → `303 /payments/{paymentID}` (RT-06) |
-| **Permission gate** | `payment:create`, `withCSRF`; store re-checks the reservation |
+| **Permission gate** | `payment:create` **+ `payment:settle`** (F-D-10, Wave 3), `withCSRF`; store re-checks the reservation |
 | **Coverage IDs** | S10, S13, L10, L11, Q4, S9, S15 |
 | **Priority** | critical |
 
@@ -592,7 +592,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 1. The request is `processing` and `processing_by = caller.id`.
 2. `settlement` posts as `settled`.
-3. `amount > 0`, `paid_on` is a valid date, `head_id` resolves to an **active** head under an **active** project, and `paid_on`'s month is not locked (`store.go:1620-1635`).
+3. `amount > 0`, `paid_on` is a valid date, and `paid_on`'s month is not locked. `head_id` must resolve to an **active** head under an **active** project only when the request's own treatment is not `recoverable`; since migration v8 `payments.head_id` is nullable and `validatePayment` takes a `headOptional` flag that is true for a recoverable settlement, so a recoverable with no head skips this check entirely (`migrations.go:453`, `store.go:1922-1957`, caller at `store.go:1115`).
 4. `amount <= approvedOf(request)` (G13, `store.go:901-910`).
 5. No payment already links to this request (`idx_payments_request`, `phase-3 spec:16`).
 
@@ -617,9 +617,9 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 3. `settled` is pre-checked whenever `Settlement.Settlement != "partial"` (`templates.go:488`).
 4. Accountant confirms the `settled` radio is checked and presses **Confirm and save payment**.
 5. System validates CSRF, reads `request_id` from the form, and refuses immediately if it is zero (`app.go:692-696`).
-6. System builds `PaymentInput` from `head_id, paid_on, vendor_payee, payment_mode, invoice_no, reference_no, remarks, amount` (`app.go:1499-1515`).
+6. System builds `PaymentInput` from `head_id, paid_on, vendor_payee, payment_mode, invoice_no, reference_no, remarks, amount` via the `paymentInput` helper (`app.go:1988-1997`).
 7. System stages any uploaded attachment to disk (`app.go:700-704`).
-8. System calls `RecordPaymentForRequest`, which validates the settlement word, validates the payment, opens one transaction, re-reads `status/processing_by/amount/approved_amount`, enforces the reservation, enforces the ceiling, inserts the payment, transitions the request, writes both audit rows, adds the attachment, and commits (`store.go:866-956`).
+8. System calls `RecordPaymentForRequest`, which validates the settlement word, re-reads `status/processing_by/treatment/head_id/vendor(display)/invoice_no/amount/approved_amount` from the request row itself and **overwrites** `in.HeadID`/`in.VendorPayee`/`in.InvoiceNo` with those values — the form's copies of these three fields, built in step 6, are discarded rather than trusted (F-D-01, `store.go:1110-1114`) — validates the payment, opens one transaction, enforces the reservation, enforces the ceiling, inserts the payment, transitions the request, writes both audit rows, adds the attachment, and commits (`store.go:866-956`).
 9. System fires `EventPaymentSettled` (`app.go:723-724`) and redirects `303` to `/payments/{paymentID}`.
 10. Accountant reads the payment detail (UC-C-21): a `.banner.good` `Payment saved. The request is completed.`, a `.pill.completed`, and a `.compare .cmp-row.match` reading `Difference · confirmed settled by Accounts` (`templates.go:243-249`, `templates.go:271`).
 
@@ -636,7 +636,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - **08.e2 — paid above approved (tampered amount).** `ErrValidation` `"{paid} is more than the approved {ceiling} — to pay more, cancel this request and raise a new one"` at `400` (`store.go:901-910`). See UC-C-28.
 - **08.e3 — the month is locked.** `validatePayment` returns `ErrLockedMonth` → `409` (`store.go:1624-1626`, `http_errors.go:189-190`) and `settlementError` routes it back into the sheet because 409 < 500 (`linking.go:342-345`).
 - **08.e4 — inactive head or project.** `ErrInactiveHead` → `400` (`store.go:1627-1634`).
-- **08.e5 — `head_id` is 0.** `ErrValidation` "valid head, date, and positive amount are required" → `400`. Reachable for a recoverable with no project; see divergence DV-01.
+- **08.e5 — `head_id` is 0 on a non-recoverable request.** `ErrValidation` "valid head, date, and positive amount are required" → `400`. **Not reachable for a recoverable** since migration v8 / `store.go:1922-1923` (`headOptional` is true when `treatment=="recoverable"`); the divergence this used to cite (DV-01) is fixed — see the correction there.
 - **08.e6 — reservation lost.** `ErrForbidden` "reserve this request before recording its payment" (pre-insert) or "reservation was lost before settlement" (post-insert guard) → `403`, nothing written (`store.go:898-900`, `store.go:925-933`).
 - **08.e7 — a payment already links to this request.** Refused by the status guard (the request is no longer `processing`) and, at the database level, by `idx_payments_request`. See UC-C-27.
 - **08.e8 — attachment rejected.** `validateAttachment` failure returns before the transaction; the staged file is removed (`store.go:878-882`, `app.go:710`).
@@ -668,7 +668,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | **Scope / level** | system · user-goal |
 | **Trigger** | Choosing **Partial payment** in the settlement sheet |
 | **Route(s)** | `POST /payments` → `303 /payments/{paymentID}` (RT-06) |
-| **Permission gate** | `payment:create`, `withCSRF`; store re-checks the reservation |
+| **Permission gate** | `payment:create` **+ `payment:settle`**, and **`payment:mark_partial`** because `settlement=partial` (F-D-10, Wave 3), `withCSRF`; store re-checks the reservation |
 | **Coverage IDs** | S11, S13, L9, L11 |
 | **Priority** | critical |
 
@@ -785,7 +785,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - **10.e2 — wrong status.** `RowsAffected()==0` → `ErrForbidden` "only a partial-review request can be accepted" → `403` (`store.go:987-991`).
 - **10.e3 — opening the screen off `partial_review`.** `requestPartialReview` redirects `303` to `/requests/{id}` rather than rendering a page every sentence of which would be false (`linking.go:382-389`).
 - **10.e4 — no payment recorded.** `404` `No payment has been recorded against this request yet, so there is nothing to review.` (`linking.go:393-398`).
-- **10.e5 — outside the caller's request scope.** `403` `You do not have permission to view this request.` (`requests.go:236-239`).
+- **10.e5 — outside the caller's request scope.** `404` `The requested record was not found.` **Corrected since Wave 3 (F-G-002, commit `1fac147`): this answered `403` `You do not have permission to view this request.` at the time of this audit.** A row outside the caller's scope now answers exactly as a row that does not exist, so the status code is no longer an existence oracle (`requests.go:295-308`).
 - **10.e6 — no `approval:accept_partial`.** `403` from the middleware on RT-19; the read route RT-18 still succeeds, and the bar degrades — see alternate 11.c.
 
 **Business rules**
@@ -795,7 +795,9 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - Neither decision moves money and neither can amend the payment (S12) (`linking.go:369-371`).
 - The action bar is chosen **server-side** on the very permission the routes are gated by; the mockup's `data-for`/`data-not-for` persona attributes are prototype scaffolding (`templates.go:819-822`).
 
-**Data touched** — writes `payment_requests.status/updated_at`, `audit_log`; reads `payments`, `payment_attachments`, `request_comments`, `audit_log` (both entity types).
+**Data touched** — writes `payment_requests.status/updated_at`, `audit_log`, `notifications`; reads `payments`, `payment_attachments`, `request_comments`, `audit_log` (both entity types).
+
+**Correction (Waves 2/4)** — at the time of this audit accepting a partial fired nothing. `notify.EventPaymentPartialAccepted` was added by migration v9 (Wave 2, commit `25411b8`) and wired in Wave 4, so a fifth success postcondition now holds: one `notifications` row per resolved recipient — the requester learns the balance is never coming, the assigned accountant learns to stop chasing it (`events.go:55-56`, call site `linking.go:554`). F-F-06.
 
 **Non-functional / UX notes** — the sheets are the manager's alone, so a spec must sign in as `approverFor(runId)`, never as the admin (`fixtures.ts:133-143`). The accept button is a plain `.btn.primary`, not the mockup's green `.btn.approve` — that class existed with no rule when the screen was built (`templates.go:906-908`); it now has one (AF-13), so the mockup's colour could be restored.
 
@@ -861,7 +863,9 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - A concern is a line in the trail rather than a chat message, which is why it is a sheet and not an inline disclosure (`templates.go:814-817`).
 - `#cn-reason` uses `required` (not `aria-required`) because the concern sheet has no `data-when` reveal — the field is always visible once the sheet opens.
 
-**Data touched** — writes `request_comments`, `audit_log`.
+**Data touched** — writes `request_comments`, `audit_log`, `notifications`.
+
+**Correction (Waves 2/4)** — at the time of this audit a concern fired nothing, so the accountant it is addressed to learned of it only by reloading. `notify.EventPaymentPartialConcern` was added by migration v9 (Wave 2, commit `25411b8`) and wired in Wave 4: a fifth success postcondition now holds, one `notifications` row per resolved recipient, filed under `mention` rather than `activity` because it waits on the accountant's answer (`events.go:60`, call site `linking.go:567`). F-F-06.
 
 **Non-functional / UX notes** — the sheet starts `hidden` and is opened by `data-open`; without JavaScript it is unreachable. That is a genuine no-JS gap on this screen, unlike the settlement sheet which has a full-page fallback.
 
@@ -985,7 +989,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - **13.e2 — already on hold, or not approved.** `RowsAffected()==0` → `ErrForbidden` "only an approved, not-already-held request can be held" → `403` (`store.go:1051-1055`).
 - **13.e3 — the request is `processing`.** Same as 13.e2: a reserved request must be released first (the rule alternate 13.c's sub-line states).
 - **13.e4 — no `payment:hold`.** `403` from the middleware; the button was not rendered.
-- **13.e5 — outside the caller's request scope.** `403` `You do not have permission to view this request.` (`linking.go:695-698`, `requests.go:236-239`).
+- **13.e5 — outside the caller's request scope.** `404` `The requested record was not found.` — **`403` until Wave 3 (F-G-002, commit `1fac147`)**; `loadViewableRequest` now answers a scope refusal exactly as it answers a missing row (`linking.go:695-698`, `requests.go:295-308`).
 
 **Business rules**
 
@@ -1052,7 +1056,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - **14.e1 — blank body.** `ErrValidation` "comment cannot be empty" → `400`. The browser also refuses: the textarea is `required` (`store.go:1002-1004`, `templates.go:2193`).
 - **14.e2 — attempting to edit fields instead.** `/requests/{id}/edit` refuses: `loadEditableRequest` demands `status` be `pending` or `returned` and answers `400` `This request can no longer be edited.` otherwise (`requests.go:596-599`). The detail screen does not render an **Edit request** button for an approved request either (`templates.go:2413-2415`).
 - **14.e3 — no `request:comment`.** `403` from the middleware; the `.comment-box` was not rendered (`templates.go:2189`).
-- **14.e4 — outside scope.** `403` `You do not have permission to view this request.`
+- **14.e4 — outside scope.** `404` `The requested record was not found.` — **`403` until Wave 3 (F-G-002, commit `1fac147`)** (`requests.go:295-308`).
 
 **Business rules**
 
@@ -1117,7 +1121,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 - **15.e1 — not on hold.** `RowsAffected()==0` → `ErrForbidden` "request is not on hold" → `403` (`store.go:1074-1078`).
 - **15.e2 — no `payment:hold`.** `403` from the middleware.
-- **15.e3 — outside scope.** `403` from `loadViewableRequest` (`linking.go:711-714`).
+- **15.e3 — outside scope.** `404` from `loadViewableRequest` — **`403` until Wave 3 (F-G-002, commit `1fac147`)** (`linking.go:711-714`, `requests.go:295-308`).
 
 **Business rules**
 
@@ -1128,9 +1132,9 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Data touched** — writes `payment_requests.on_hold/hold_reason/updated_at`, `audit_log`.
 
-**Non-functional / UX notes** — no notification event fires on unhold; only `EventRequestOnHold` exists (`events.go:15`). The requester learns the hold was lifted from the request screen, not from an email.
+**Non-functional / UX notes** — at the time of this audit, no notification event fired on unhold; only `EventRequestOnHold` existed (`events.go:15`). **Fixed (F-F-06, migration v9, Wave 4 wiring):** `EventRequestUnheld` now exists and fires from `linking.go:803`, so the requester learns the hold was lifted by email/in-app as well as from the request screen.
 
-**Open questions** — is the absence of an "unhold" notification deliberate? The twelve-event list has no room for a thirteenth, so probably; nothing records the decision.
+**Open questions** — none. (Was: is the absence of an "unhold" notification deliberate? Answered by the fix above — it was a gap, not a decision, and it is closed.)
 
 ---
 
@@ -1256,7 +1260,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - **17.e4 — not the assignee and not authorized.** `ErrForbidden` "only the assignee may release this request" → `403` (`store.go:785-787`). See UC-C-19.
 - **17.e5 — reading the screen with neither standing.** `403` `Only the person holding this reservation can release it.` (`linking.go:534-538`).
 - **17.e6 — the request is not reserved by anyone.** `409` `This request is not reserved by anyone.` (`linking.go:527-530`).
-- **17.e7 — outside the caller's request scope.** `403` from `loadViewableRequest` — holding a reservation verb somewhere is not permission to read this request (`linking.go:517-520`, `linking.go:620-622`).
+- **17.e7 — outside the caller's request scope.** `404` from `loadViewableRequest` — holding a reservation verb somewhere is not permission to read this request. **`403` until Wave 3 (F-G-002, commit `1fac147`)**; the refusal is now indistinguishable from a missing row (`linking.go:517-520`, `linking.go:620-622`, `requests.go:295-308`).
 
 **Business rules**
 
@@ -1270,7 +1274,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Non-functional / UX notes** — `#to_user_id` uses `aria-required`, not `required`, because a required control inside a `data-when`-hidden field makes the whole form unsubmittable in Chrome (`templates.go:1022-1025`). The confirm checkbox *is* `required` because it is never hidden. The history reads oldest-first, unlike the mockup — one product, one direction (`templates.go:963-966`).
 
-**Open questions** — the action-bar note claims `The requester and the approver are both notified.` (`templates.go:1042`), but no notification event fires on release: `requestRelease` calls no `a.fire`, and `events.go` has no release event (`linking.go:623-635`, `events.go:8-21`). Recorded as suspected defect SD-02.
+**Open questions** — none. At the time of this audit the action-bar note claimed `The requester and the approver are both notified.` (`templates.go:1042`) while no notification event fired on release — `requestRelease` called no `a.fire` and `events.go` had no release event — recorded as suspected defect SD-02. **Fixed (F-F-06):** `notify.EventReservationReleased` was added by migration v9 (Wave 2, commit `25411b8`) and wired in Wave 4; `requestRelease` now fires it, so the screen's promise is true and this use case also writes `notifications` (`events.go:45-48`, call site `linking.go:712`).
 
 ---
 
@@ -1345,7 +1349,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Non-functional / UX notes** — `reassignCandidates` runs one permission query per user; fine at this user count, but the fix if the table grows is a batched permission read in the store, not a looser filter (`linking.go:571-579`, `PROGRESS.md:393-395`).
 
-**Open questions** — same as UC-C-17: the screen promises notification and none is sent (SD-02).
+**Open questions** — none, and for the same reason as UC-C-17. At the time of this audit the screen promised notification and none was sent (SD-02). **Fixed (F-F-06):** `notify.EventReservationReassigned` was added by migration v9 (Wave 2, commit `25411b8`) and wired in Wave 4; `requestReassign` now fires it and addresses the new assignee personally, since they are the one now expected to pay it (`events.go:49-52`, call site `linking.go:755`). This use case therefore also writes `notifications`.
 
 ---
 
@@ -1459,7 +1463,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 - **20.e1 — not `processing`.** `409` `This request is not reserved by anyone.` — off that status every sentence on the screen is false (`linking.go:735-740`).
 - **20.e2 — no `payment:process`.** `403` from the middleware (`app.go:470`).
-- **20.e3 — outside scope.** `403` from `loadViewableRequest`: holding `payment:process` is permission to work the queue, not permission to read a request outside the caller's data scope (`linking.go:726-729`).
+- **20.e3 — outside scope.** `404` from `loadViewableRequest`: holding `payment:process` is permission to work the queue, not permission to read a request outside the caller's data scope. **`403` until Wave 3 (F-G-002, commit `1fac147`)** (`linking.go:726-729`, `requests.go:295-308`).
 - **20.e4 — the "Who has been told" section is empty of reminders.** The `ol.thread` renders `.Audit`, i.e. the request's whole merged audit trail; the reminder writes **no audit row**, so the reminder itself never appears there. See open questions.
 
 **Business rules**
@@ -1508,7 +1512,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 4. System renders `.req-head`: `.rh-no` `PAY-{id} · from {Number}`, `.rh-amt` the amount, `h1` the payee, `.rh-meta` `{Project} / {Head} · paid {date}`, and `.rh-status` carrying the request's status pill and the shared `waitingOn` line (`templates.go:251-263`).
 5. System renders the `.compare`: `Approved`, `Paid`, then `.cmp-row.match` `Difference · confirmed settled by Accounts` for a settled payment or `.cmp-row.diff` `Still owed to the payee` for a partial one (`templates.go:265-273`).
 6. System renders the **Payment** card headed `<span class="pill neutral no-dot">Read-only</span>`, with `dl.dl` rows `Paid on`, `Mode`, `Reference`, `Recorded by`, `Payee`, `Invoice`, `Settlement`, `Partial reason`, `Processing note` (`templates.go:275-288`).
-7. System renders **Proof** — one `.file-row` per payment attachment, plus one per **request** attachment sub-labelled `Invoice from the request`, each with a **Download** link when the reader holds `attachment:view` (`templates.go:290-311`).
+7. System renders **Proof** — one `.file-row` per payment attachment, plus one per **request** attachment sub-labelled `Invoice from the request`, each with a **Download** link when the reader holds `attachment:view`. **The two links go to two different routes since Wave 3 (F-A-05/F-B-09, commit `1fac147`):** a payment attachment to `GET /attachments/{id}` (`templates.go:304`), a request document to `GET /requests/{requestID}/attachments/{attachmentID}` (`templates.go:319`). At audit time both rendered through `/attachments/{id}`, which reads `payment_attachments` — and both id sequences start at 1, so Download on your own invoice served a stranger's bank advice. Both handlers now check ownership and refuse with **404** (`app.go:1091-1107`, `app.go:1115-1146`, `app.go:1040-1048`). See REPAIR-LOG.md Wave 3.
 8. System renders **Full trail, request to payment** — an `ol.thread` over the merged audit, oldest first, each line decorated by `trailAction`/`auditTone`/`auditGlyph`/`auditPhrase` (`templates.go:313-322`, `linking.go:997-1020`).
 9. System renders the `.action-bar` with the note `Refunds and reversals are outside this version.`, an **Open the request** link and **Back to ledger** — and **no Edit and no Void** (`templates.go:324-329`).
 
@@ -1526,13 +1530,15 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - **21.e3 — unknown id.** `404` `The requested record was not found.`
 - **21.e4 — no attachments on either side.** The whole **Proof** section is omitted (`templates.go:290`, `templates.go:311`).
 - **21.e5 — empty trail.** `<li>` with `.tl-body.muted` `No history recorded.` (`templates.go:321`).
+- **21.e6 — a **Download** link on a payment the caller cannot see.** `404` `The requested attachment was not found.` **Added in Wave 3 (F-A-01/F-B-11, commit `1fac147`).** At the time of this audit `GET /attachments/{id}` was gated on `attachment:view` alone and streamed any file to any holder of that verb, which the seeded Requester role holds. `attachmentDownload` now resolves the attachment together with its payment and applies `canReadPayment` — the same test 21.e2 applies to the screen — before opening a byte (`app.go:459`, handler `app.go:1091`, refusal at `app.go:1044-1048`).
+- **21.e7 — a request document downloaded through the payment route.** `404`. **Added in Wave 3 (F-A-05/F-B-09).** The two id sequences are independent, so one shared route handed id `7` from whichever table it read first; the routes are now split. `GET /attachments/{id}` serves payment documents only, and the **Proof** list's `Invoice from the request` rows link to the request's own route, `/requests/{requestID}/attachments/{attachmentID}` (`app.go:460`, handler `app.go:1115`, link at `templates.go:319`).
 
 **Business rules**
 
 - **S12:** a linked payment offers no mutation control anywhere, because the store refuses to edit or void one and a control the route would reject is a lie (`templates.go:230-238`, `store.go:609-611`, `store.go:649-651`).
 - The trail spans two entity types, merged and ordered oldest-first because a trail is a story and a story is told forwards (`linking.go:997-1000`).
 - `trailAction` folds the entity into the action once — `create`→`record_payment`, `update`→`amend_payment`, `attach`→`attach_payment` — so "create" on a payment is a different sentence from the same word on a request (`linking.go:823-842`).
-- The proof list is both halves: the bank advice Accounts uploaded and the invoice the request came in with, so nobody has to open the request to check what was billed (`templates.go:300-302`).
+- The proof list is both halves: the bank advice Accounts uploaded and the invoice the request came in with, so nobody has to open the request to check what was billed (`templates.go:300-302`). **Since Wave 3 the two halves are served by two routes** — payment documents from `GET /attachments/{id}`, request documents from `GET /requests/{id}/attachments/{attachmentID}` — because one URL over two independent id sequences handed one reader another reader's bank advice, and because `attachment:view` alone is not permission to read a particular file (F-A-01/F-A-05, `app.go:459-460`, `templates.go:304`, `templates.go:319`). See 21.e6/21.e7.
 
 **Data touched** — reads `payments`, `payment_attachments`, `payment_requests`, `request_attachments`, `audit_log` (both entity types), `users`, `projects`, `heads`, `vendors`.
 
@@ -1644,7 +1650,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 **Alternate flows**
 
 - **23.a — the ledger row.** Offers neither control (UC-C-22 step 6); `ISS-025` asserts zero `Edit` links and zero `details.inline-danger` on the row (`regression-issues.spec.ts:504-507`).
-- **23.b — attaching more proof after the fact.** `POST /payments/{id}/attachments` is still routed and gated on `attachment:create` (`app.go:392`), but no linked-payment screen renders the form (`templates.go:290-311` has no upload control), and `AddAttachment` has no `RequestID` guard. See open questions.
+- **23.b — attaching more proof after the fact.** `POST /payments/{id}/attachments` is still routed and gated on `attachment:create` (`app.go:452`), and no linked-payment screen renders the form. **Since Wave 1 the store refuses it too:** `AddAttachment` returns a validation error for a payment whose `request_id` is set, matching the edit and void guards (F-D-08, `store.go:1580-1587`), and Wave 3 added an ownership check on the same path (F-A-03, `app.go:1050-1070`). See open questions.
 
 **Exception flows**
 
@@ -1660,7 +1666,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Non-functional / UX notes** — a complete test asserts three layers: the screen offers nothing, the form route redirects, and both write routes answer 400 with the exact phrases `cannot be edited` / `cannot be voided`.
 
-**Open questions** — `POST /payments/{id}/attachments` accepts an upload against a **linked** payment: `AddAttachment` has no `RequestID` guard (`store.go:1310-1329`) and no screen offers the control, but the route is live and gated only on `attachment:create`. Recorded as suspected defect SD-03.
+**Open questions** — none. At the time of this audit, `POST /payments/{id}/attachments` accepted an upload against a **linked** payment: `AddAttachment` had no `RequestID` guard and no screen offered the control, but the route was live and gated only on `attachment:create`. Recorded then as suspected defect SD-03. **Fixed (F-D-08 in Wave 1, F-A-03 in Wave 3):** the store refuses a payment whose `request_id` is set (`store.go:1580-1587`), and the handler resolves the payment and applies the caller's scope before staging anything, answering 404 on refusal (`app.go:1050-1070`, `app.go:1040-1048`). See the correction on SD-03 and `docs/qa/results/REPAIR-LOG.md`.
 
 ---
 
@@ -1732,7 +1738,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | **Scope / level** | system · subfunction (negative) |
 | **Trigger** | `POST /payments` with no `request_id` |
 | **Route(s)** | RT-06 |
-| **Permission gate** | `payment:create` **passes**; the handler refuses |
+| **Permission gate** | `payment:create` **+ `payment:settle`** pass (both are needed since Wave 3's F-D-10); the handler refuses |
 | **Coverage IDs** | S15, X5 |
 | **Priority** | critical |
 
@@ -1790,7 +1796,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | **Scope / level** | system · subfunction (negative) |
 | **Trigger** | `POST /payments` with a `request_id` whose request is `approved`, unclaimed |
 | **Route(s)** | RT-06 |
-| **Permission gate** | `payment:create` **passes**; the store refuses |
+| **Permission gate** | `payment:create` **+ `payment:settle`** pass (both are needed since Wave 3's F-D-10); the store refuses |
 | **Coverage IDs** | S15, S2, X5 |
 | **Priority** | critical |
 
@@ -1850,7 +1856,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | **Scope / level** | system · subfunction (negative) |
 | **Trigger** | `POST /payments` twice for one `request_id` |
 | **Route(s)** | RT-06 |
-| **Permission gate** | `payment:create`; store status guard + unique index |
+| **Permission gate** | `payment:create` **+ `payment:settle`** (F-D-10, Wave 3); store status guard + unique index |
 | **Coverage IDs** | S9, S13 |
 | **Priority** | critical |
 
@@ -1910,7 +1916,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | **Scope / level** | system · subfunction (negative) |
 | **Trigger** | A hand-rolled `POST /payments` with a forged `settlement` or `amount` |
 | **Route(s)** | RT-06, RT-05 |
-| **Permission gate** | `payment:create`; store validation |
+| **Permission gate** | `payment:create` **+ `payment:settle`** (F-D-10, Wave 3); store validation |
 | **Coverage IDs** | S13, S10, S11 |
 | **Priority** | critical |
 
@@ -1939,9 +1945,9 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 **Alternate flows**
 
 - **28.a — forged `settlement=SETTLED`.** The comparison is case-sensitive after `TrimSpace`, so `SETTLED` is rejected by 400 (`store.go:867-871`).
-- **28.b — skipping the preview entirely.** `POST /payments` is gated on `payment:create`, while `POST /requests/{id}/settlement-preview` is gated on `payment:settle`. A caller holding `create` but not `settle` cannot open the sheet but **can** post the settlement directly, and the store accepts it. See divergence DV-04.
-- **28.c — forged `head_id`.** `validatePayment` demands an active head under an active project; an arbitrary id fails with `ErrInactiveHead` → 400 (`store.go:1627-1634`). Note the head is **not** required to match the request's own head — see open questions.
-- **28.d — forged `vendor_payee` / `invoice_no`.** Both are hidden inputs copied from the request and are stored verbatim with **no** server-side comparison against the request (`app.go:1500-1508`, `store.go:911-913`). See open questions.
+- **28.b — skipping the preview entirely.** At audit time `POST /payments` was gated on `payment:create` while `POST /requests/{id}/settlement-preview` needed `payment:settle`, so a caller holding `create` but not `settle` could not open the sheet yet **could** post the settlement directly, and the store accepted it (divergence DV-04). **Fixed in Wave 3 (F-D-10, commit `1fac147`):** `POST /payments` now needs `payment:create` **and** `payment:settle`, and `payment:mark_partial` besides when `settlement=partial` — the last checked in the handler rather than as a route gate, because it applies to one value of one field (`app.go:446-447`, `app.go:833-837`). Skipping the preview no longer skips the verb. See REPAIR-LOG.md Wave 3.
+- **28.c — forged `head_id`.** **Fixed since Wave 1 (F-D-01, commit `633997b`).** `RecordPaymentForRequest` never validates the *posted* `head_id` against anything, because it never uses it: it overwrites `in.HeadID` with the request's own `head_id` before `validatePayment` runs (`store.go:1112`). A forged value in the POST body is simply discarded, so there is no "an arbitrary id fails with `ErrInactiveHead`" case to reach — the only head ever checked is the one the manager actually approved against.
+- **28.d — forged `vendor_payee` / `invoice_no`.** **Fixed since Wave 1 (F-D-01).** Both are hidden inputs copied from the request for display continuity, but the server overwrites them from the request row the same way as `head_id` (`store.go:1113-1114`) and never stores the posted values verbatim.
 - **28.e — the preview with a forged amount.** `settlementPreview` only parses the amount; the ceiling is not checked there, so the sheet will happily display an over-approved figure and the refusal arrives at the confirm (`linking.go:294-308`).
 
 **Exception flows**
@@ -1959,7 +1965,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Non-functional / UX notes** — the amount is echoed back **even when it is what was rejected**: a malformed figure parses to zero, and the field still shows the characters the accountant actually entered (`linking.go:352-355`).
 
-**Open questions** — `head_id`, `vendor_payee` and `invoice_no` are accepted from the form without any comparison against the request they claim to settle. A forged `head_id` naming a *different active head* is accepted, which charges the payment to a head nobody approved and moves it in the variance grid. Recorded as suspected defect SD-05.
+**Open questions** — none. This use case originally recorded suspected defect SD-05: `head_id`, `vendor_payee` and `invoice_no` accepted from the form with no comparison against the request. **Fixed in Wave 1 (F-D-01, commit `633997b`, see `docs/qa/results/REPAIR-LOG.md`).** The three fields are never read from the form at all any more — see 28.c/28.d above and the correction on SD-05 in the divergence log.
 
 ---
 
@@ -2002,7 +2008,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Exception flows**
 
-- **29.e1 — another requester's request.** `403` from `loadViewableRequest`; `own` scope means `requester_id = u.ID` (`requests.go:338-339`).
+- **29.e1 — another requester's request.** `404` from `loadViewableRequest`; `own` scope means `requester_id = u.ID`. **`403` until Wave 3 (F-G-002, commit `1fac147`)**, when the scope refusal was made indistinguishable from a missing row (`requests.go:295-308`, `requests.go:399-410`).
 - **29.e2 — the store read fails for a reason other than not-found.** `respondStoreError` → 500 (`requests.go:560-561`).
 
 **Business rules**
@@ -2036,7 +2042,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Preconditions**
 
-1. Migration v7 has run, so `recoverable_categories` exists and is seeded with six rows (`recoverables.go:37-61`).
+1. Migration **v6** has run, so `recoverable_categories` exists and is seeded with six rows (`recoverables.go:33-61` — `upRecoverableCategories`'s own comment names it v6; registered as `{Version: 6, Name: "recoverable_categories"}` at `migrations.go:320-321`). **This document said "v7" throughout; that was wrong at the time of the audit and is corrected here — v7 is `notifications`.** Later migrations are present too and none of them touches this table: the chain is **v1–v10** as of this writing (`Version:` at `migrations.go:42/99/150/272/304/320/327/336/344/352`).
 2. The caller holds `config:view` to read and `recoverable_category:edit` to write.
 3. For a new row, `name` is non-blank and contains at least one letter or digit (`recoverables.go:185-200`).
 
@@ -2086,13 +2092,13 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - The built-in `recoverableCategoryRules` map survives only as the migration seed and as the fixture the pure validator's tests use; `TestSeededCategoriesMatchPhase2Rules` fails if the two ever drift (`requests.go:109-123`, `recoverables.go:18-20`).
 - The fieldset sits **outside** the main settings form because a `<form>` nested inside another is invalid HTML that the parser silently drops — the row toggles would post nothing at all (`templates.go:3119-3124`, `PROGRESS.md:279-284`).
 - **V5 field rules:** EMD and PBG require a project; ICD and security deposit require a counterparty; employee advance and other require neither (`recoverables.go:25-30`, `requests.go:116-123`).
-- Migration v7 back-fills `payment_requests.recoverable_category_id` from the code, because Phase 2 hardcoded it to NULL and every register query joins on it (`recoverables.go:63-78`, `PROGRESS.md:176-180`).
+- Migration **v6** back-fills `payment_requests.recoverable_category_id` from the code, because Phase 2 hardcoded it to NULL and every register query joins on it (`backfillRecoverableCategoryIDs`, called from `upRecoverableCategories`: `recoverables.go:60`, `recoverables.go:63-78`; `PROGRESS.md:176-180`). **Recorded as "v7" at audit time; that was a mis-numbering, not a change — see precondition 1.**
 
 **Data touched** — writes `recoverable_categories`, `audit_log`; reads `payment_requests` for the usage count.
 
 **Non-functional / UX notes** — the Active label uses `.sr-only` (never the invented `.vh`) for its accessible name (`templates.go:3142`, `PROGRESS.md:291-293`). At 390 px the table restacks with `data-label` on every cell, including a `data-label=""` on the empty-state row.
 
-**Open questions** — **the request form does not read this table.** `request_form_fields` hardcodes the six seeded `<option>` values (`templates.go:1738-1743`), so an admin-added category can never be chosen on the real form and a deactivated one is still offered. `V4` is satisfied in the store and the validator but not in the UI. Recorded as suspected defect SD-06.
+**Open questions** — none. At the time of this audit **the request form did not read this table**: `request_form_fields` hardcoded the six seeded `<option>` values, so an admin-added category could never be chosen on the real form and a deactivated one was still offered — `V4` satisfied in the store and the validator but not in the UI, recorded as suspected defect SD-06. **Fixed (F-E-02/F-B-17):** Wave 2 exposed `ListRecoverableCategories(ctx, activeOnly)` and Wave 4a rewrote the select to `{{range .Categories}}<option value="{{.Code}}">` with a `Choose a category` placeholder (`templates.go:1828-1831`). V4 is now delivered end to end. See the correction on SD-06 and `docs/qa/results/REPAIR-LOG.md`.
 
 ---
 
@@ -2160,14 +2166,14 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 - **V1:** treatment is the classification, and it is a first-class column, not a derived flag (`requests.go:145-147`).
 - **V6:** every recoverable records the counterparty (when its category demands it), the expected return date and the refund terms; the requester is recorded as the payee for an employee advance (`requests.go:173-190`, `requests.go:367-370`).
 - `validateRequestInput` stays **pure** — the caller supplies the rule set — so the rules can come from the database without the validator reaching for it (`requests.go:125-127`).
-- `recoverable_category_id` is populated on **both** write paths (create and edit); Phase 2 hardcoded it NULL and v7 back-fills the history (`requests.go:378-381`, `requests.go:583`, `PROGRESS.md:176-180`).
-- `payment_requests.recoverable_category_id` is a plain `INTEGER` with **no** `REFERENCES`, because a forward foreign key would have made SQLite reject every write to the table before v7 created the parent (`PROGRESS.md:261-265`).
+- `recoverable_category_id` is populated on **both** write paths (create and edit); Phase 2 hardcoded it NULL and **v6** back-fills the history (`requests.go:378-381`, `requests.go:583`, `recoverables.go:63-78`, `PROGRESS.md:176-180`). (Written as "v7" at audit time — a mis-numbering; see UC-C-30 precondition 1.)
+- `payment_requests.recoverable_category_id` is a plain `INTEGER` with **no** `REFERENCES`, because a forward foreign key would have made SQLite reject every write to the table before **v6** created the parent — the reason is spelled out in v3's own schema comment (`migrations.go:163-170`, `PROGRESS.md:261-265`).
 
 **Data touched** — writes `payment_requests` (incl. `treatment`, `recoverable_category`, `recoverable_category_id`, `counterparty`, `expected_return_date`, `repayment_notes`), `request_attachments`, `audit_log`; reads `recoverable_categories`.
 
 **Non-functional / UX notes** — every revealed field uses `aria-required`, never `required`, because a `required` control inside a `data-when`-hidden container makes the form unsubmittable in Chrome; the asterisks are `aria-hidden` (`templates.go:1736`, `PROGRESS.md:277-278`).
 
-**Open questions** — as UC-C-30: the category select is hardcoded, so V4 and this use case's step 3 disagree about where the option list comes from (SD-06).
+**Open questions** — none, as UC-C-30. At the time of this audit the category select was hardcoded, so V4 and this use case's step 3 disagreed about where the option list came from (SD-06). **Fixed in Waves 2/4 (F-E-02/F-B-17):** the select now ranges over the active categories (`templates.go:1828-1831`), which is what step 3 always claimed.
 
 ---
 
@@ -2221,6 +2227,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 **Business rules**
 
 - "A live recoverable" has exactly one definition, shared by the report, the metrics and the rollups so the dashboard totals can never drift from the list underneath them: `treatment='recoverable' AND status NOT IN ('rejected','cancelled','withdrawn')` (`recoverables.go:250-254`).
+- **Correction (F-G-016/F-E-03, fixed, Wave 4):** the four tiles, the by-category rollup and the by-counterparty rollup all read through `RecoverableMetrics`/`RecoverableRollups`, which — like the register in UC-C-33 — now apply `recoverableScope(viewer)` (`internal/store/recoverables.go:347-357`, taken as a `RecoverableViewer` parameter at `recoverables.go:488` and `recoverables.go:532`; the viewer is built at `internal/app/recoverables.go:117-120`). At the time of this audit they did not, so a caller with `recoverable_report:view` and a narrower-than-`all` request scope saw company-wide totals; nothing changes for the seeded roles, which both hold `request=all`.
 - The money considered at risk is `COALESCE(py.amount, COALESCE(pr.approved_amount, pr.amount))` — what actually left when the payment exists, else what was approved, else what was asked for (`recoverables.go:256-258`).
 - The payment join excludes voided rows: `LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL` (`recoverables.go:294`).
 - `time.Now()` is called at the HTTP boundary and nowhere below it, so the same request always produces the same ageing and tests can pin "25 days overdue" to a fixed clock (`recoverables.go:19-21`).
@@ -2293,6 +2300,8 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Business rules**
 
+- **Correction (F-G-016/F-E-03, Wave 4, critical, fixed):** at the time of this audit, this screen, its CSV and its summary aggregates applied **no data scope at all** — `recoverable_report:view` alone returned every recoverable in the company, including rows the same caller was refused on `/requests/{id}`. Fixed: every read builds its options through `recoverableListOptions`, which sets `Viewer: a.recoverableViewer(r)` (`internal/app/recoverables.go:97`, viewer built at `recoverables.go:117-120`), and the store applies it via `recoverableScope` (`internal/store/recoverables.go:347-357`) in `RecoverableReport` (`recoverables.go:401-403`), `RecoverableMetrics` (`recoverables.go:488`) and `RecoverableRollups` (`recoverables.go:532`) alike — `RecoverableViewer` itself is `{Scope, ViewerID}` at `internal/store/models.go:281-288`, and an unrecognised scope returns `AND 0`, i.e. no rows — so the list, the CSV, the detail (33.e2/33.e3, which also now answer the request's own 404 rather than a blanket 403 — see below) and the dashboard rollups all agree with the caller's `request` scope. Nothing changes for Accounts or Admin, both seeded `request=all` — which is exactly why this went unnoticed originally.
+- **33.e3 correction:** an id outside the caller's scope now answers the same `404` as an unknown id (F-G-002, `recoverables.go:195-198`) — the register is not an existence oracle for requests the caller cannot see.
 - **V3:** the recoverable register and its total are separate from budget reporting — a different route, a different query and a different total (`recoverables.go:281-382`).
 - Ageing is whole calendar days from `asOf` to the expected return date, negative meaning overdue, computed in SQL as `CAST(julianday(...) - julianday(...) AS INTEGER)` (`recoverables.go:292`).
 - An undated row substitutes today so `julianday` never scans NULL into an int; the label then says `No fixed date`, not `Due today` (`recoverables.go:372-377`).
@@ -2358,6 +2367,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 - **D3:** exports are gated on their own `export` action, distinct from `view` (`permissions.go:165`).
 - The list and the export share one options builder, so a filtered list and its export can never disagree about the query (`recoverables.go:45-47`).
+- **Correction (F-G-016/F-E-03, Wave 4):** that shared builder now also carries the row scope. At the time of this audit the CSV applied none, so `recoverable_report:export` alone downloaded every counterparty, amount, requester and repayment note in the company — including rows the same caller is refused on `/requests/{id}`. `recoverableListOptions` sets `Viewer: a.recoverableViewer(r)` at the one place the screen and the download both pass through, so the file cannot drift from the screen (`internal/app/recoverables.go:97`, `recoverables.go:117-120`, `internal/store/recoverables.go:347-357`). See the same correction under UC-C-33.
 - `money.FormatPaise` already includes `₹`, so the CSV's Amount column carries the symbol (AF-05).
 
 **Data touched** — reads the register; writes `audit_log`.
@@ -2421,7 +2431,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Exception flows**
 
-- **35.e1 — the recoverable cannot be paid at all.** If `R`'s category does not require a project (ICD, security deposit, employee advance, other) the request carries `project_id`/`head_id` NULL, so the entry screen posts `head_id=0` and `validatePayment` refuses with `400` `valid head, date, and positive amount are required`. **Choose an EMD or PBG category (which require a project) for this test**, or the settlement in step 5 cannot happen. Recorded as suspected defect SD-07 / divergence DV-01 (`linking.go:244-247`, `templates.go:389`, `store.go:1621-1623`, `schema.go:60`).
+- **35.e1 — a project-less recoverable.** If `R`'s category does not require a project (ICD, security deposit, employee advance, other) the request carries `project_id`/`head_id` NULL, so the entry screen posts `head_id=0`. **Fixed in Wave 1 (migration v8, F-D-11/F-E-01/F-G-001, commit `633997b`) — this used to be suspected defect SD-07 / divergence DV-01, and is no longer one.** `payments.head_id` is nullable (`migrations.go:453`) and `validatePayment` accepts `HeadID==0` when the request's treatment is `recoverable` (`store.go:1922-1923`, caller at `store.go:1115`), so any of the four project-less categories settles in step 5 exactly like a project-bearing one.
 - **35.e2 — a locked month.** `validatePayment` returns `ErrLockedMonth` → `409`; unlock `M` first (`store.go:1624-1626`).
 - **35.e3 — the mobile grid.** At 390 px the desktop `.gridwrap` is `d-only` and the figures live in the accordion instead. The accordion contract is `.is-open` on a `<button class="acc-head">`, driven by `fervid-app.js`, **not** `<details>/<summary>`; built from `<details>` every project renders permanently collapsed (`PROGRESS.md:101-108`). Assert on the desktop project only, or drive the accordion the way the JS expects.
 
@@ -2436,7 +2446,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Non-functional / UX notes** — the grid is the widest screen in the product. `baseline.spec.ts` captured `/` as `grid` for several phases and therefore photographed the dashboard instead, which is why the accordion defect above was invisible; the route list now says `/grid` (`PROGRESS.md:96-100`, commit `278918b`).
 
-**Open questions** — none beyond SD-07.
+**Open questions** — none. (SD-07 is fixed — see 35.e1.)
 
 ---
 
@@ -2450,14 +2460,14 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | **Scope / level** | system · user-goal |
 | **Trigger** | Settling a recoverable request |
 | **Route(s)** | RT-04 then RT-06, then RT-23 / RT-25 to verify |
-| **Permission gate** | `reservation:reserve`, `payment:create` |
+| **Permission gate** | `reservation:reserve`, `payment:create` **+ `payment:settle`** (F-D-10, Wave 3) |
 | **Coverage IDs** | V7, V1, V6, L10 |
 | **Priority** | critical |
 
 **Preconditions**
 
-1. A recoverable request, `status='processing'`, held by the caller, with a resolvable `head_id` (exception 36.e1).
-2. `recoverable_category_id` is populated (it is, on both write paths and after the v7 back-fill — `requests.go:378-381`, `recoverables.go:71-78`).
+1. A recoverable request, `status='processing'`, held by the caller. `head_id` need **not** resolve — a recoverable settles with a NULL head since migration v8 (see 36.e1, since fixed).
+2. `recoverable_category_id` is populated (it is, on both write paths and after the **v6** back-fill — `requests.go:378-381`, `recoverables.go:71-78`; "v7" here was a mis-numbering, see UC-C-30 precondition 1).
 3. `expected_return_date` and `repayment_notes` are set (mandatory for every recoverable — UC-C-31).
 
 **Postconditions (success)**
@@ -2490,7 +2500,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Exception flows**
 
-- **36.e1 — a project-less recoverable cannot be settled.** ICD, security deposit, employee advance and `other` require no project, so `project_id`/`head_id` are NULL, the entry form posts `head_id=0`, and `validatePayment` answers `400`. Such a request is stuck at `processing` and shows `Awaiting payment` in the register for ever. This is the sharpest live defect in this document — SD-07 / DV-01 (`recoverables.go:25-30`, `linking.go:244-247`, `store.go:1621-1623`).
+- **36.e1 — a project-less recoverable.** ICD, security deposit, employee advance and `other` require no project, so `project_id`/`head_id` are NULL and the entry form posts `head_id=0`. **This was the sharpest live defect in this document — SD-07 / DV-01 — and is fixed as of Wave 1** (migration v8: `payments.head_id` nullable, `migrations.go:453`; `validatePayment` accepts `HeadID==0` for a recoverable, `store.go:1922-1923`, caller `store.go:1115`; commit `633997b`, `docs/qa/results/REPAIR-LOG.md`). The request now settles like any other and moves to `completed`/`completed_partial` in the same step (`recoverables.go:25-30`, `linking.go:244-247`).
 - **36.e2 — the queue row for a recoverable hides the head.** The `Project / head` cell renders the `.pill.recoverable` in place of the path, so the accountant cannot see from the queue whether a head is even set (`templates.go:718`).
 - **36.e3 — repayment tracking.** Out of scope; see UC-C-37.
 
@@ -2498,13 +2508,13 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 - **V7:** the settlement UPDATE touches only `status` and `updated_at`; the classification and the return information are what keep the row in the register after it closes (`store.go:925`, `recoverables_test.go:790-828`).
 - The register's live set includes every non-terminated status, including `completed` and `completed_partial`, which is why a closed recoverable is still visible (`recoverables.go:254`).
-- Nothing in the settlement flow branches on `treatment`: the accountant records a recoverable payment exactly as they record a budget one, and the exclusion is applied later, in the reporting queries (`store.go:866-956`, `store.go:1388`).
+- The accountant's screen flow does not branch on `treatment` — the entry form and confirm sheet are identical for a recoverable and a budget payment — but the store now does branch on it once, at `validatePayment`'s `headOptional` argument (`treatment == "recoverable"`, `store.go:1115`), which is what lets a project-less recoverable settle with no head. The budget-actuals exclusion is a separate, later branch in the reporting queries (`store.go:1388`).
 
 **Data touched** — writes `payments`, `payment_requests.status/updated_at`, `audit_log`; reads `recoverable_categories`.
 
 **Non-functional / UX notes** — the register's ageing label flips from `Awaiting payment` to a date-derived label the instant the payment lands, because `recoverableAgeing` switches on `paid_on` being non-empty (`recoverables.go:264-279`). That flip is a good single assertion for V7.
 
-**Open questions** — none beyond SD-07.
+**Open questions** — none. (SD-07 is fixed — see 36.e1.)
 
 ---
 
@@ -2718,7 +2728,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Preconditions**
 
-1. Migration v7 has run, seeding `notification_settings`; `app_settings` already exists from v3 (`migrations_notifications.go:70-72`).
+1. Migration v7 has run, seeding `notification_settings`; `app_settings` already exists from v3 (`migrations_notifications.go:70-72`). v7 is no longer the last migration: v8, v9 and v10 have landed since (`migrations.go:336`, `:344`, `:352`), and **v9 seeds nine further `notification_settings` rows** with `ON CONFLICT(event) DO NOTHING`, so an administrator's edits to v7's twelve survive (F-F-06, `migrations_notifications.go:132-157`). This screen therefore lists **21** rules, not twelve.
 2. The caller holds `notification:view` to read and `notification:edit` to write.
 3. `FERVID_SMTP_PASSWORD` is set in the process environment if authentication is needed (`config.go:40`).
 
@@ -2788,7 +2798,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Preconditions**
 
-1. `{event}` is one of the twelve seeded rows — `SetNotificationSetting` is an `UPDATE`, not an upsert, so an unknown event is rejected rather than silently creating a rule nothing will ever fire (`notifications.go:114-119`, `notifications.go:139-143`).
+1. `{event}` is one of the seeded rows — twelve at the time of this audit, 21 since migration v9 (F-F-06) — and `SetNotificationSetting` is an `UPDATE`, not an upsert, so an unknown event is rejected rather than silently creating a rule nothing will ever fire (`notifications.go:114-119`, `notifications.go:139-143`).
 2. The caller holds `notification:edit`.
 3. Both templates use only known `{{token}}` names (`notifications.go:109-114`).
 
@@ -2843,7 +2853,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Data touched** — writes `notification_settings`, `audit_log`; reads `users`, `user_roles`, `role_permissions`, `app_settings`.
 
-**Non-functional / UX notes** — the `.hint`'s braces are HTML entities (`&#123;&#123;`) so the literal `{{token}}` renders rather than being consumed (`templates.go:3365`). Each sheet's id is `ev-{event}`, i.e. one overlay per event — twelve overlays on the page.
+**Non-functional / UX notes** — the `.hint`'s braces are HTML entities (`&#123;&#123;`) so the literal `{{token}}` renders rather than being consumed (`templates.go:3365`). Each sheet's id is `ev-{event}`, i.e. one overlay per event — twelve overlays on the page at the time of this audit, 21 since migration v9 added the F-F-06 events (`templates.go:3535`, ranging over the same settings list the table renders from).
 
 **Open questions** — the sheets require JavaScript (`data-open`); there is no no-JS path to editing a rule.
 
@@ -2911,6 +2921,8 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 #### UC-C-43 — The twelve events and who each resolves to
 
+> **Correction (post-audit, Wave 2/4, migration v9, commit `25411b8`):** nine more events exist now, closing finding F-F-06 — the six workflow actions that fired nothing (withdraw, re-raise, release, unhold, accept-partial, either cancellation decision), plus reservation-reassignment and the split concern event. **The vocabulary is 21 events, not twelve.** This use case's title, preconditions, table and business rules describe the original twelve as they stood at the time of this audit; they are still accurate as a description of *that* twelve, so the table is kept rather than rewritten. The nine additions are listed in a second table immediately after it. See `internal/notify/events.go:22-67` and `docs/qa/results/REPAIR-LOG.md` (Wave 2 · vocabulary, Wave 4 · wiring).
+
 | | |
 |---|---|
 | **Goal** | "For each thing that can happen, exactly one rule row, one audience and one pair of templates." |
@@ -2925,12 +2937,12 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Preconditions**
 
-1. Migration v7 has seeded exactly twelve `notification_settings` rows (`migrations_notifications.go:28-68`, `migrations_notifications.go:105-114`).
-2. `notify.AllEvents` lists the same twelve in the screen's order (`events.go:23-27`).
+1. Migration v7 seeded exactly twelve `notification_settings` rows (`migrations_notifications.go:28-68`, `migrations_notifications.go:105-114`). As of migration v9, nine more rows exist (F-F-06) — 21 total.
+2. `notify.AllEvents` lists the original twelve, then v9's nine, in the screen's order (`events.go:71-79`).
 
-**Postconditions (success)** — the table lists twelve rows; each fires from at least one call site; each writes one `notifications` row per resolved recipient.
+**Postconditions (success)** — the table lists 21 rows (as of migration v9); each fires from at least one call site; each writes one `notifications` row per resolved recipient.
 
-**Postconditions (failure)** — a thirteenth row, a missing row, or an event with no writer.
+**Postconditions (failure)** — a row outside the seeded set, a missing row, or an event with no writer. (This read "a thirteenth row" at the time of this audit, when twelve was the whole vocabulary; migration v9 made the seeded set 21, so the test is "matches `notify.AllEvents`", not "is exactly twelve" — `events.go:71-79`.)
 
 **The twelve events**
 
@@ -2948,6 +2960,22 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | EV-10 | `payment_partial_review` | Partial payment sent for review | Approver | manager | `app.go:726` |
 | EV-11 | `reminder_pending` | Pending reminder | Whoever it is waiting on | manager | `reminders.go:19` |
 | EV-12 | `reminder_stale_reservation` | Stale reservation | Assigned accountant | accounts | `reminders.go:22` |
+
+**The nine events added by migration v9 (F-F-06, Wave 2 vocabulary / Wave 4 wiring)**
+
+| EV | Event key | Fired at | Closes |
+|---|---|---|---|
+| EV-13 | `request_withdrawn` | `requests.go:916` | the approver's queue item vanishing with no explanation on a withdraw (UC-C's sibling, request lifecycle) |
+| EV-14 | `request_reraised` | `requests.go:932` | the approver never learning a rejected request came back under a new number (D1) |
+| EV-15 | `request_unheld` | `linking.go:803` | Accounts lifting a hold silently (see the now-fixed Open Question below and UC-C-15) |
+| EV-16 | `reservation_released` | `linking.go:712` | SD-02: the release screen's "both are notified" promise, previously false |
+| EV-17 | `reservation_reassigned` | `linking.go:755` | the new assignee not learning a reservation was handed to them (G11) |
+| EV-18 | `payment_partial_accepted` | `linking.go:554` | the requester/accountant not learning a shortfall was accepted and the request closed `completed_partial` |
+| EV-19 | `payment_partial_concern` | `linking.go:567` | the accountant not learning the approver disputed a shortfall instead |
+| EV-20 | `request_cancellation_accepted` | `requests.go:1029` | SD-02-adjacent: neither cancellation decision fired anything before |
+| EV-21 | `request_cancellation_declined` | `requests.go:1031` | same, for the decline branch |
+
+Line numbers above are current as of this writing; `internal/app/linking.go` and `internal/app/requests.go` are both under active development in the same repair effort, so re-grep the event constant before citing a line number in a future test.
 
 **Main success scenario**
 
@@ -2979,16 +3007,16 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Business rules**
 
-- The twelve events are the G20 set; `AllEvents` is the order the admin screen renders and the seeded `sort_order` is what `AllNotificationSettings` orders by (`events.go:6-27`, `notifications.go:95-98`).
+- The original twelve events are the G20 set; `AllEvents` now also carries the nine F-F-06 additions, and is the order the admin screen renders — the seeded `sort_order` is what `AllNotificationSettings` orders by (`events.go:6-79`, `notifications.go:95-98`).
 - `resolveInAppUsers` mirrors `resolveRecipients` **in user-id space** — the same switches, two spaces — so what an admin ticks governs both channels (`service.go:130-132`).
 - "The Accounts group" is resolved by permission (`payment:process`), never by role name; no template compares a role name anywhere in the product (`service.go:88`, `PROGRESS.md:231-233`).
 - The plan's `kindFor(event)` classifier in `internal/notify` was dropped: `store.AddNotification` already derives `kind`, and a second copy could only drift (`events.go:29-32`).
 
 **Data touched** — writes `notifications`; reads `notification_settings`, `app_settings`, `users`, `user_roles`, `role_permissions`, `payment_requests`.
 
-**Non-functional / UX notes** — a coverage test should assert that every key in `AllEvents` has a seeded row **and** at least one `a.fire` (or scheduler) call site. Nine `a.fire` sites plus the derived urgent plus the two scheduler batches account for all twelve.
+**Non-functional / UX notes** — a coverage test should assert that every key in `AllEvents` has a seeded row **and** at least one `a.fire` (or scheduler) call site. At the time of this audit, nine `a.fire` sites plus the derived urgent plus the two scheduler batches accounted for all twelve; the count is larger now that F-F-06 added nine more call sites (see the table above).
 
-**Open questions** — no event fires on **unhold** (UC-C-15), on **release** or on **reassign** (UC-C-17, UC-C-18), yet the reservation screen's note promises notification. See SD-02.
+**Open questions** — none. At the time of this audit, no event fired on **unhold** (UC-C-15), **release** or **reassign** (UC-C-17, UC-C-18), despite the reservation screen's note promising notification (SD-02). **Fixed** — all three now fire (`EventRequestUnheld`, `EventReservationReleased`, `EventReservationReassigned`; see the nine-event table above and the correction on SD-02).
 
 ---
 
@@ -3127,7 +3155,7 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 **Non-functional / UX notes** — the queue's own stale marker uses the **fixed** 24-hour `store.StaleReservation`, while this scheduler uses the **configurable** `reminder_stale_days`. Set `reminder_stale_days=4` and the queue still flags a 25-hour reservation as stale and links to a screen whose banner claims a reminder went out at the one-day mark, while no reminder has been sent (AF-08). Recorded as divergence DV-02.
 
-**Open questions** — `calendarDaysBetween` exists, is documented as the intended semantics ("counts date boundaries crossed, not elapsed hours"), and is tested — but **no query uses it**. Both batches compare against `now.AddDate(0,0,-N)`, which is a wall-clock instant, not a calendar-day boundary. A request submitted at 23:00 is therefore reminded at 23:00 three days later, not at midnight (`store/reminders.go:49-58`, `store/reminders.go:94-95`, `store/reminders.go:116-117`). Recorded as divergence DV-03.
+**Open questions** — answered. At the time of this audit `calendarDaysBetween` existed, was documented as the intended semantics ("counts date boundaries crossed, not elapsed hours") and was tested, but **no query used it**; recorded as divergence DV-03. **Wave 2 answered it by deleting the helper** (F-F-08, decision 2 in `docs/qa/results/REPAIR-LOG.md`): a calendar boundary needs a timezone this app does not have, and under calendar semantics `reminder_repeat_days` degrades into nightly spam. Elapsed days are therefore the intended semantics, and the reasoning is recorded at `store/reminders.go:37-56`. The behaviour is unchanged — both batches still compare against `now.AddDate(0,0,-N)`, so a request submitted at 23:00 is reminded at 23:00 three days later, not at midnight (`store/reminders.go:94-95`, `store/reminders.go:116-117`). **One thing did not follow:** the Configuration note at `configuration.go:86` still says "counted in calendar days", which the decision said should read plain "days" — see the correction on DV-03.
 
 ---
 
@@ -3137,10 +3165,10 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 
 | DV | Claim | Spec / doc says | Code does |
 |---|---|---|---|
-| DV-01 | A recoverable request with no project can be paid | `V8` treats a project as *optional* on a recoverable, and four of the six seeded categories require none (`recoverables.go:25-30`) | `payments.head_id` is `INTEGER NOT NULL REFERENCES heads(id)` (`schema.go:60`) and `validatePayment` refuses `HeadID == 0` (`store.go:1621-1623`). `paymentEntry` posts `head_id` = 0 for a project-less request (`linking.go:244-247`, `templates.go:389`). **Such a request cannot be settled at all.** |
+| DV-01 | A recoverable request with no project can be paid | `V8` treats a project as *optional* on a recoverable, and four of the six seeded categories require none (`recoverables.go:25-30`) | **Fixed in Wave 1, migration v8 (F-D-11/F-E-01/F-G-001, commit `633997b`).** At the time of this audit, `payments.head_id` was `INTEGER NOT NULL REFERENCES heads(id)` and such a request could not be settled at all. As of migration v8, `payments.head_id` is nullable (`migrations.go:453`) and `validatePayment` accepts `HeadID == 0` when the request's treatment is `recoverable` (`store.go:1922-1923`, caller `store.go:1115`). The spec and the code now agree. |
 | DV-02 | One stale-reservation threshold | Phase 5 made the wait admin-set data: "The old hardcoded 3 and 1 are gone" (`store/reminders.go:26-33`) | Two thresholds coexist. The queue and the `Resume` link use the fixed `store.StaleReservation = 24 * time.Hour` (`models.go:410`, `linking.go:787`, `store.go:1098`); the scheduler uses `reminder_stale_days` (`reminders.go:46`). Configuring the latter does not move the former. |
-| DV-03 | Reminders count calendar days | `calendarDaysBetween` is documented as the semantics and the Configuration note says "Reminders are counted in calendar days, not working hours" (`store/reminders.go:49-58`, `configuration.go:86`) | Neither query calls it. Both use `now.AddDate(0,0,-N)`, an elapsed-instant comparison (`store/reminders.go:94-95`, `store/reminders.go:116-117`). `calendarDaysBetween` is referenced only by its own unit test (`store/reminders_test.go:35-39`). |
-| DV-04 | The settlement gate | The Phase-3 spec gates `POST /payments` on `payment,create` and the settlement decision behind the preview (`phase-3 spec:112-113`, `phase-3 spec:123`) | `POST /requests/{id}/settlement-preview` needs `payment:settle` (`app.go:454`) but the **writer** `POST /payments` needs only `payment:create` (`app.go:387`). A caller with `create` and not `settle` cannot open the sheet but can post the settlement directly, and `RecordPaymentForRequest` accepts it. `payment:mark_partial` is in the vocabulary and **gates nothing at all** (`permissions.go:153`). |
+| DV-03 | Reminders count calendar days | `calendarDaysBetween` is documented as the semantics and the Configuration note says "Reminders are counted in calendar days, not working hours" (`store/reminders.go:49-58`, `configuration.go:86`) | At the time of this audit: neither query called it, both used `now.AddDate(0,0,-N)` (an elapsed-instant comparison), and `calendarDaysBetween` was referenced only by its own unit test. **Half-resolved in Wave 2 (F-F-08, decision 2 in REPAIR-LOG.md): `calendarDaysBetween` was deleted rather than adopted** — a calendar boundary needs a timezone this app does not have, and under calendar semantics `reminder_repeat_days` degrades into nightly spam (`store/reminders.go:37-56`, which now records the reasoning; the helper is gone, grep finds only comments about its removal). The queries are unchanged and still elapsed-instant. **The other half stands:** `configuration.go:86` still reads "Reminders are counted in calendar days, not working hours", which the decision said should say plain "days". So the divergence is now only between the Configuration copy and the query. |
+| DV-04 | The settlement gate | The Phase-3 spec gates `POST /payments` on `payment,create` and the settlement decision behind the preview (`phase-3 spec:112-113`, `phase-3 spec:123`) | **Fixed in Wave 3 (F-D-10, commit `1fac147`).** At the time of this audit: `POST /requests/{id}/settlement-preview` needed `payment:settle` but the **writer** `POST /payments` needed only `payment:create`, so a caller with `create` and not `settle` could not open the sheet yet could post the settlement directly and `RecordPaymentForRequest` accepted it; `payment:mark_partial` was in the vocabulary and gated nothing at all. The write is no longer gated more weakly than its own pure preview: `POST /payments` is wrapped in `payment:create` **and** `payment:settle` (`app.go:446-447`), and `payment:mark_partial` is checked in `paymentCreate` when `settlement=partial` (`app.go:833-837`) — in the handler rather than as a route gate, because it applies to one value of one field. |
 | DV-05 | `ListPayments` and the linkage columns | `linking.go:209-210`: "ListPayments does not select the linkage columns — RequestID is always nil on its rows — so the linkage is re-read per candidate" | `ListPayments` **does** select `py.request_id, settlement, partial_reason` and scans them (`store.go:1263`, `store.go:1296-1305`). The comment is stale and `recentPaidByActor` performs an unnecessary `Payment(ctx,id)` per candidate over up to 200 rows. |
 | DV-06 | Two Configuration settings nothing reads | `configSections` declares `allow_direct_payments` ("Turning this on demands a written reason and is flagged in the audit log") and `payment_modes` ("Comma separated, in the order the payment form should offer them") (`configuration.go:69-74`) | Neither key is read anywhere outside `configSections` and the v3 seed (`migrations.go:247`). The payment modes are a hardcoded Go slice (`linking.go:993-995`), and no code path consults `allow_direct_payments` — X5 is absolute regardless of its value. |
 | DV-07 | The queue's route and name | Phase-3 spec: `/requests/to-pay`, handler `accountsQueue` (`phase-3 spec:119`) | The route is `GET /accounts-queue` (`app.go:476`). `/requests/to-pay` does not exist. The nav calls it **Accounts queue**, the `h1` says **Payment queue**, the spec says **To pay**. |
@@ -3150,23 +3178,23 @@ Actors used throughout: **Accountant** (Accounts role), **Second accountant**
 | DV-11 | `.metric-foot` has no CSS rule | `PROGRESS.md:368-375` lists `.btn.approve`, `.metric.warn`, `.metric.good` and `.metric-foot` as having **no rule**, "so today that third line in every metric tile renders unstyled" | All four have rules, added by Phase 6 (`fervid-ds.css:364-405`). `PROGRESS.md`'s own Phase-6 detail table records the fix at commit `a80e18f` (`PROGRESS.md:116`), so the Known-gaps entry contradicts the same file three sections earlier. |
 | DV-12 | `unbuiltPrefixes` holds `/admin/notifications` | `PROGRESS.md:229-230`: "It now holds exactly one line, `/admin/notifications` (Phase 5)" | `var unbuiltPrefixes []string` — empty (`nav.go:250`). Every navigable screen resolves. |
 | DV-13 | The blank-payee gap across the settlement flow | `fixtures.ts:178-188` carries a "KNOWN GAP" saying every Phase-3 screen reads `Request.VendorPayee`, so "the queue's Payee column, the entry screen's payee, the payment row's `vendor_payee` and the payment detail's `<h1>` are all blank" | Fixed at commit `fca6939`. `LinkablePaymentRequests` selects `COALESCE(NULLIF(v.name,''),r.vendor_payee,'')` as `Vendor` (`store.go:1136`), every screen reads `.Vendor` (`templates.go:717`, `templates.go:364`, `templates.go:584`), and the entry form copies it into the payment (`templates.go:390`, `linking.go:260`). The fixture comment is stale; `ISS-026`'s comment repeats it (`regression-issues.spec.ts:530-536`). |
-| DV-14 | Migration count | The coverage spec's audit footer says "single monotonic migration sequence v1–v5" (`coverage:145`) | v1–v7: v1 permissions, v2 vendors, v3 requests, v4 payments-linking, v5 accounts reservation grants, v6 recoverable categories, v7 notification settings (`PROGRESS.md:39-48`). |
+| DV-14 | Migration count | The coverage spec's audit footer said "single monotonic migration sequence v1–v5" (`coverage:145`) at the time of this audit | At the time of this audit: v1–v7 (v1 permissions, v2 vendors, v3 requests, v4 payments-linking, v5 accounts reservation grants, v6 recoverable categories, v7 notification settings, `PROGRESS.md:39-48`). **Stale now, too.** Three repair-wave migrations have run since: v8 (`migrations.go:336`, `payments.head_id` nullable, F-D-11/F-E-01/F-G-001), v9 (`migrations.go:344`, nine new notification events, F-F-06) and v10 (`migrations.go:352`, `payments.vendor_id`, F-G-009/F-G-010). The chain is **v1–v10** as of this writing (`internal/store/migrations.go`, `Version:` declared at lines 42/99/150/272/304/320/327/336/344/352; the roster comment is `migrations.go:20-29`). |
 | DV-15 | `store.RecoverableCategory` and `recoverableCategoryRules` | The Phase-4 plan expected `RequestInput.RecoverableCategoryID` | Phase 2 identifies a category by its **code**, so the table carries a `code` column that is the stable identity and `UpsertRecoverableCategory` never rewrites it (`recoverables.go:11-16`, `recoverables.go:211-213`, `PROGRESS.md:165-170`). Recorded here because the brief asks the `code` rule to be explicit. |
 
 ### 4.2 Suspected defects, ranked
 
-Ranked by the harm a real user would suffer. **None of these was fixed** — they are findings, per the shared brief.
+Ranked by the harm a real user would suffer. **At the time of this audit, none of these was fixed** — they were findings, per the shared brief that instructed *report, do not repair*. That instruction was later reversed; four repair waves have since run (`docs/qa/results/REPAIR-LOG.md`), and several entries below are now marked fixed inline rather than removed, so the finding stays on record.
 
 | SD | Severity | Defect | Concrete failure scenario | Evidence |
 |---|---|---|---|---|
-| SD-07 | **critical** | A recoverable request whose category requires no project can never be paid | An administrator approves an ICD for ₹5,00,000 (category `icd`, counterparty required, project not). An accountant takes it from the queue, fills the entry form, presses **Payment settled →**, chooses **Fully settled**, and presses **Confirm and save payment**. The store answers `400` `valid head, date, and positive amount are required`, because the hidden `head_id` is `0` and `payments.head_id` is `NOT NULL`. There is no control on the entry screen to choose a head. The request stays `processing` for ever, holding the accountant's reservation, and the recoverables register shows it as `Awaiting payment` permanently. Four of the six seeded categories are affected: `icd`, `security_deposit`, `employee_advance`, `other`. | `schema.go:60`, `store.go:1621-1623`, `linking.go:244-247`, `templates.go:389`, `recoverables.go:25-30`. No test covers it: `TestRecoverableRequestClosesOnPaymentRetainingClassification` seeds `project_id=nil` but a real `head_id` and passes `HeadID: headID` explicitly (`recoverables_test.go:802-814`). |
-| SD-06 | **high** | The request form's recoverable-category list is hardcoded, so V4 is not delivered in the UI | An administrator adds "Retention deposit" on Configuration and it saves, appears in the categories table, and is enforced by the validator. A requester then opens the new-request form, chooses **Recoverable**, and the **Category** select offers only the six seeded options — the new one is absent. Symmetrically, deactivating `icd` leaves it in the dropdown, and choosing it now fails validation with `choose a recoverable category`, which reads like the requester's mistake. | `templates.go:1738-1743` hardcodes six `<option>` values; the handler never passes `ListRecoverableCategories` into `request_form_fields` (`requests.go:100-130`). Contrast `recoverables_list`, which does render `.Categories` (`templates.go:3516`). |
-| SD-05 | **high** | The settlement POST accepts `head_id`, `vendor_payee` and `invoice_no` from the form without comparing them to the request | An accountant reserves request `PR-2026-000042` (approved against *Operations / Office Rent*) and posts `/payments` with `head_id` pointing at *Growth / Marketing* instead. The store validates only that the head is **active**; it never checks the head belongs to the request. The payment is recorded, the request closes as `completed`, and ₹X lands in a head nobody approved — moving the variance grid for the wrong project. The same holds for the payee name and the invoice number. | `app.go:1499-1508` reads all three straight from the form; `store.go:892-913` re-reads only `status`, `processing_by`, `amount` and `approved_amount` from the request, then inserts the form's values; `validatePayment` checks only head activity (`store.go:1627-1634`). |
-| SD-02 | medium | The reservation screen promises notifications that are never sent | An accountant releases a reservation, reads `The requester and the approver are both notified.` on the action bar, and tells the requester so. No email and no in-app row is created: `requestRelease` and `requestReassign` call no `a.fire`, and `events.go` has no release or reassign event. The requester learns nothing until they re-read the request. | `templates.go:1042`, `linking.go:623-635`, `linking.go:642-675`, `events.go:8-21`; the nine `a.fire` call sites do not include release, reassign or unhold. |
-| SD-01 | medium | The stale-reservation screen asserts a reminder that may not have been sent, and can never evidence it | An administrator sets `reminder_stale_days=4`. A reservation crosses 25 hours, so the queue flags it stale (fixed 24 h) and links to the nudge screen, whose banner states `A reminder went out at the one-day mark.` No reminder has been sent, and none will be for three more days. The "Who has been told" thread renders the request's audit trail, and the reminder path writes no audit row, so even a genuine reminder never appears there. | `templates.go:1091`, `linking.go:787-800` vs `reminders.go:46`; `MarkReminderSent` writes only a column (`store/reminders.go:131-134`) and `AddNotification` writes no audit row (`inapp.go:67-84`). `PROGRESS.md:390-391` recorded the missing writer before Phase 5; Phase 5 added the notification but not the trail line. |
-| SD-08 | medium | The notification centre is unreachable on desktop, and the unread count invisible | A manager signs in on a laptop, is sent a `payment_partial_review` notification, and has no way to see it: `.m-topbar` (which holds the bell and its `.dot`) is `display:none` above 860 px, and `navSpec` has no `/notifications` entry — only `/admin/notifications`, which the manager cannot open (`notification:view` is not in the Manager role). The row exists and is unread for ever. | `templates.go:74`, `fervid-ds.css:3881-3884`, `fervid-ds.css:4398`, `nav.go:82-92`, `migrations.go:365-378`. `shell.spec.ts` visits `/notifications` by URL, so it never notices (`shell.spec.ts:16`). |
-| SD-04 | low | The reservation-conflict screen gives the wrong reason for two of its three causes | An accountant posts a reserve for a request that is **on hold** (or not approved). `ReserveRequest` returns the same `ErrForbidden` for all three causes, so the screen reads `Someone else took this request before you` and `{Number} is now reserved by Someone else` — for a request nobody has reserved. The `.rh-status` pill also reads `Processing — Someone else` on a request whose status is `approved`. | `store.go:746-748` collapses three causes into one error; `linking.go:55-71` renders one message; `templates.go:775-785`. The picker gets it right — `On hold — {HoldReason}` (`templates.go:585`). |
-| SD-03 | low | A linked payment still accepts new attachments by route | `POST /payments/{id}/attachments` is gated only on `attachment:create` and `AddAttachment` has no `RequestID` guard, so a hand-rolled POST can add proof to an immutable payment. No screen offers the control, and the addition is audited, so the harm is limited — but it is the one mutation S12 does not close. | `app.go:392`, `store.go:1310-1329`; contrast the explicit guards at `store.go:609-611` and `store.go:649-651`. |
+| SD-07 | **critical** — **FIXED, Wave 1** | A recoverable request whose category requires no project can never be paid | At the time of this audit: an administrator approves an ICD for ₹5,00,000 (category `icd`, counterparty required, project not). An accountant takes it from the queue, fills the entry form, presses **Payment settled →**, chooses **Fully settled**, and presses **Confirm and save payment**. The store answered `400` `valid head, date, and positive amount are required`, because the hidden `head_id` was `0` and `payments.head_id` was `NOT NULL`. **Fixed by migration v8 (F-D-11/F-E-01/F-G-001, commit `633997b`, decision 1 in REPAIR-LOG.md): `payments.head_id` is now nullable and `validatePayment` accepts a zero head for a recoverable settlement.** All four affected categories (`icd`, `security_deposit`, `employee_advance`, `other`) now settle normally. | `migrations.go:453` — the `head_id INTEGER REFERENCES heads(id)` line of `upPaymentsHeadNullable`'s `CREATE TABLE payments_v8`, with no `NOT NULL`; `store.go:1922-1923` (`validatePayment`'s `headOptional` guard), `store.go:1115` (caller passes `treatment=="recoverable"`), `recoverables.go:25-30`. Note `migrations.go:173` is a *different* `head_id` — `payment_requests`', from v3 — and is not the one this finding is about. |
+| SD-06 | **high** — **FIXED, Waves 2/4** | The request form's recoverable-category list is hardcoded, so V4 is not delivered in the UI | At the time of this audit: an administrator adds "Retention deposit" on Configuration and it saves, appears in the categories table, and is enforced by the validator; a requester then opens the new-request form, chooses **Recoverable**, and the **Category** select offers only the six seeded options. Symmetrically, deactivating `icd` left it in the dropdown, and choosing it then failed validation with `choose a recoverable category`, which read like the requester's mistake. **Fixed (F-E-02/F-B-17): Wave 2 added `ListRecoverableCategories(ctx, activeOnly)` and Wave 4a rewrote the select to range over it.** | `templates.go:1828-1831` now renders `{{range .Categories}}<option value="{{.Code}}">`, with a `Choose a category` placeholder when none is selected and the hint `Categories are maintained by your administrator.` (`templates.go:1831`). See REPAIR-LOG.md Waves 2 and 4. |
+| SD-05 | **high** — **FIXED, Wave 1** | The settlement POST accepts `head_id`, `vendor_payee` and `invoice_no` from the form without comparing them to the request | At the time of this audit: an accountant reserves request `PR-2026-000042` (approved against *Operations / Office Rent*) and posts `/payments` with `head_id` pointing at *Growth / Marketing* instead; the store validated only that the head was active and never checked it belonged to the request. **Fixed (F-D-01, commit `633997b`): `RecordPaymentForRequest` no longer reads `head_id`, `vendor_payee` or `invoice_no` from the form at all** — it re-reads all three from the request row it already holds open and overwrites whatever the form sent, before `validatePayment` ever runs. A forged value in the POST body is simply discarded. | `store.go:1110-1115` (the re-read and overwrite); `app.go:1988-1997` (`paymentInput`) still parses the form fields into `PaymentInput`, but they are replaced before use. |
+| SD-02 | medium — **FIXED, Waves 2/4** | The reservation screen promises notifications that are never sent | At the time of this audit: an accountant releases a reservation, reads `The requester and the approver are both notified.` on the action bar, and tells the requester so, but no email and no in-app row was created. **Fixed.** Migration v9 (Wave 2, commit `25411b8`) declared `EventReservationReleased`, `EventReservationReassigned` and `EventRequestUnheld`; Wave 4 wired them. `requestRelease` now fires `notify.EventReservationReleased`, `requestReassign`(-the reservation kind) fires `notify.EventReservationReassigned`, and unhold fires `notify.EventRequestUnheld`. | `internal/notify/events.go:44-52`; call sites `internal/app/linking.go:712` (released), `:755` (reassigned), `:803` (unheld) — line numbers as of this writing, verify against current source before citing further. |
+| SD-01 | medium — **the "no audit row" half is FIXED, Wave 2; the two-threshold mismatch is not** | The stale-reservation screen asserts a reminder that may not have been sent, and (at the time of this audit) could never evidence it | An administrator sets `reminder_stale_days=4`. A reservation crosses 25 hours, so the queue flags it stale (fixed 24 h, DV-02, still true) and links to the nudge screen, whose banner states `A reminder went out at the one-day mark.` No reminder has been sent, and none will be for three more days — **this half stands; DV-02 is not one of the four repair waves' fixes.** The audit-trail half is fixed: `MarkReminderSent` now writes a `remind` audit row (`Action: "remind", EntityType: "payment_request"`) with the reminder label and recipients (F-F-02, commit `25411b8`), so a genuine reminder now does appear in "Who has been told". | `linking.go:787-800` vs `reminders.go:46` (threshold mismatch, unchanged); `store/reminders.go:171-200` (`MarkReminderSent` now writes the audit row via `recordAuditTx`, fixed). |
+| SD-08 | medium — **FIXED, Wave 4** | The notification centre is unreachable on desktop, and the unread count invisible | At the time of this audit: a manager signs in on a laptop, is sent a `payment_partial_review` notification, and has no way to see it, because `.m-topbar` is `display:none` above 860 px and `navSpec` had no `/notifications` entry. **Fixed (F-F-05).** `navSpec` now carries a top-level `notifications` item (`Href: "/notifications"`, no `Resource` gate — every row the screen returns is already scoped to the signed-in user by the store), with `Badge: "notifications"` for the unread count injected in `buildPageShell`. | `nav.go:53-61`. |
+| SD-04 | low — **FIXED, Waves 1/4** | The reservation-conflict screen gives the wrong reason for two of its three causes | At the time of this audit: an accountant posts a reserve for a request that is **on hold** (or not approved), `ReserveRequest` returned the same `ErrForbidden` for all three causes, and the screen read `Someone else took this request before you` about a request nobody had reserved. **Fixed (F-D-02): Wave 1 gave `ReserveRequest` three distinguishable sentinels and Wave 4 taught the screen to branch on them.** `linking.go:61-65` declares `conflictTaken` / `conflictHold` / `conflictNotApproved`; `conflictCause` (`linking.go:109-123`) reads the sentinel **and** the row together, because they can disagree — `RecordPaymentForRequest` leaves `processing_by` set on a completed request, so the row wins on "does anybody hold it". The page title is now `Already taken` / `On hold` / `Not available to process` (`linking.go:80-92`). | `store.go:890-891` (`ErrAlreadyReserved`), `store.go:937`, `linking.go:55-92`, `linking.go:109-123`. |
+| SD-03 | low — **FIXED, Waves 1/3** | A linked payment still accepts new attachments by route | At the time of this audit: `POST /payments/{id}/attachments` was gated only on `attachment:create` and `AddAttachment` had no `RequestID` guard, so a hand-rolled POST could add proof to an immutable payment — the one mutation S12 did not close. **Fixed twice over.** Wave 1 (F-D-08) made `AddAttachment` refuse a payment whose `request_id` is set, matching the edit and void guards (`store.go:1580-1587`). Wave 3 (F-A-03, decision 4 in REPAIR-LOG.md) added the ownership check on the write path as well — `attachmentUpload` resolves the payment and applies `canReadPayment` before staging anything (`app.go:1050-1070`) — kept even though F-D-08 makes it unreachable today, because the hole returns the day a free-standing payment becomes creatable. Both refusals are **404**, not 403, so the route is not an id-enumeration oracle (`app.go:1040-1048`). | `store.go:1580-1587`, `app.go:1050-1070`, `app.go:1040-1048`. |
 | SD-09 | low | Two Configuration settings do nothing | An administrator ticks **Allow direct payments without a request** and saves. Nothing changes: X5 is unconditional. Likewise editing **Payment modes offered** leaves the entry form's six modes untouched. Both are recorded to the audit log as if they had an effect. | `configuration.go:69-74`; no reader outside `configSections` and `migrations.go:247`; `linking.go:993-995` hardcodes the modes. |
 | SD-10 | low | Neither partial-review decision, nor a hold, is reachable without JavaScript | With scripting off, `#close-sheet`, `#concern-sheet` and `#hold-sheet` all start `hidden` and are opened only by `data-open`, so a manager cannot decide a partial settlement and an accountant cannot place a hold. The settlement sheet, by contrast, has a full-page `settlement_confirm` fallback, and the release screen's `data-when` reveal degrades safely. | `templates.go:911`, `templates.go:928`, `templates.go:2459`, `fervid-app.js:401-406`; contrast `linking.go:327-335`. |
 
@@ -3259,7 +3287,7 @@ Every ID in the four sections this document owns is covered. Read the other way 
 | Recoverables | V1 | UC-C-31, UC-C-36 |
 | Recoverables | V2 | UC-C-32, UC-C-35 |
 | Recoverables | V3 | UC-C-32, UC-C-33, UC-C-34, UC-C-35 |
-| Recoverables | V4 | UC-C-30 (and SD-06: not delivered in the UI) |
+| Recoverables | V4 | UC-C-30 (SD-06 — "not delivered in the UI" — is fixed; the form's select now reads the table, `templates.go:1828-1831`) |
 | Recoverables | V5 | UC-C-30, UC-C-31 |
 | Recoverables | V6 | UC-C-31, UC-C-33, UC-C-36 |
 | Recoverables | V7 | UC-C-36 |

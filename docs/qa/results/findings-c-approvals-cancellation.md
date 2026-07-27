@@ -1,5 +1,13 @@
 # Findings — C: the approver's decisions and the cancellation flow
 
+> **Frozen evidence, not current status.** This document records what was found
+> at commit `30edd6a` and is **not** updated as defects are fixed — the same rule
+> `AUDIT-REPORT.md` states for itself. Its present-tense claims describe the
+> audited commit, so a statement here that something "is" broken means it was
+> broken then; several have since been repaired, and a few of the `file:line`
+> citations have shifted. For what was actually **done** about each finding, read
+> [`REPAIR-LOG.md`](REPAIR-LOG.md).
+
 **Suite** `tests/e2e/audit-c-approvals-cancellation.spec.ts` — 94 executed cases, **`94 passed (10.9s)`, 0
 failed** on a fresh server and a fresh database
 (`FERVID_E2E_PORT=4303 npx playwright test tests/e2e/audit-c-approvals-cancellation.spec.ts --project=chromium --reporter=line`).

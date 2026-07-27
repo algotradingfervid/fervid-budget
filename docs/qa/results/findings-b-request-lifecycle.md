@@ -1,5 +1,13 @@
 # Findings — B · the payment-request lifecycle
 
+> **Frozen evidence, not current status.** This document records what was found
+> at commit `30edd6a` and is **not** updated as defects are fixed — the same rule
+> `AUDIT-REPORT.md` states for itself. Its present-tense claims describe the
+> audited commit, so a statement here that something "is" broken means it was
+> broken then; several have since been repaired, and a few of the `file:line`
+> citations have shifted. For what was actually **done** about each finding, read
+> [`REPAIR-LOG.md`](REPAIR-LOG.md).
+
 From the audit of raising a request and everything the requester can still do to
 it. Suite: `tests/e2e/audit-b-request-lifecycle.spec.ts` · cases:
 `docs/qa/test-cases/TC-B-request-lifecycle.md`.

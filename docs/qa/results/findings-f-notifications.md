@@ -1,5 +1,13 @@
 # Findings — TC-F Notifications & Reminders
 
+> **Frozen evidence, not current status.** This document records what was found
+> at commit `30edd6a` and is **not** updated as defects are fixed — the same rule
+> `AUDIT-REPORT.md` states for itself. Its present-tense claims describe the
+> audited commit, so a statement here that something "is" broken means it was
+> broken then; several have since been repaired, and a few of the `file:line`
+> citations have shifted. For what was actually **done** about each finding, read
+> [`REPAIR-LOG.md`](REPAIR-LOG.md).
+
 Eight findings, ranked by severity. Confidence is "confirmed" only where reproduced two
 independent ways (a live Playwright assertion plus a direct code citation, or two code paths);
 "probable" where the code is unambiguous but no live reproduction was attempted; nothing here is

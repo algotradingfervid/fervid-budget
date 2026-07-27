@@ -52,6 +52,23 @@ than in every row:
   critical). Every test case whose precondition is "a *paid* recoverable
   request" is marked `BLOCKED` and cross-references the Go store test that
   proves the same logic at the unit level instead.
+  - **Since the run — F-E-01 is Fixed**, in REPAIR-LOG.md Wave 1, commit
+    `633997b` (with F-D-11 and F-G-001), under its decision 1: the head became
+    **optional** rather than collected. Migration **v8** rebuilds `payments`
+    with `head_id INTEGER REFERENCES heads(id)` and no `NOT NULL`
+    (`internal/store/migrations.go:453`, in `upPaymentsHeadNullable` at `:435`),
+    and `validatePayment` takes a `headOptional` flag that is true only when
+    `treatment == "recoverable"` (`internal/store/store.go`, `validatePayment`,
+    called from `RecordPaymentForRequest`). The fieldset still collects no head,
+    and that is now correct: the grid and the monthly report exclude
+    recoverables *by treatment*, so a recoverable's head was never meaningful to
+    any reader, and collecting one would have made every accountant choose a
+    value nothing consumes. A budget or reimbursement payment still requires an
+    active head under an active project. **Every expected result below that
+    turns on "a recoverable can never be settled" is stale, and the two cases
+    blocked on it (TC-E-031, TC-E-042) are drivable** — REPAIR-LOG.md records
+    both coming back from `test.fixme()` in spec pass 1, commit `350c108`. The
+    verdicts recorded below are the frozen `30edd6a` record and stand as run.
 
 ---
 
@@ -68,8 +85,8 @@ than in every row:
 | TC-E-007 | No delete action exists for a category, in use or not | V4 | proof-of-absence | high | PASS |
 | TC-E-008 | The pre-Phase-4 standalone `/recoverable-categories` screen is gone | V4 | proof-of-absence | low | PASS |
 | TC-E-009 | Requester, Manager, Accounts refused `POST /configuration/recoverable-categories`; Admin succeeds | V4, R6 | permission | high | PASS |
-| TC-E-010 | A newly admin-created category is never selectable on the real request form | V4 | regression | medium | FAIL (product defect) |
-| TC-E-011 | A deactivated seed category is still offered on the request form and only refused after submit | V4, V5 | regression | medium | FAIL (product defect) |
+| TC-E-010 | A newly admin-created category is never selectable on the real request form | V4 | regression | medium | FAIL (product defect) · **Fixed, now PASS** — F-E-02, REPAIR-LOG.md Wave 4; see the detailed verdict below |
+| TC-E-011 | A deactivated seed category is still offered on the request form and only refused after submit | V4, V5 | regression | medium | FAIL (product defect) · **Fixed, now PASS** — F-E-02, REPAIR-LOG.md Wave 4; see the detailed verdict below |
 | TC-E-012 | EMD without a project is refused | V5 | negative | high | PASS |
 | TC-E-013 | EMD with a project is accepted | V5 | functional | high | PASS |
 | TC-E-014 | PBG without a project is refused | V5 | negative | high | PASS |
@@ -88,20 +105,20 @@ than in every row:
 | TC-E-027 | Baseline: grid and per-head report agree on the actual for a project/head before any change | V2, V3 | functional | high | PASS |
 | TC-E-028 | A settled budget payment raises the grid actual by exactly the paid amount | V2 | functional | high | PASS |
 | TC-E-029 | The same rise is reflected in the per-head report and both CSV exports | V2, D3 | functional | high | PASS |
-| TC-E-030 | **A recoverable request raised through the real screens can be reserved, paid and closed** | V2, V3, V7 | functional | critical | FAIL (product defect) |
-| TC-E-031 | Grid/report stay unchanged after a *paid* recoverable — blocked by F-E-01 | V2, V3 | functional | high | BLOCKED |
+| TC-E-030 | **A recoverable request raised through the real screens can be reserved, paid and closed** | V2, V3, V7 | functional | critical | FAIL (product defect) · **Fixed, now PASS** — REPAIR-LOG.md Wave 1, migration v8 (`633997b`); see the detailed verdict below |
+| TC-E-031 | Grid/report stay unchanged after a *paid* recoverable — blocked by F-E-01 | V2, V3 | functional | high | BLOCKED · **Unblocked, now PASS** — F-E-01 fixed Wave 1; `tests/e2e/audit-e-recoverables.spec.ts` carries this test with no `test.fixme()` |
 | TC-E-032 | An approved-but-unpaid recoverable contributes nothing to grid or report | V2 | functional | high | PASS |
 | TC-E-033 | That unpaid recoverable is present in the register and the dashboard's outstanding totals | V3 | functional | high | PASS |
 | TC-E-034 | `/recoverables/list.csv` total agrees with the on-screen list total | V3, D3 | functional | medium | PASS |
 | TC-E-035 | Dashboard renders its metric strip, rollups and the two explanatory banners | V2, V3 | functional | medium | PASS |
 | TC-E-036 | An unpaid recoverable never reads as overdue, however old its expected return date | V3 | boundary | high | PASS |
-| TC-E-036b | The dashboard's "Past expected return" tile applies the same "unpaid can't be overdue" rule as the row | V3 | functional | medium | FAIL (product defect) |
+| TC-E-036b | The dashboard's "Past expected return" tile applies the same "unpaid can't be overdue" rule as the row | V3 | functional | medium | FAIL (product defect) · **Fixed, now PASS** — F-E-05, REPAIR-LOG.md Wave 2 (`25411b8`); see the detailed verdict below |
 | TC-E-037 | `/recoverables/list.csv` reaches the export handler, not the `{id}` detail handler | V3 | regression | high | PASS |
 | TC-E-038 | `/recoverables/{id}` for a non-recoverable request answers 404 | V3 | negative | medium | PASS |
 | TC-E-039 | `ageing=unpaid` narrows the register correctly | V3 | functional | low | PASS |
 | TC-E-040 | Dashboard Outstanding metric and category rollup agree with the list's own footer total | V3 | functional | medium | PASS |
 | TC-E-041 | `.metric-foot` now carries a real CSS rule (informational; previously a Phase-0 gap) | — | regression | low | PASS |
-| TC-E-042 | Category and expected-return survive settlement — blocked by F-E-01 | V7 | regression | high | BLOCKED |
+| TC-E-042 | Category and expected-return survive settlement — blocked by F-E-01 | V7 | regression | high | BLOCKED · **Unblocked, now PASS** — F-E-01 fixed Wave 1; `tests/e2e/audit-e-recoverables.spec.ts` carries this test with no `test.fixme()` |
 | TC-E-043 | Before settlement, the detail screen already shows category and expected return correctly | V6, V7 | functional | medium | PASS |
 | TC-E-044 | An EMD linked to a real project shows in that project's register row while absent from its grid actuals | V8, V2 | functional | high | PASS |
 | TC-E-045 | A recoverable with no project reads "Not project linked" everywhere | V8 | functional | low | PASS |
@@ -255,7 +272,10 @@ Note also that `recoverable_category:delete` **is** a valid permission grant
 "Recoverables" row/"Cancel" column (`internal/app/permmap.go:106-117`), but no
 route or handler ever checks it — it is a dead grant.
 **Actual:** Matches. **Verdict:** PASS. (Dead-grant observation recorded as
-F-E-03, informational.)
+**F-E-06**, informational — this row cited F-E-03, which is the register's
+missing data scope, not the dead grant; corrected against the register in
+`docs/qa/results/findings-e-recoverables.md:96`. F-E-06 is still open, and
+`FIX-PLAN.md` puts it in Wave 5.)
 
 #### TC-E-008 — The pre-Phase-4 standalone `/recoverable-categories` screen is gone
 **Traces to:** V4. **Type:** proof-of-absence. **Priority:** low.
@@ -296,6 +316,13 @@ path (only `internal/app/configuration.go:98` and
 enforceable (proven in TC-E-024–026 via `probePost`) but **unreachable by
 anyone clicking through the product** — it can only be used by a caller who
 already knows its code and can craft a raw POST.
+**Since the run:** **Fixed** in REPAIR-LOG.md Wave 4, per the F-E-02/F-B-17
+comment now at `internal/app/templates.go:1818-1825`: the `<select>` is
+rendered from `.Categories` (the active rows Wave 2's `ListRecoverableCategories`
+supplies), `{{range .Categories}}<option value="{{.Code}}" …>{{.Name}}</option>{{end}}`
+(`templates.go:1829`), not six literal options. A newly created category is
+now selectable as soon as it is active. The verdict below is the frozen
+`30edd6a` record and stands as run.
 **Verdict:** FAIL (product defect) — see F-E-02 (high).
 
 #### TC-E-011 — A deactivated seed category is still offered on the request form and only refused after submit
@@ -311,6 +338,11 @@ the select is the same hardcoded six regardless of `active`. Selecting it and
 submitting is refused only server-side, with the generic "choose a recoverable
 category" message, which reads oddly next to a form that shows "Other"
 plainly selected.
+**Since the run:** **Fixed**, same root cause and same commit as TC-E-010.
+The request form now calls `ListRecoverableCategories(ctx, true)` — active
+only — at `internal/app/requests.go:448`, so a deactivated category no longer
+appears in the `<select>` at all. The verdict below is the frozen `30edd6a`
+record and stands as run.
 **Verdict:** FAIL (product defect) — same root cause as TC-E-010, folded into
 F-E-02 (high).
 
@@ -507,6 +539,16 @@ regardless of category (`needsRecoverable()` never touches `HeadID`,
 `requests.go:173-190`); and `validatePayment` refuses `HeadID == 0`
 (`store.go:1620-1623`). **No recoverable request raised through the product,
 in any category, can ever be settled.**
+**Since the run:** **Fixed** in REPAIR-LOG.md Wave 1, commit `633997b`
+(F-E-01 · F-D-11 · F-G-001). Migration **v8** rebuilds `payments` with
+`head_id INTEGER REFERENCES heads(id)` — no `NOT NULL`
+(`internal/store/migrations.go:453`, `upPaymentsHeadNullable` at `:435`) — and
+`validatePayment` takes `headOptional`, true only when the payment settles a
+recoverable request (`internal/store/store.go`, `validatePayment`). All five
+categories now settle with `head_id=0`. Four payment readers that inner-joined
+`heads` and would have silently dropped a NULL-head row are `LEFT JOIN` +
+`COALESCE` for the same reason. The verdict below is the frozen `30edd6a`
+record and stands as run.
 **Verdict:** FAIL (product defect) — F-E-01, critical. Reproduced three ways:
 driving the full UI flow through reservation and settlement for all five
 categories (this test), an earlier manual Playwright probe against a live
@@ -533,6 +575,12 @@ directly (bypassing the broken form path):
 delta-zero property this test would assert. That is unit-level, not
 end-to-end, evidence — it proves the logic is right, not that a user can ever
 reach it.
+**Since the run:** the block is lifted. F-E-01 is **Fixed** in REPAIR-LOG.md
+Wave 1, commit `633997b` — migration **v8** makes `payments.head_id` nullable
+and `validatePayment` requires a head only outside a recoverable settlement —
+so a *paid* recoverable is reachable through the product for the first time.
+REPAIR-LOG.md records this case coming back from `test.fixme()` in spec pass 1,
+commit `350c108`. The `BLOCKED` verdict below is the frozen `30edd6a` record.
 **Verdict:** BLOCKED (reason: F-E-01).
 
 #### TC-E-032 — An approved-but-unpaid recoverable contributes nothing to grid or report
@@ -609,6 +657,13 @@ the same reasoning TC-E-036 already established at the row level, so the
 aggregate that summarises those rows should agree with them.
 **Actual:** the count rises by exactly 1. Root cause quoted above under
 TC-E-036: `recoverables.go:391-406` has no `paid_on` guard.
+**Since the run:** **Fixed** in REPAIR-LOG.md Wave 2, commit `25411b8`.
+`RecoverableMetrics` now carries the same `paid <> ''` guard on the overdue
+pair that `recoverableAgeing` already had (`internal/store/recoverables.go:495-498`),
+so an approved-but-unpaid recoverable no longer counts as overdue on the
+dashboard tile. `tests/e2e/audit-e-recoverables.spec.ts` carries this test
+with no `test.fail()`. The verdict below is the frozen `30edd6a` record and
+stands as run.
 **Verdict:** FAIL (product defect) — F-E-05, medium. Reproduced twice: live,
 via this test, and by reading the SQL directly.
 
@@ -663,7 +718,9 @@ Phase 0 never delivered"), which post-dates the "Known gaps" section in
 `docs/superpowers/PROGRESS.md:368-375` — that section is now **stale
 documentation**, not a live defect.
 **Verdict:** PASS (the CSS rule exists and applies); the stale doc note is
-recorded as F-E-06 (informational, doc-only).
+recorded as **F-E-09** (informational, doc-only — this row cited F-E-06, which
+is the dead `recoverable_category:delete` grant; corrected against
+`docs/qa/results/findings-e-recoverables.md:139`).
 
 ---
 
@@ -682,6 +739,12 @@ calls `RecordPaymentForRequest` directly, then asserts `status='completed'`,
 notes are all retained, and that the grid actual is still 0. That test passes
 today — the retention *logic* is correct — but, as with TC-E-031, no user can
 reach the state it starts from.
+**Since the run:** the block is lifted, for the same reason as TC-E-031. F-E-01
+is **Fixed** in REPAIR-LOG.md Wave 1, commit `633997b`; a recoverable settles
+with no head, so the state this case starts from is reachable through the real
+screens. REPAIR-LOG.md records the case coming back from `test.fixme()` in spec
+pass 1, commit `350c108`. The `BLOCKED` verdict below is the frozen `30edd6a`
+record.
 **Verdict:** BLOCKED (reason: F-E-01).
 
 #### TC-E-043 — Before settlement, the detail screen already shows category and expected return correctly
@@ -711,6 +774,13 @@ payment exists yet for this request (approved-but-unpaid, same caveat as
 TC-E-032/044 — a genuinely *paid* linked recoverable cannot be produced while
 F-E-01 stands).
 **Actual:** matches. **Verdict:** PASS.
+**Since the run:** the caveat no longer applies — a *paid* linked recoverable is
+producible, because F-E-01 is **Fixed** in REPAIR-LOG.md Wave 1, commit
+`633997b`. "No head — recoverables never carry one" in the step above is still
+true of the request and is now also true of its payment: `payments.head_id` is
+nullable and `validatePayment` requires a head only outside a recoverable
+settlement (`internal/store/migrations.go:453`; `internal/store/store.go`,
+`validatePayment`).
 
 #### TC-E-045 — A recoverable with no project reads "Not project linked" everywhere
 **Traces to:** V8. **Type:** functional. **Priority:** low.
@@ -760,6 +830,28 @@ accounted for above). **Verdict:** PASS.
 ---
 
 ### Section 8 — Permissions
+
+The five cases here assert the **route gate** only — which roles reach
+`/recoverables`, `/recoverables/list`, `/recoverables/list.csv` and
+`/recoverables/{id}`. None of them asserts the **row scope** behind the gate,
+and that gap is `F-E-03` (with its sibling `F-G-016`, critical): the register
+was a second view over `payment_requests` that never asked who was reading it,
+so `recoverable_report:view` alone returned every category, counterparty,
+project, amount, requester and repayment note in the company — including rows
+the same caller is refused on `/requests/{id}`. It was found by reading rather
+than by a case here, which is why no verdict below records it.
+
+**Fixed** — REPAIR-LOG.md Wave 4, commits `709dfa6` (rows, CSV and detail) and
+`629925e` (the summary's aggregates). `recoverableViewer` supplies the caller's
+`request` scope at the one place the list and its download both pass through
+(`internal/app/recoverables.go:117-119`), `recoverableScope` applies it in the
+SQL rather than in a handler-side filter (`internal/store/recoverables.go`,
+`recoverableScope`, used by `RecoverableReport`, `RecoverableMetrics` and
+`RecoverableRollups`), and `recoverableDetail` answers **404** for a row outside
+scope so the register is not an existence oracle either
+(`internal/app/recoverables.go:180-199`). Nothing was exposed under the shipped
+roles — Accounts and Admin both hold `request=all` — which is exactly why the
+five gate cases below could all pass while the scope was missing.
 
 #### TC-E-051 — Requester refused `recoverable_report:view` on all three view routes
 **Traces to:** R6. **Type:** permission. **Priority:** high.

@@ -503,6 +503,7 @@ unconditionally; the store is the only gate).
 **TC-B-080** · P2 · `POST /requests/{id}/comment` as the stranger.
 *Expected*: 403 — `requestComment` calls `loadViewableRequest` first — and the body never appears on the thread.
 *Actual*: as expected. · **PASS**
+*Since the run*: the refusal is now **404**. `loadViewableRequest` answers a row outside the caller's scope exactly as it answers one that does not exist, so the status code is no longer an existence oracle (**F-G-002**, fixed in REPAIR-LOG.md Wave 3 and Wave 4, commits `1fac147` and `709dfa6` — `internal/app/requests.go:289-306`, `requestComment` at `:936-937`). The half this case is about — the body never reaching the thread — is unchanged.
 
 **TC-B-081** · P2 · `body="   "`.
 *Expected*: 400 · `comment cannot be empty`.
@@ -521,10 +522,12 @@ unconditionally; the store is the only gate).
 **TC-B-084** · P1 · Raise a request with a document, read the Download link the detail renders, follow it as the owner.
 *Expected*: 200, serving the requester's own file. The screen offers the link, so the link must work.
 *Actual*: **404.** `request_detail` links a `request_attachments` row id to `GET /attachments/{id}`, and that route reads `payment_attachments` (`internal/store/store.go:1355`) — a different table with a sequence of its own. Every request attachment is therefore undownloadable, and worse, an id that happens to exist in the payment table serves an **unrelated payment's file**. · **FAIL (product defect) — F-B-09**, annotated `it.fail()`.
+*Since the run*: **Fixed** in REPAIR-LOG.md Wave 3, commit `1fac147` (F-A-05/F-B-09). Request documents have a route of their own, `GET /requests/{id}/attachments/{attachmentID}` (`internal/app/app.go:460`, handler `requestAttachmentDownload` at `:1115`), which reads `request_attachments`, refuses a document that does not belong to the `{id}` in the path, and then applies the request's own scope. `GET /attachments/{id}` now serves payment attachments only, so the two id sequences no longer collide. The verdict above is the frozen `30edd6a` record and stands as run.
 
 **TC-B-085** · P7 · Confirm the Requester is refused the request (403) and the payment (403) behind an Accounts-uploaded proof, then `GET` the proof's `/attachments/{id}`.
 *Expected*: not 200. `payment_detail` justifies its own request-scope check with *“or payment:view becomes a way around Q5/R6”*; the same reasoning must hold for the file on it.
 *Actual*: **200 — the file is served.** `attachmentDownload` (`internal/app/app.go:881`) checks only that the stored path is inside the attachment directory and that the file exists; it never asks who is calling. `attachment:view`, which the seeded **Requester** role holds, is enough to read the bank advice on any payment in the system by walking ids. · **FAIL (product defect) — F-B-11**, annotated `it.fail()`.
+*Since the run*: **Fixed** in REPAIR-LOG.md Wave 3, commit `1fac147` (F-A-01/F-B-11). `attachmentDownload` resolves the attachment to its payment through `AttachmentWithPayment` and applies `canReadPayment` — the same request-scope check `paymentDetail` runs, whose own comment said *"or `payment:view` becomes a way around Q5/R6"* (`internal/app/app.go:1091-1107`, `:1014-1025`). The refusal is **404**, through the same path as a missing id, so the route is not an enumeration oracle either. The verdict above is the frozen `30edd6a` record and stands as run.
 
 ### J · scope, and the doors that must stay shut
 
@@ -539,6 +542,7 @@ unconditionally; the store is the only gate).
 **TC-B-088** · P1 · The stranger's request id on `/requests/{id}`, `/submitted`, `/edit`, `/cancel`; then a non-existent id.
 *Expected*: 403 on all four; **404** for the missing id. The two must not be swapped — though the distinction itself leaks existence (UC-B DS14).
 *Actual*: as expected. · **PASS**
+*Since the run*: the leak this case flagged in its own expectation is closed. All five probes now answer **404**: `loadViewableRequest` gives a row outside the caller's scope the same status as a row that does not exist, so the id space cannot be walked (**F-G-002**, fixed in REPAIR-LOG.md Wave 3 and Wave 4, commits `1fac147` and `709dfa6` — `internal/app/requests.go:289-306`; `/edit` reaches it through `loadEditableRequest` at `:700`).
 
 **TC-B-089** · P1 · Anonymous `GET /requests`, `/requests/new`, `/requests/new?type=…`; then the no-role subject on the same and on `POST /requests`; then the Manager on the form and the POST.
 *Expected*: anonymous gets a 3xx to `/login` (**303**, not 302); the no-role subject 403 on all three; the Manager 403 on both, holding no `request:create`.

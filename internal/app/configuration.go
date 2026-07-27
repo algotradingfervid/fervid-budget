@@ -1,11 +1,13 @@
 package app
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
 )
 
 // The Configuration screen (D6, G21).
@@ -87,6 +89,14 @@ var configSections = []ConfigSection{
 }
 
 func (a *App) configuration(w http.ResponseWriter, r *http.Request) {
+	a.renderConfiguration(w, r, http.StatusOK, "")
+}
+
+// renderConfiguration draws the screen, optionally carrying the sentence that
+// refused something on it. A refusal re-reads the categories rather than
+// re-using whatever the caller was looking at, so the "In use" count printed
+// beside a refused delete is the count that refused it.
+func (a *App) renderConfiguration(w http.ResponseWriter, r *http.Request, status int, errMsg string) {
 	settings, err := a.st.AppSettings(r.Context())
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -100,7 +110,9 @@ func (a *App) configuration(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.render(w, r, "configuration", PageData{Title: "Configuration", Config: settings, CategoryUsage: catUsage})
+	a.renderStatus(w, r, status, "configuration", PageData{
+		Title: "Configuration", Config: settings, CategoryUsage: catUsage, Error: errMsg,
+	})
 }
 
 // recoverableCategorySave persists one row of the Configuration screen's
@@ -129,6 +141,34 @@ func (a *App) recoverableCategorySave(w http.ResponseWriter, r *http.Request) {
 	_, err := a.st.UpsertRecoverableCategory(r.Context(), auth.CurrentUser(r), parseID(r.FormValue("id")),
 		r.FormValue("name"), requiresProject, requiresCounterparty, r.FormValue("active") == "on", sortOrder)
 	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/configuration", http.StatusSeeOther)
+}
+
+// recoverableCategoryDelete is the door F-E-06 reported missing:
+// recoverable_category:delete has been grantable from the Roles screen since
+// Phase 4 and no route ever consulted it, so an administrator could hand it out
+// and buy nothing at all.
+//
+// The refusal is the interesting half. store.DeleteRecoverableCategory counts
+// the requests still pointing at the category inside the same transaction as the
+// DELETE and refuses with that count, so this handler must not flatten it into
+// "you do not have permission" — the same mistake F-G-023 reported on the roles
+// screen, and roleDelete's ErrForbidden branch is the pattern being followed.
+//
+// It lands back on Configuration rather than on the error page, because the
+// count that refused the delete is printed on that screen in the "In use"
+// column, immediately beside the row: the reader gets the sentence and the
+// evidence for it in one view, and the ordinary remedy — deactivate it instead —
+// is the toggle in the next cell.
+func (a *App) recoverableCategoryDelete(w http.ResponseWriter, r *http.Request) {
+	if err := a.st.DeleteRecoverableCategory(r.Context(), auth.CurrentUser(r), pathID(r)); err != nil {
+		if errors.Is(err, store.ErrForbidden) {
+			a.renderConfiguration(w, r, storeErrorStatus(err), friendly(err))
+			return
+		}
 		a.respondStoreError(w, r, err)
 		return
 	}

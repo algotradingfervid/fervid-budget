@@ -61,9 +61,12 @@ func TestMigrationV9SeedsTheNineMissingEvents(t *testing.T) { // F-F-06
 	s := newTestStore(t)
 	applyAuditNotificationEvents(t, s)
 
-	want := len(defaultNotificationSettings) + len(auditNotificationSettings)
-	if want != 21 {
-		t.Fatalf("event catalogue = %d, want 21 (v7's twelve plus v9's nine)", want)
+	// The catalogue is counted, not assumed, and the literal is updated only when
+	// a migration deliberately adds to it — v11 added the last two, so a change
+	// here has to be argued for rather than absorbed.
+	want := len(defaultNotificationSettings) + len(auditNotificationSettings) + len(reassignmentNotificationSettings)
+	if want != 23 {
+		t.Fatalf("event catalogue = %d, want 23 (v7's twelve, v9's nine, v11's two)", want)
 	}
 	var count int
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM notification_settings`).Scan(&count); err != nil {
@@ -197,7 +200,7 @@ func TestMigrationV9IsIdempotentAndKeepsAdministratorEdits(t *testing.T) { // F-
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM notification_settings`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if want := len(defaultNotificationSettings) + len(auditNotificationSettings); count != want {
+	if want := len(defaultNotificationSettings) + len(auditNotificationSettings) + len(reassignmentNotificationSettings); count != want {
 		t.Fatalf("events after three applications = %d, want %d", count, want)
 	}
 	for _, in := range edits {

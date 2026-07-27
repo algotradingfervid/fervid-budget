@@ -3,7 +3,11 @@
 **Last updated:** 2026-07-27 (Phases 4, 5 and 6 complete — all phases done)
 **Branch:** `main` (all work committed here; nothing pushed)
 
-Resume by reading this file, then the phase plan named under "Next up".
+Resume by reading this file, then the phase plan named under "Next up". "All
+phases done" is a build-plan status, not a defect-free claim — a QA audit ran
+the same day and a repair is in progress; see "Next up" and
+`docs/qa/results/REPAIR-LOG.md` before trusting any screen as correct rather
+than merely built.
 
 ---
 
@@ -39,16 +43,36 @@ phases. The design system, specs and every phase plan are committed.
 **Migration sequence** (one monotonic line, `PRAGMA user_version`):
 v1 permissions · v2 vendors · v3 requests · v4 payments-linking ·
 **v5 accounts reservation grants** (Phase 3) ·
-**v6 recoverable categories** (Phase 4) · **v7 notification settings** (Phase 5).
+**v6 recoverable categories** (Phase 4) · **v7 notification settings** (Phase 5) ·
+**v8 `payments.head_id` nullable** · **v9 nine more notification events** ·
+**v10 `payments.vendor_id`**
+(the last three from the 2026-07-27 QA audit repair — `docs/qa/results/REPAIR-LOG.md`).
 
 > ⚠ **Phase 3 took v5.** The Phase 5 plan still says v6; it means "the next
 > one", which is **v7**. Migrations are append-only and are never renumbered.
-> The authority is the `migrations` slice in `internal/store/migrations.go`,
-> whose header comment now carries this same map.
+> The line stopped at v7 when the eight build phases finished; the QA audit
+> repair has since carried it to **v10**, and it may grow further as repair
+> waves land — do not hardcode an upper bound anywhere. The authority is the
+> `migrations` slice in `internal/store/migrations.go`, whose header comment
+> carries this same map.
 
 ---
 
-## Both suites are green
+## The suites, as they stood when the build phases closed
+
+> ⚠ **"Both suites are green" — this section's old heading — is now two of three,
+> and these figures are the pre-audit run.**
+> This section was written when the build phases closed, and it predates the
+> **audit suite** (`make test-audit`, `tests/e2e/audit-*.spec.ts`), which
+> `playwright.config.ts` deliberately excludes from `make test-e2e` — so the
+> `npx playwright test` line below has never covered it. That third suite is
+> **not green: areas A and G are red on purpose**, because twenty-nine
+> assertions there recorded defective behaviour as truth and now fail since the
+> product improved (`docs/qa/results/REPAIR-LOG.md`, "Expectations that were
+> wrong, not the product"). The numbers below were also measured before the four
+> repair waves and have not been re-measured here — treat them as the record of
+> what the build phases achieved, not as current status. `REPAIR-LOG.md` is
+> current status.
 
 ```
 go build ./... && go vet ./... && go test -count=1 ./...   # all five packages ok
@@ -57,6 +81,8 @@ make test-cover                                            # app 72.5%  auth 92.
                                                            # config 90.9%  money 100%  store 74.1%
 npm run typecheck                                          # clean
 npx playwright test                                        # 163 passed, 49 skipped, 0 failed
+make test-audit                                            # NOT covered by the line above;
+                                                           # areas A and G currently red — see REPAIR-LOG.md
 ```
 
 The 49 skips are structural, and the count breaks down exactly:
@@ -81,12 +107,23 @@ chromium-only — hence 10 more skipped mobile copies and the 39 → 49 move.
 
 ## Next up
 
-**Nothing. Every phase in the plan is complete.** `unbuiltPrefixes` is empty:
-every screen the navigation knows about resolves to a real route.
+**Every phase in the build plan is complete** — that framing predates the audit
+below and describes the plan, not the product's current defect state.
+`unbuiltPrefixes` is empty: every screen the navigation knows about resolves to
+a real route. But "complete" is not "correct": a QA audit on 2026-07-27 ran 564
+new test cases against commit `30edd6a` across 8 areas and raised 103 area-level
+findings (`docs/qa/results/AUDIT-REPORT.md:57-67`, the "What was executed"
+table) before cross-area dedup — no single document states one deduplicated
+total, and the coverage matrix's unrelated **"92 / 92 VERIFIED"** requirements
+count (`docs/superpowers/specs/2026-07-25-payment-requests-coverage.md`, itself
+now corrected — see that file) is not that number either, in case a future
+reader conflates the two. A four-wave repair is under way. Read
+`docs/qa/results/REPAIR-LOG.md` for what is actually fixed, in progress, or
+still open before treating any phase as done in the sense of defect-free.
 
-The open items worth a future session are under "Known gaps" below. The largest
-is that **production has still never run any of this** — see
-`docs/superpowers/PROGRESS.md` → Known gaps and `deploy.sh`.
+The open items worth a future session, beyond the repair itself, are under
+"Known gaps" below. The largest is that **production has still never run any
+of this** — see `docs/superpowers/PROGRESS.md` → Known gaps and `deploy.sh`.
 
 ### Where the Phase 6 plan was wrong
 
@@ -225,7 +262,7 @@ These are learned, not theoretical. Each one has already cost a debugging pass.
   with no route yet. The sidebar renders them as Soon announcements and the tab
   bar skips them. A phase that builds a screen **deletes its line**;
   `TestEveryLinkedNavItemResolves` and `TestTabBarNeverLinksToAnUnbuiltRoute`
-  fail until it does. **It is now empty** (`internal/app/nav.go:250`) — every
+  fail until it does. **It is now empty** (`internal/app/nav.go:307`) — every
   screen the navigation knows about resolves to a real route. This paragraph used
   to say it held one line for `/admin/notifications`; Phase 5 built that screen
   and emptied it. Deleting a line also flips the nav guard tests that assert the
@@ -294,6 +331,40 @@ These are learned, not theoretical. Each one has already cost a debugging pass.
 - **Verify every class you add against the stylesheet.** Phase 4 caught two this
   way: an invented `.dl-wide` (the convention is `style="grid-column:1/-1"`) and
   `.vh` (the convention is `.sr-only`). Neither renders, and no test sees it.
+- **A read-then-write transaction races.** `BeginTx → read → write` lets a
+  second writer's SQLite transaction race the first, and `_pragma=busy_timeout`
+  on the DSN does **not** apply to the read-to-write upgrade, so the loser gets
+  an instant `500 SQLITE_BUSY` instead of waiting its turn (found in the audit
+  as F-B-10/F-C-05, `docs/qa/results/REPAIR-LOG.md` Wave 2). Take the write lock
+  with the transaction's **first** statement instead — `beginWriteTx`
+  (`internal/store/requests.go:16-45`) does this with a no-op `UPDATE …
+  WHERE 1=0` — then guard the real write with the state it expects and check
+  `RowsAffected`. Any new writer added to the request or recoverable flow
+  should open through `beginWriteTx`, not a bare `BeginTx`.
+- **A migration cannot drop `NOT NULL` in place, and `PRAGMA foreign_keys`
+  cannot be toggled inside the migration's own transaction** — it rides on the
+  DSN (see the pooled-connection trap above). `PRAGMA defer_foreign_keys` alone
+  is not a substitute: SQLite counts deferred violations as a running total that
+  only DML adjusts, so the violations an implicit `DROP TABLE` books against a
+  child table are never cancelled by a later rename, and `COMMIT` still fails.
+  The working recipe — stash the dependent table's rows, empty it, rebuild the
+  parent with the new column definition, copy rows back with their original
+  ids, restore the dependent table's rows — is `upPaymentsHeadNullable`
+  (`internal/store/migrations.go:435`, migration v8). Renaming the old table
+  aside and swapping in the new one under the old name does not work either:
+  this driver rewrites a child table's `REFERENCES` clause even under
+  `legacy_alter_table`.
+- **If a screen's copy says somebody is told, grep for the `a.fire` that tells
+  them.** Nothing binds the sentence to the send, so the two drift silently: the
+  reservation screen promised *"The requester and the approver are both
+  notified"* while release, reassign and unhold fired nothing (finding F-D-12).
+  Wave 4 fixed those three — and Wave 3's new approver-reassignment sheet
+  reintroduced the same defect one screen over, promising *"The new approver is
+  told"* from a handler with no `a.fire` and no event in the vocabulary. Adding a
+  route that changes who owes the next action means adding its event to
+  `notify.AllEvents` **and** firing it, or not writing the promise. Both live
+  instances are recorded under "Still open" in
+  `docs/qa/results/REPAIR-LOG.md`.
 
 ---
 
@@ -359,20 +430,29 @@ used to overwrite the very images it was being compared against, and
   anyone holding `approval:accept_partial` — an admin holds every grant but is
   not the manager.
 - **`on_hold=1` implies `status='approved'`.** Enforced at every exit from
-  approved. Consequence: a hold placed before a cancellation is dropped when the
-  requester asks for cancellation, so a manager who *declines* that cancellation
-  returns the request to approved with no hold. The hold event and its reason
-  survive in the audit trail.
+  approved. **This paragraph used to say a hold was dropped, permanently, the
+  moment a requester asked for cancellation — that was finding F-C-07, not a
+  decision, and it broke requirement L7 ("On hold — only Accounts lifts"): a
+  manager declining the cancellation returned the request to `approved` with
+  the accountant's hold silently gone.** Fixed in REPAIR-LOG Wave 2 (commit
+  `25411b8`, decision 3): `RequestCancellation` clears `on_hold` but keeps
+  `hold_reason` (`internal/store/requests.go:1268-1286`); `DecideCancellation`
+  restores `on_hold` from `hold_reason` on a decline and clears both on accept
+  (`requests.go:1310-1333`). The hold event and its reason survive in the audit
+  trail either way.
 
 ---
 
 ## Known gaps and open items
 
-> **A QA audit ran on 2026-07-27** against commit `30edd6a` and found 92 defects,
-> five of them critical. **`docs/qa/results/AUDIT-REPORT.md` supersedes this
-> section** for anything it covers, and `docs/qa/results/FIX-PLAN.md` tracks the
-> repair. The audit also corrected several claims made *in this file* — see its
-> "Documentation that is now wrong" table. Corrections applied below.
+> **A QA audit ran on 2026-07-27** against commit `30edd6a` and raised 103
+> area-level findings (see "Next up" above for why that number, not "92", is
+> the defensible one), five of them critical. **`docs/qa/results/AUDIT-REPORT.md`
+> supersedes this section** for anything it covers, and
+> `docs/qa/results/REPAIR-LOG.md` tracks what has actually been fixed since —
+> `FIX-PLAN.md` is the wave layout, not current status. The audit also corrected
+> several claims made *in this file* — see its "Documentation that is now
+> wrong" table. Corrections applied below.
 
 - ~~**Design system:** `.btn.approve`, `.metric.warn`, `.metric.good` and
   `.metric-foot` have no rule.~~ **Fixed in Phase 6** by commit `a80e18f`, which
@@ -386,19 +466,30 @@ used to overwrite the very images it was being compared against, and
   built. It needs `vendor_bank`-restricted data on a screen no spec authorises
   for it, plus an account-masking helper with no precedent. Needs a spec
   decision, not an implementation pass.
-- **`lockMonth`/`unlockMonth` redirect to `/?month=`**, which was the variance
+- ~~**`lockMonth`/`unlockMonth` redirect to `/?month=`**, which was the variance
   grid before `/` became the dashboard. Locking a month now drops the operator on
   a page that shows no confirmation. Pre-existing; `/grid?month=` for both would
-  fix it. Phase 6 territory.
-- **Vendor "Paid this year"** still matches payments by payee *name* because
-  `payments.vendor_id` does not exist. Now that linked payments store the
-  vendor's display name this is materially more accurate, but it is still a name
-  match and can under-count.
-- **Vendor "Open requests" is 0 for everyone** until the request/vendor join lands.
+  fix it. Phase 6 territory.~~ **Fixed** (F-G-019 family, Wave 4): both handlers
+  redirect to `/grid?month=` + month (`internal/app/app.go:1387,1396`).
+- ~~**Vendor "Paid this year"** still matches payments by payee *name* because
+  `payments.vendor_id` does not exist.~~ **Fixed by migration v10** (F-G-009,
+  2026-07-27 audit repair): `payments.vendor_id` now exists and is back-filled
+  from the request each payment settles; `vendorPaidThisYear` joins on it
+  (`internal/store/vendors.go:171`, `migrations.go:29,390,399`). The
+  payee-name match survives only as a fallback, for a payment that settles no
+  request and so was never linked to a vendor id — history, not the primary path.
+- ~~**Vendor "Open requests" is 0 for everyone** until the request/vendor join
+  lands.~~ **Fixed** (F-G-010): it now counts `requestBuckets["open"]` per
+  vendor — the same status set `/requests?bucket=open` uses, so the tile and the
+  list it links to cannot disagree (`internal/store/vendors.go:192`).
 - **The mockup's vendor "Export CSV" was not built** — `vendor` has no `export`
   action in the canonical vocabulary, so there is no verb to gate a route on.
-- **The stale-reservation screen's "reminder sent" trail line has no writer** —
-  no reminder is actually sent until Phase 5.
+- ~~**The stale-reservation screen's "reminder sent" trail line has no writer**
+  — no reminder is actually sent until Phase 5.~~ **Resolved twice over:**
+  Phase 5 shipped reminders, and the QA audit found the writer itself was still
+  missing (F-F-02) — `MarkReminderSent` now writes an audit row on every
+  reminder (`internal/store/reminders.go:171`, fixed REPAIR-LOG Wave 2, commit
+  `25411b8`).
 - **`reassignCandidates` runs one permission query per user.** Fine at this user
   count; if the user table grows the fix is a batched permission read in the
   store, not a looser filter.
@@ -406,6 +497,7 @@ used to overwrite the very images it was being compared against, and
   `user_version = 0`, so it will run **the whole chain — v1 through the current
   head — in full on first deploy**. Do not trust a hardcoded upper bound here: an
   earlier version of this line said "v1→v5" while the chain had already reached
-  v7, and the QA audit's repair adds v8. The authority is the `migrations` slice
-  in `internal/store/migrations.go`. Local databases that ran a partial v1 need
+  v7, and the QA audit's repair has since added v8, v9 and v10 — and may still
+  be adding more as later waves land. The authority is the `migrations` slice in
+  `internal/store/migrations.go`. Local databases that ran a partial v1 need
   re-stamping or recreating.

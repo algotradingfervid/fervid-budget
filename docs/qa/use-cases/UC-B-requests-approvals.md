@@ -810,7 +810,7 @@ Every recoverable treatment additionally requires a **known active category code
 | **Scope / level** | system · subfunction |
 | **Trigger** | Choosing a file in **Add invoice, receipt or proof** before submitting, or **Add another document** / **Attach the corrected document** on the edit screens. |
 | **Route(s)** | `POST /requests` · `POST /requests/{id}/edit` |
-| **Permission gate** | `request:create` / `request:edit` + CSRF. Downloading later needs `attachment:view` (`app.go:393`, `templates.go:2393`) |
+| **Permission gate** | `request:create` / `request:edit` + CSRF. Downloading later needs `attachment:view` **plus** the request's own row scope, on the request's own route — `GET /requests/{id}/attachments/{attachmentID}` (`app.go:460`, handler `app.go:1115`, `templates.go:2510`). See the correction under Postconditions. |
 | **Coverage IDs** | T10, N7, C2 |
 | **Priority** | high |
 
@@ -825,6 +825,8 @@ Every recoverable treatment additionally requires a **known active category code
 3. On create, the row is written **in the same transaction** as the request. On edit, it is a separate `AddRequestAttachment` call that also writes an audit row action `attach`, summary *“Uploaded attachment <name>”* (`store/requests.go:1051–1080`).
 4. The thread gains an `attachment` entry rendered as `📎 <name> · <size>` with glyph `⇪` (`templates.go:2182`, `requests.go:1086`).
 5. The **Attachments** section on the detail screen lists it with a `.f-ico` extension tag and a **Download** button for anyone holding `attachment:view` (`templates.go:2387–2396`).
+
+**Correction (Wave 3, commit `1fac147`)** — at the time of this audit the **Download** button pointed at `GET /attachments/{id}`, one route shared by payment attachments and request documents over two independent id sequences and gated on `attachment:view` alone. Two holes followed: id `7` could resolve to either table (F-A-05/F-B-09), and the verb by itself — a Requester grant — read every request's documents (F-A-01/F-B-11). The routes are now split and both re-check the request the file hangs off: `GET /attachments/{id}` serves **payment** documents only and refuses anybody the payment's own request is not visible to (`app.go:459`, handler `attachmentDownload` at `app.go:1091`), and a request document is served by the request's own route, `GET /requests/{id}/attachments/{attachmentID}`, which checks the attachment belongs to the request in the path (`app.go:460`, handler `requestAttachmentDownload` at `app.go:1115`). The detail screen's link is `/requests/{{$.Request2.ID}}/attachments/{{.ID}}` (`templates.go:2510`).
 
 **Postconditions (failure)** — no `request_attachments` row and **no file left on disk**: `removeStagedAttachment` deletes the staged path on every error path (`requests.go:163`, `667`; `http_errors.go:238–249`).
 
@@ -845,7 +847,9 @@ Every recoverable treatment additionally requires a **known active category code
 - **12.e1** File > 20 MiB ⇒ **400** *“validation failed: files must be 20 MiB or smaller”*, staged file removed.
 - **12.e2** Body > 21 MiB ⇒ **413** *“The submitted form is too large.”*
 - **12.e3** Disk write failure ⇒ **500** and the partial file is removed.
-- **12.e4** Caller lacks `attachment:view` ⇒ the file row renders with no **Download** control (`templates.go:2393`).
+- **12.e4** Caller lacks `attachment:view` ⇒ the file row renders with no **Download** control (`templates.go:2510`).
+- **12.e5** Caller holds `attachment:view` but the request is outside their data scope ⇒ **404** *“The requested attachment was not found.”* — `requestAttachmentDownload` resolves the attachment, loads its request and applies `canViewRequest` before opening a byte (`app.go:1115`, refusal at `notFoundAttachment`, `app.go:1044–1048`). Added in Wave 3 (F-A-01/F-B-11); at the time of this audit the verb alone was enough.
+- **12.e6** Caller substitutes an `{attachmentID}` belonging to a different request ⇒ the same **404**: the handler compares the attachment's `RequestID` with the `{id}` in the path, *“otherwise the path's {id} is decoration and the route is /attachments/{id} again under a longer name”* (`app.go:1115`). Added in Wave 3 (F-A-05/F-B-09).
 
 **Business rules**
 - BR-12.1 D1 leaves no earlier moment at which a file could be attached, so the attachment and the request commit together — `internal/store/models.go:389–392`.
@@ -1001,7 +1005,7 @@ Every recoverable treatment additionally requires a **known active category code
 
 **Exception flows**
 - **15.e1** Unknown id ⇒ **404** *“The requested record was not found.”*
-- **15.e2** Another requester’s id under scope `own` ⇒ **403** *“You do not have permission to view this request.”* (UC-B-42).
+- **15.e2** Another requester’s id under scope `own` ⇒ **404** *“The requested record was not found.”* (UC-B-42). *(403 “You do not have permission to view this request.” at `30edd6a`; changed by F-G-002, Wave 3, `1fac147` — `loadViewableRequest`, `internal/app/requests.go:295-308`.)*
 - **15.e3** No `request:view` ⇒ **403** from the middleware.
 
 **Business rules**
@@ -1063,7 +1067,7 @@ Every recoverable treatment additionally requires a **known active category code
 
 **Exception flows**
 - **16.e1** Unknown id ⇒ **404**.
-- **16.e2** Out of scope ⇒ **403** *“You do not have permission to view this request.”*
+- **16.e2** Out of scope ⇒ **404** *“The requested record was not found.”* *(403 at `30edd6a`; F-G-002, Wave 3, `1fac147` — `requests.go:295-308`.)*
 - **16.e3** No `request:view` ⇒ **403** from the middleware.
 - **16.e4** A reader who is neither requester nor manager and holds no decision verb sees an action bar containing only `.row-end` — an empty bar, not a missing one.
 
@@ -1122,7 +1126,7 @@ Every recoverable treatment additionally requires a **known active category code
 
 **Exception flows**
 - **17.e1** Blank or whitespace-only body ⇒ **400** *“validation failed: comment cannot be empty”*. The `<textarea required>` also blocks it client-side (`templates.go:2193`).
-- **17.e2** Out of scope ⇒ **403** before any write.
+- **17.e2** Out of scope ⇒ **404** before any write *(403 at `30edd6a`; F-G-002, Wave 3, `1fac147` — `requests.go:295-308`)*.
 - **17.e3** Unknown id ⇒ **404**.
 - **17.e4** No CSRF ⇒ **403** (CV4).
 
@@ -1301,8 +1305,9 @@ Every recoverable treatment additionally requires a **known active category code
 4. The waiting line reads **“Withdrawn by the requester”** with class `closed`; the pill uses the `cancelled` modifier (`requests.go:429–430`, `967–971`).
 5. It is excluded from future duplicate checks (`store/requests.go:1328`).
 6. Redirect **303** to `/requests/{id}`.
+7. **Added since Waves 2/4 (F-F-06):** one `notifications` row per resolved recipient. `requestWithdraw` fires `notify.EventRequestWithdrawn` — *“the approver's queue item has just disappeared without a decision, so they are told why”* (`internal/app/requests.go:916`; the constant at `internal/notify/events.go:37`, seeded by migration v9). At `30edd6a` a withdrawal notified nobody, recorded as **DS10**. `Data touched` below therefore also includes `notifications`.
 
-**Postconditions (failure)** — status and every field unchanged; no audit row.
+**Postconditions (failure)** — status and every field unchanged; no audit row, no notification.
 
 **Main success scenario**
 1. Actor opens their `pending` request.
@@ -1326,7 +1331,7 @@ Every recoverable treatment additionally requires a **known active category code
 - BR-20.2 `withdrawn` is terminal: `legalTransitions` gives it no outgoing edges — `internal/store/requests.go:91–101`.
 - BR-20.3 The screen never offers a control whose submit the store would refuse — the button is gated on `$mine` **and** `pending` **and** the verb (`internal/app/templates.go:2416`).
 
-**Data touched** — writes `payment_requests.status`, `.updated_at`, `audit_log`.
+**Data touched** — writes `payment_requests.status`, `.updated_at`, `audit_log`, `notifications` (the last since Wave 4 — see postcondition 7).
 
 **Non-functional / UX notes** — no confirmation dialog: withdrawal is reversible in practice (raise again) so the design does not interrupt. The button is `.btn.outline` inside the sticky bar; at 390px it shares the bar with **Edit request**. Focus after the redirect lands at the top of the detail document.
 
@@ -1359,8 +1364,9 @@ Every recoverable treatment additionally requires a **known active category code
 3. The **source row is untouched** — it stays `rejected` and read-only.
 4. One `audit_log` row on the **new** id, action `reraise`, summary *“<name> re-raised <old number> as <new number>”*, `after.source`/`after.number` (`store/requests.go:846–850`).
 5. Redirect **303** to `/requests/{newID}/submitted`.
+6. **Added since Waves 2/4 (F-F-06):** one `notifications` row per resolved recipient, fired for the **new** id, not the rejected one — D1 makes a re-raise a fresh pending request with its own number, so without this the approver never learned the second attempt existed (`notify.EventRequestReraised`, `internal/app/requests.go:932`; the constant at `internal/notify/events.go:41`, seeded by migration v9). At `30edd6a` a re-raise notified nobody.
 
-**Postconditions (failure)** — no new row, no number consumed beyond the transaction rollback, source unchanged.
+**Postconditions (failure)** — no new row, no number consumed beyond the transaction rollback, source unchanged, no notification.
 
 **Main success scenario**
 1. Actor opens the rejected request; a `.banner.bad` reads **“<manager> rejected this”** with the reason.
@@ -1383,7 +1389,7 @@ Every recoverable treatment additionally requires a **known active category code
 - BR-21.2 `rejected` is final and read-only; raising again is the only forward path (L4) — `internal/app/requests.go:610–611`.
 - BR-21.3 The copy retains the original approver, so a rejection by one manager is re-sent to the same manager unless the requester then edits it.
 
-**Data touched** — writes `payment_requests` (new row), `request_number_seq`, `audit_log`. Reads the source row.
+**Data touched** — writes `payment_requests` (new row), `request_number_seq`, `audit_log`, `notifications` (the last since Wave 4 — see postcondition 6). Reads the source row.
 
 **Non-functional / UX notes** — the button is the screen’s only primary action in that state; at 390px it sits alone in the sticky bar. No confirmation step — the design treats a new pending request as cheap and reversible (withdraw).
 
@@ -1886,9 +1892,9 @@ Every recoverable treatment additionally requires a **known active category code
 
 **Data touched** — writes `payment_requests.status`, `.cancel_reason`, `.on_hold`, `.hold_reason`, `.updated_at`; `audit_log`.
 
-**Non-functional / UX notes** — `getByLabel('Reason')` inside `#outright-sheet` is unique; the same string appears on `request_cancel` (a different screen). Modal focus behaviour as UC-B-26. No notification event fires for an outright cancel (`requests.go:860–867` has no `a.fire`) — **DS10**.
+**Non-functional / UX notes** — `getByLabel('Reason')` inside `#outright-sheet` is unique; the same string appears on `request_cancel` (a different screen). Modal focus behaviour as UC-B-26. No notification event fires for an outright cancel — **still true after the repair waves**: `requestCancelOutright` has no `a.fire` (`internal/app/requests.go:1036-1043`; it was `requests.go:860–867` at the time of this audit). **DS10**.
 
-**Open questions** — DS10: the requester learns of an outright cancellation only by looking.
+**Open questions** — DS10, still open for this path. Migration v9 gave withdrawal and both cancellation *decisions* their events (F-F-06, Waves 2/4), but an approver cancelling an approved request outright still fires nothing, so the requester learns of it only by looking (`requests.go:1036-1043`).
 
 ---
 
@@ -1953,19 +1959,21 @@ Every recoverable treatment additionally requires a **known active category code
 **Business rules**
 - BR-30.1 Accepting a cancellation **is** cancelling the request, so it lands on the thread under the same `cancel` action; a separate `cancel_accept` would split one event across two names — `internal/store/requests.go:914–918`.
 - BR-30.2 Declining requires words because the requester **and** Accounts both read them — `internal/store/requests.go:906–913`.
-- BR-30.3 Neither branch may leave a hold set — `internal/store/requests.go:937–941`.
+- BR-30.3 ~~Neither branch may leave a hold set~~ — `internal/store/requests.go:937–941`. **Corrected (F-C-07, Wave 2 `25411b8`, REPAIR-LOG decision 3).** The branches now differ, deliberately. **Accept** clears both columns: nothing may still be "on hold" on a dead row, or the hold tab keeps listing it and offering *"Read reply"* on a request no reply can change. **Decline** returns the request to `approved` — the one status a hold may describe — and *restores* the pause, `on_hold=CASE WHEN COALESCE(hold_reason,'') <> '' THEN 1 ELSE 0 END` (`internal/store/requests.go:1320-1334`, the UPDATE at `:1350`). At `30edd6a` both branches cleared the hold, which cost requirement **L7** *"On hold (only Accounts lifts)"*: a requester asking for cancellation and an approver declining it lifted an accountant's hold between them, with the accountant's question still unanswered. `RequestCancellation` is the other half — it suspends `on_hold` but keeps `hold_reason` precisely so this restore has something to read (`requests.go:1268-1286`).
 - BR-30.4 `cancellation_requested` has exactly two legal edges: `cancelled` and back to `approved` — `internal/store/requests.go:97`.
-- BR-30.5 Neither branch fires a notification event (`requests.go:850–858` has no `a.fire`) — **DS10**.
+- BR-30.5 **Corrected (F-F-06, Wave 2 vocabulary `25411b8` + Wave 4 wiring).** At `30edd6a` neither branch fired a notification event (`requests.go:850–858` had no `a.fire`) — **DS10**. Both branches fire now, and they are deliberately **two** events rather than one, because "nothing will be paid" and "payment is unfrozen" are opposite sentences and each is an admin-editable template in its own right: `requestCancellationDecide` fires `notify.EventCancellationAccepted` on accept and `notify.EventCancellationDeclined` on decline (`internal/app/requests.go:1029`, `:1031`; the constants at `internal/notify/events.go:65-66`). `Data touched` below therefore also includes `notifications`.
 
-**Data touched** — writes `payment_requests.status`, `.decision_reason`, `.on_hold`, `.hold_reason`, `.updated_at`; `audit_log`.
+**Data touched** — writes `payment_requests.status`, `.decision_reason`, `.on_hold`, `.hold_reason`, `.updated_at`; `audit_log`; `notifications` (one row per resolved recipient, since Wave 4).
 
 **Non-functional / UX notes** — two sheets on one page; both are `hidden` in the DOM, so scope every selector to `#accept-sheet` or `#decline-sheet`. **SV18 applies** to `#cx-note`. At 390px the two cards stack above the thread and the sticky bar holds both actions.
 
-**Open questions** — DS10.
+**Open questions** — none for this use case. DS10 covered four silent paths at `30edd6a`; the two decided here are fixed (BR-30.5). The one still open is the **outright** cancel, UC-B-29 — see its open question.
 
 ---
 
 ### UC-B-31 — Reassign a pending request to a different approver
+
+**Fixed in the 2026-07-27 audit repair, Wave 3, commit `1fac147`** (`docs/qa/results/REPAIR-LOG.md`: "F-A-06 · F-C-02 medium | Fixed — coverage requirement A7 now has a door."). Everything below described the state at `30edd6a`, where this use case had no route at all; the corrected header, scenario and flows follow, with the `30edd6a` gap kept underneath each so the history is not lost.
 
 | | |
 |---|---|
@@ -1973,43 +1981,51 @@ Every recoverable treatment additionally requires a **known active category code
 | **Primary actor** | Admin (AC4) · Manager (AC2) — both hold `approval:reassign` |
 | **Supporting actors** | the outgoing and incoming approvers |
 | **Scope / level** | system · user-goal |
-| **Trigger** | **None exists.** No screen control and no route reaches this behaviour. |
-| **Route(s)** | **Unrouted.** `store.ReassignRequest` has no HTTP caller. The path the Phase-2 spec names, `POST /requests/{id}/reassign`, is registered on **`reservation:reassign`** and handled by `requestReassign`, which reassigns a **payment reservation** (`app.go:466`, `linking.go:642–674`) |
-| **Permission gate** | `approval:reassign` exists in the vocabulary (`store/permissions.go:152`), is granted to Manager and Admin (`migrations.go:371`, `404`) and is wired into the roles matrix **Approve** cell (`permmap.go:69`) — but nothing consumes it |
-| **Coverage IDs** | **A7 (not reachable through the UI)** |
-| **Priority** | high (gap) |
+| **Trigger** | The actor presses a reassignment control naming a new approver and a reason, on a `pending` request they may see. |
+| **Route(s)** | `POST /requests/{id}/reassign-approver` (`internal/app/app.go:569`), handler `requestReassignApprover` (`app.go:1615-1647`). *(At `30edd6a`: unrouted — `store.ReassignRequest` had no HTTP caller, and `POST /requests/{id}/reassign` was — and still is — the unrelated **reservation** handoff route, `reservation:reassign` → `requestReassign`, `app.go:466`/`642`, `linking.go:642-674`.)* |
+| **Permission gate** | `approval:reassign`, granted to Manager (`internal/store/migrations.go:538`, inside the seed at `:533`) and to Admin, which takes every pair through `adminGrants()` (`migrations.go:564-567`, `migrations.go:571`), now enforced at the route via `a.auth.RequirePermission("approval", "reassign", …)` (`app.go:569`). *(At `30edd6a`: the grant existed and was wired into the roles matrix but consumed by nothing; the seed then sat at `migrations.go:371`/`404`, which is where this row used to cite it.)* |
+| **Coverage IDs** | **A7 — verified end-to-end** by `TestApproverReassignmentRoute` (`internal/app/app_integration_test.go:2191`) |
+| **Priority** | high |
 
-**Preconditions** *(of the store method, were it reachable)*
-1. The request status is exactly `pending` (`store/requests.go:776–778`).
-2. `newManagerID > 0`.
-3. `newManagerID != requester_id` (G8 for reassignment, `store/requests.go:779–782`).
-4. A non-blank reason.
+**Preconditions**
+1. The request is within the actor's `request` data scope — enforced by `loadViewableRequest`-equivalent logic inline in the handler; outside scope answers **404**, not 403 (`app.go:1622-1627`, F-G-002).
+2. `manager_id` names a user; absent ⇒ 400 "Choose the approver this request should go to." (`app.go:1628-1631`).
+3. `reason` is non-blank ⇒ 400 "Give a reason for the reassignment." (`app.go:1633-1635`).
+4. Underneath, `store.ReassignRequest` still enforces: a non-blank reason (`store/requests.go:1132-1135`), `newManagerID > 0` (`:1136-1138`), request status exactly `pending` (`:1153-1155`), `newManagerID != requester_id` (G8, `:1157-1159`), and — added by the same repair — that the target actually holds `approval:approve`, refused 400 *“that person cannot approve requests — choose one of the approvers offered”* otherwise (`requireApprover`, `store/requests.go:414-426`, called at `:1141-1143`). That last guard is F-A-08's: reassignment is the recovery path for a request stranded on somebody who cannot decide it, so it must not be a way back into the same hole. **The method moved to `store/requests.go:1131` after the audit; this use case originally cited it at `:759-801`.**
 
-**Postconditions (success)** *(of the store method)*
-1. `manager_id=<new>`, `decision_reason=<reason>`, **`reminder_last_sent=NULL`** (`store/requests.go:783`).
-2. One `audit_log` row action **`approval_reassign`** — deliberately **not** `reassign`, because reservation reassignment writes that action on the same entity type — summary *“<name> reassigned request <number> to <new approver>: <reason>”* (`store/requests.go:790–797`).
-3. The row moves into the new approver’s queue and out of the old one.
+**Postconditions (success)**
+1. `manager_id=<new>`, `decision_reason=<reason>`, `reminder_last_sent=NULL`, in one `UPDATE … WHERE id=? AND status='pending'` (`store/requests.go:1160-1161`).
+2. One `audit_log` row, action `approval_reassign` — deliberately **not** `reassign`, because reservation reassignment writes that action on the same entity type — summary "\<name\> reassigned request \<number\> to \<new approver\>: \<reason\>" (`store/requests.go:1172-1179`).
+3. The row moves into the new approver's queue and out of the old one.
+4. 303 redirect to `/requests/{id}` (`app.go:1646`).
 
-**Postconditions (failure)** — unchanged.
+**Postconditions (failure)** — unchanged; a refused reassignment leaves `manager_id` and every other field untouched.
 
-**Main success scenario** — *not implementable against the shipped product.* The only way a request changes approver today is the **requester** editing it and choosing a different **Approver** (UC-B-18.a), which reroutes and re-notifies but records the change as an `update` diff on the `manager_id` field (`threadField`, `requests.go:1136`) rather than as `approval_reassign`.
+**Main success scenario**
+1. Admin or Manager opens a pending request within their scope and supplies a new approver and a reason.
+2. `POST /requests/{id}/reassign-approver` with `manager_id` and `reason`.
+3. The route checks scope, then delegates to `store.ReassignRequest`, which validates and writes the postconditions above.
+4. The caller is redirected to `/requests/{id}`, now showing the new approver and the `approval_reassign` trail entry.
+
+*(At `30edd6a` this scenario was **not implementable against the shipped product** — the only way a request changed approver was the requester editing it and choosing a different Approver (UC-B-18.a), which reroutes and re-notifies but records the change as an `update` diff on `manager_id` (`threadField`, `requests.go:1136`) rather than as `approval_reassign`. That path still exists alongside the new one and is still recorded as a plain `update`.)*
 
 **Alternate flows** — none.
 
 **Exception flows**
-- **31.e1** `POST /requests/{id}/reassign` with `to_user_id` and `confirm=on` reaches the **reservation** handler, which requires the target to be able to work the Accounts queue and refuses otherwise: **400** *“That person cannot work the Accounts queue.”* (`linking.go:664–668`).
-- **31.e2** `POST /requests/{id}/approval-reassign` or any similar path ⇒ **405** (CV1).
+- **31.e1** A Requester, or anyone without `approval:reassign`, gets 403 (`TestApproverReassignmentRoute`, `app_integration_test.go:2191-2211`).
+- **31.e2** `POST /requests/{id}/reassign` (no `-approver` suffix) still reaches the **reservation** handler, unrelated to this use case: it requires the target to be able to work the Accounts queue and refuses otherwise, **400** "That person cannot work the Accounts queue." (`linking.go:664-668`). This is a different feature (handing over a payment reservation), not a stale route — do not conflate the two when testing A7.
+- **31.e3** `POST /requests/{id}/approval-reassign` or any other guessed path ⇒ **405** (CV1); the real path is `/reassign-approver`.
 
 **Business rules**
-- BR-31.1 The store method exists, is tested at unit level and enforces every rule the spec asks for — `internal/store/requests.go:759–801`.
-- BR-31.2 The two reassignments are deliberately different audit actions so an approver swap does not read as somebody taking over the payment — `internal/store/requests.go:791–795`.
-- BR-31.3 The Phase-2 spec route table maps `POST /requests/{id}/reassign` → `approval/reassign` → `requestReassign` for A7 (`docs/superpowers/specs/2026-07-25-phase-2-request-workflow-spec.md:206`); the code maps that path to `reservation:reassign`. **DV7.**
+- BR-31.1 The store method exists, is tested at unit level and enforces every rule the spec asks for — `internal/store/requests.go:1131-1183` (`:759-801` at the time of this audit).
+- BR-31.2 The two reassignments are deliberately different audit actions so an approver swap does not read as somebody taking over the payment — `internal/store/requests.go:1173-1177`.
+- BR-31.3 *(historical, DV7)* The Phase-2 spec route table mapped `POST /requests/{id}/reassign` → `approval/reassign` → `requestReassign` for A7 (`docs/superpowers/specs/2026-07-25-phase-2-request-workflow-spec.md:206`); the shipped `30edd6a` code mapped that exact path to `reservation:reassign` instead. The repair did not change that mapping — it left the ambiguous shared path alone and gave A7 its own path, `/reassign-approver`, rather than resolve the collision on the shared one.
 
-**Data touched** *(if reachable)* — `payment_requests.manager_id`, `.decision_reason`, `.reminder_last_sent`; `audit_log`.
+**Data touched** — `payment_requests.manager_id`, `.decision_reason`, `.reminder_last_sent`; `audit_log`.
 
-**Non-functional / UX notes** — no screen to assess. A Playwright test for A7 can only assert **absence**: no `approval_reassign` route, and no reassignment control on `/approvals` or `/requests/{id}`.
+**Non-functional / UX notes** — `/requests/{id}` renders a **Reassign approval** button, gated on `(eq .Request2.Status "pending") (.Perms.Can "approval" "reassign") .Approvers` (`internal/app/templates.go:2578-2579`), opening a `reassign-approver-sheet` overlay that posts to the route above (`templates.go:2584-2603`). The template comment explains why the gate is the grant and not "is the request's own approver": this route is also the recovery path for a request stuck with a deactivated or now-unqualified approver (F-G-025, F-A-08), so restricting it to the current approver would close that door.
 
-**Open questions** — **DV7 / DS11**: is A7 satisfied by the requester’s approver change, or is a manager-side reassign screen missing?
+**Open questions** — **DV7 / DS11 are resolved**: A7 now has its own route and its own screen control, rather than being folded into the requester's approver-change path.
 
 ---
 
@@ -2104,7 +2120,7 @@ These are first-class: each is a rule the product must keep under attack.
 6. `ApproveRequest` refuses on the manager check first (`before.ManagerID != actor.ID` ⇒ `ErrForbidden`, `store/requests.go:687–689`), and if the row somehow carried them as manager, the explicit G8 test refuses again: **403** (`store/requests.go:690–694`).
 
 **Alternate flows**
-- **33.a** Reassignment: `ReassignRequest` refuses `newManagerID == requester_id` — *“a request cannot be reassigned to its own requester”* (`store/requests.go:779–782`). Currently unreachable (UC-B-31).
+- **33.a** Reassignment: `ReassignRequest` refuses `newManagerID == requester_id` — *“a request cannot be reassigned to its own requester”* (`store/requests.go:779–782`). Reachable since Wave 3 via `POST /requests/{id}/reassign-approver` (UC-B-31).
 - **33.b** The Configuration screen renders **“Block self-approval”** checked and **disabled**, carrying **no `name`**, so it cannot be written — G8 is structural, not a setting: `<label class="checkline"><input type="checkbox" checked disabled> Block self-approval</label>` (`templates.go:3098`), with the section note *“Self-approval is blocked always. A person can never approve a request they raised, whatever roles they hold.”* (`configuration.go:68`).
 
 **Exception flows**
@@ -2353,7 +2369,7 @@ These are first-class: each is a rule the product must keep under attack.
 - **38.c** Status `withdrawn`/`cancelled`/`processing`/`completed*` ⇒ the default branch: *“It is <lower-cased status text>.”* (`requests.go:614–616`).
 
 **Exception flows**
-- **38.e1** Another person’s rejected request ⇒ **403** *“Only the person who raised a request may edit it.”* — checked **after** the view scope test, so an out-of-scope caller gets *“You do not have permission to view this request.”* instead (`requests.go:588–595`).
+- **38.e1** Another person’s rejected request ⇒ **403** *“Only the person who raised a request may edit it.”* — checked **after** the view scope test, so an out-of-scope caller gets **404** *“The requested record was not found.”* instead (`loadEditableRequest` calls `loadViewableRequest` first, `internal/app/requests.go:699-707`). *(At `30edd6a` the scope refusal was 403 “You do not have permission to view this request.”; changed by F-G-002, Wave 3, `1fac147`. The two outcomes are still distinguishable — 403 for a scope-reaching non-owner, 404 for an out-of-scope caller — which is the point: only the second is an existence question.)*
 - **38.e2** `SubmitRequest` on a rejected row ⇒ **400** *“a rejected request cannot be submitted”* (`store/requests.go:469–471`).
 
 **Business rules**
@@ -2545,15 +2561,15 @@ These are first-class: each is a rule the product must keep under attack.
 1. The caller’s `request` scope is `own` — the seeded Requester role (`migrations.go:363`).
 2. The target request was raised by somebody else.
 
-**Postconditions (success of the refusal)** — **403** and **no field of the target request appears in the response body**: the refusal happens before any render (`requests.go:236–239`).
+**Postconditions (success of the refusal)** — **404**, not 403, and **no field of the target request appears in the response body**: the refusal happens before any render (`loadViewableRequest`, `internal/app/requests.go:295-308`). *(Changed from 403 in Wave 3, `1fac147`, F-G-002 — see 42.e1.)*
 
 **Postconditions (failure)** — n/a.
 
 **Main success scenario**
 1. Actor opens `/requests/{someone-elses-id}`.
 2. `loadViewableRequest` reads the row, then applies `canViewRequest`: scope `own` requires `req.RequesterID == u.ID` (`requests.go:332–343`).
-3. **403** *“You do not have permission to view this request.”* — the chrome-less error page.
-4. Actor tries `/requests/{id}/submitted`, `/edit`, `/cancel` and `POST /comment`; every one funnels through `loadViewableRequest` and answers the same **403** (`requests.go:219`, `588`, `798`, `769`).
+3. **404** *“The requested record was not found.”* — the chrome-less error page, with the real reason (`request %d is outside the caller's data scope`) logged, not rendered (`requests.go:295-308`). *(At `30edd6a` this was 403 **“You do not have permission to view this request.”** — see 42.e1 for why that changed.)*
+4. Actor tries `/requests/{id}/submitted`, `/edit`, `/cancel` and `POST /comment`; every one funnels through `loadViewableRequest` and answers the same **404**.
 5. Actor tries `/requests?scope=all`; `effectiveScope` refuses to widen and keeps them on `own` (`requests.go:347–354`).
 6. Actor tries `/requests/export.csv?scope=all`; the same narrowing applies (`requests.go:929`).
 
@@ -2563,7 +2579,7 @@ These are first-class: each is a rule the product must keep under attack.
 - **42.c** No scope at all ⇒ `canViewRequest` default branch returns false, so every id is refused (`requests.go:340–342`).
 
 **Exception flows**
-- **42.e1** A non-existent id ⇒ **404** *“The requested record was not found.”* — a different status from 403, which technically **discloses existence** to an out-of-scope caller (`requests.go:231–234`). Low severity; recorded as **DS14**.
+- **42.e1** A non-existent id ⇒ **404** *“The requested record was not found.”* — **the same status** an out-of-scope id now gets (step 3 above), so the response no longer discloses existence to a caller who cannot see the row. At `30edd6a` an out-of-scope id answered 403, a different status from a non-existent id's 404, which did disclose existence — recorded as **DS14**, fixed F-G-002 Wave 3 (`1fac147`).
 - **42.e2** `/requests/{id}/reservation` requires only a session at the route (`app.go:464`); `reservationForm` applies its own ownership rules (specified in `UC-C-*`).
 - **42.e3** `/requests/{id}/partial-review` is gated on `request:view` and applies the same scope test.
 
@@ -2574,9 +2590,9 @@ These are first-class: each is a rule the product must keep under attack.
 
 **Data touched** — reads `payment_requests` (one row, discarded), `role_permissions`.
 
-**Non-functional / UX notes** — the 403 page is chrome-less and offers its own two ways out. Assert both the status **and** that the response body contains none of the target’s short title, number or amount.
+**Non-functional / UX notes** — the 404 page is chrome-less and offers its own two ways out. Assert both the status **and** that the response body contains none of the target’s short title, number or amount.
 
-**Open questions** — DS14.
+**Open questions** — DS14 (resolved, see above).
 
 ---
 
@@ -2594,7 +2610,7 @@ Findings only — nothing here was changed.
 | DV4 | One category, one name | `recoverableCategorySeed` names `emd` **“EMD”** (`internal/store/recoverables.go:27`) | The request form option reads **“EMD — earnest money deposit”** and so does `recoverableLabel` (`internal/app/templates.go:1738`, `internal/app/requests.go:1027`), while the Configuration screen and the recoverable register render `rc.name` = “EMD”. |
 | DV5 | The advertised attachment cap is the enforced one | screen: *“PDF, JPG or PNG up to {{attachment_max_mb}} MB”*, default **10** (`internal/app/templates.go:1994`, `internal/store/migrations.go:244`) | The server enforces **20 MiB** and the setting is never read by the validator (`internal/app/http_errors.go:23`, `internal/app/app.go:948`). |
 | DV6 | A head belongs to the chosen project | the form filters heads by project (`internal/app/templates.go:1799`) | Nothing validates the pairing on submit; `needsProjectHead` checks only that both ids are positive (`internal/store/requests.go:161–166`). |
-| DV7 | A7 “Admin reassign (reason + history)” is delivered | *“`POST /requests/{id}/reassign` \| approval/reassign \| `requestReassign` \| Admin reassign, reason + history (A7)”* (`docs/superpowers/specs/2026-07-25-phase-2-request-workflow-spec.md:206`) | That exact path is registered on **`reservation:reassign`** and handles reservation handover (`internal/app/app.go:466`, `internal/app/linking.go:642–674`). `store.ReassignRequest` (`internal/store/requests.go:759`) has **no HTTP caller**; `approval:reassign` is granted but consumed by nothing. |
+| DV7 | A7 “Admin reassign (reason + history)” is delivered | *“`POST /requests/{id}/reassign` \| approval/reassign \| `requestReassign` \| Admin reassign, reason + history (A7)”* (`docs/superpowers/specs/2026-07-25-phase-2-request-workflow-spec.md:206`) | **Resolved as of Wave 3, `1fac147`** (`docs/qa/results/REPAIR-LOG.md`) — see UC-B-31. The exact path the spec names, `POST /requests/{id}/reassign`, is still registered on `reservation:reassign` and still handles reservation handover, unrelated to this requirement (`internal/app/app.go:466`, `internal/app/linking.go:642–674`); the repair did not rewire that path. Instead A7 got its own route, `POST /requests/{id}/reassign-approver` (`app.go:569`, handler `app.go:1615-1647`), over the same `store.ReassignRequest` (`internal/store/requests.go:1131`; `:759` at the time of this audit), with a screen control at `internal/app/templates.go:2578-2603`. |
 | DV8 | The fixtures’ payee gap | `tests/e2e/fixtures.ts:178–188` “KNOWN GAP … every Phase-3 screen reads `Request.VendorPayee`” | **Fixed** at `fca6939`; `internal/app/linking.go:260` writes `VendorPayee: req.Vendor`. The comment is stale and should not be propagated. |
 
 ### 7.2 Suspected defects, ranked
@@ -2610,11 +2626,11 @@ Findings only — nothing here was changed.
 | DS7 | medium | A re-raise runs no attachment policy (`internal/store/requests.go:805–856`) and copies no attachments. | With `require_attachments=1`, **Raise it again** produces a `pending` request with zero documents and whatever exception reason the rejected one carried — a path around G10. |
 | DS8 | low | `ListRequests` caps at 200 and the CSV export uses it (`internal/store/requests.go:1272–1274`, `internal/app/requests.go:928`). | An organisation with 300 open requests exports 200 rows with no warning and no pagination control anywhere on `/requests`. |
 | DS9 | low | The approvals queue has no tab for requests the manager returned. `approvalTabs` covers `pending`, `cancellation_requested`, and `approved`/`rejected`/`cancelled` (`internal/app/requests.go:877–881`). | A returned request vanishes from the approver’s screens entirely; only the requester’s **Needs me** bucket carries it. |
-| DS10 | low | No notification fires for a withdrawal, an outright cancellation, or either cancellation decision. `requestWithdraw`, `requestCancelOutright` and `requestCancellationDecide` contain no `a.fire` (`internal/app/requests.go:748–754`, `850–867`). | A manager cancels an approved request with a reason; the requester and any reserving accountant learn of it only by reloading. |
-| DS11 | low | `store.ReassignRequest` is unreachable dead code (DV7). | `go vet` passes because it is an exported method; A7 has no end-to-end path. |
+| DS10 | low | **Fixed for three of the four paths, one still open** — F-F-06, Wave 2 vocabulary (`25411b8`) + Wave 4 wiring (`docs/qa/results/REPAIR-LOG.md`). At `30edd6a`, no notification fired for a withdrawal, an outright cancellation, or either cancellation decision. `requestWithdraw` now calls `a.fire(r, notify.EventRequestWithdrawn, …)` (`internal/app/requests.go:916`) and `requestCancellationDecide` fires `EventCancellationAccepted`/`EventCancellationDeclined` (`requests.go:1029`, `1031`) — three of the nine events migration v9 added, bringing the vocabulary from twelve to 21 (`internal/notify/events.go:71-79`). **`requestCancelOutright` still calls no `a.fire`** (`requests.go:1036-1043`), and `notify.AllEvents` has no outright-cancel event, so an approver cancelling an approved request outright still notifies nobody. | Partly superseded. The outright-cancel half stands: see UC-B-29's open question. |
+| DS11 | low | **Fixed** (DV7) — `store.ReassignRequest` now has a caller, `requestReassignApprover` (`internal/app/app.go:1615-1647`), over `POST /requests/{id}/reassign-approver`. | Superseded; kept for history. |
 | DS12 | low | The dashboard’s **Approved, unclaimed** count uses `status='approved'` with no hold filter (`internal/app/dashboard.go:94–100`), while the Accounts queue’s takeable set excludes held rows (L7). | With one approved request on hold, the tile reads 1 and the Accounts queue offers nothing to take. |
 | DS13 | low | A refused return/reject/approve replaces the whole page with the error page rather than re-opening the sheet (`internal/app/requests.go:717–745`). | A manager who types whitespace into **What needs correcting** loses the sheet and must navigate back and reopen it. |
-| DS14 | informational | A non-existent id answers 404 while an out-of-scope id answers 403 (`internal/app/requests.go:231–239`). | An out-of-scope caller can distinguish “exists” from “does not exist” by status code. |
+| DS14 | informational | **Fixed** — F-G-002, Wave 3 (`1fac147`). Both a non-existent id and an out-of-scope id now answer **404**: `loadViewableRequest` (`internal/app/requests.go:295-308`) applies `canViewRequest` and answers the same 404 either way, with the real reason logged, not rendered. | Superseded; kept for history. The old citation (`requests.go:231-239`) no longer points at this logic — it moved to `loadViewableRequest`. |
 
 ---
 
@@ -2654,7 +2670,7 @@ Findings only — nothing here was changed.
 | UC-B-28 | A3, L4, L11, Q3, C2 | `POST /requests/{id}/reject` | Manager |
 | UC-B-29 | L6, L11, C2 (G2) | `GET /requests/{id}/cancellation`, `POST /requests/{id}/cancel` | Manager |
 | UC-B-30 | L6, L11, C2, D4 (G1) | `GET`+`POST /requests/{id}/cancellation` | Manager |
-| UC-B-31 | **A7 — unreachable** | none (`store.ReassignRequest` only) | Admin / Manager |
+| UC-B-31 | **A7 — reachable since Wave 3** (`1fac147`) | `POST /requests/{id}/reassign-approver` | Admin / Manager |
 | UC-B-32 | D1, D2, D4, N1, Q5, A5 | `GET /{$}`, `GET /dashboard` | all four |
 | UC-B-33 | A1, A2, L11, R6 (G8) | `POST /requests`, `POST /requests/{id}/edit`, `POST /requests/{id}/approve` | Admin / Manager |
 | UC-B-34 | A5, R6, L11 | `POST /requests/{id}/{approve\|return\|reject\|cancel\|cancellation}` | Manager / Admin |
@@ -2693,7 +2709,7 @@ least one use case above.
 | A4 | Return with required comments | UC-B-27, UC-B-36 |
 | A5 | Managers see all; approve assigned | UC-B-16, UC-B-23, UC-B-25, UC-B-26, UC-B-34 |
 | A6 | No bulk approval | UC-B-25, UC-B-35 |
-| A7 | Admin reassign (reason + history) | **UC-B-31 — store-only, no route (DV7 / DS11)** |
+| A7 | Admin reassign (reason + history) | UC-B-31 — `POST /requests/{id}/reassign-approver` since Wave 3 (`1fac147`); DV7/DS11 resolved |
 | A8 | Edit-while-pending: history + re-notify + reset + reroute | UC-B-18, UC-B-19 |
 | Q1 | Edit & resubmit a sent-back request | UC-B-18, UC-B-19, UC-B-38 |
 | Q2 | Withdraw pending | UC-B-20, UC-B-22, UC-B-37 |

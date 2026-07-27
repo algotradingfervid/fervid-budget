@@ -1,17 +1,25 @@
 # 01 — Domain Model
 
 Derived entirely from code: `internal/store/schema.go` (v0 baseline), `internal/store/migrations.go`
-(v1–v7), `internal/store/migrations_notifications.go` (v7 detail), `internal/store/recoverables.go`
+(v1–v10), `internal/store/migrations_notifications.go` (v7 and v9 detail), `internal/store/recoverables.go`
 (v6 detail), `internal/store/models.go`, `permissions.go`, `vendors.go`, `notifications.go`,
 `inapp.go`, `reminders.go`, `settings.go`, `badges.go`, `backup.go`, `seed.go`, `store.go`,
 `requests.go`, `internal/app/linking.go`, `internal/money/money.go`, and (for the request-status
 cross-check) `internal/store/requests_test.go`. Where a claim could not be confirmed from code it is
 marked **UNVERIFIED**.
 
-After migration v7 the database has **22 tables**. Migrations are strictly append-only and
+The database has **22 tables**. Migrations are strictly append-only and
 contiguous — v1 permissions, v2 vendors, v3 requests, v4 payments-request-linking, v5
 accounts-reservation-grants (permission rows only, no schema), v6 recoverable categories, v7
 notifications (`internal/store/migrations.go:15-30`).
+
+**Since the audit:** three more migrations landed during the repair waves, so the sequence now runs
+**v1 through v10 as of this writing** — v8 `payments_head_nullable` (`migrations.go:336`), v9
+`notification_events_audit` (`migrations.go:344`), v10 `payments_vendor_id` (`migrations.go:352`).
+The table count is unchanged at 22: v8 rebuilds `payments` through two scratch tables it drops in the
+same transaction (`migrations.go:447,451,480-481,486`), v9 inserts rows only, v10 adds a column. This
+document is otherwise written against commit `30edd6a`; the list above is the authority for numbering
+and a v11 may follow it.
 
 ---
 
@@ -77,7 +85,7 @@ erDiagram
   }
   PAYMENTS {
     INTEGER id PK
-    INTEGER head_id FK
+    INTEGER head_id FK "null v8"
     TEXT paid_on
     INTEGER amount
     TEXT vendor_payee "null"
@@ -95,6 +103,7 @@ erDiagram
     INTEGER request_id FK "null v4"
     TEXT settlement "v4"
     TEXT partial_reason "v4"
+    INTEGER vendor_id FK "null v10, see 1.4"
   }
   PAYMENT_ATTACHMENTS {
     INTEGER id PK
@@ -146,6 +155,23 @@ keeps `request_id NULL`, which is what X6 depends on. `users.default_approver_id
 drawn here with the rest of `users` for locality. Composite uniqueness that Mermaid cannot express
 on a single attribute — `heads(project_id, name)` and `budgets(head_id, month)` — is listed in the
 §2 index inventory instead of forced into this diagram.
+
+**Since the audit:** two `payments` columns changed and are re-tagged above.
+
+- `head_id` was `NOT NULL` at `30edd6a`; migration **v8** rebuilt the table with it **nullable**
+  (`migrations.go:453`, `head_id INTEGER REFERENCES heads(id)`). A recoverable request carries no
+  budget head — the recoverable fieldset never collects one — so the payment settling it could not
+  satisfy a `NOT NULL` head. `validatePayment` now takes a `headOptional bool`
+  (`internal/store/store.go:1922-1923`); of its three callers only `RecordPaymentForRequest` passes
+  it true, as `treatment == "recoverable"` (`store.go:1115`), while the two free-standing payment
+  writers pass `false` (`store.go:701,744`). So a recoverable payment settles carrying no head at
+  all and every other payment still needs one. Fixed in Wave 1, commit `633997b`, decision 1
+  (`docs/qa/results/REPAIR-LOG.md:24,36`). The `HEADS ||--o{ PAYMENTS : posts` line above is
+  therefore now optional-to-one on the `PAYMENTS` side.
+- `vendor_id` was added by migration **v10** (`migrations.go:390`), back-filled from the request the
+  payment settles, so the vendor master no longer infers a vendor from a payee name (F-G-009,
+  F-G-010). It is drawn as an attribute only; the `VENDORS` relationship line lives in §1.4, which
+  owns that table.
 
 ### 1.2 Permissions (migration v1)
 
@@ -421,7 +447,7 @@ is the deliberate, documented one (A21, `internal/store/migrations.go:160-167`);
 | T03 | `heads` | v0 | Budget line (head) within a project | small, admin-maintained |
 | T04 | `budgets` | v0 | Planned amount for one head in one month | heads × months in use |
 | T05 | `budget_months` | v0 | Per-month plan status (open/locked) and provenance | one row per month that has ever had a plan or a lock |
-| T06 | `payments` | v0 (+v4 cols) | The ledger: every rupee actually paid, plus (v4) the request it settles | one row per payment ever recorded, append-mostly (voided, not deleted) |
+| T06 | `payments` | v0 (+v4 cols, +v8 rebuild, +v10 col) | The ledger: every rupee actually paid, plus (v4) the request it settles. Since the audit: v8 rebuilt the table so `head_id` is nullable (`migrations.go:453`) and v10 added `vendor_id` (`migrations.go:390`) | one row per payment ever recorded, append-mostly (voided, not deleted) |
 | T07 | `payment_attachments` | v0 | Proof-of-payment files attached to a ledger row | payments with uploaded evidence |
 | T08 | `month_locks` | v0 | Which months are frozen against further edits | one row per locked month |
 | T09 | `audit_log` | v0 | Free-text, free-entity_type history of every mutation | grows with every write in the system |
@@ -436,7 +462,7 @@ is the deliberate, documented one (A21, `internal/store/migrations.go:160-167`);
 | T18 | `request_number_seq` | v3 | Per-year monotonic counter feeding the human-readable request number | one row per calendar/financial year (or a single blank-year row if `number_year_mode='none'`) |
 | T19 | `app_settings` | v3 (+v5 keys) | Generic key/value runtime configuration (numbering, attachments, urgency, SMTP, etc.) | fixed small set of keys |
 | T20 | `recoverable_categories` | v6 | Admin-configurable recoverable-payment categories and their field rules | small (6 seeded + admin additions) |
-| T21 | `notification_settings` | v7 | The 12 admin-editable event rules (recipients, templates, email on/off) | fixed at 12 rows, seeded once |
+| T21 | `notification_settings` | v7 (+v9 rows) | The 12 admin-editable event rules (recipients, templates, email on/off). **Since the audit: 21 rules** — v9 adds nine more (`migrations_notifications.go:87-129`) | ~~fixed at 12 rows, seeded once~~ **fixed at 21 rows**, seeded by two migrations; v9 uses `ON CONFLICT(event) DO NOTHING` so an administrator's edits to v7's twelve survive |
 | T22 | `notifications` | v7 | In-app notification centre: one row per recipient per event | users × events fired at them, grows continuously |
 
 ### Indexes and unique constraints — what each one prevents
@@ -845,9 +871,11 @@ classDiagram
 ```
 
 `NotificationSetting.Event` is the string primary key shared with `notify.AllEvents`
-(`internal/notify/events.go:23-27`) and with the twelve rows migration v7 seeds
-(`migrations_notifications.go:28-68`) — see §4 for the full event list and its divergence from the
-overview spec. `MailSettings` deliberately has **no password field**; the SMTP password is read from
+(`internal/notify/events.go:71-79`) and with the rows the notification migrations seed — v7's twelve
+(`migrations_notifications.go:28-68`) and v9's nine (`migrations_notifications.go:155`,
+`UpAuditNotificationEvents`) — see §4 for the full event list and its divergence from the
+overview spec. **Since the audit:** the vocabulary was twelve at `30edd6a` and is **21** now; the
+`AllEvents` slice moved to `events.go:71-79` when v9's block was added above it. `MailSettings` deliberately has **no password field**; the SMTP password is read from
 the environment and never persisted (`notifications.go:20-22`).
 
 | Store method | Operates on |
@@ -915,12 +943,27 @@ only to the two `scopedResources`, `request` and `payment` (`permissions.go:185`
 lists 17 resources and 54 pairs (no `vendor`, `vendor_bank`, `reservation`, `config`; no
 `request:cancel` or `approval:cancel`) — see §6.
 
-**Notification events** — 12, seeded by migration v7 and mirrored in `notify.AllEvents`
-(`internal/notify/events.go:9-27`, `migrations_notifications.go:28-68`):
+**Notification events** — **21**, mirrored in `notify.AllEvents` (`internal/notify/events.go:71-79`),
+in the seeded `sort_order`: v7's twelve, then v9's nine.
+
+Seeded by migration v7 (`internal/notify/events.go:8-19`, `migrations_notifications.go:28-68`):
 
 `request_submitted` · `request_edited` · `request_returned` · `request_rejected` ·
 `request_approved` · `request_urgent` · `request_on_hold` · `request_cancellation_requested` ·
 `payment_settled` · `payment_partial_review` · `reminder_pending` · `reminder_stale_reservation`.
+
+**Since the audit** — nine more, seeded by migration v9 (`internal/notify/events.go:22-67`,
+`migrations_notifications.go:155`, `UpAuditNotificationEvents`). At `30edd6a` this enumeration was
+twelve and the count is now 21; the audit finding was F-F-06 (six workflow actions notified nobody
+at all), fixed as vocabulary in Wave 2, commit `25411b8`, and wired in Wave 4:
+
+`request_withdrawn` · `request_reraised` · `request_unheld` · `reservation_released` ·
+`reservation_reassigned` · `payment_partial_accepted` · `payment_partial_concern` ·
+`request_cancellation_accepted` · `request_cancellation_declined`.
+
+v9 inserts with `ON CONFLICT(event) DO NOTHING` (`migrations_notifications.go:136`), so an
+administrator's edits to v7's twelve survive — which is why it is a migration and never a re-seed
+(`migrations.go:341-343`).
 
 The overview spec §6 names only `request_approved`, `request_submitted_urgent`,
 `request_approved_urgent`, `reminder_pending`, `reminder_processing_stale` — none of the "urgent"
@@ -980,7 +1023,7 @@ Every row is verified against both documents; `file:line` is given for each side
 
 | # | Area | Overview spec says | Shipped code does | Spec cite | Code cite |
 |---|---|---|---|---|---|
-| DV1 | Migration count/mapping | v1–v5, one per phase: v1 permissions, v2 requests, v3 payments-linking, v4 recoverables, v5 notifications | v1–v7: v1 permissions, v2 **vendors**, v3 requests, v4 payments-linking, v5 **accounts-reservation-grants (no schema)**, v6 recoverables, v7 notifications | `overview.md:35,194-199` | `migrations.go:15-30` |
+| DV1 | Migration count/mapping | v1–v5, one per phase: v1 permissions, v2 requests, v3 payments-linking, v4 recoverables, v5 notifications | **v1–v10 as of this writing**: v1 permissions, v2 **vendors**, v3 requests, v4 payments-linking, v5 **accounts-reservation-grants (no schema)**, v6 recoverables, v7 notifications, v8 **payments head nullable**, v9 **nine more notification events**, v10 **payments.vendor_id**. The row read "v1–v7" at `30edd6a`; v8–v10 landed in the repair waves, so the *gap* this row records is now five migrations wide, not two | `overview.md:35,194-199` | `migrations.go:15-30`, `:336`, `:344`, `:352` |
 | DV2 | Phase map | Five phases (1–5); no vendor master phase is named at all | An entire unplanned "Phase 1V" (vendor master) sits between Phase 1 and Phase 2 in the shipped migration sequence | `overview.md:19-29` (§2 Phase map) | `migrations.go:84-94` |
 | DV3 | Permission vocabulary size | 17 resources, 54 (resource, action) pairs; no `vendor`, `vendor_bank`, `reservation`, `config`; no `request:cancel`/`approval:cancel` | 21 resources, 66 pairs (adds exactly those four resources and two actions) | `overview.md:209-230` | `permissions.go:150-183` |
 | DV4 | `recoverable_categories` schema | `CREATE TABLE recoverable_categories(id, name, requires_project, requires_counterparty, active, sort_order, created_at)` — no `code` column, unique only on `lower(name)` | Adds a `code TEXT NOT NULL` column with its own `UNIQUE(code)` index; `code` (not `name`) is the stable identity `payment_requests.recoverable_category` resolves by | `overview.md:151-160` | `recoverables.go:39-50` |
@@ -991,7 +1034,7 @@ Every row is verified against both documents; `file:line` is given for each side
 | DV9 | Coverage matrix L1 ("Draft (private)") still claims VERIFIED against a named test | — | The cited test `TestCreateRequestDraftAssignsNumberAndForcesPayee` **does not exist** in the repository; the actual test was renamed `TestCreateRequestIsAtomicCreateAndSubmit`, and a separate proof-of-absence test's own comment reads "D1 proof of absence: coverage row L1 inverted" — the coverage matrix was never updated after the rename | `docs/superpowers/specs/2026-07-25-payment-requests-coverage.md:61` | `internal/store/requests_test.go:263,312-313` (test not found anywhere by that name — confirmed by repo-wide grep) |
 | DV10 | Seeded Manager role | `approval` grants: approve, reject, return, reassign, accept_partial — no `cancel` | Manager also holds `approval:cancel` (G2's outright-cancellation power) | `overview.md:238` | `migrations.go:368-377` |
 | DV11 | Seeded Accounts role | No `reservation` grants listed (resource doesn't exist in spec's vocabulary) | Accounts holds `reservation:reserve` and `reservation:release`, added by the one-off v5 migration specifically because `seedSystemRoles` only runs at v1 and a re-seed would clobber admin customisation | `overview.md:239` | `migrations.go:293-312,382-393` |
-| DV12 | Notification events | Names `request_approved`, `request_submitted_urgent`, `request_approved_urgent`, `reminder_pending`, `reminder_processing_stale` (5 named) | 12 seeded events, differently named: one `request_urgent` (not two "…_urgent" variants), `reminder_stale_reservation` (not `reminder_processing_stale`), plus 7 more events the spec never names (`request_submitted`, `request_edited`, `request_returned`, `request_rejected`, `request_on_hold`, `request_cancellation_requested`, `payment_settled`, `payment_partial_review`) | `overview.md:261` | `migrations_notifications.go:28-68`, `internal/notify/events.go:9-27` |
+| DV12 | Notification events | Names `request_approved`, `request_submitted_urgent`, `request_approved_urgent`, `reminder_pending`, `reminder_processing_stale` (5 named) | **21** seeded events, differently named: one `request_urgent` (not two "…_urgent" variants), `reminder_stale_reservation` (not `reminder_processing_stale`), plus the rest the spec never names. This row read "12 seeded events" at `30edd6a`; migration v9 added nine more (F-F-06, Wave 2 `25411b8`), so the divergence is wider, not narrower | `overview.md:261` | `migrations_notifications.go:28-68` (v7's twelve), `:155` (v9's nine), `internal/notify/events.go:71-79` |
 | DV13 | `payment_modes` app setting | Not mentioned in the overview at all (it is a Phase-2 `app_settings` seed row) | Exists, is admin-editable on the Configuration screen, and is **never read** by the payment form — the live payment-mode options are a separate hardcoded 6-value Go list | n/a | `migrations.go:248`, `internal/app/configuration.go:72`, `internal/app/linking.go:993-995` |
 | DV14 | `recoverable_category:delete` permission | Not applicable (resource didn't exist in spec's 17) | Present in the canonical vocabulary and grantable to a role via the admin matrix, but no `DeleteRecoverableCategory` store method and no route ever checks it — a dead permission | n/a | `permissions.go:164`, `internal/app/permmap.go:114` (grep of `internal/app/*.go` and `internal/store/*.go` confirms no consumer) |
 | DV15 | Last-active-administrator safety check | Not specified at this level of detail | `RequireAnotherActiveAdmin` guards only the legacy `users.role='admin'`/`active` columns (`UpdateUser`); it is never consulted by `SetUserRoles` or `UpdateRolePermissions`, so the RBAC path can strip every user of the `Admin` role, or strip the `Admin` role of `user:edit`/`role:edit`, with no safety net | n/a | `store.go:126-167`, `permissions.go:458-492,366-413`, `auth.go:122-148` (RequirePermission never consults the legacy column) |
@@ -1011,7 +1054,8 @@ with spec-vs-code flags inline; (5) 15 invariants with `file:line` and SQL-vs-Go
 15-row divergence log against the overview spec.
 
 **Divergences found:** the 15 rows of §6 above, most load-bearing: migration numbering (v1–v5 vs
-v1–v7, DV1), an entirely unplanned vendor-master phase missing from the spec's phase map (DV2), 17→21
+v1–v10 as of this writing — v1–v7 when this was written, DV1), an entirely unplanned vendor-master
+phase missing from the spec's phase map (DV2), 17→21
 resources / 54→66 permission pairs (DV3), `recoverable_categories` gaining a `code` identity column
 the spec never had (DV4), the spec's Phase-2 `recoverable_category_id` FK being physically impossible
 as written (DV5), a materially incomplete `payment_requests` column list in the spec (DV6), the

@@ -66,8 +66,28 @@ const (
 	EventCancellationDeclined = "request_cancellation_declined"
 )
 
+// The two the audit's own repair left behind, found while reconciling the
+// documentation against the code that had just been written. Both are the same
+// mistake the nine above were: a transition that changes what a specific other
+// person must do next, firing nothing.
+const (
+	// EventApproverReassigned — a request was routed to a different approver.
+	// The reassignment sheet promises, in as many words, that "The new approver
+	// is told, and the reminder clock starts again"; the route Wave 3 built to
+	// make that reassignment possible at all fired nothing, so the sentence was
+	// false from the moment it shipped. Told to the new approver, who is the
+	// only person with something to do: ReassignRequest has already moved
+	// manager_id, so IncludeManager addresses them and not their predecessor.
+	EventApproverReassigned = "approval_reassigned"
+	// EventRequestCancelled — the approver cancelled a request outright, which
+	// is a different act from deciding a cancellation the requester asked for
+	// (that pair is above). Nobody asked, so the requester learns here that the
+	// money they were waiting on is not coming.
+	EventRequestCancelled = "request_cancelled"
+)
+
 // AllEvents is the order the admin rules screen renders, which is the seeded
-// sort_order: v7's twelve, then v9's nine.
+// sort_order: v7's twelve, then v9's nine, then v11's two.
 var AllEvents = []string{
 	EventRequestSubmitted, EventRequestEdited, EventRequestReturned, EventRequestRejected,
 	EventRequestApproved, EventRequestUrgent, EventRequestOnHold, EventCancellationRequested,
@@ -76,6 +96,7 @@ var AllEvents = []string{
 	EventReservationReleased, EventReservationReassigned,
 	EventPaymentPartialAccepted, EventPaymentPartialConcern,
 	EventCancellationAccepted, EventCancellationDeclined,
+	EventApproverReassigned, EventRequestCancelled,
 }
 
 // The plan also listed a kindFor(event) classifier here. It is deliberately

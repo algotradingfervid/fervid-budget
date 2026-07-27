@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-25
 **Status:** Supersedes the phase map in `2026-07-25-payment-requests-overview.md` §2. All other sections of the overview remain authoritative unless amended here.
-**Why this exists:** the five phase plans were written before the UI/UX design system existed. They are excellent on the backend and audited to 92/92 requirement coverage, but every UI task targets markup that the approved design replaces. A four-way independent analysis of the plans against the approved mockups also surfaced functional gaps that have nothing to do with styling.
+**Why this exists:** the five phase plans were written before the UI/UX design system existed. They are strong on the backend — though the "92/92 requirement coverage" this sentence used to cite has since been **retracted**: the 2026-07-27 audit found the coverage matrix's verification column unsound, not its requirement IDs, and A7 and L1 in particular did not hold (`docs/superpowers/specs/2026-07-25-payment-requests-coverage.md`, `docs/qa/results/AUDIT-REPORT.md:283`). Every UI task targets markup that the approved design replaces. A four-way independent analysis of the plans against the approved mockups also surfaced functional gaps that have nothing to do with styling.
 
 **Authoritative design sources:**
 - `docs/superpowers/specs/2026-07-25-payment-requests-uiux-design.md` — the approved UI/UX design
