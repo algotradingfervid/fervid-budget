@@ -9,6 +9,12 @@ were green.
 consolidated findings, deduplicated across areas and ranked by severity, with a
 suggested order of repair grouped by root cause.
 
+**Then:** [`results/REPAIR-LOG.md`](results/REPAIR-LOG.md) — what was *done* about
+each finding, and the decisions taken along the way. The audit report is a
+snapshot of `30edd6a` and is not updated as defects are fixed; the repair log is
+the current status. [`results/FIX-PLAN.md`](results/FIX-PLAN.md) is the wave
+layout and file ownership the repair follows.
+
 ---
 
 ## The rule this documentation was built on

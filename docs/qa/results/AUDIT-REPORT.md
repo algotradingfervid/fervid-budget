@@ -11,6 +11,14 @@ below is recorded as an honest, still-failing assertion annotated `test.fail()`
 the defect stays pinned — and the day one is fixed, its test goes red with
 "passed unexpectedly".
 
+> **This document describes `30edd6a` and is not updated as defects are fixed.**
+> That instruction was subsequently reversed — the findings below are being
+> repaired — so this report stays as the record of *what was found and how it was
+> proved*. For **what was done about each finding**, read
+> [`REPAIR-LOG.md`](REPAIR-LOG.md); for the wave layout and file ownership, read
+> [`FIX-PLAN.md`](FIX-PLAN.md). Line and file references below point at the
+> audited commit and will have moved.
+
 ---
 
 ## The short version
