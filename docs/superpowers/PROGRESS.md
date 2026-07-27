@@ -143,8 +143,9 @@ These are learned, not theoretical. Each one has already cost a debugging pass.
   with no route yet. The sidebar renders them as Soon announcements and the tab
   bar skips them. A phase that builds a screen **deletes its line**;
   `TestEveryLinkedNavItemResolves` and `TestTabBarNeverLinksToAnUnbuiltRoute`
-  fail until it does. It currently holds `/recoverables` (Phase 4) and
-  `/admin/notifications` (Phase 5).
+  fail until it does. It now holds exactly one line, `/admin/notifications`
+  (Phase 5). Deleting it also flips three nav guard tests that assert the screen
+  is *not* linked — updating those is part of the same task, not a regression.
 - **Never `git add -A`.** Parallel agents share one index. Commit with pathspec
   form: `git commit -m "..." -- <explicit paths>`.
 - **The canonical permission vocabulary is 21 resources / 66 pairs**, declared
