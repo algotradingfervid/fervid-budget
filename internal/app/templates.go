@@ -3367,21 +3367,19 @@ const templates = `
   <a class="{{if eq .NotifScope "reminders"}}is-active{{end}}" href="/notifications?scope=reminders">Reminders <span class="n">{{.NotifCounts.Reminders}}</span></a>
 </div>
 
-<div class="card">
-  <ul class="notif-list">
-    {{range .Notifs}}
-    <li class="notif{{if not .ReadAt}} unread{{end}}">
-      <span class="n-ico" aria-hidden="true">{{notifGlyph .Kind}}</span>
-      <form class="n-main" method="post" action="/notifications/{{.ID}}/read">
-        <input type="hidden" name="csrf" value="{{$.CSRF}}">
-        <input type="hidden" name="href" value="{{.Href}}">
-        <button type="submit"><b>{{.Title}}</b>{{if .Body}}<span>{{.Body}}</span>{{end}}<time>{{date .CreatedAt}}</time></button>
-      </form>
-    </li>
-    {{else}}
-    <li class="notif"><span class="n-ico" aria-hidden="true">·</span><div class="n-main"><b>Nothing here yet</b><span>You will be told when something needs you.</span></div></li>
-    {{end}}
-  </ul>
+<div class="notif-list">
+  {{range .Notifs}}
+  <a class="notif{{if not .ReadAt}} unread{{end}}" href="/notifications/{{.ID}}/open">
+    <span class="n-ico" aria-hidden="true">{{notifGlyph .Kind}}</span>
+    <span class="n-main"><b>{{.Title}}</b>{{if .Body}}<p>{{.Body}}</p>{{end}}</span>
+    <time>{{date .CreatedAt}}</time>
+  </a>
+  {{else}}
+  <div class="notif">
+    <span class="n-ico" aria-hidden="true">·</span>
+    <span class="n-main"><b>Nothing here yet</b><p>You will be told when something needs you.</p></span>
+  </div>
+  {{end}}
 </div>
 {{template "bottom" .}}
 {{end}}

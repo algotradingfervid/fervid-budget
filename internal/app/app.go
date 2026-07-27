@@ -410,7 +410,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	// verb would add nothing.
 	mux.Handle("GET /notifications", a.auth.RequireLogin(http.HandlerFunc(a.notificationCentre)))
 	mux.Handle("POST /notifications/read", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.notificationsMarkAllRead))))
-	mux.Handle("POST /notifications/{id}/read", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.notificationMarkRead))))
+	mux.Handle("GET /notifications/{id}/open", a.auth.RequireLogin(http.HandlerFunc(a.notificationOpen)))
 
 	// The admin rule editor (D7). A different screen from the centre above, with
 	// a different audience, so it is the one behind a permission verb.

@@ -13,7 +13,8 @@ const ROUTES = [
   '/payments', '/payments/new',
   '/recoverables', '/recoverables/list',
   '/budgets', '/months', '/reports/monthly', '/projects', '/heads', '/vendors', '/vendors/new',
-  '/users', '/roles', '/configuration', '/audit', '/backups',
+  '/notifications',
+  '/users', '/roles', '/configuration', '/admin/notifications', '/audit', '/backups',
 ];
 
 test.describe('app shell', () => {

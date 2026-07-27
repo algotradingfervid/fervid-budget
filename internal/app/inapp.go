@@ -60,13 +60,21 @@ func (a *App) notificationsMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/notifications", http.StatusSeeOther)
 }
 
-// notificationMarkRead is what a .notif posts through on the way to its target,
-// and it is also the no-JS path: on success it redirects to the notification's
-// own href so the click still lands where the user meant to go.
-func (a *App) notificationMarkRead(w http.ResponseWriter, r *http.Request) {
+// notificationOpen is what a .notif links to: it marks the row read and then
+// forwards to wherever the row points.
+//
+// It is a GET because the approved design makes each row a plain anchor, and an
+// anchor cannot POST. The side effect is a per-user read receipt on the reader's
+// own row — the same thing every mail client does when you open a message — not
+// a destructive action, so nothing here is worth a CSRF token.
+//
+// The destination comes from the stored row, never from the query string, so
+// there is no redirect for an attacker to aim.
+func (a *App) notificationOpen(w http.ResponseWriter, r *http.Request) {
 	user := auth.CurrentUser(r)
 	id := parseID(r.PathValue("id"))
-	if err := a.st.MarkNotificationRead(r.Context(), user.ID, id, time.Now().UTC()); err != nil {
+	n, err := a.st.Notification(r.Context(), user.ID, id)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			// Not yours, or gone. Either way there is nothing to show.
 			a.respondError(w, r, http.StatusNotFound, "That notification is not available.", nil)
@@ -75,9 +83,12 @@ func (a *App) notificationMarkRead(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	target := r.FormValue("href")
+	if err := a.st.MarkNotificationRead(r.Context(), user.ID, id, time.Now().UTC()); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	target := n.Href
 	if target == "" || target[0] != '/' {
-		// Never redirect off-site on a posted value.
 		target = "/notifications"
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)

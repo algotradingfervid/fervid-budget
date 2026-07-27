@@ -59,8 +59,8 @@ func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
 		t.Fatal("scope=mentions did not narrow the list")
 	}
 
-	// Marking one read redirects to where it points and drops the unread count.
-	resp := s.postForm("/notifications/"+itoa64(returned)+"/read", url.Values{"href": {"/requests/1"}})
+	// Opening one marks it read and forwards to where it points.
+	resp := s.request(http.MethodGet, "/notifications/"+itoa64(returned)+"/open", nil, "")
 	requireStatus(t, resp, http.StatusSeeOther)
 	if loc := resp.Header.Get("Location"); loc != "/requests/1" {
 		t.Fatalf("redirect = %q, want the notification's own href", loc)
@@ -108,8 +108,8 @@ func TestNotificationCentreNeverShowsAnotherUsersRows(t *testing.T) {
 	if strings.Contains(body, "Admin only secret") {
 		t.Fatal("the centre leaked another user's notification")
 	}
-	// And it cannot be marked read by guessing its id.
-	resp := s.postForm("/notifications/"+itoa64(adminsRow)+"/read", url.Values{})
+	// And it cannot be opened or marked read by guessing its id.
+	resp := s.request(http.MethodGet, "/notifications/"+itoa64(adminsRow)+"/open", nil, "")
 	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
 	unread, err := s.st.UnreadNotificationCount(s.ctx, admin.ID)
@@ -121,8 +121,9 @@ func TestNotificationCentreNeverShowsAnotherUsersRows(t *testing.T) {
 	}
 }
 
-// A posted href is attacker-controlled: it must never redirect off-site.
-func TestNotificationMarkReadRefusesAnOffsiteRedirect(t *testing.T) {
+// The destination comes from the stored row, never from the request, so a
+// query string cannot aim the redirect anywhere.
+func TestNotificationOpenRedirectsToTheStoredHrefOnly(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	if err != nil {
@@ -130,10 +131,10 @@ func TestNotificationMarkReadRefusesAnOffsiteRedirect(t *testing.T) {
 	}
 	id := seedNotification(t, s, admin.ID, "request_approved", "activity", "Row", "/requests/1")
 	s.login(s.cfg.AdminEmail, testAdminPassword)
-	resp := s.postForm("/notifications/"+itoa64(id)+"/read", url.Values{"href": {"https://evil.test/steal"}})
+	resp := s.request(http.MethodGet, "/notifications/"+itoa64(id)+"/open?href=https://evil.test/steal", nil, "")
 	requireStatus(t, resp, http.StatusSeeOther)
-	if loc := resp.Header.Get("Location"); loc != "/notifications" {
-		t.Fatalf("redirect = %q, want the local fallback", loc)
+	if loc := resp.Header.Get("Location"); loc != "/requests/1" {
+		t.Fatalf("redirect = %q, want the stored href", loc)
 	}
 	_ = responseBody(t, resp)
 }

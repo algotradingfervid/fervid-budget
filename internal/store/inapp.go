@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -119,6 +120,18 @@ func (s *Store) ListNotifications(ctx context.Context, f NotificationFilter) ([]
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// Notification reads one row, scoped to its owner. Another user's id returns
+// ErrNotFound rather than the row, so the caller cannot leak it by guessing.
+func (s *Store) Notification(ctx context.Context, userID, id int64) (Notification, error) {
+	var n Notification
+	err := s.db.QueryRowContext(ctx, notificationSelect+` WHERE id=? AND user_id=?`, id, userID).
+		Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt)
+	if err == sql.ErrNoRows {
+		return n, ErrNotFound
+	}
+	return n, err
 }
 
 func (s *Store) NotificationCounts(ctx context.Context, userID int64) (NotificationCounts, error) {
