@@ -72,6 +72,18 @@ var configSections = []ConfigSection{
 		{Key: "payment_modes", Label: "Payment modes offered", Kind: "text", Span: 12,
 			Hint: "Comma separated, in the order the payment form should offer them."},
 	}},
+	// Phase 5. These were hardcoded 3-day and 1-day waits inside the scheduler;
+	// they are data now, read through store.ReminderThresholds. A blank or
+	// non-positive value falls back to the default rather than silently
+	// disabling reminders, so the form cannot switch them off by accident.
+	{Title: "Reminders and ageing", Fields: []ConfigField{
+		{Key: "reminder_pending_days", Label: "Remind after (days pending)", Kind: "number", Span: 4,
+			Hint: "How long a request may sit with an approver before the first reminder. Default 3."},
+		{Key: "reminder_repeat_days", Label: "Then repeat every (days)", Kind: "number", Span: 4,
+			Hint: "How often the reminder returns while nothing happens. Default 1."},
+		{Key: "reminder_stale_days", Label: "Reservation goes stale after (days)", Kind: "number", Span: 4,
+			Hint: "How long an accountant may hold a reservation with no payment recorded. Default 1."},
+	}, Note: "Reminders are counted in calendar days, not working hours. A request put on hold is waiting on the requester by design and is never reminded about."},
 }
 
 func (a *App) configuration(w http.ResponseWriter, r *http.Request) {

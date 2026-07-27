@@ -348,3 +348,32 @@ func TestNoForfeitureRoute(t *testing.T) { // X4
 	}
 	_ = responseBody(t, resp)
 }
+
+// Phase 5, Task 6: the reminder thresholds are admin-set data on the
+// Configuration screen, not constants in the scheduler.
+func TestConfigurationRemindersFieldsetPersistsThresholds(t *testing.T) {
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	for _, want := range []string{"Reminders and ageing", `name="reminder_pending_days"`, `name="reminder_repeat_days"`, `name="reminder_stale_days"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("configuration screen missing %q", want)
+		}
+	}
+
+	form := url.Values{
+		"reminder_pending_days": {"5"}, "reminder_repeat_days": {"2"}, "reminder_stale_days": {"4"},
+	}
+	resp := s.postForm("/configuration", form)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	th, err := s.st.ReminderThresholds(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.PendingAfterDays != 5 || th.RepeatEveryDays != 2 || th.StaleAfterDays != 4 {
+		t.Fatalf("thresholds after save = %+v, want 5/2/4", th)
+	}
+}
