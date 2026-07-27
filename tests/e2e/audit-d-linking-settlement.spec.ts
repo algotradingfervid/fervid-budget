@@ -583,10 +583,13 @@ test.describe('D · reservation entry points and the linkable set', () => {
   });
 
   test('TC-D-013 — S4: the amount search matches the amount a person can see', async ({ browser }) => {
-    // FINDING F-D-04. The amount column is searched as `CAST(r.amount AS TEXT)`,
-    // which is paise, so the figure a person can actually read — ₹7,431.00 —
-    // never matches. The rupee digits match only by substring luck.
-    test.fail();
+    // FINDING F-D-04, fixed. The amount column used to be searched only as
+    // `CAST(r.amount AS TEXT)` — paise — so the figure a person can actually read,
+    // ₹7,431.00, never matched and the rupee digits matched by substring luck.
+    // The query now also parses the needle with `money.ParsePaise` (the same
+    // normaliser the form uses, so the two cannot drift) and compares on paise.
+    // This case guards both halves: the paise substring still works, and the
+    // displayed figure the hint promises — "or amount" — now finds the row.
     const c = await corpus(browser);
     expect(
       await pickerOptions(c.admin, '743100'),
@@ -2348,14 +2351,17 @@ test.describe('D · settlements the product cannot complete', () => {
     browser,
     runId
   }) => {
-    // FINDING F-D-10. POST /requests/{id}/settlement-preview — which writes
-    // nothing — is gated on payment:settle (internal/app/app.go:454), while
-    // POST /payments, the only writer in the flow, is gated on payment:create
-    // alone (internal/app/app.go:387). RecordPaymentForRequest checks the
-    // reservation and nothing else, and payment:mark_partial gates no route at
-    // all, so a subject holding create+reserve can settle a request in full and
-    // mark one a partial without either verb.
-    test.fail();
+    // FINDING F-D-10, fixed while this suite was being repaired — the annotation
+    // is removed here because the fix landed in another wave's file, not because
+    // this case changed. POST /requests/{id}/settlement-preview, which writes
+    // nothing, was gated on payment:settle while POST /payments — the only writer
+    // in the flow — was gated on payment:create alone; RecordPaymentForRequest
+    // checked the reservation and nothing else, and payment:mark_partial gated no
+    // route at all. So a subject holding create+reserve could settle a request in
+    // full and mark one a partial without either verb. POST /payments now requires
+    // payment:settle, and payment:mark_partial when settlement=partial. This case
+    // is the regression guard: the writer is never gated more loosely than the
+    // read-only preview beside it.
     const heads = await headIds(adminPage);
     const head = heads.get('Operations / Office Rent')!;
     const entry = await subjectWithGrants(adminPage, browser, runId, 'entryonly', [

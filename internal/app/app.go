@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -47,15 +48,20 @@ type PageData struct {
 	// No template compares a role name: every gated control names the resource
 	// and action its route is guarded by, and the permission set answers. It is
 	// always non-nil, so a signed-out render simply gates everything off.
-	Perms          store.PermissionSet
-	CSRF           string
-	Error          string
-	Notice         string
-	Month          string
-	Status         string
-	Query          string
-	Grid           store.GridData
-	Projects       []store.Project
+	Perms    store.PermissionSet
+	CSRF     string
+	Error    string
+	Notice   string
+	Month    string
+	Status   string
+	Query    string
+	Grid     store.GridData
+	Projects []store.Project
+	// AllProjects is every project, retired ones included. Projects is the
+	// active set a new record may choose from; AllProjects is what a row select
+	// on an existing record must offer, so a retired project still has an option
+	// to be selected and Save cannot silently move the record (F-G-033).
+	AllProjects    []store.Project
 	Heads          []store.Head
 	Users          []store.User
 	Payments       []store.Payment
@@ -304,7 +310,12 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		// Configuration. The screen is a rendering of this table, so a later
 		// phase adds a section by appending to it and nothing else.
 		"configSections": func() []ConfigSection { return configSections },
-		"waitingOn":      waitingOn,
+		// The audit screen's two filters. Built from the strings the store
+		// actually writes, so an option list can never drift out of reach of the
+		// rows it is meant to select (F-G-004).
+		"auditEntities": auditEntities,
+		"auditActions":  auditActions,
+		"waitingOn":     waitingOn,
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
 		},
@@ -362,7 +373,14 @@ func contextWithTimeout() struct {
 func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
 	mux.HandleFunc("GET /login", a.loginForm)
-	mux.HandleFunc("POST /login", a.loginPost)
+	// POST /login is deliberately outside withCSRF: there is no session yet to
+	// protect, and a pre-session token buys nothing (F-A-10). It is the single
+	// exception to the rule that every mutating POST is wrapped, so it is
+	// written down here rather than left for the next reader of withCSRF to
+	// rediscover. The body cap is *not* optional, though — withCSRF is where it
+	// lives for every other POST, and loginPost is the one unauthenticated
+	// endpoint that parses a form, so it caps its own body instead.
+	mux.HandleFunc("POST /login", a.withBodyCap(a.loginPost))
 	mux.HandleFunc("POST /logout", a.withCSRF(a.logoutPost))
 	// "GET /{$}" matches the root and nothing else. Registered as "GET /" it is
 	// a catch-all, so every URL the app does not serve — including nav items
@@ -374,7 +392,11 @@ func (a *App) routes(mux *http.ServeMux) {
 	// both simply rendered the grid until the dashboard existed.
 	mux.Handle("GET /{$}", a.auth.RequireLogin(http.HandlerFunc(a.dashboard)))
 	mux.Handle("GET /", a.auth.RequireLogin(http.HandlerFunc(a.notFound)))
-	mux.Handle("GET /grid", a.auth.RequireLogin(http.HandlerFunc(a.grid)))
+	// The variance grid carries the whole budget-versus-actual matrix, so it is
+	// gated on the verb the nav item already declares and /export.csv already
+	// enforces (F-A-02/F-G-032). It used to ask only for a session, which served
+	// the company's plan to a caller holding no role at all.
+	mux.Handle("GET /grid", a.auth.RequirePermission("grid", "view", http.HandlerFunc(a.grid)))
 	// The work dashboard. It is ungated beyond being signed in, because every
 	// area inside it is gated on the queue it opens: a person with no areas is
 	// told nothing is waiting on them rather than refused the page.
@@ -384,13 +406,26 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentForm)))
 	mux.Handle("GET /payments/new/options", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentPickerOptions)))
 	mux.Handle("GET /payments", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.payments)))
-	mux.Handle("POST /payments", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.withCSRF(a.paymentCreate))))
+	// The write that records a payment and closes a request is gated at least as
+	// tightly as its own read-only preview (F-D-10): the preview asks for
+	// payment:settle, so the writer asks for payment:create *and* payment:settle.
+	// payment:mark_partial cannot be a route gate, because it applies only when
+	// settlement=partial — paymentCreate checks it itself.
+	mux.Handle("POST /payments", a.auth.RequirePermission("payment", "create",
+		a.auth.RequirePermission("payment", "settle", http.HandlerFunc(a.withCSRF(a.paymentCreate)))))
 	mux.Handle("GET /payments/{id}", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.paymentDetail)))
 	mux.Handle("GET /payments/{id}/edit", a.auth.RequirePermission("payment", "edit", http.HandlerFunc(a.paymentEditForm)))
 	mux.Handle("POST /payments/{id}/edit", a.auth.RequirePermission("payment", "edit", http.HandlerFunc(a.withCSRF(a.paymentEdit))))
 	mux.Handle("POST /payments/{id}/void", a.auth.RequirePermission("payment", "void", http.HandlerFunc(a.withCSRF(a.paymentVoid))))
 	mux.Handle("POST /payments/{id}/attachments", a.auth.RequirePermission("attachment", "create", http.HandlerFunc(a.withCSRF(a.attachmentUpload))))
+	// Two tables, two routes. /attachments/{id} reads payment_attachments;
+	// request documents live in request_attachments with an unrelated id
+	// sequence, so serving them from the same URL handed one reader another
+	// reader's bank advice (F-A-05). Both routes re-check the request the
+	// attachment hangs off, because attachment:view is a Requester grant and
+	// the verb alone is not permission to read a particular file (F-A-01).
 	mux.Handle("GET /attachments/{id}", a.auth.RequirePermission("attachment", "view", http.HandlerFunc(a.attachmentDownload)))
+	mux.Handle("GET /requests/{id}/attachments/{attachmentID}", a.auth.RequirePermission("attachment", "view", http.HandlerFunc(a.requestAttachmentDownload)))
 	mux.Handle("GET /export.csv", a.auth.RequirePermission("grid", "export", http.HandlerFunc(a.exportGrid)))
 	mux.Handle("GET /reports/monthly", a.auth.RequirePermission("report", "view", http.HandlerFunc(a.report)))
 	mux.Handle("GET /reports/projects", a.auth.RequirePermission("report", "view", http.HandlerFunc(a.report)))
@@ -494,6 +529,12 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /requests/{id}/approve", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.withCSRF(a.requestApprove))))
 	mux.Handle("POST /requests/{id}/return", a.auth.RequirePermission("approval", "return", http.HandlerFunc(a.withCSRF(a.requestReturn))))
 	mux.Handle("POST /requests/{id}/reject", a.auth.RequirePermission("approval", "reject", http.HandlerFunc(a.withCSRF(a.requestReject))))
+	// A7: handing an approval on to a different approver, with a reason and a
+	// history entry. The path is deliberately not /reassign — that one is the
+	// payment reservation's, on reservation:reassign — because moving an
+	// approval and moving a reservation are different acts by different people
+	// (F-A-06/F-C-02). store.ReassignRequest carried every rule and had no door.
+	mux.Handle("POST /requests/{id}/reassign-approver", a.auth.RequirePermission("approval", "reassign", http.HandlerFunc(a.withCSRF(a.requestReassignApprover))))
 	// The cancellation flow. GET /cancel is the employee asking and POST /cancel
 	// is the approver cancelling outright: two verbs on one path, because they
 	// are the same sentence said by two people, and ServeMux gates each method
@@ -507,7 +548,14 @@ func (a *App) routes(mux *http.ServeMux) {
 	// person decide rather than on the one that lets them read.
 	mux.Handle("GET /approvals", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.approvals)))
 	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
-	mux.Handle("POST /users", a.auth.RequirePermission("user", "edit", http.HandlerFunc(a.withCSRF(a.userSave))))
+	// One handler, two verbs: the screen renders ＋ Add user behind user:create
+	// and the Edit sheet behind user:edit, and the route has to agree with both
+	// or a legitimately configured role gets a control whose submit 403s
+	// (F-A-07). Which verb applies depends on the posted id, which cannot be read
+	// before the form is parsed — so the route refuses anybody holding neither,
+	// keeping the "permission gate outside withCSRF" ordering every other POST
+	// has, and userSave then demands the one the pressed control was gated on.
+	mux.Handle("POST /users", a.requireAnyOf("user", []string{"create", "edit"}, http.HandlerFunc(a.withCSRF(a.userSave))))
 	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))
 	mux.Handle("POST /roles", a.auth.RequirePermission("role", "edit", http.HandlerFunc(a.withCSRF(a.rolesSave))))
 	mux.Handle("POST /roles/new", a.auth.RequirePermission("role", "create", http.HandlerFunc(a.withCSRF(a.roleCreate))))
@@ -548,6 +596,37 @@ func (a *App) renderPartial(w http.ResponseWriter, r *http.Request, name string,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		a.log.ErrorContext(r.Context(), "fragment write failed", "request_id", requestID(r), "error", err)
+	}
+}
+
+// requireAnyOf is RequirePermission for a route one of whose actions depends on
+// the submitted form. It refuses a caller holding none of the named actions with
+// the same status and the same sentence auth.RequirePermission uses, so the
+// refusal is indistinguishable, and it runs where every other permission gate
+// runs: outside withCSRF, before anything is parsed. The handler behind it must
+// still demand the specific action the request turns out to need — this only
+// establishes that the caller has business here at all.
+func (a *App) requireAnyOf(resource string, actions []string, next http.Handler) http.Handler {
+	return a.auth.RequireLogin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u := auth.CurrentUser(r)
+		for _, action := range actions {
+			if a.auth.Can(u, resource, action) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		a.respondError(w, r, http.StatusForbidden, "You do not have permission to perform this action.", nil)
+	}))
+}
+
+// withBodyCap is the body limit half of withCSRF, on its own, for the one POST
+// that is deliberately outside the token check. An unauthenticated endpoint
+// that calls ParseForm on an unbounded body is a free memory sink; every other
+// POST refuses at maxRequestBodyBytes and so does this one (F-A-10).
+func (a *App) withBodyCap(fn func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		fn(w, r)
 	}
 }
 
@@ -640,10 +719,23 @@ func (a *App) grid(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Month: month, Status: "active", Limit: 10})
-	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
+	// grid:view opens the budget matrix. The Recent Payments panel is a second
+	// question: it carries amounts, payees and live /payments/{id} links, so it
+	// is gated on payment:view separately (F-A-02/F-G-032) and the caller who
+	// lacks that verb is simply handed no rows. The gate is here rather than in
+	// the template because a screen must not be trusted to hide data the handler
+	// loaded — /payments answers 403 to exactly this caller.
+	u := auth.CurrentUser(r)
+	var payments []store.Payment
+	if a.auth.Can(u, "payment", "view") {
+		payments, err = a.st.ListPayments(r.Context(), store.PaymentListOptions{
+			Month: month, Status: "active", Limit: 10,
+			Scope: a.auth.Scope(u, "payment"), ViewerID: u.ID,
+		})
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
 	}
 	a.render(w, r, "grid", PageData{Title: "Variance Grid", Grid: grid, CloseGrid: closeGrid, Month: month, Status: status, Query: q, Payments: payments})
 }
@@ -670,7 +762,15 @@ func (a *App) payments(w http.ResponseWriter, r *http.Request) {
 	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	status := queryDefault(r, "status", "active")
 	q := r.URL.Query().Get("q")
-	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Month: month, Status: status, Query: q})
+	// The `payment` data scope is one of the two scoped resources, and until the
+	// viewer reached ListPayments a role built with Payments · Own received the
+	// whole ledger (F-A-04/F-G-003). The store mirrors requestWhere: only "own"
+	// and "assigned" narrow.
+	u := auth.CurrentUser(r)
+	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{
+		Month: month, Status: status, Query: q,
+		Scope: a.auth.Scope(u, "payment"), ViewerID: u.ID,
+	})
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -694,8 +794,16 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusBadRequest, "Payments must be linked to an approved request.", nil)
 		return
 	}
-	in, err := paymentInput(r)
 	settlement := r.FormValue("settlement")
+	// Writing off a shortfall to the approver's queue is its own decision, and
+	// payment:mark_partial is the verb the vocabulary declares for it. It cannot
+	// be a route gate because it applies to one value of one field (F-D-10).
+	if settlement == "partial" && !a.auth.Can(u, "payment", "mark_partial") {
+		a.respondError(w, r, http.StatusForbidden,
+			"You do not have permission to record a partial payment.", nil)
+		return
+	}
+	in, err := paymentInput(r)
 	partialReason := r.FormValue("partial_reason")
 	var attachment *store.AttachmentInput
 	var attachmentPath string
@@ -858,8 +966,72 @@ func (a *App) paymentVoid(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
 }
 
+// canReadPayment is the ownership rule behind every attachment route, and it is
+// the same rule paymentDetail applies before rendering a linked payment: half of
+// what an attachment discloses belongs to the request, so reading it obeys the
+// request's row scope "or payment:view becomes a way around Q5/R6"
+// (paymentDetail's own comment, and this is the route it was written about —
+// F-A-01/F-A-03).
+//
+// A request-less historical payment has no row scope to consult, so it falls
+// back to the ledger's own verb plus the payment data scope.
+func (a *App) canReadPayment(r *http.Request, p store.Payment) bool {
+	u := auth.CurrentUser(r)
+	if p.RequestID != nil {
+		req, err := a.st.Request(r.Context(), *p.RequestID)
+		if err != nil {
+			return false
+		}
+		return canViewRequest(a.auth.Scope(u, "request"), u, req)
+	}
+	return a.auth.Can(u, "payment", "view") &&
+		paymentScopeReaches(a.auth.Scope(u, "payment"), u.ID, p)
+}
+
+// paymentScopeReaches mirrors ListPayments' scope filter exactly, so a caller
+// who cannot see a payment in the ledger cannot see it by id either: "own" and
+// "assigned" narrow to what the caller entered, and everything else — including
+// the empty scope — leaves the ledger unrestricted.
+func paymentScopeReaches(scope string, viewerID int64, p store.Payment) bool {
+	switch scope {
+	case "own", "assigned":
+		return p.EnteredBy == viewerID
+	default:
+		return true
+	}
+}
+
+// notFoundAttachment is the single refusal for every attachment the caller may
+// not have. It is a 404 and not a 403 on purpose: attachment ids are small
+// sequential integers, and a distinguishable refusal turns the route into an
+// enumeration oracle for the whole table.
+func (a *App) notFoundAttachment(w http.ResponseWriter, r *http.Request, reason string, id int64) {
+	a.log.WarnContext(r.Context(), "attachment refused",
+		"request_id", requestID(r), "attachment_id", id, "reason", reason)
+	a.respondError(w, r, http.StatusNotFound, "The requested attachment was not found.", nil)
+}
+
 func (a *App) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
+	// The write path needs the same ownership check the read path needs, in the
+	// other direction: the attachments on a payment *are* the evidence that it
+	// happened as recorded, and evidence any signed-in user can add to is not
+	// evidence (F-A-03). AddAttachment separately refuses a linked payment, which
+	// makes this unreachable today; the check stays so the hole does not reopen
+	// the day a free-standing payment becomes creatable again.
+	payment, err := a.st.Payment(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			a.notFoundAttachment(w, r, "payment not found", id)
+			return
+		}
+		a.respondStoreError(w, r, err)
+		return
+	}
+	if !a.canReadPayment(r, payment) {
+		a.notFoundAttachment(w, r, "payment out of the caller's scope", id)
+		return
+	}
 	attachment, attachmentPath, err := a.stageUploadedAttachment(r)
 	if err != nil {
 		removeStagedAttachment(a.log, r, attachmentPath)
@@ -878,20 +1050,78 @@ func (a *App) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
 }
 
+// attachmentDownload serves a *payment* document — a bank advice, a proof of
+// payment — and only to somebody the payment's own request is visible to.
 func (a *App) attachmentDownload(w http.ResponseWriter, r *http.Request) {
-	att, err := a.st.AttachmentByID(r.Context(), pathID(r))
+	id := pathID(r)
+	att, payment, err := a.st.AttachmentWithPayment(r.Context(), id)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			a.notFoundAttachment(w, r, "no such payment attachment", id)
+			return
+		}
 		a.respondStoreError(w, r, err)
 		return
 	}
+	if !a.canReadPayment(r, payment) {
+		a.notFoundAttachment(w, r, "payment out of the caller's scope", id)
+		return
+	}
+	a.serveAttachmentFile(w, r, att.ID, att.StoredPath, att.OriginalName, att.MimeType)
+}
+
+// requestAttachmentDownload serves a *request* document — the invoice or
+// quotation the request came in with. It reads request_attachments, checks the
+// document really belongs to the {id} in the path, and scopes it by that
+// request. Both halves matter: without the table split the two id sequences
+// collide (F-A-05), and without the scope check attachment:view would read
+// every request's documents (F-A-01).
+func (a *App) requestAttachmentDownload(w http.ResponseWriter, r *http.Request) {
+	attachmentID := parseID(r.PathValue("attachmentID"))
+	att, err := a.st.RequestAttachmentByID(r.Context(), attachmentID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			a.notFoundAttachment(w, r, "no such request attachment", attachmentID)
+			return
+		}
+		a.respondStoreError(w, r, err)
+		return
+	}
+	// The document has to belong to the request in the URL. Otherwise the path's
+	// {id} is decoration and the route is /attachments/{id} again under a longer
+	// name.
+	if att.RequestID != pathID(r) {
+		a.notFoundAttachment(w, r, "attachment belongs to another request", attachmentID)
+		return
+	}
+	u := auth.CurrentUser(r)
+	req, err := a.st.Request(r.Context(), att.RequestID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			a.notFoundAttachment(w, r, "no such request", attachmentID)
+			return
+		}
+		a.respondStoreError(w, r, err)
+		return
+	}
+	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+		a.notFoundAttachment(w, r, "request out of the caller's scope", attachmentID)
+		return
+	}
+	a.serveAttachmentFile(w, r, att.ID, att.StoredPath, att.OriginalName, att.MimeType)
+}
+
+// serveAttachmentFile is the path-safety and streaming tail both download
+// routes share, so the two can never drift about what is inside AttachmentDir.
+func (a *App) serveAttachmentFile(w http.ResponseWriter, r *http.Request, id int64, storedPath, originalName, mimeType string) {
 	root, err := filepath.Abs(a.cfg.AttachmentDir)
 	if err != nil {
 		a.respondError(w, r, http.StatusInternalServerError, "The attachment could not be opened.", err)
 		return
 	}
-	stored, err := filepath.Abs(att.StoredPath)
+	stored, err := filepath.Abs(storedPath)
 	if err != nil || !strings.HasPrefix(stored, root+string(os.PathSeparator)) {
-		a.log.WarnContext(r.Context(), "unsafe attachment path rejected", "request_id", requestID(r), "attachment_id", att.ID)
+		a.log.WarnContext(r.Context(), "unsafe attachment path rejected", "request_id", requestID(r), "attachment_id", id)
 		a.respondError(w, r, http.StatusNotFound, "The requested attachment was not found.", nil)
 		return
 	}
@@ -903,9 +1133,9 @@ func (a *App) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": att.OriginalName}))
-	if att.MimeType != "" {
-		w.Header().Set("Content-Type", att.MimeType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": originalName}))
+	if mimeType != "" {
+		w.Header().Set("Content-Type", mimeType)
 	}
 	http.ServeFile(w, r, stored)
 }
@@ -980,7 +1210,9 @@ func (a *App) monthCreate(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, listErr)
 			return
 		}
-		a.renderStatus(w, r, http.StatusBadRequest, "months", PageData{Title: "Monthly Plans", MonthPlans: plans, TargetMonth: target, SourceMonth: source, Error: friendly(err)})
+		// The status is the store's, not a hardcoded 400: a locked month is a 409
+		// everywhere else and must be a 409 here too (F-G-026).
+		a.renderStatus(w, r, reRenderStatus(err), "months", PageData{Title: "Monthly Plans", MonthPlans: plans, TargetMonth: target, SourceMonth: source, Error: friendly(err)})
 		return
 	}
 	http.Redirect(w, r, "/budgets?month="+target, http.StatusSeeOther)
@@ -1009,8 +1241,13 @@ func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 	}
 	u := auth.CurrentUser(r)
 	inputs := make(map[int64]string)
+	fieldErrors := make(map[int64]string)
 	var updates []store.BudgetInput
-	var parseErr error
+	// One unreadable field is one unreadable field. The whole batch used to be
+	// abandoned for any single failure, and because the screen renders ₹0.00 for
+	// every unbudgeted head — a value ParsePaise refuses — a month that had never
+	// been budgeted could not be budgeted at all (F-G-028). Every field that
+	// parses is now applied; the ones that do not are named back to the operator.
 	for k, v := range r.Form {
 		if !strings.HasPrefix(k, "budget_") {
 			continue
@@ -1020,28 +1257,84 @@ func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 		if len(v) > 0 {
 			raw = v[0]
 		}
+		if idErr != nil || headID <= 0 {
+			continue
+		}
 		inputs[headID] = raw
-		amt, amountErr := money.ParsePaise(raw)
-		if idErr != nil || headID <= 0 || amountErr != nil {
-			parseErr = fmt.Errorf("%w: invalid budget amount for one or more heads", store.ErrValidation)
+		amt, amountErr := parseBudgetPaise(raw)
+		if amountErr != nil {
+			fieldErrors[headID] = amountErr.Error()
 			continue
 		}
 		updates = append(updates, store.BudgetInput{HeadID: headID, Amount: amt})
 	}
-	if parseErr == nil {
-		parseErr = a.st.SetBudgets(r.Context(), u, month, updates)
+	var saveErr error
+	if len(updates) > 0 {
+		saveErr = a.st.SetBudgets(r.Context(), u, month, updates)
 	}
-	if parseErr != nil {
+	if saveErr != nil || len(fieldErrors) > 0 {
 		grid, gridErr := a.st.Grid(r.Context(), month, "", "")
 		heads, headsErr := a.st.ListHeads(r.Context(), true)
 		if gridErr != nil || headsErr != nil {
 			a.respondStoreError(w, r, errors.Join(gridErr, headsErr))
 			return
 		}
-		a.renderStatus(w, r, http.StatusBadRequest, "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, Error: friendly(parseErr)})
+		message := friendly(saveErr)
+		if saveErr == nil {
+			// The wording keeps "invalid budget amount" from the message this
+			// replaces, because that phrase is what the reader — and the shipped
+			// regression guard — recognises. What it no longer says is that
+			// everything was refused, because it no longer is.
+			message = fmt.Sprintf("%d invalid budget %s left unchanged; everything else was saved.",
+				len(fieldErrors), plural(len(fieldErrors), "amount was", "amounts were"))
+		}
+		// reRenderStatus keeps a locked month a 409 here too (F-G-026).
+		a.renderStatus(w, r, reRenderStatus(saveErr), "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, BudgetErrors: fieldErrors, Error: message})
 		return
 	}
 	http.Redirect(w, r, "/budgets?month="+month, http.StatusSeeOther)
+}
+
+// parseBudgetPaise reads a budget figure. A budget of zero is a real and
+// meaningful number — "this head has no budget this month" is the state the
+// screen renders by default, as ₹0.00 — so an empty or zero field is accepted
+// and money.ParsePaise, which rightly refuses a non-positive *payment*, is not
+// the parser for it. A negative budget is still refused; SetBudgets refuses it
+// again.
+func parseBudgetPaise(raw string) (int64, error) {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimSpace(strings.TrimPrefix(s, "₹"))
+	s = strings.ReplaceAll(s, ",", "")
+	if s == "" {
+		return 0, nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("enter a number, or leave it empty for no budget")
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("enter a number, or leave it empty for no budget")
+	}
+	rounded := math.Round(f * 100)
+	if rounded >= float64(math.MaxInt64) || rounded <= -float64(math.MaxInt64) {
+		return 0, fmt.Errorf("that budget is too large")
+	}
+	paise := int64(rounded)
+	if paise < 0 {
+		return 0, fmt.Errorf("a budget cannot be negative")
+	}
+	return paise, nil
+}
+
+// reRenderStatus is the status a handler that re-renders its own screen answers
+// with. Routing through storeErrorStatus is what keeps one condition to one
+// code: a locked month was a 409 through respondStoreError and a 400 on the two
+// screens that draw their own error (F-G-026).
+func reRenderStatus(err error) int {
+	if err == nil {
+		return http.StatusBadRequest
+	}
+	return storeErrorStatus(err)
 }
 
 func (a *App) lockMonth(w http.ResponseWriter, r *http.Request) {
@@ -1091,17 +1384,39 @@ func (a *App) projectSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) heads(w http.ResponseWriter, r *http.Request) {
-	heads, err := a.st.ListHeads(r.Context(), false)
+	data, err := a.headsPageData(r.Context())
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	projects, err := a.st.ListProjects(r.Context(), true)
+	a.render(w, r, "heads", data)
+}
+
+// headsPageData is the heads screen's whole state, split out so the contract it
+// owes the markup is testable without a rendered page.
+//
+// Two project lists, because the screen asks two different questions. Projects
+// is what a *new* head may be filed under: active only, per T12. AllProjects is
+// what an *existing* row's select must offer, and it has to be every project —
+// a head whose project was retired had no matching option, so the browser
+// preselected the first one and that row's own Save moved the head there with no
+// edit of any kind (F-G-033). Server-side there is no way to tell "the operator
+// chose this project" from "the browser defaulted to it", which is why the fix is
+// the option list and not a validation rule.
+func (a *App) headsPageData(ctx context.Context) (PageData, error) {
+	heads, err := a.st.ListHeads(ctx, false)
 	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
+		return PageData{}, err
 	}
-	a.render(w, r, "heads", PageData{Title: "Heads", Heads: heads, Projects: projects})
+	projects, err := a.st.ListProjects(ctx, true)
+	if err != nil {
+		return PageData{}, err
+	}
+	allProjects, err := a.st.ListProjects(ctx, false)
+	if err != nil {
+		return PageData{}, err
+	}
+	return PageData{Title: "Heads", Heads: heads, Projects: projects, AllProjects: allProjects}, nil
 }
 
 func (a *App) headSave(w http.ResponseWriter, r *http.Request) {
@@ -1166,6 +1481,17 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 	id := parseID(r.FormValue("id"))
+	// F-A-07: creating and editing are two grants and this one handler does both.
+	// The verb it demands is therefore the verb the control the caller pressed is
+	// gated on, not whichever one happened to be on the route.
+	verb := "edit"
+	if id == 0 {
+		verb = "create"
+	}
+	if !a.auth.Can(auth.CurrentUser(r), "user", verb) {
+		a.respondError(w, r, http.StatusForbidden, "You do not have permission to perform this action.", nil)
+		return
+	}
 	hash := ""
 	if pw := r.FormValue("password"); pw != "" {
 		if err := validatePassword(pw); err != nil {
@@ -1194,30 +1520,32 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 			a.respondError(w, r, http.StatusBadRequest, "You cannot deactivate or demote your own administrator account.", nil)
 			return
 		}
-		err = a.st.UpdateUser(r.Context(), id, r.FormValue("name"), r.FormValue("role"), active, hash)
-		savedID = id
-	}
-	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	// Role assignment and the default approver only apply to an existing user;
-	// the create path relies on CreateUser's default-role assignment instead.
-	if id != 0 {
+		// One form, one submit, one transaction. The profile, the role assignment
+		// and the default approver used to be three independent store calls, so a
+		// save refused by the second left the first one's rename committed and
+		// unaudited (F-G-034). Role assignment and the default approver apply only
+		// to an existing user; the create path relies on CreateUser's own
+		// default-role assignment.
 		var roleIDs []int64
 		for _, raw := range r.Form["role_ids"] {
 			if v := parseID(raw); v != 0 {
 				roleIDs = append(roleIDs, v)
 			}
 		}
-		if err := a.st.SetUserRoles(r.Context(), auth.CurrentUser(r), id, roleIDs); err != nil {
-			a.respondStoreError(w, r, err)
-			return
-		}
-		if err := a.st.SetUserDefaultApprover(r.Context(), auth.CurrentUser(r), id, parseID(r.FormValue("default_approver_id"))); err != nil {
-			a.respondStoreError(w, r, err)
-			return
-		}
+		err = a.st.SaveUser(r.Context(), current, store.UserSaveInput{
+			ID:                id,
+			Name:              r.FormValue("name"),
+			Role:              r.FormValue("role"),
+			Active:            active,
+			PasswordHash:      hash,
+			RoleIDs:           roleIDs,
+			DefaultApproverID: parseID(r.FormValue("default_approver_id")),
+		})
+		savedID = id
+	}
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
 	}
 	u := auth.CurrentUser(r)
 	action := "update"
@@ -1226,6 +1554,55 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: action, EntityType: "user", EntityID: &savedID, Summary: strings.Title(action) + "d user " + strings.ToLower(strings.TrimSpace(r.FormValue("email")))})
 	http.Redirect(w, r, "/users", http.StatusSeeOther)
+}
+
+// requestReassignApprover hands a pending request to a different approver, with
+// a reason, and records it as its own `approval_reassign` event (coverage A7).
+//
+// store.ReassignRequest has always carried every rule this needs — pending only,
+// a real approver at the other end, G8, a mandatory reason, its own audit action
+// — and had no HTTP caller at all, so `approval:reassign` was a grant an
+// administrator could give and revoke with nothing behind it (F-A-06/F-C-02).
+// This is also the repair for a request routed to somebody who cannot approve
+// (F-A-08) and for a stranded approval (F-G-025).
+//
+// Who may do it: the route asks for `approval:reassign`, and the caller's request
+// data scope must reach the row. That admits the request's own approver handing
+// it on, and an administrator rescuing one whose approver cannot act — which is
+// the case that needs rescuing, so requiring `manager_id == actor` here would
+// close the only door out of it.
+func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	req, err := a.st.Request(r.Context(), pathID(r))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+		// 404 and not 403: a request outside the caller's scope answers the same
+		// way whether or not it exists (F-G-002).
+		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)
+		return
+	}
+	to := parseID(r.FormValue("manager_id"))
+	if to == 0 {
+		a.respondError(w, r, http.StatusBadRequest, "Choose the approver this request should go to.", nil)
+		return
+	}
+	if strings.TrimSpace(r.FormValue("reason")) == "" {
+		a.respondError(w, r, http.StatusBadRequest, "Give a reason for the reassignment.", nil)
+		return
+	}
+	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason")); err != nil {
+		status := storeErrorStatus(err)
+		if status >= http.StatusInternalServerError {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		a.respondError(w, r, status, friendly(err), err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
 func (a *App) rolesPage(w http.ResponseWriter, r *http.Request) {
@@ -1355,6 +1732,15 @@ func (a *App) roleCopy(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) roleDelete(w http.ResponseWriter, r *http.Request) {
 	if err := a.st.DeleteRole(r.Context(), auth.CurrentUser(r), pathID(r)); err != nil {
+		// respondStoreError replaces every ErrForbidden with "You do not have
+		// permission to perform this action.", which told the holder of all 66
+		// grants that they held none (F-G-023). Both refusals this route can
+		// produce — a system role, and a role somebody still holds — are rules
+		// with reasons, so the reason is what the reader gets.
+		if errors.Is(err, store.ErrForbidden) {
+			a.respondError(w, r, storeErrorStatus(err), friendly(err), err)
+			return
+		}
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -1383,10 +1769,62 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 		}
 		audit = filtered
 	}
+	audit = a.auditWithinRequestScope(r, audit)
 	if len(audit) > 200 {
 		audit = audit[:200]
 	}
 	a.render(w, r, "audit", PageData{Title: "Audit Log", Audit: audit, AuditEntity: entity, AuditAction: action, AuditActor: r.URL.Query().Get("actor")})
+}
+
+// auditWithinRequestScope applies the request row scope to the audit log.
+//
+// The decision (F-G-017): the log is **scoped**, not redacted. C2 requires an
+// audit history for request mutations, and a history whose evidence has been
+// blanked out is not one — the whole value of `before_json`/`after_json` is that
+// a reviewer can see what actually changed. But `before_json` for a
+// payment_request row is the entire Request struct: number, purpose, requester,
+// approver, amount, every date. Rendering that to a caller who is answered 403
+// on /requests/{id} makes audit:view a way around Q5/R6, and it carries strictly
+// more data than the screens that do check. So the rows themselves are withheld
+// from a reader whose scope does not reach the request, exactly as
+// loadViewableRequest withholds the request.
+//
+// Nothing else is touched: a payment, a budget or a user row is unaffected, and
+// a caller with request=all — which is every seeded holder of audit:view — sees
+// precisely what they saw before.
+//
+// The lookup is one query per distinct request id, memoised, and it runs only
+// for a caller whose scope is narrower than "all". That is the same trade
+// reassignCandidates makes; if it ever costs anything the fix is a batched read
+// in the store, not a looser rule.
+func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntry) []store.AuditEntry {
+	u := auth.CurrentUser(r)
+	scope := a.auth.Scope(u, "request")
+	if scope == store.ScopeAll {
+		return entries
+	}
+	visible := map[int64]bool{}
+	out := entries[:0]
+	for _, entry := range entries {
+		if entry.EntityType != "payment_request" {
+			out = append(out, entry)
+			continue
+		}
+		// A payment_request row with no id names no request, so there is no scope
+		// to check it against and no way to prove it may be read.
+		if entry.EntityID == nil {
+			continue
+		}
+		id := *entry.EntityID
+		if _, known := visible[id]; !known {
+			req, err := a.st.Request(r.Context(), id)
+			visible[id] = err == nil && canViewRequest(scope, u, req)
+		}
+		if visible[id] {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func (a *App) backups(w http.ResponseWriter, r *http.Request) {
@@ -1552,11 +1990,17 @@ func validDateInput(s string) bool {
 	return err == nil
 }
 
+// validatePassword owns the whole password rule, so every rejection is a 400
+// naming what is missing. It used to check the length alone and leave the
+// letter-and-digit rule to auth.HashPassword, which reports a refusal as a
+// failure to hash — a 500 reading "The password could not be secured." for a
+// perfectly ordinary validation event (F-A-11/F-G-036). The 12-character
+// minimum is this layer's own, stricter than auth's bootstrap-compatible 8.
 func validatePassword(password string) error {
 	if len(password) < 12 {
 		return fmt.Errorf("password must be at least 12 characters")
 	}
-	return nil
+	return auth.ValidatePassword(password)
 }
 
 func nonEmptyReportRows(rows []store.ReportRow) []store.ReportRow {
@@ -1635,9 +2079,28 @@ func friendly(err error) string {
 		return "This project/head is inactive."
 	case errors.Is(err, store.ErrValidation):
 		return err.Error()
+	case errors.Is(err, store.ErrForbidden):
+		// A refusal that carries a reason keeps it. The state conflicts on the
+		// settlement path — "reserve this request before recording its payment",
+		// "this request is on hold" — are rules, not faults, and fell through to
+		// the generic sentence that also covers a genuine server error (F-A-09).
+		// The sentinel prefix is trimmed because "forbidden: …" is not a sentence
+		// a person reads; ErrForbidden alone, with nothing wrapped, still gets the
+		// permission wording.
+		if msg := strings.TrimPrefix(err.Error(), store.ErrForbidden.Error()+": "); msg != err.Error() {
+			return upperFirst(msg)
+		}
+		return "You do not have permission to perform this action."
 	default:
 		return "Something went wrong while processing your request."
 	}
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func usedPct(budget, actual int64) string {
@@ -1879,12 +2342,19 @@ func boolText(v bool) string {
 	return "Inactive"
 }
 
+// actionText spells an audit action for a person. It covers every action string
+// the store writes, because an action with no case renders its raw lower-case
+// identifier in the audit pill — which is what `settings` did on every
+// configuration save (F-G-004). auditActions below is built from the same list,
+// so the filter can never offer an action this cannot name.
 func actionText(action string) string {
 	switch action {
 	case "create":
 		return "Created"
-	case "update":
+	case "update", "edit":
 		return "Updated"
+	case "delete":
+		return "Deleted"
 	case "void":
 		return "Voided"
 	case "lock":
@@ -1901,6 +2371,54 @@ func actionText(action string) string {
 		return "Attached"
 	case "login_failed":
 		return "Login failed"
+	case "settings":
+		return "Settings saved"
+	// The request workflow (Phase 2) and the settlement flow (Phase 3). Every one
+	// of these is written against entity_type 'payment_request'.
+	case "submit":
+		return "Submitted"
+	case "approve":
+		return "Approved"
+	case "return":
+		return "Returned"
+	case "reject":
+		return "Rejected"
+	case "withdraw":
+		return "Withdrawn"
+	case "reraise":
+		return "Raised again"
+	case "comment":
+		return "Commented"
+	case "cancel":
+		return "Cancelled"
+	case "cancel_request":
+		return "Cancellation asked"
+	case "approval_reassign":
+		return "Approval reassigned"
+	case "process":
+		return "Reserved"
+	case "reserve":
+		return "Reserved"
+	case "release":
+		return "Released"
+	case "reassign":
+		return "Reservation reassigned"
+	case "hold":
+		return "Put on hold"
+	case "unhold":
+		return "Taken off hold"
+	case "settle":
+		return "Settled"
+	case "mark_partial":
+		return "Marked partial"
+	case "accept_partial":
+		return "Partial accepted"
+	case "concern":
+		return "Concern raised"
+	case "remind":
+		return "Reminder sent"
+	case "view":
+		return "Viewed"
 	default:
 		return action
 	}
@@ -1908,17 +2426,65 @@ func actionText(action string) string {
 
 func actionClass(action string) string {
 	switch action {
-	case "void", "login_failed":
+	case "void", "login_failed", "reject", "cancel", "concern":
 		return "bad"
-	case "lock", "unlock":
+	case "lock", "unlock", "hold", "return", "withdraw", "mark_partial":
 		return "warn"
-	case "create":
+	case "create", "submit", "approve", "settle", "accept_partial", "unhold":
 		return "good"
-	case "update":
+	case "update", "edit", "settings", "comment", "attach", "process", "reserve",
+		"release", "reassign", "approval_reassign", "reraise", "remind":
 		return "info"
 	default:
 		return "neutral"
 	}
+}
+
+// auditOption is one <option> of the audit screen's Entity and Action filters.
+// Both lists live here rather than as literals in the template because the
+// template's hand-maintained copy had drifted so far that `payment_request` —
+// the entity every request, approval, reservation and settlement is filed under
+// — could not be asked for at all, and no request action was offered either
+// (F-G-004/F-C-06). Every value below is a string the store actually writes;
+// `remind` arrived with migration v9's reminder audit row.
+type auditOption struct {
+	Value string
+	Label string
+}
+
+// auditEntities are the entity_type values the store writes, in reading order:
+// the request workflow first, then the ledger, then masters, then
+// administration.
+func auditEntities() []auditOption {
+	values := []string{
+		"payment_request", "payment", "budget", "budget_month", "month_lock",
+		"project", "head", "vendor", "recoverable_category", "recoverable_report",
+		"user", "role", "notification_setting", "app_setting", "report", "backup",
+	}
+	out := make([]auditOption, 0, len(values))
+	for _, v := range values {
+		out = append(out, auditOption{Value: v, Label: entityText(v)})
+	}
+	return out
+}
+
+// auditActions are the action values the store writes, ordered so the request
+// workflow reads as a workflow rather than as an alphabet.
+func auditActions() []auditOption {
+	values := []string{
+		"create", "update", "delete", "attach", "comment",
+		"submit", "approve", "return", "reject", "withdraw", "reraise",
+		"cancel_request", "cancel", "approval_reassign",
+		"process", "release", "reassign", "hold", "unhold",
+		"settle", "mark_partial", "accept_partial", "concern", "remind",
+		"void", "lock", "unlock", "settings", "export",
+		"login", "logout", "login_failed",
+	}
+	out := make([]auditOption, 0, len(values))
+	for _, v := range values {
+		out = append(out, auditOption{Value: v, Label: actionText(v)})
+	}
+	return out
 }
 
 func entityText(entity string) string {

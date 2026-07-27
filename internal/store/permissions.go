@@ -318,6 +318,20 @@ func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 	if sys == 1 {
 		return fmt.Errorf("%w: system roles cannot be deleted", ErrForbidden)
 	}
+	// user_roles.role_id cascades on delete, so deleting an assigned role used to
+	// strip it from every holder in silence — each of whom lost the permissions it
+	// carried on their very next request, with nothing on screen connecting cause
+	// to effect (F-G-022). The holder count is already on the roles screen,
+	// immediately above the Delete button; this is the check that consults it.
+	// R9 permits deleting a non-system role; it does not permit doing so blind.
+	var holders int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_roles WHERE role_id=?`, id).Scan(&holders); err != nil {
+		return err
+	}
+	if holders > 0 {
+		return fmt.Errorf("%w: %s is assigned to %d %s — reassign them before deleting the role",
+			ErrForbidden, name, holders, pluralUsers(holders))
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM roles WHERE id=?`, id); err != nil {
 		return classify(err)
 	}
@@ -325,6 +339,13 @@ func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func pluralUsers(n int) string {
+	if n == 1 {
+		return "user"
+	}
+	return "users"
 }
 
 func (s *Store) RolePermissions(ctx context.Context, id int64) ([]Grant, []ScopeGrant, error) {

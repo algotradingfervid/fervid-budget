@@ -141,6 +141,137 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, name, role string, act
 	return classify(err)
 }
 
+// UserSaveInput is one submission of the Users screen's edit sheet: the profile,
+// the role assignment and the default approver together. They arrive together
+// because they are saved together — see SaveUser.
+type UserSaveInput struct {
+	ID     int64
+	Name   string
+	Role   string
+	Active bool
+	// PasswordHash is empty when the sheet was submitted without a new password.
+	PasswordHash string
+	// RoleIDs replaces the user's entire role assignment. A nil slice clears it,
+	// which is what unticking every box means.
+	RoleIDs []int64
+	// DefaultApproverID is 0 to clear the field.
+	DefaultApproverID int64
+}
+
+// SaveUser applies a whole user save in one transaction.
+//
+// It exists because the three writes behind one submit used to be three store
+// calls with three transactions, so a save refused by the second left the first
+// one's rename committed — and the audit row, written last of all by the
+// handler, described neither state (F-G-034). R4 makes role assignment the thing
+// that governs access, so a half-applied user save is a half-applied access
+// change.
+//
+// Every rule the three old calls enforced is enforced here, before any write:
+// the profile fields, the last-active-administrator guard, that every role id
+// exists, and that nobody is their own default approver.
+func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) error {
+	name := strings.TrimSpace(in.Name)
+	if err := validateUserFields("placeholder@example.invalid", name, in.Role); err != nil {
+		return err
+	}
+	if in.DefaultApproverID != 0 && in.DefaultApproverID == in.ID {
+		return fmt.Errorf("%w: a user cannot be their own default approver", ErrValidation)
+	}
+	roleIDs := make([]int64, 0, len(in.RoleIDs))
+	seen := map[int64]struct{}{}
+	for _, id := range in.RoleIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		roleIDs = append(roleIDs, id)
+	}
+
+	// beginWriteTx takes the write lock with the transaction's first statement,
+	// which is what keeps a read-then-write like this one out of the SQLITE_BUSY
+	// races the audit closed elsewhere.
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// The last-active-administrator guard, re-asked inside the transaction. The
+	// exported RequireAnotherActiveAdmin reads through s.db, and a read on a
+	// second connection while this transaction holds the write lock is exactly
+	// the shape that deadlocks under SQLite.
+	var currentRole, currentName string
+	var currentActive int
+	if err := tx.QueryRowContext(ctx, `SELECT role,active,name FROM users WHERE id=?`, in.ID).
+		Scan(&currentRole, &currentActive, &currentName); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if currentRole == "admin" && currentActive == 1 && !(in.Role == "admin" && in.Active) {
+		var others int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND id<>?`, in.ID).Scan(&others); err != nil {
+			return err
+		}
+		if others == 0 {
+			return fmt.Errorf("%w: at least one active administrator is required", ErrValidation)
+		}
+	}
+	for _, id := range roleIDs {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM roles WHERE id=?`, id).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return fmt.Errorf("%w: role %d does not exist", ErrValidation, id)
+		}
+	}
+	var approver any
+	if in.DefaultApproverID != 0 {
+		var active int
+		err := tx.QueryRowContext(ctx, `SELECT active FROM users WHERE id=?`, in.DefaultApproverID).Scan(&active)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: the chosen approver does not exist", ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if active != 1 {
+			return fmt.Errorf("%w: the chosen approver is not an active user", ErrValidation)
+		}
+		approver = in.DefaultApproverID
+	}
+
+	if in.PasswordHash != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=?, default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+			name, in.Role, boolInt(in.Active), in.PasswordHash, approver, in.ID); err != nil {
+			return classify(err)
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		name, in.Role, boolInt(in.Active), approver, in.ID); err != nil {
+		return classify(err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_roles WHERE user_id=?`, in.ID); err != nil {
+		return err
+	}
+	for _, id := range roleIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_roles(user_id,role_id) VALUES(?,?)`, in.ID, id); err != nil {
+			return classify(err)
+		}
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
+		Action: "update", EntityType: "user", EntityID: &in.ID,
+		Summary: "Updated user " + name,
+		Before:  map[string]any{"name": currentName, "role": currentRole, "active": currentActive == 1},
+		After: map[string]any{"name": name, "role": in.Role, "active": in.Active,
+			"role_ids": roleIDs, "default_approver_id": in.DefaultApproverID}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // RequireAnotherActiveAdmin prevents disabling or demoting the final active
 // administrator. It is deliberately public so callers can surface a useful
 // validation message before displaying a confirmation form.

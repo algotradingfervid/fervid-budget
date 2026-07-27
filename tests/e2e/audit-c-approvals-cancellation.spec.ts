@@ -483,42 +483,96 @@ test.describe('approving', () => {
     expect(await thread(requester, req.id), 'the decision is on the shared history').toContain('approved request');
   });
 
-  test('TC-C-014 — an adjusted amount GREATER than requested is accepted (finding F-C-01)', async () => {
-    // Expected from the code, not from the run: ApproveRequest checks only
-    // `approvedAmount <= 0` (internal/store/requests.go:675). There is no
-    // ceiling anywhere, so an over-approval commits. The approve sheet's own
-    // hint says "You may approve a smaller amount than was asked for", and A2
-    // in the coverage matrix says only "may adjust amount", so this is a gap in
-    // the specification rather than a violation of it — recorded as F-C-01.
+  test('TC-C-014 — an adjusted amount GREATER than requested is refused (finding F-C-01)', async () => {
+    // REWRITTEN for the F-C-01 fix. As written for the audit this case asserted
+    // the defect — that an over-approval commits, because `ApproveRequest`
+    // checked only `approvedAmount <= 0` and there was no ceiling anywhere. The
+    // approved amount is not a note: `approvedOf()` makes it the ceiling Accounts
+    // may pay to (G13), so approving above the request raised that ceiling above
+    // what anybody asked for, on one person's signature, and the audit trail
+    // could not tell it from an ordinary approval. `ApproveRequest` now refuses
+    // it. Downwards remains the adjustment the sheet offers ("You may approve a
+    // smaller amount than was asked for") and TC-C-011 pins that.
+    //
+    // What this case now protects: the ceiling, and that a refused approval is a
+    // no-op — the request is still pending, still asks for what it asked for,
+    // and carries no approved figure at all.
     const req = await pendingRequest(mgrA.id, '18400');
-    succeeded(await approve(mgrA, req.id, '25000'), 'over-approval is not refused by any guard in the store');
+    const probe = await approve(mgrA, req.id, '25000');
+    refused(probe, 'approving ₹25,000 against a ₹18,400 request');
+    expect(probe.status, 'an over-approval is a validation refusal, not an authorisation one').toBe(400);
+    expect(probe.body, 'and the approver is told the rule and what to do instead').toContain(
+      'you cannot approve more than'
+    );
+    expect(probe.body, 'naming the figure that was actually requested').toContain('₹18,400.00');
 
+    expect(await statusPill(mgrA, req.id), 'the request is untouched — still awaiting a legal decision').toBe(
+      'Awaiting approval'
+    );
     await requester.page.goto(`/requests/${req.id}`);
-    await expect(dlValue(requester.page, 'Amount'), 'the request still asks for ₹18,400.00').toHaveText('₹18,400.00');
+    await expect(dlValue(requester.page, 'Amount'), 'it still asks for ₹18,400.00').toHaveText('₹18,400.00');
     await expect(
       dlValue(requester.page, 'Approved'),
-      'but ₹25,000.00 was approved — and approvedOf() makes that the ceiling Accounts may pay to'
-    ).toHaveText('₹25,000.00');
+      'and no approved amount was recorded: the refusal wrote nothing'
+    ).toHaveCount(0);
   });
 
-  test('TC-C-014B — the raised ceiling is real money: Accounts pays above the request and it completes', async () => {
-    // The consequence half of F-C-01. G13 caps a payment at `approvedOf(req)`
-    // (internal/store/store.go:900–910), which is the approved amount when one
-    // was recorded — so over-approving does not merely record a larger figure,
-    // it authorises a larger payment. Driven end to end rather than argued.
+  test('TC-C-014B — the ceiling holds end to end: Accounts cannot pay above what was approved', async () => {
+    // REWRITTEN for the F-C-01 fix. As written this case drove the consequence
+    // half of the defect — ₹25,000 approved and paid against a ₹18,400 request,
+    // ending Completed. That path is unreachable now that the over-approval is
+    // refused, so the case drives the ceiling itself instead, end to end rather
+    // than argued from the code: an approver may approve at or below the
+    // requested amount, and G13 caps the payment at that approved figure
+    // (`approvedOf`, internal/store/store.go:900–910) — not at the requested one.
     const req = await pendingRequest(mgrA.id, '18400');
-    succeeded(await approve(mgrA, req.id, '25000'), 'over-approving');
-    await settlePayment(accounts.page, req.id, { amount: '25000', paidOn: '2029-06-15' });
+    succeeded(await approve(mgrA, req.id, '12000'), 'approving below the request is the adjustment on offer');
 
-    expect(await statusPill(mgrA, req.id), 'a payment of ₹25,000 against a ₹18,400 request completes it').toBe(
+    // Reserved first, the way the queue's own button does it, so the probe below
+    // is refused on the ceiling and not on the reservation guard.
+    succeeded(await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}), 'reserving it for payment');
+
+    const settleBody = (amount: string) => ({
+      request_id: String(req.id),
+      amount,
+      paid_on: '2029-06-15',
+      payment_mode: 'bank_transfer',
+      reference_no: `UTR-C014B-${req.id}`,
+      settlement: 'settled'
+    });
+
+    // The requested amount is NOT the ceiling; the approved amount is. Paying the
+    // ₹18,400 that was asked for must be refused once ₹12,000 was approved.
+    const over = await probePost(accounts.page, '/payments', settleBody('18400'));
+    expect(
+      over.status,
+      `paying ₹18,400 against a ₹12,000 approval must be refused; got ${over.outcome} ${over.body.slice(0, 200)}`
+    ).toBe(400);
+    expect(over.body, 'and the accountant is told the approved amount is the ceiling').toContain(
+      'is more than the approved'
+    );
+    expect(over.body, 'naming the ceiling itself').toContain('₹12,000.00');
+    expect(await statusPill(mgrA, req.id), 'nothing was paid: the request is still reserved, not completed').toBe(
+      'With Accounts'
+    );
+
+    // At the approved figure the same POST goes through, and the outcome panel
+    // reconciles against the approved amount rather than the requested one.
+    succeeded(await probePost(accounts.page, '/payments', settleBody('12000')), 'paying the approved amount');
+    expect(await statusPill(mgrA, req.id), 'a payment at the approved amount completes the request').toBe(
       'Completed'
     );
     await requester.page.goto(`/requests/${req.id}`);
     const outcome = requester.page.locator('.compare');
-    await expect(outcome, 'and the outcome panel reports it as settled, not as an overpayment').toContainText(
-      '₹25,000.00'
-    );
+    await expect(outcome, 'the outcome panel compares against the approved figure').toContainText('₹12,000.00');
     await expect(outcome, 'with the difference confirmed settled').toContainText('confirmed settled');
+    await expect(
+      outcome,
+      'and the requested figure is nowhere in it — ₹18,400 was never authority to pay anything'
+    ).not.toContainText('₹18,400.00');
+    await expect(dlValue(requester.page, 'Amount'), 'though the request still records what was asked for').toHaveText(
+      '₹18,400.00'
+    );
   });
 
   const badAmounts: Array<{ id: string; label: string; form: Record<string, string> }> = [
@@ -800,24 +854,30 @@ test.describe('returning and rejecting', () => {
 });
 
 // --------------------------------------------------------------------------
-// 5. Reassignment. approval:reassign is granted and has no route — proof of
-//    absence, plus the reservation route that is easy to mistake for it.
+// 5. Reassignment. The approval reassignment now has a route (F-A-06/F-C-02),
+//    and the reservation reassignment that is easy to mistake for it does not
+//    reach it.
 // --------------------------------------------------------------------------
 
 test.describe('reassignment', () => {
-  test('TC-C-060 — a Manager holding approval:reassign has no route to use it (finding F-C-02)', async () => {
-    // Manager is seeded with approval:reassign (internal/store/migrations.go:371)
-    // and store.ReassignRequest implements it (internal/store/requests.go:759),
-    // but routes() registers no handler that calls it: the only
-    // POST /requests/{id}/reassign is the RESERVATION reassignment, gated on
-    // reservation:reassign, which Admin alone holds. So the grant is dead.
+  test('TC-C-060 — the reservation reassign route is not the approval one, and a Manager is refused it', async () => {
+    // REWRITTEN: this case was titled "a Manager holding approval:reassign has no
+    // route to use it (finding F-C-02)" and its comment said routes() registered
+    // no handler that called store.ReassignRequest, so the grant was dead. It is
+    // not dead any more — POST /requests/{id}/reassign-approver is that handler,
+    // and TC-C-060B drives it. Every assertion below is unchanged and still worth
+    // making: /requests/{id}/reassign is the RESERVATION reassignment, gated on
+    // reservation:reassign, which Admin alone holds, so a Manager reaching for the
+    // obvious name is refused and moves nothing.
     const req = await pendingRequest(mgrA.id);
     const probe = await probePost(mgrA.page, `/requests/${req.id}/reassign`, {
       to_user_id: mgrB.id,
       reason: 'On leave for a fortnight.',
       confirm: 'on'
     });
-    expect(probe.status, 'the only reassign route is gated on reservation:reassign, which Manager lacks').toBe(403);
+    expect(probe.status, 'the reservation reassign route is gated on reservation:reassign, which Manager lacks').toBe(
+      403
+    );
 
     await requester.page.goto(`/requests/${req.id}`);
     await expect(dlValue(requester.page, 'Approver'), 'and the approver on the row is unchanged').toHaveText(
@@ -825,25 +885,55 @@ test.describe('reassignment', () => {
     );
   });
 
-  test('TC-C-060B — no route of any other plausible name reaches the approval reassignment', async () => {
-    // Proof of absence has to rule out the paths a reader would guess at, not
-    // only the one the spec named. An unrouted POST answers 405, not 404 (CV1).
+  test('TC-C-060B — the approval reassignment has exactly one URL, and it moves the approver', async () => {
+    // REWRITTEN for the F-A-06/F-C-02 fix. This was a proof-of-absence case: it
+    // fired four plausible names at the server and required all four to be
+    // unrouted, because `approval:reassign` was a grant with nothing behind it.
+    // One of the four is now the real route, so requiring its absence asserts the
+    // defect. What the case protects instead is the property that made it worth
+    // writing — the reassignment has ONE door, not several — plus coverage
+    // requirement A7, which nothing else drives end to end.
+    //
+    // An unrouted POST answers 405, not 404 (CV1).
     const req = await pendingRequest(mgrA.id);
     for (const path of [
       `/requests/${req.id}/approval-reassign`,
-      `/requests/${req.id}/reassign-approver`,
       `/requests/${req.id}/change-approver`,
       `/approvals/${req.id}/reassign`
     ]) {
       for (const actor of [mgrA, bossActor]) {
-        const probe = await probePost(actor.page, path, { to_user_id: mgrB.id, reason: 'Hand it on.' });
+        const probe = await probePost(actor.page, path, { manager_id: mgrB.id, reason: 'Hand it on.' });
         expect([404, 405], `POST ${path} must not exist — got ${probe.outcome}`).toContain(probe.status);
       }
     }
     await requester.page.goto(`/requests/${req.id}`);
-    await expect(dlValue(requester.page, 'Approver'), 'the approver is untouched throughout').toHaveText(
-      mgrA.subject.name
+    await expect(
+      dlValue(requester.page, 'Approver'),
+      'and none of them moved the approver'
+    ).toHaveText(mgrA.subject.name);
+
+    // The one that does exist, driven by the approver handing their own request
+    // on. store.ReassignRequest carries the rules — pending only, a real approver
+    // at the other end, G8, a mandatory reason — and this is its only HTTP caller.
+    succeeded(
+      await probePost(mgrA.page, `/requests/${req.id}/reassign-approver`, {
+        manager_id: mgrB.id,
+        reason: 'On leave for a fortnight.'
+      }),
+      'the approval reassignment route'
     );
+    await requester.page.goto(`/requests/${req.id}`);
+    await expect(dlValue(requester.page, 'Approver'), 'the request is now the other manager\'s to decide').toHaveText(
+      mgrB.subject.name
+    );
+    expect(await queueCards(mgrB, 'to-approve', req.title), "and it is in that manager's queue").toBe(1);
+    expect(await queueCards(mgrA, 'to-approve', req.title), 'and out of the one it came from').toBe(0);
+
+    // Its own audit action, so an approver swap never reads as somebody taking
+    // over the payment. `actionText` renders it for a person, which is what the
+    // screen shows and therefore what this matches.
+    expect(await auditTrail(req.id), 'the swap is audited as its own event').toContain('Approval reassigned');
+    expect(await auditTrail(req.id), 'with the reason that was given').toContain('On leave for a fortnight.');
   });
 
   test('TC-C-061 — the reservation reassign route cannot move an approver either', async () => {
@@ -1052,7 +1142,11 @@ test.describe('the cancellation flow', () => {
       'Payment is frozen'
     );
     await expect(requester.page.locator('.banner.warn')).toContainText('The site cancelled the trip.');
-    expect(await auditTrail(req.id), 'the ask is audited as cancel_request').toContain('cancel_request');
+    // The stored action is `cancel_request`; `actionText` now renders it as
+    // "Cancellation asked" (it used to fall through to the raw token), so the
+    // trail is matched on the words a reader actually sees — the same convention
+    // TC-C-121 follows for `update` → "Updated".
+    expect(await auditTrail(req.id), 'the ask is audited as its own action').toContain('Cancellation asked');
   });
 
   test('TC-C-088 — a cancellation ask with an empty or whitespace-only reason is refused', async () => {
@@ -1170,7 +1264,24 @@ test.describe('the cancellation flow', () => {
     expect(await statusPill(requester, req.id), 'the request is cancelled').toBe('Cancelled');
   });
 
-  test('TC-C-097 — a hold placed before a cancellation ask is dropped, and declining returns it with no hold', async () => {
+  test('TC-C-097 — a hold is suspended by a cancellation ask and restored when the ask is declined', async () => {
+    // REWRITTEN for the F-C-07 fix. As written this case asserted that the hold
+    // was DROPPED by the round trip: a requester asking for cancellation and an
+    // approver declining it lifted an accountant's hold between them, and the
+    // request came back genuinely re-reservable with the accountant's question
+    // still unanswered. That cost requirement L7, "On hold (only Accounts lifts)".
+    //
+    // The fix suspends the hold rather than destroying it: `RequestCancellation`
+    // clears `on_hold` and deliberately keeps `hold_reason`, and
+    // `DecideCancellation` restores `on_hold` from it on a decline (and clears
+    // both on an accept, because nothing may still be on hold on a dead row).
+    //
+    // The first half of this case is UNCHANGED and is not a defect: the flag
+    // really is suspended while the request is frozen, because `on_hold=1` implies
+    // `status='approved'` is an invariant the hold tab, the hold pill and
+    // `ReserveRequest` all trust one column for — recorded in the build and pinned
+    // by linking_test.go. What changed is the second half: after the decline the
+    // pause is back, and only Accounts lifts it.
     const req = await approvedRequest();
     succeeded(await hold(accounts, req.id, 'Send the original receipt.'), 'Accounts puts an approved request on hold');
     expect(await statusPills(requester, req.id), 'the hold is what the reader sees').toContain('On hold');
@@ -1181,25 +1292,53 @@ test.describe('the cancellation flow', () => {
     succeeded(await askCancel(requester, req.id, 'No longer needed.'), 'the requester asks for cancellation');
     const frozenPills = await statusPills(requester, req.id);
     expect(frozenPills, 'the status moves off approved').toContain('Cancellation requested');
-    expect(frozenPills, 'and on_hold=1 implies status=approved, so the hold is gone').not.toContain('On hold');
+    expect(frozenPills, 'and on_hold=1 implies status=approved, so the hold is suspended').not.toContain('On hold');
+    await requester.page.goto(`/requests/${req.id}`);
+    await expect(
+      requester.page.locator('.banner.warn'),
+      'the frozen request shows the cancellation banner and only that: a suspended hold is never rendered as one'
+    ).toContainText('Payment is frozen');
 
     succeeded(await decideCancel(mgrA, req.id, 'decline', 'Pay it as approved.'), 'the approver declines');
     const backPills = await statusPills(requester, req.id);
-    expect(backPills, 'the request returns to approved').toContain('Approved — awaiting payment');
-    expect(backPills, 'with NO hold — the pause did not survive the round trip').not.toContain('On hold');
+    expect(
+      backPills,
+      'the pause survives the round trip: the request is live again but back on hold, ' +
+        'so the pill says the thing that blocks payment'
+    ).toContain('On hold');
+    expect(backPills, 'and the freeze is over — nothing is waiting on a cancellation decision').not.toContain(
+      'Cancellation requested'
+    );
     await requester.page.goto(`/requests/${req.id}`);
-    await expect(requester.page.locator('.banner.warn'), 'and no hold banner either').toHaveCount(0);
-    await expect(requester.page.locator('.banner.locked'), 'it is simply approved and locked again').toBeVisible();
+    await expect(
+      requester.page.locator('.banner.warn'),
+      "the hold banner is back, still carrying the accountant's unanswered question"
+    ).toContainText('Send the original receipt.');
+    await expect(
+      requester.page.locator('.banner.warn'),
+      'and it says who may lift it: not the requester, and not the approver who declined',
+    ).toContainText('until Accounts lifts the hold');
 
-    // The pause is lost; the record of it is not.
+    // The pause survived; so did the record of it.
     const history = await thread(requester, req.id);
-    expect(history, 'the hold event survives on the history').toContain('Send the original receipt.');
+    expect(history, 'the hold event is on the history').toContain('Send the original receipt.');
     const trail = await auditTrail(req.id);
     expect(trail, 'and in the audit trail, under its own action').toContain('hold');
     expect(trail, 'with its reason').toContain('Send the original receipt.');
   });
 
-  test('TC-C-098 — after the decline the request is takeable from the Accounts queue again', async () => {
+  test('TC-C-098 — after the decline the request is NOT takeable: only Accounts lifts the restored hold', async () => {
+    // REWRITTEN for the F-C-07 fix. As written this case asserted the request was
+    // immediately re-reservable after the declined cancellation — which was the
+    // defect, and its own proof requirement was that a reservation should be
+    // refused instead. `ReserveRequest`'s conditional UPDATE requires
+    // `status='approved' AND processing_by IS NULL AND on_hold=0` and now names its
+    // refusal `ErrRequestOnHold` (a 403), so the reservation probe is the only
+    // proof that `on_hold` is genuinely 1 rather than merely rendered.
+    //
+    // What this case now protects: the restored hold is real all the way down —
+    // the queue offers a reply rather than the work, the reservation route refuses,
+    // and `UnholdRequest` — Accounts — is what clears it.
     const req = await approvedRequest();
     succeeded(await hold(accounts, req.id, 'Clarify the head.'), 'holding');
     succeeded(await askCancel(requester, req.id, 'Might not need it.'), 'asking');
@@ -1209,41 +1348,72 @@ test.describe('the cancellation flow', () => {
     await accounts.page.goto(`/accounts-queue?tab=approved&q=${encodeURIComponent(number)}`);
     const row = accounts.page.locator('tr', { has: accounts.page.locator(`a[href="/requests/${req.id}"]`) });
     await expect(row, 'the request is back in the queue').toHaveCount(1);
+    await expect(row.locator('.pill.hold'), 'and back on hold, which is what the row says').toHaveText('On hold');
     await expect(
       row.getByRole('button', { name: 'Take for processing' }),
-      'and available, which proves the hold really is gone'
+      'so it is not offered as work: the question is still unanswered'
+    ).toHaveCount(0);
+    await expect(
+      row.getByRole('link', { name: 'Read reply' }),
+      'the accountant is offered the question instead'
     ).toBeVisible();
 
-    // Offered is not the same as permitted. `ReserveRequest`'s conditional
-    // UPDATE requires `status='approved' AND processing_by IS NULL AND
-    // on_hold=0`, so a successful reservation is the only proof that on_hold is
-    // genuinely 0 rather than merely unrendered.
+    // It also shows up under the hold tab, which is the queue's own record that a
+    // held request is somebody's outstanding question rather than lost.
+    await accounts.page.goto(`/accounts-queue?tab=hold&q=${encodeURIComponent(number)}`);
+    await expect(
+      accounts.page.locator('tr', { has: accounts.page.locator(`a[href="/requests/${req.id}"]`) }),
+      'the restored hold puts it back on the hold tab'
+    ).toHaveCount(1);
+
+    // Not offered is not the same as not permitted. The route is the proof:
+    // ReserveRequest answers ErrRequestOnHold, and requestRecordPayment renders
+    // every ErrForbidden reservation refusal as the conflict screen carrying 409
+    // (G15) — the same status TC-D-023 pins for a hold placed the ordinary way.
+    const reserve = await probePost(accounts.page, `/requests/${req.id}/record-payment`, {});
+    expect(
+      reserve.status,
+      `reserving a re-held request must be refused (ErrRequestOnHold); got ${reserve.outcome}`
+    ).toBe(409);
+    expect(await statusPill(mgrA, req.id), 'and it was not taken').toBe('On hold');
+
+    // And the one route that does clear it is the accountant's own.
+    succeeded(
+      await probePost(accounts.page, `/requests/${req.id}/unhold`, {}),
+      'only Accounts lifts a hold — and when they do, the request is payable again'
+    );
     succeeded(
       await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}),
-      'the request is immediately re-reservable, hold question unanswered'
+      'now it reserves'
     );
-    expect(await statusPill(mgrA, req.id), 'and it is now with Accounts, ready to pay').toBe('With Accounts');
+    expect(await statusPill(mgrA, req.id), 'and it is with Accounts, ready to pay').toBe('With Accounts');
   });
 
   /**
-   * The information-flow half of the hold interaction, and the claim that it is
-   * worse than documented.
+   * The information-flow half of the hold interaction.
    *
-   * `PROGRESS.md:358–361` documents the mechanism: a hold placed before a
-   * cancellation ask is dropped, and a decline returns the request to approved
-   * with no hold. What is documented nowhere is that **nobody is told**: there is
-   * no notify event for either cancellation decision — the vocabulary stops at
-   * `EventCancellationRequested` (`internal/notify/events.go:9–21`) — and neither
-   * `requestCancellationDecide` nor `requestCancelOutright` calls `a.fire`
-   * (`internal/app/requests.go:850–867`). So the accountant who placed the hold
-   * is told the cancellation was asked for and never told it was refused, while
-   * their hold silently disappears and the request becomes payable.
+   * **Nobody is told** when a cancellation is decided: there is no notify event
+   * for either decision — the vocabulary stops at `EventCancellationRequested`
+   * (`internal/notify/events.go:9–21`) — and neither `requestCancellationDecide`
+   * nor `requestCancelOutright` calls `a.fire` (`internal/app/requests.go`). So
+   * the accountant who placed the hold is told the cancellation was asked for and
+   * never told it was refused. That half is F-F-06, wired by a later wave, and its
+   * assertions are left exactly as written.
    *
    * The control matters: the ask's own notification proves the mechanism works
    * and that Accounts is on the routing list for this flow, so the silence after
    * the decline is a real absence rather than a switched-off environment.
+   *
+   * REWRITTEN in part for the F-C-07 fix. The tail of this case used to assert
+   * that the accountant's question was gone from every screen after the decline —
+   * "the hold banner is gone", no `On hold` pill — and that it survived only in the
+   * audit trail, which no queue links to. That was the defect, and it is fixed:
+   * the hold is suspended by the ask and restored by the decline, so the question
+   * comes back onto the screen the accountant works from. What the tail now
+   * asserts is exactly that, which is also what makes the silence above matter
+   * less than it did: the hold is no longer lost, only unannounced.
    */
-  test('TC-C-097B — nobody is told when a cancellation is decided, and the accountant loses their hold in silence', async () => {
+  test('TC-C-097B — nobody is told when a cancellation is decided, though the accountant keeps their hold', async () => {
     const req = await approvedRequest();
     const number = await requestNumber(requester, req.id);
     const notices = async (actor: Actor) => {
@@ -1269,21 +1439,24 @@ test.describe('the cancellation flow', () => {
     succeeded(await decideCancel(mgrA, req.id, 'decline', 'Pay it as approved.'), 'declining');
     expect(
       await notices(accounts),
-      'but the decision that unfroze the payment AND dropped their hold tells the accountant nothing'
+      'but the decision that unfroze the payment tells the accountant nothing'
     ).toBe(afterAsk);
     expect(
       await notices(requester),
       'and it tells the requester who asked for the cancellation nothing either'
     ).toBe(requesterBefore);
 
-    // The question the accountant asked is gone from every screen — it survives
-    // only in the audit trail, which no queue links to.
+    // The question the accountant asked is back on the screen they work from
+    // (F-C-07), so the missing notification costs them a visit and not the hold.
     await accounts.page.goto(`/requests/${req.id}`);
-    await expect(accounts.page.locator('.banner.warn'), 'the hold banner is gone').toHaveCount(0);
-    expect(await statusPills(accounts, req.id), 'and no pill records that a hold was ever placed').not.toContain(
-      'On hold'
+    await expect(
+      accounts.page.locator('.banner.warn'),
+      'the hold banner is back, still asking what it asked'
+    ).toContainText('Which head should this hit?');
+    expect(await statusPills(accounts, req.id), 'and the pill says payment is still paused').toContain('On hold');
+    expect(await auditTrail(req.id), 'the reason is on the trail as well as the screen').toContain(
+      'Which head should this hit?'
     );
-    expect(await auditTrail(req.id), 'the reason survives only here').toContain('Which head should this hit?');
   });
 
   test('TC-C-099 — a hold cannot be placed while a cancellation is pending', async () => {
@@ -1321,11 +1494,13 @@ const transitionActions: TransitionAction[] = [
   {
     key: 'approve',
     legalFrom: ['pending'],
-    // F-C-03, proved by TC-C-113B: legalTransitions carries
-    // cancellation_requested → approved so DecideCancellation can decline, and
-    // ApproveRequest reuses the same edge, so POST /approve unfreezes a request
-    // whose cancellation nobody has decided.
-    bypasses: ['cancellation_requested'],
+    // No bypass any more. `cancellation_requested` was excluded from the grid
+    // while F-C-03 was open — legalTransitions carries cancellation_requested →
+    // approved so DecideCancellation can decline, and ApproveRequest reused that
+    // edge — so the failure was reported once, by name, as TC-C-113B rather than
+    // as one lost row in a table. ApproveRequest now tests the frozen status
+    // itself, so approve belongs in the grid like every other action and
+    // TC-C-113 fires it at a frozen request on every run.
     run: id => approve(mgrA, id, '18400')
   },
   { key: 'return', legalFrom: ['pending'], run: id => sendBack(mgrA, id, 'Needs work.') },
@@ -1378,15 +1553,28 @@ test.describe('legal transitions', () => {
   }
 
   /**
-   * F-C-03. Marked test.fail(): the assertion below is what the design says and
-   * the code does not do, so Playwright expects the failure and the day somebody
-   * closes the hole this test goes red saying "passed unexpectedly".
+   * F-C-03, fixed. `legalTransitions` carries cancellation_requested → approved
+   * so `DecideCancellation` can decline, and `ApproveRequest` reused the same
+   * edge — so POST /approve unfroze a request whose cancellation nobody had
+   * decided, with none of the decline's obligations: no `approval:cancel` gate,
+   * no written reason, no `cancel_decline` row. `ApproveRequest` now tests the
+   * frozen status explicitly and refuses.
    *
-   * Soft assertions, so one run reports the whole extent of the bypass rather
-   * than stopping at the first thing that is wrong.
+   * Soft assertions are kept so one run reports the whole extent of any
+   * regression rather than stopping at the first thing that is wrong.
+   *
+   * WHAT THIS CASE NO LONGER ASSERTS, and must not be given back. It used to
+   * soft-assert that the audit trail contained a `cancel_decline` row. That
+   * assertion could never pass here whatever the product did: this case performs
+   * exactly one POST — the refused approve — and never decides the cancellation,
+   * so there is no decline to record. Its subject is the refusal, not the
+   * decline. The `cancel_decline` row is asserted where a decline is actually
+   * driven: TC-C-092 above, which declines through the sheet and reads the trail,
+   * and `TestApproveIsRefusedWhileACancellationIsUndecided`
+   * (internal/store/requests_test.go:1348), which drives this exact sequence and
+   * then declines, asserting exactly one `cancel_decline` row.
    */
-  test('TC-C-113B — approving a request whose cancellation is undecided must be refused (finding F-C-03)', async () => {
-    test.fail();
+  test('TC-C-113B — approving a request whose cancellation is undecided is refused (finding F-C-03)', async () => {
     const req = await cancellationRequested();
     const probe = await approve(mgrA, req.id, '9999');
 
@@ -1396,13 +1584,10 @@ test.describe('legal transitions', () => {
     expect
       .soft(await statusPill(mgrA, req.id), 'the cancellation is still nobody\'s decision, so the status must hold')
       .toBe('Cancellation requested');
-    expect
-      .soft(await auditTrail(req.id), 'and unfreezing is a cancel_decline, which demands a written reason')
-      .toContain('cancel_decline');
     // The requester must be able to see what became of their ask. Refusing the
     // approve leaves the status at cancellation_requested, so the frozen banner
     // — which is the only place cancel_reason is ever rendered — still carries
-    // it. Accepting the approve strands the reason in a column nothing shows.
+    // it. Accepting the approve stranded the reason in a column nothing shows.
     await requester.page.goto(`/requests/${req.id}`);
     expect
       .soft(
@@ -1672,24 +1857,26 @@ test.describe('concurrency', () => {
   });
 
   /**
-   * F-C-05. The loser of a decision race is handed a 500 internal-error page,
-   * not a refusal: every decision writer in internal/store/requests.go opens a
-   * deferred transaction, READS the request and then writes, so two of them
-   * deadlock on the read-to-write upgrade and SQLite answers SQLITE_BUSY
-   * immediately — the busy handler is deliberately not consulted for an upgrade
-   * that can never succeed, which is why busy_timeout(5000) does not save it.
+   * F-C-05, fixed. The loser of a decision race used to be handed a 500
+   * internal-error page: every decision writer opened a deferred transaction,
+   * READ the request and then wrote, so two of them deadlocked on the
+   * read-to-write upgrade and SQLite answered SQLITE_BUSY immediately — the busy
+   * handler is deliberately not consulted for an upgrade that can never succeed,
+   * which is why busy_timeout(5000) never saved it.
    *
-   * ReserveRequest shows the shape that is safe (store.go:736): one conditional
-   * UPDATE, no prior read, so the loser simply matches no rows.
+   * Each writer now takes the write lock with its first statement
+   * (`beginWriteTx`) and applies one conditional UPDATE whose row count decides
+   * the outcome — the shape `ReserveRequest` always had — so the loser matches no
+   * rows and is told `ErrRequestRaced`, a 400.
    *
-   * Marked test.fail() with soft assertions: all three races are reported in one
-   * run, and the day the decision writers become conditional updates this test
-   * goes red saying "passed unexpectedly".
+   * This case is the regression guard on all three races at once, and the soft
+   * assertions are kept so one run reports every race that regresses rather than
+   * stopping at the first. The bar is deliberately "not a 5xx": which of the two
+   * callers wins is still timing, and TC-C-130/131/133 pin that exactly one does.
    */
-  test('TC-C-134 — the loser of a decision race must be refused, not handed a 500 (finding F-C-05)', async ({
+  test('TC-C-134 — the loser of a decision race is refused, not handed a 500 (finding F-C-05)', async ({
     browser
   }) => {
-    test.fail();
     const second = await signIn(browser, mgrA.subject);
     try {
       const approveRace = await pendingRequest(mgrA.id);

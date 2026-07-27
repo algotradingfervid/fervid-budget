@@ -1013,15 +1013,13 @@ test.describe('TC-E — Recoverables', () => {
     browser,
     runId
   }) => {
-    test.fail(
-      true,
-      'F-E-05: RecoverableMetrics\' OverdueAmount/OverdueCount (recoverables.go:392-395) counts by ' +
-        '`expected_return_date < today` alone, with no `paid_on <> \'\'` guard — unlike recoverableAgeing, which ' +
-        'checks paidOn=="" first (recoverables.go:264-279). An unpaid, past-due recoverable therefore inflates ' +
-        'this dashboard tile even though its own row correctly reads "Awaiting payment", not overdue. This ' +
-        'assertion documents the CORRECT behaviour (no such row should move this tile) and is expected to fail ' +
-        'until F-E-05 is fixed.'
-    );
+    // F-E-05, fixed. RecoverableMetrics' OverdueAmount/OverdueCount used to count
+    // by `expected_return_date < today` alone, with no `paid_on <> ''` guard —
+    // unlike recoverableAgeing, which checks paidOn=="" first. An unpaid, past-due
+    // recoverable therefore inflated this dashboard tile while its own row
+    // correctly read "Awaiting payment". The metric now applies the same guard as
+    // the row. This case is what keeps the two agreeing: money that never left
+    // cannot be overdue, on the tile as well as in the register.
     const before = await dashboardMetric(adminPage, 'Past expected return');
     const approver = await createApproverUser(adminPage, runId);
     await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {

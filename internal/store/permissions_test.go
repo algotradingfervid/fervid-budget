@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -511,5 +512,52 @@ func TestCreateUserAssignsDefaultRole(t *testing.T) {
 	roles, _ = s.UserRoles(ctx, entryID)
 	if len(roles) != 1 || roles[0].Name != "Accounts" {
 		t.Fatalf("data_entry default roles = %+v; want [Accounts]", roles)
+	}
+}
+
+// F-G-022 — user_roles.role_id cascades, so deleting an assigned role stripped it
+// from every holder in silence. F-G-023 — and the refusal has to say something
+// true, which is what the app layer renders through friendly().
+func TestDeleteRoleRefusesARoleSomebodyHolds(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+	roleID, err := s.CreateRole(ctx, actor, "Held", "")
+	if err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	holder, err := s.CreateUser(ctx, "holder@example.com", "Holder", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := s.SetUserRoles(ctx, actor, holder, []int64{roleID}); err != nil {
+		t.Fatalf("SetUserRoles: %v", err)
+	}
+
+	err = s.DeleteRole(ctx, actor, roleID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("DeleteRole on an assigned role = %v, want ErrForbidden", err)
+	}
+	if !strings.Contains(err.Error(), "assigned to 1 user") {
+		t.Fatalf("the refusal does not name the holders: %v", err)
+	}
+	if _, err := s.Role(ctx, roleID); err != nil {
+		t.Fatalf("the refused delete removed the role: %v", err)
+	}
+	// The grant the holder had is still theirs.
+	roles, err := s.UserRoles(ctx, holder)
+	if err != nil || len(roles) != 1 {
+		t.Fatalf("UserRoles after a refused delete = %+v, %v", roles, err)
+	}
+
+	// Released, the same role deletes as before — nothing was locked shut.
+	if err := s.SetUserRoles(ctx, actor, holder, nil); err != nil {
+		t.Fatalf("SetUserRoles(nil): %v", err)
+	}
+	if err := s.DeleteRole(ctx, actor, roleID); err != nil {
+		t.Fatalf("DeleteRole on an unheld role: %v", err)
+	}
+	if _, err := s.Role(ctx, roleID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Role after delete = %v, want ErrNotFound", err)
 	}
 }

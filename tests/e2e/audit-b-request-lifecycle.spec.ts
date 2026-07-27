@@ -961,10 +961,12 @@ it.describe('B · the required, forced and optional matrix', () => {
     }
   });
 
-  // F-B-03: needsProjectHead (internal/store/requests.go:161) checks that a head
-  // was named and never that it is one an active project still offers, so the
-  // only thing standing between a retired head and a new request is the form.
-  it.fail('TC-B-046 — an inactive head named in the POST is refused', async ({ world }) => {
+  // F-B-03, fixed. The store — not the form — is what stands between a retired
+  // head and a new request: `validateRequestInput` now checks that the named head
+  // is one an active project still offers, so a hand-rolled POST naming a head
+  // nobody may charge to any more is refused. This case is the regression guard
+  // on that check; the form hiding the option is not evidence of anything.
+  it('TC-B-046 — an inactive head named in the POST is refused', async ({ world }) => {
     const probe = await raise(
       world.requester.page,
       validBody(world, 'vendor_invoice', { head_id: world.retiredHeadId })
@@ -1155,9 +1157,11 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     expectRefused(probe, 'choose a vendor from the vendor master', 'reimbursement fieldset on an invoice');
   });
 
-  // F-B-05: the form only ever offers the chosen project's own heads, and
-  // needsProjectHead checks that both are present and never that they agree.
-  it.fail('TC-B-056 — a head belonging to another project is refused', async ({ world }) => {
+  // F-B-05, fixed. The form only ever offers the chosen project's own heads, and
+  // the store now insists the two agree rather than merely that both are present.
+  // This case guards that agreement: a head belonging to another project charges
+  // the wrong project's budget, which is a number somebody reports on.
+  it('TC-B-056 — a head belonging to another project is refused', async ({ world }) => {
     const probe = await raise(
       world.requester.page,
       validBody(world, 'vendor_invoice', { project_id: world.operationsId, head_id: world.payrollId })
@@ -1165,10 +1169,13 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     expectRefused(probe, /head/i, 'a head from a different project');
   });
 
-  // F-B-04: CreateRequest writes every column it was handed, whatever the type
-  // is (internal/store/requests.go:414), and request_detail prints any column
-  // that is non-empty (internal/app/templates.go:2351).
-  it.fail('TC-B-092 — a field belonging to another type is neither stored nor shown', async ({ world }) => {
+  // F-B-04, fixed. CreateRequest used to write every column it was handed
+  // whatever the type was, and request_detail prints any column that is
+  // non-empty — so a forged invoice number on a reimbursement was stored and
+  // then displayed as if the reimbursement had one. The store now clears the
+  // columns a type does not own. This case guards that scrub: a reimbursement's
+  // detail screen must never show invoice or advance fields.
+  it('TC-B-092 — a field belonging to another type is neither stored nor shown', async ({ world }) => {
     const id = await raiseOk(
       world.requester.page,
       validBody(world, 'reimbursement', {
@@ -1184,12 +1191,14 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     expect(detail.includes('Not a field this type has.'), 'and no advance reason').toBe(false);
   });
 
-  // F-B-15: CreateRequest writes counterparty, expected_return_date and
-  // repayment_notes for every treatment (internal/store/requests.go:414–427),
-  // and request_detail prints each one whenever it is non-empty
-  // (internal/app/templates.go:2355–2357). Nothing scrubs the concealed
-  // fieldset. Confirms a sibling audit's DS3.
-  it.fail('TC-B-096 — the recoverable fieldset posted on a budget request is neither stored nor shown', async ({
+  // F-B-15, fixed. CreateRequest used to write counterparty,
+  // expected_return_date and repayment_notes for every treatment, and
+  // request_detail prints each one whenever it is non-empty — so the concealed
+  // recoverable fieldset, posted by hand, appeared on a budget expense. The
+  // store now clears the columns a treatment does not own. This case guards that
+  // scrub, and with it a sibling audit's DS3: a budget expense carries no
+  // counterparty, no return date and no repayment terms.
+  it('TC-B-096 — the recoverable fieldset posted on a budget request is neither stored nor shown', async ({
     world
   }) => {
     const id = await raiseOk(
@@ -1358,9 +1367,11 @@ it.describe('D · the vendor control', () => {
     await expect(world.requester.page.locator('.dl')).toContainText(world.otherVendor.name);
   });
 
-  // F-B-07: the same hole as F-B-03, one table over — vendorChoices offers
-  // active vendors only and the store never re-checks the status.
-  it.fail('TC-B-060 — a vendor_id naming an inactive vendor is refused', async ({ world }) => {
+  // F-B-07, fixed — the same hole as F-B-03, one table over. `vendorChoices`
+  // offers active vendors only and the store now re-checks the status instead of
+  // trusting it, so a retired vendor named directly in the POST is refused.
+  // This case is the regression guard on that check.
+  it('TC-B-060 — a vendor_id naming an inactive vendor is refused', async ({ world }) => {
     const probe = await raise(
       world.requester.page,
       validBody(world, 'vendor_invoice', { vendor_id: world.inactiveVendor.id })
@@ -1479,18 +1490,22 @@ it.describe('E · PR-YYYY-NNNNNN is unique and monotonic', () => {
   });
 
   /*
-   * F-B-10: CreateRequest opens a DEFERRED transaction, reads the numbering
-   * settings and only then writes, so SQLite refuses the read-to-write upgrade
-   * and never calls the busy handler — busy_timeout(5000) cannot help.
+   * F-B-10, fixed. CreateRequest used to open a DEFERRED transaction, read the
+   * numbering settings and only then write, so SQLite refused the read-to-write
+   * upgrade and answered SQLITE_BUSY without ever consulting the busy handler —
+   * busy_timeout(5000) cannot help an upgrade that can never succeed. It now
+   * takes the write lock with the transaction's first statement
+   * (`beginWriteTx`, internal/store/requests.go:38), so the second submit waits
+   * for the first instead of being refused.
    *
-   * fixme, not fail: whether the loser is refused depends on the interleaving.
-   * It reproduced on 5 of 6 full runs and 3 of 3 isolated runs, and once with a
-   * parallel curl burst — but a run where the race is won would turn a
-   * test.fail() red with "expected to fail, but passed". The assertion below is
-   * the one the product should satisfy and is left exactly as written; the
-   * integrity half of the same race runs on every pass as TC-B-093.
+   * That is what made this case promotable. It was parked as `fixme` because the
+   * loser's fate depended on the interleaving, so neither a plain test nor a
+   * `test.fail()` could state the truth on every run. With the race removed the
+   * outcome is deterministic: both submits commit, and the sequence is reserved
+   * inside the same transaction so they are consecutive. Its integrity twin
+   * TC-B-093 covers the other half — a number is never handed out twice.
    */
-  it.fixme('TC-B-063 — two concurrent raises from two browsers both succeed, with consecutive numbers', async ({
+  it('TC-B-063 — two concurrent raises from two browsers both succeed, with consecutive numbers', async ({
     world
   }) => {
     const [a, b] = await Promise.all([
@@ -2080,11 +2095,16 @@ it.describe('I · documents', () => {
     ).toBe(200);
   });
 
-  // F-B-11: attachmentDownload (internal/app/app.go:881) checks the path is
-  // inside the attachment directory and that the file exists. It never asks who
-  // is calling, so attachment:view — which the Requester role holds — is enough
-  // to read the bank advice on any payment in the system.
-  it.fail('TC-B-085 — /attachments/{id} obeys the row scope its request obeys', async ({
+  // F-B-11 (with F-A-01), fixed while this suite was being repaired — the
+  // annotation is removed here because the fix landed in another wave's file, not
+  // because this case changed. `attachmentDownload` used to check only that the
+  // path was inside the attachment directory and that the file existed; it never
+  // asked who was calling, so `attachment:view` — which the Requester role holds —
+  // read the bank advice on any payment in the system. It now resolves the
+  // attachment's payment and applies the same scope check `paymentDetail` runs,
+  // answering 404 rather than 403 so the route is not an enumeration oracle.
+  // This case is the regression guard on that check.
+  it('TC-B-085 — /attachments/{id} obeys the row scope its request obeys', async ({
     world,
     adminPage,
     runId

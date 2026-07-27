@@ -1125,3 +1125,105 @@ func assertAuditPayloads(t *testing.T, audits []AuditEntry, paymentID int64) {
 		}
 	}
 }
+
+// F-G-034 — the profile, the role assignment and the default approver used to be
+// three store calls with three transactions, so a save refused by the second
+// left the first one's rename committed.
+func TestSaveUserIsAtomicAcrossProfileRolesAndApprover(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+	subject, err := s.CreateUser(ctx, "envelope@example.com", "Original Name", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	roleID, err := s.CreateRole(ctx, actor, "Envelope", "")
+	if err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	before, err := s.UserRoles(ctx, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A role id that does not exist must roll the whole save back.
+	err = s.SaveUser(ctx, actor, UserSaveInput{ID: subject, Name: "Renamed By A Failure",
+		Role: "data_entry", Active: true, RoleIDs: []int64{roleID, 999999}})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("SaveUser with an unknown role = %v, want ErrValidation", err)
+	}
+	u, err := s.UserByID(ctx, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Name != "Original Name" {
+		t.Fatalf("a refused save committed the rename: %q", u.Name)
+	}
+	after, err := s.UserRoles(ctx, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("a refused save changed the role assignment: %d roles, was %d", len(after), len(before))
+	}
+
+	// Self-approval is refused before anything is written, as it was by
+	// SetUserDefaultApprover.
+	err = s.SaveUser(ctx, actor, UserSaveInput{ID: subject, Name: "Also Not Renamed",
+		Role: "data_entry", Active: true, DefaultApproverID: subject})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("SaveUser with a self-approver = %v, want ErrValidation", err)
+	}
+	if u, _ := s.UserByID(ctx, subject); u.Name != "Original Name" {
+		t.Fatalf("a refused self-approver save committed the rename: %q", u.Name)
+	}
+
+	// And the accepted save applies all three parts together.
+	if err := s.SaveUser(ctx, actor, UserSaveInput{ID: subject, Name: "Renamed On Purpose",
+		Role: "data_entry", Active: true, RoleIDs: []int64{roleID}, DefaultApproverID: actor.ID}); err != nil {
+		t.Fatalf("SaveUser: %v", err)
+	}
+	u, err = s.UserByID(ctx, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Name != "Renamed On Purpose" || u.DefaultApproverID != actor.ID {
+		t.Fatalf("SaveUser did not apply the profile and approver: %+v", u)
+	}
+	roles, err := s.UserRoles(ctx, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 1 || roles[0].ID != roleID {
+		t.Fatalf("SaveUser did not replace the role assignment: %+v", roles)
+	}
+	// One audit row for one submit, and it names both sides.
+	trail, err := s.Audit(ctx, "user", subject, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved int
+	for _, entry := range trail {
+		if entry.Action == "update" && strings.Contains(entry.Summary, "Renamed On Purpose") {
+			saved++
+		}
+	}
+	if saved != 1 {
+		t.Fatalf("audit rows for one user save = %d, want 1: %+v", saved, trail)
+	}
+}
+
+// SaveUser must keep the guard UpdateUser had: the last active administrator
+// cannot demote or deactivate themselves through the new envelope either.
+func TestSaveUserKeepsTheLastAdministrator(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor := newRoleActor(t, s, ctx)
+	err := s.SaveUser(ctx, actor, UserSaveInput{ID: actor.ID, Name: actor.Name, Role: "data_entry", Active: true})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("demoting the last administrator = %v, want ErrValidation", err)
+	}
+	if u, _ := s.UserByID(ctx, actor.ID); u.Role != "admin" {
+		t.Fatalf("the last administrator was demoted anyway: %+v", u)
+	}
+}

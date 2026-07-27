@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -365,7 +367,17 @@ func TestLockedPaymentsAreReadOnlyAndRejectAttachmentUpload(t *testing.T) {
 	}
 }
 
-func TestBudgetBatchValidationDoesNotPartiallySave(t *testing.T) {
+// TestBudgetSaveAppliesReadableFieldsAndNamesTheRest replaces
+// TestBudgetBatchValidationDoesNotPartiallySave, whose expectation F-G-028
+// reversed. That test asserted a batch is abandoned whole when any one field
+// fails — which is precisely the defect: the budgets screen renders ₹0.00 for
+// every unbudgeted head, money.ParsePaise refuses zero, so a month that had
+// never been budgeted could not be budgeted at all, one head at a time or
+// otherwise. Every field that reads is now applied and the ones that do not are
+// named back, so the "did not partially save" assertion is no longer the
+// contract. Nothing was weakened: the same POST is made and the same status is
+// demanded, and the row that used to be discarded is now asserted to be written.
+func TestBudgetSaveAppliesReadableFieldsAndNamesTheRest(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headA := s.seedHead("BudgetA")
 	_, headB := s.seedHead("BudgetB")
@@ -381,16 +393,111 @@ func TestBudgetBatchValidationDoesNotPartiallySave(t *testing.T) {
 	resp := s.postForm("/budgets", form)
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
-	if !strings.Contains(body, "not-a-number") || !strings.Contains(strings.ToLower(body), "invalid budget") {
-		t.Fatalf("budget validation response does not preserve the invalid row and safe error: %s", body)
+	if !strings.Contains(body, "not-a-number") {
+		t.Fatalf("the unreadable field was not handed back for correction: %s", body)
+	}
+	if !strings.Contains(body, "invalid budget") {
+		t.Fatalf("the response does not say which figures were refused: %s", body)
 	}
 	budget, err := s.st.Budget(s.ctx, headA, "2026-04")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if budget.Amount != 10000 {
-		t.Fatalf("valid row was partially saved: got %d, want 10000", budget.Amount)
+	if budget.Amount != 25000 {
+		t.Fatalf("the readable field was not applied: got %d, want 25000", budget.Amount)
 	}
+	if _, err := s.st.Budget(s.ctx, headB, "2026-04"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Budget(headB) = %v, want ErrNotFound — an unreadable field must write nothing", err)
+	}
+}
+
+// F-G-028's three reproductions, in one test: the values the screen renders can
+// be saved, a single head can be filled in on a month with no budgets at all,
+// and an existing budget can be reduced to zero.
+func TestUnbudgetedMonthCanBeSavedAndABudgetCanBeZeroed(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headA := s.seedHead("ZeroA")
+	_, headB := s.seedHead("ZeroB")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// 1. Exactly what the form sends for a month nobody has budgeted: ₹0.00 in
+	// every field, the way `value="{{money .Budget}}"` renders it.
+	asRendered := url.Values{
+		"month":                          {"2028-06"},
+		"budget_" + strconvFormat(headA): {"₹0.00"},
+		"budget_" + strconvFormat(headB): {"₹0.00"},
+	}
+	requireStatus(t, s.postForm("/budgets", asRendered), http.StatusSeeOther)
+
+	// 2. One head filled in, the rest left as rendered.
+	firstFigure := url.Values{
+		"month":                          {"2028-06"},
+		"budget_" + strconvFormat(headA): {"25,00,000.00"},
+		"budget_" + strconvFormat(headB): {"₹0.00"},
+	}
+	requireStatus(t, s.postForm("/budgets", firstFigure), http.StatusSeeOther)
+	budget, err := s.st.Budget(s.ctx, headA, "2028-06")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if budget.Amount != 250000000 {
+		t.Fatalf("the first budget of a month = %d, want 250000000", budget.Amount)
+	}
+
+	// 3. An existing figure reduced to zero. It is a real number: "no budget this
+	// month" is a state an operator must be able to reach.
+	if err := s.st.SetBudget(s.ctx, admin, headB, "2028-07", 500000); err != nil {
+		t.Fatal(err)
+	}
+	toZero := url.Values{"month": {"2028-07"}, "budget_" + strconvFormat(headB): {"0.00"}}
+	requireStatus(t, s.postForm("/budgets", toZero), http.StatusSeeOther)
+	budget, err = s.st.Budget(s.ctx, headB, "2028-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if budget.Amount != 0 {
+		t.Fatalf("budget after being zeroed = %d, want 0", budget.Amount)
+	}
+
+	// An empty field means the same thing as a zero one, and a negative figure is
+	// still refused.
+	empty := url.Values{"month": {"2028-07"}, "budget_" + strconvFormat(headB): {""}}
+	requireStatus(t, s.postForm("/budgets", empty), http.StatusSeeOther)
+	negative := url.Values{"month": {"2028-07"}, "budget_" + strconvFormat(headB): {"-100.00"}}
+	resp := s.postForm("/budgets", negative)
+	requireStatus(t, resp, http.StatusBadRequest)
+	if body := responseBody(t, resp); !strings.Contains(body, "invalid budget") {
+		t.Fatalf("a negative budget was not refused: %s", body)
+	}
+}
+
+// F-G-026: one condition, one status code. A locked month is a 409 through
+// respondStoreError and used to be a 400 on the two screens that render their
+// own error instead.
+func TestLockedMonthRefusalIsAlwaysAConflict(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("LockStatus")
+	if err := s.st.SetBudget(s.ctx, admin, headID, "2026-09", 100000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.LockMonth(s.ctx, admin, "2026-09", "Closed for audit"); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp := s.postForm("/budgets", url.Values{
+		"month":                           {"2026-09"},
+		"budget_" + strconvFormat(headID): {"200000.00"},
+	})
+	requireStatus(t, resp, http.StatusConflict)
+	if body := responseBody(t, resp); !strings.Contains(strings.ToLower(body), "locked") {
+		t.Fatalf("the locked-month refusal does not say so: %s", body)
+	}
+	// The same condition reached through monthCreate, which also re-renders.
+	resp = s.postForm("/months", url.Values{"target_month": {"2026-09"}, "source_mode": {"blank"}})
+	if resp.StatusCode != http.StatusConflict && resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("re-creating a locked month = %d, want 409 (or 400 if it is refused for another reason)", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
 }
 
 func TestUserCreationEnforcesPasswordAndInactiveFlagWithCreateAudit(t *testing.T) {
@@ -1556,5 +1663,782 @@ func TestNoRefundRoute(t *testing.T) {
 		if name := st.Method(i).Name; strings.Contains(strings.ToLower(name), "refund") {
 			t.Fatalf("unexpected refund store method %q (X3): payments are immutable; refunds are out of scope", name)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The 2026-07-27 QA audit's area-A and area-G repairs. Every test below pins one
+// finding, and each is named with the id so a regression points straight at the
+// record.
+// ---------------------------------------------------------------------------
+
+// seedAttachmentFile writes a real file into AttachmentDir and returns the
+// AttachmentInput naming it, so a download test exercises the streaming path and
+// not a missing-file 404.
+// paymentDetailLink is a link to a payment *record*, which only the Recent
+// Payments panel emits. `href="/payments/` alone also matches the grid's own
+// "+ Add payment" button (/payments/new).
+var paymentDetailLink = regexp.MustCompile(`href="/payments/\d+"`)
+
+func (s *appTestServer) seedAttachmentFile(name, content string) store.AttachmentInput {
+	s.t.Helper()
+	stored := filepath.Join(s.cfg.AttachmentDir, name)
+	if err := os.WriteFile(stored, []byte(content), 0600); err != nil {
+		s.t.Fatal(err)
+	}
+	return store.AttachmentInput{OriginalName: name, StoredPath: stored, MimeType: "text/plain", SizeBytes: int64(len(content))}
+}
+
+// seedPaymentAttachment inserts a payment_attachments row directly. It has to:
+// AddAttachment now refuses a payment that settles a request (F-D-08), which is
+// exactly the payment whose bank advice these tests are about.
+func (s *appTestServer) seedPaymentAttachment(payID, uploader int64, in store.AttachmentInput) int64 {
+	s.t.Helper()
+	res, err := s.st.DB().Exec(`INSERT INTO payment_attachments(payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`,
+		payID, in.OriginalName, in.StoredPath, in.MimeType, in.SizeBytes, uploader)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return id
+}
+
+// F-A-01 / F-B-11 — attachment:view is a seeded Requester grant, and the route
+// used to ask nothing else. A signed-in user could read every bank advice in the
+// product by walking ids from 1.
+func TestAttachmentDownloadObeysTheRequestScopeAndAnswers404(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("AttachScope")
+	s.seedRequester("outsider@example.test", "Outsider", "OutsiderPass123")
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	reqID, payID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
+	advice := s.seedAttachmentFile("bank-advice.txt", "UTR N221260725004417 · A/C 000123456789")
+	attID := s.seedPaymentAttachment(payID, admin.ID, advice)
+
+	// The accountant who recorded it still reads it.
+	resp := s.request(http.MethodGet, "/attachments/"+strconvFormat(attID), nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	if body := responseBody(t, resp); !strings.Contains(body, "UTR N221260725004417") {
+		t.Fatalf("the owner did not receive the file: %q", body)
+	}
+
+	// The Requester holds attachment:view, holds no scope over this request, and
+	// is correctly refused the request itself.
+	s.login("outsider@example.test", "OutsiderPass123")
+	resp = s.request(http.MethodGet, "/requests/"+strconvFormat(reqID), nil, "")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("fixture is wrong: the outsider can see the request")
+	}
+	_ = responseBody(t, resp)
+
+	resp = s.request(http.MethodGet, "/attachments/"+strconvFormat(attID), nil, "")
+	// 404, not 403: ids are small sequential integers, so a distinguishable
+	// refusal is an enumeration oracle for the whole table.
+	requireStatus(t, resp, http.StatusNotFound)
+	body := responseBody(t, resp)
+	if strings.Contains(body, "UTR N221260725004417") || strings.Contains(body, "000123456789") {
+		t.Fatalf("the refused download leaked the file: %q", body)
+	}
+	// An id that does not exist answers exactly the same way, so the two cases
+	// cannot be told apart.
+	missing := s.request(http.MethodGet, "/attachments/999999", nil, "")
+	requireStatus(t, missing, http.StatusNotFound)
+	_ = responseBody(t, missing)
+}
+
+// F-A-05 / F-B-09 — one download route served two tables with independent id
+// sequences, so the Download button on a requester's own invoice returned a
+// stranger's bank advice.
+func TestRequestDocumentsHaveTheirOwnScopedRoute(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("TwoTables")
+	requester := s.seedRequester("mine@example.test", "Mine", "MinePass12345")
+	other := s.seedRequester("theirs@example.test", "Theirs", "TheirsPass123")
+
+	// payment_attachments row 1 …
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	_, payID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
+	advice := s.seedAttachmentFile("bank-advice.txt", "PAYMENT-ATTACHMENT-ROW-ONE")
+	payAttID := s.seedPaymentAttachment(payID, admin.ID, advice)
+
+	// … and request_attachments row 1, on a request the payment knows nothing
+	// about. Both sequences start at 1, so the collision is the default case.
+	ownReq := s.seedApprovedRequest(2, requester.ID, admin.ID, headID, 250000)
+	invoice := s.seedAttachmentFile("invoice-mine.txt", "REQUEST-ATTACHMENT-ROW-ONE")
+	reqAttID, err := s.st.AddRequestAttachment(s.ctx, requester, ownReq, invoice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payAttID != reqAttID {
+		t.Fatalf("fixture does not reproduce the collision: payment attachment %d, request attachment %d", payAttID, reqAttID)
+	}
+
+	s.login("mine@example.test", "MinePass12345")
+	// The requester's own document, through the route that reads its own table.
+	resp := s.request(http.MethodGet, fmt.Sprintf("/requests/%d/attachments/%d", ownReq, reqAttID), nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "REQUEST-ATTACHMENT-ROW-ONE") {
+		t.Fatalf("the request document route served the wrong bytes: %q", body)
+	}
+	if strings.Contains(resp.Header.Get("Content-Disposition"), "bank-advice") {
+		t.Fatalf("Content-Disposition names the payment attachment: %q", resp.Header.Get("Content-Disposition"))
+	}
+	// And the payment route, handed the same number, gives this reader nothing.
+	resp = s.request(http.MethodGet, "/attachments/"+strconvFormat(payAttID), nil, "")
+	requireStatus(t, resp, http.StatusNotFound)
+	if got := responseBody(t, resp); strings.Contains(got, "PAYMENT-ATTACHMENT-ROW-ONE") {
+		t.Fatal("the payment download route still serves a bank advice to a requester")
+	}
+
+	// The {id} in the path is load-bearing: a document that belongs to another
+	// request is not reachable by naming a request the caller can see.
+	theirReq := s.seedApprovedRequest(3, other.ID, admin.ID, headID, 100000)
+	theirInvoice := s.seedAttachmentFile("invoice-theirs.txt", "SOMEBODY-ELSES-INVOICE")
+	theirAttID, err := s.st.AddRequestAttachment(s.ctx, other, theirReq, theirInvoice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp = s.request(http.MethodGet, fmt.Sprintf("/requests/%d/attachments/%d", ownReq, theirAttID), nil, "")
+	requireStatus(t, resp, http.StatusNotFound)
+	_ = responseBody(t, resp)
+	// …and neither is it by naming its own request, which this reader cannot see.
+	resp = s.request(http.MethodGet, fmt.Sprintf("/requests/%d/attachments/%d", theirReq, theirAttID), nil, "")
+	requireStatus(t, resp, http.StatusNotFound)
+	if got := responseBody(t, resp); strings.Contains(got, "SOMEBODY-ELSES-INVOICE") {
+		t.Fatal("the request document route leaks another requester's invoice")
+	}
+}
+
+// F-A-03 — the write path needs the same ownership check as the read path.
+func TestAttachmentUploadObeysTheRequestScope(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("PlantProof")
+	s.seedRequester("planter@example.test", "Planter", "PlanterPass123")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	_, payID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
+
+	s.login("planter@example.test", "PlanterPass123")
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("csrf", s.csrf()); err != nil {
+		t.Fatal(err)
+	}
+	part, err := mw.CreateFormFile("attachment", "planted.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("forged advice")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp := s.request(http.MethodPost, "/payments/"+strconvFormat(payID)+"/attachments", &body, mw.FormDataContentType())
+	requireStatus(t, resp, http.StatusNotFound)
+	_ = responseBody(t, resp)
+	atts, err := s.st.Attachments(s.ctx, payID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 0 {
+		t.Fatalf("a stranger planted %d documents on a payment", len(atts))
+	}
+}
+
+// F-A-02 / F-G-032 — /grid was RequireLogin only, and its Recent Payments panel
+// carries amounts, payees and live payment links.
+func TestGridIsGatedOnGridViewAndItsPaymentPanelOnPaymentView(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("GridGate")
+	if err := s.st.SetBudget(s.ctx, admin, headID, time.Now().Format("2006-01"), 85000000); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	paidOn := time.Now().Format("2006-01") + "-01"
+	s.settleOneRequest(1, headID, 6600000, "66000.00", "settled", paidOn)
+
+	// A Requester holds neither grid:view nor payment:view.
+	s.seedRequester("noone@example.test", "No One", "NoOnePass1234")
+	s.login("noone@example.test", "NoOnePass1234")
+	resp := s.request(http.MethodGet, "/grid", nil, "")
+	requireStatus(t, resp, http.StatusForbidden)
+	if body := responseBody(t, resp); strings.Contains(body, "8,50,000.00") || strings.Contains(body, "66,000.00") {
+		t.Fatal("the refused grid still rendered the company's figures")
+	}
+
+	// grid:view alone opens the matrix and nothing else: no payment rows, no
+	// payment links, because that panel is payment:view's.
+	s.seedProbeUser("gridonly@example.test", "Grid Only", "GridOnlyPass1", "grid-only",
+		[]store.Grant{{Resource: "grid", Action: "view"}}, nil)
+	s.login("gridonly@example.test", "GridOnlyPass1")
+	resp = s.request(http.MethodGet, "/grid", nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "8,50,000.00") {
+		t.Fatalf("grid:view did not open the budget matrix: %s", body)
+	}
+	// The amount also appears as the head's Actual, which is budget data and
+	// grid:view's to show. What must not appear is the payments panel's own
+	// content: a row per payment, each linking to a /payments/{id} this caller is
+	// answered 403 on.
+	if paymentDetailLink.MatchString(body) {
+		t.Fatalf("the Recent Payments panel served payment links to a caller with no payment:view: %v", paymentDetailLink.FindString(body))
+	}
+	if !strings.Contains(body, "No payments in this month.") {
+		t.Fatalf("the payments panel was handed rows rather than nothing: %s", body)
+	}
+
+	// And with both verbs the panel is back, so the gate narrows nothing it
+	// should not.
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body = responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
+	if !paymentDetailLink.MatchString(body) || strings.Contains(body, "No payments in this month.") {
+		t.Fatalf("a caller holding payment:view lost the Recent Payments panel: %s", body)
+	}
+}
+
+// F-D-10 — the settlement write was gated more weakly than its pure preview.
+func TestSettlementWriteNeedsSettleAndPartialNeedsMarkPartial(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("SettleGate")
+	// Everything an accountant needs except the two decision verbs.
+	entry := s.seedProbeUser("entry@example.test", "Entry Only", "EntryPass1234", "entry-no-settle",
+		[]store.Grant{
+			{Resource: "request", Action: "view"}, {Resource: "payment", Action: "view"},
+			{Resource: "payment", Action: "create"}, {Resource: "payment", Action: "process"},
+			{Resource: "reservation", Action: "reserve"},
+		},
+		[]store.ScopeGrant{{Resource: "request", Scope: store.ScopeAll}, {Resource: "payment", Scope: store.ScopeAll}})
+	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
+
+	s.login("entry@example.test", "EntryPass1234")
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	form := url.Values{
+		"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
+		"paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme Landlord"},
+		"settlement": {"settled"},
+	}
+	resp := s.postForm("/payments", form)
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+	var payments int
+	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&payments); err != nil {
+		t.Fatal(err)
+	}
+	if payments != 0 {
+		t.Fatalf("a caller without payment:settle recorded %d payments", payments)
+	}
+
+	// payment:settle and nothing more: a full settlement goes through, and a
+	// partial one — writing a shortfall off to the approver's queue — does not.
+	s.grantAlso(entry.ID, "settle-only", []store.Grant{{Resource: "payment", Action: "settle"}}, nil)
+	partial := url.Values{}
+	for k, v := range form {
+		partial[k] = v
+	}
+	partial.Set("settlement", "partial")
+	partial.Set("amount", "3000.00")
+	partial.Set("partial_reason", "balance next month")
+	resp = s.postForm("/payments", partial)
+	requireStatus(t, resp, http.StatusForbidden)
+	if body := responseBody(t, resp); !strings.Contains(body, "partial payment") {
+		t.Fatalf("the refusal does not name the decision it refused: %s", body)
+	}
+	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+}
+
+// F-G-033 — the heads screen lists every head and must offer every project, or a
+// row whose project was retired has no option of its own and its Save moves it.
+func TestHeadsScreenIsSuppliedEveryProjectIncludingRetiredOnes(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Retired")
+	var projectID int64
+	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.UpsertProject(s.ctx, projectID, "Operations Retired", false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.UpsertProject(s.ctx, 0, "Still Running", true, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := s.probeApp().headsPageData(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Projects) != 1 || data.Projects[0].Name != "Still Running" {
+		t.Fatalf("Projects must stay the active set a new head may choose from, got %+v", data.Projects)
+	}
+	found := false
+	for _, p := range data.AllProjects {
+		if p.ID == projectID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("AllProjects has no option for the retired project %d: %+v", projectID, data.AllProjects)
+	}
+	// Every head the screen lists must have an option in AllProjects, which is
+	// the property whose absence let the browser pick a stranger's project.
+	options := map[int64]bool{}
+	for _, p := range data.AllProjects {
+		options[p.ID] = true
+	}
+	for _, h := range data.Heads {
+		if !options[h.ProjectID] {
+			t.Fatalf("head %q is listed with no option for its own project %d", h.Name, h.ProjectID)
+		}
+	}
+}
+
+// F-G-034 — one form, one submit, one transaction.
+func TestUserSaveIsOneTransaction(t *testing.T) {
+	s := newAppTestServer(t)
+	subject := s.seedRequester("subject@example.test", "Original Name", "SubjectPass123")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	resp := s.postForm("/users", url.Values{
+		"id": {strconvFormat(subject.ID)}, "email": {"subject@example.test"},
+		"name": {"Renamed By A Failure"}, "role": {"data_entry"}, "active": {"on"},
+		"role_ids": {"99999999"}, "default_approver_id": {"0"},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	if body := responseBody(t, resp); !strings.Contains(body, "99999999") {
+		t.Fatalf("the refusal does not name the bad role id: %s", body)
+	}
+	after, err := s.st.UserByID(s.ctx, subject.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Name != "Original Name" {
+		t.Fatalf("a refused save committed the rename anyway: name = %q", after.Name)
+	}
+	roles, err := s.st.UserRoles(s.ctx, subject.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 1 || roles[0].Name != "Requester" {
+		t.Fatalf("the role assignment moved: %+v", roles)
+	}
+
+	// The same save with a real role id applies all three parts at once.
+	all, err := s.st.AllRoles(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var managerID int64
+	for _, r := range all {
+		if r.Name == "Manager" {
+			managerID = r.ID
+		}
+	}
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireStatus(t, s.postForm("/users", url.Values{
+		"id": {strconvFormat(subject.ID)}, "email": {"subject@example.test"},
+		"name": {"Renamed On Purpose"}, "role": {"data_entry"}, "active": {"on"},
+		"role_ids": {strconvFormat(managerID)}, "default_approver_id": {strconvFormat(admin.ID)},
+	}), http.StatusSeeOther)
+	after, err = s.st.UserByID(s.ctx, subject.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Name != "Renamed On Purpose" {
+		t.Fatalf("the accepted save did not rename: %q", after.Name)
+	}
+	if after.DefaultApproverID != admin.ID {
+		t.Fatalf("the accepted save did not set the default approver: %v", after.DefaultApproverID)
+	}
+	roles, err = s.st.UserRoles(s.ctx, subject.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 1 || roles[0].Name != "Manager" {
+		t.Fatalf("the accepted save did not reassign the role: %+v", roles)
+	}
+}
+
+// F-G-022 / F-G-023 — deleting a role checks its holders first, and a refusal
+// says what is actually true.
+func TestRoleDeleteChecksHoldersAndExplainsItself(t *testing.T) {
+	s := newAppTestServer(t)
+	holder := s.seedProbeUser("holder@example.test", "Holder", "HolderPass123", "payments-reader",
+		[]store.Grant{{Resource: "payment", Action: "view"}},
+		[]store.ScopeGrant{{Resource: "payment", Scope: store.ScopeAll}})
+	roles, err := s.st.UserRoles(s.ctx, holder.ID)
+	if err != nil || len(roles) != 1 {
+		t.Fatalf("UserRoles = %+v, %v", roles, err)
+	}
+	custom := roles[0].ID
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp := s.postForm(fmt.Sprintf("/roles/%d/delete", custom), url.Values{})
+	requireStatus(t, resp, http.StatusForbidden)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "assigned to 1 user") {
+		t.Fatalf("the refusal does not name the holders: %s", body)
+	}
+	if strings.Contains(body, "do not have permission") {
+		t.Fatalf("an administrator was told they lack permission: %s", body)
+	}
+	// The role, and therefore the holder's access, survives.
+	if _, err := s.st.Role(s.ctx, custom); err != nil {
+		t.Fatalf("the refused delete removed the role anyway: %v", err)
+	}
+	s.login("holder@example.test", "HolderPass123")
+	resp = s.request(http.MethodGet, "/payments", nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	_ = responseBody(t, resp)
+
+	// A system role says so, rather than claiming the administrator lacks a
+	// permission they hold all 66 of.
+	var requesterRole int64
+	all, err := s.st.AllRoles(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range all {
+		if r.Name == "Requester" {
+			requesterRole = r.ID
+		}
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp = s.postForm(fmt.Sprintf("/roles/%d/delete", requesterRole), url.Values{})
+	requireStatus(t, resp, http.StatusForbidden)
+	body = responseBody(t, resp)
+	if !strings.Contains(body, "System roles cannot be deleted") {
+		t.Fatalf("the system-role refusal does not say so: %s", body)
+	}
+
+	// And an unheld custom role still deletes, so nothing was locked shut.
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.SetUserRoles(s.ctx, admin, holder.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	requireStatus(t, s.postForm(fmt.Sprintf("/roles/%d/delete", custom), url.Values{}), http.StatusSeeOther)
+	if _, err := s.st.Role(s.ctx, custom); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Role after delete = %v, want ErrNotFound", err)
+	}
+}
+
+// F-G-017 — the audit log serialises whole Request structs into
+// before_json/after_json, so audit:view was a way around the request row scope.
+func TestAuditLogAppliesTheRequestRowScope(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("AuditScope")
+	raiser := s.seedRequester("raiser@example.test", "Raiser Person", "RaiserPass123")
+	reqID := s.seedApprovedRequest(1, raiser.ID, admin.ID, headID, 6400000)
+	// An approval carries the whole struct in Before and After.
+	if err := s.st.RecordAudit(s.ctx, store.AuditInput{
+		ActorID: &admin.ID, ActorName: admin.Name, Action: "approve",
+		EntityType: "payment_request", EntityID: &reqID,
+		Summary: "Approved PR-2026-000001",
+		After:   map[string]any{"purpose": "SECRET-PURPOSE-STRING", "amount": 6400000, "requester": "Raiser Person"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A reviewer holding audit:view and a request scope of "own" — the exact
+	// grant a compliance reader would be given.
+	s.seedProbeUser("reviewer@example.test", "Reviewer", "ReviewerPass1", "audit-reader",
+		[]store.Grant{{Resource: "audit", Action: "view"}, {Resource: "request", Action: "view"}},
+		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
+	s.login("reviewer@example.test", "ReviewerPass1")
+	resp := s.request(http.MethodGet, "/requests/"+strconvFormat(reqID), nil, "")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("fixture is wrong: the reviewer can read the request directly")
+	}
+	_ = responseBody(t, resp)
+	resp = s.request(http.MethodGet, "/audit?entity=payment_request", nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	body := responseBody(t, resp)
+	for _, leak := range []string{"SECRET-PURPOSE-STRING", "6400000", "Raiser Person"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("the audit log disclosed %q to a reader the request itself refuses", leak)
+		}
+	}
+
+	// An administrator, who holds request=all, sees exactly what they saw before.
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body = responseBody(t, s.request(http.MethodGet, "/audit?entity=payment_request", nil, ""))
+	if !strings.Contains(body, "SECRET-PURPOSE-STRING") {
+		t.Fatalf("scoping the audit log hid a row from request=all: %s", body)
+	}
+	// Rows that are not about a request are untouched for everybody.
+	s.login("reviewer@example.test", "ReviewerPass1")
+	body = responseBody(t, s.request(http.MethodGet, "/audit?entity=user", nil, ""))
+	if !strings.Contains(strings.ToLower(body), "login") {
+		t.Fatalf("a non-request entity lost its rows: %s", body)
+	}
+}
+
+// F-A-06 / F-C-02 — coverage A7. store.ReassignRequest was complete, tested and
+// reachable by no URL, and approval:reassign gated nothing.
+func TestApproverReassignmentRoute(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Reassign")
+	raiser := s.seedRequester("askfor@example.test", "Ask For", "AskForPass123")
+	firstApprover := seedSecondApprover(t, s)
+	var projectID int64
+	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	reqID, err := s.st.CreateRequest(s.ctx, raiser, store.RequestInput{
+		Treatment: "budget", Type: "reimbursement", ProjectID: projectID, HeadID: headID, Amount: 250000,
+		Purpose: "Taxi fares for the site visit", ShortTitle: "Taxi fares",
+		ManagerID: firstApprover, ExpenseDate: "2026-07-01", VendorPayee: "Ask For",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A Requester holds no approval:reassign, and the route says so.
+	s.login("askfor@example.test", "AskForPass123")
+	resp := s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{
+		"manager_id": {strconvFormat(admin.ID)}, "reason": {"wrong approver"},
+	})
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+
+	// The administrator holds it. A reason is mandatory and a target is mandatory.
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	resp = s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{"reason": {"no target"}})
+	requireStatus(t, resp, http.StatusBadRequest)
+	_ = responseBody(t, resp)
+	resp = s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{"manager_id": {strconvFormat(admin.ID)}})
+	requireStatus(t, resp, http.StatusBadRequest)
+	if body := responseBody(t, resp); !strings.Contains(body, "reason") {
+		t.Fatalf("the refusal does not ask for a reason: %s", body)
+	}
+	// The new approver must be able to approve — the route must not be a way back
+	// into F-A-08's stranded state.
+	resp = s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{
+		"manager_id": {strconvFormat(raiser.ID)}, "reason": {"send it to somebody who cannot decide"},
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("reassigning to a non-approver = %d, want 400", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
+
+	// And the real thing: the approver changes, and the trail records it as its
+	// own event rather than as an anonymous update.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{
+		"manager_id": {strconvFormat(admin.ID)}, "reason": {"Kavita is on leave this week"},
+	}), http.StatusSeeOther)
+	req, err := s.st.Request(s.ctx, reqID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ManagerID != admin.ID {
+		t.Fatalf("manager after reassignment = %d, want %d", req.ManagerID, admin.ID)
+	}
+	trail, err := s.st.Audit(s.ctx, "payment_request", reqID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reassigned bool
+	for _, entry := range trail {
+		if entry.Action == "approval_reassign" && strings.Contains(entry.Summary, "Kavita is on leave this week") {
+			reassigned = true
+		}
+	}
+	if !reassigned {
+		t.Fatalf("no approval_reassign row carries the reason: %+v", trail)
+	}
+	// A request outside the caller's scope answers 404, not 403 (F-G-002), so the
+	// route is not an existence oracle either.
+	resp = s.postForm("/requests/999999/reassign-approver", url.Values{
+		"manager_id": {strconvFormat(admin.ID)}, "reason": {"nothing here"},
+	})
+	requireStatus(t, resp, http.StatusNotFound)
+	_ = responseBody(t, resp)
+}
+
+// F-A-11 / F-G-036 — a 12-character letters-only password answered 500.
+func TestPasswordRulesAreOneFunctionAndEveryRefusalIsA400(t *testing.T) {
+	s := newAppTestServer(t)
+	subject := s.seedRequester("victim@example.test", "Victim", "VictimPass123")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	cases := []struct {
+		name     string
+		password string
+		wants    string
+	}{
+		{"twelve letters, no digit", "abcdefghijkl", "letter and a number"},
+		{"eleven characters", "abcdefghij1", "at least 12"},
+		{"twelve digits, no letter", "123456789012", "letter and a number"},
+	}
+	for _, tc := range cases {
+		create := url.Values{"email": {tc.name + "@example.test"}, "name": {"New Person"},
+			"role": {"data_entry"}, "active": {"on"}, "password": {tc.password}}
+		resp := s.postForm("/users", create)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("create with %s = %d, want 400", tc.name, resp.StatusCode)
+		}
+		if body := responseBody(t, resp); !strings.Contains(body, tc.wants) {
+			t.Fatalf("create with %s did not name the rule (%q): %s", tc.name, tc.wants, body)
+		}
+		reset := url.Values{"id": {strconvFormat(subject.ID)}, "email": {"victim@example.test"},
+			"name": {"Victim"}, "role": {"data_entry"}, "active": {"on"}, "password": {tc.password}}
+		resp = s.postForm("/users", reset)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("reset with %s = %d, want 400", tc.name, resp.StatusCode)
+		}
+		_ = responseBody(t, resp)
+	}
+	// The victim's own credentials are untouched, and a compliant password works.
+	s.login("victim@example.test", "VictimPass123")
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm("/users", url.Values{
+		"id": {strconvFormat(subject.ID)}, "email": {"victim@example.test"}, "name": {"Victim"},
+		"role": {"data_entry"}, "active": {"on"}, "password": {"NewVictimPass1"},
+	}), http.StatusSeeOther)
+	s.login("victim@example.test", "NewVictimPass1")
+}
+
+// F-A-07 — the ＋ Add user button is gated on user:create and the route demanded
+// user:edit, so a legitimately configured role got a control that 403s.
+func TestUserSaveDemandsCreateToCreateAndEditToEdit(t *testing.T) {
+	s := newAppTestServer(t)
+	subject := s.seedRequester("edited@example.test", "Edited", "EditedPass123")
+	s.seedProbeUser("creator@example.test", "Creator", "CreatorPass12", "user-creator",
+		[]store.Grant{{Resource: "user", Action: "view"}, {Resource: "user", Action: "create"}}, nil)
+	s.seedProbeUser("editor@example.test", "Editor", "EditorPass123", "user-editor",
+		[]store.Grant{{Resource: "user", Action: "view"}, {Resource: "user", Action: "edit"}}, nil)
+
+	// user:create renders the button and now also carries its submit.
+	s.login("creator@example.test", "CreatorPass12")
+	body := responseBody(t, s.request(http.MethodGet, "/users", nil, ""))
+	if !strings.Contains(body, `data-open="user-new"`) {
+		t.Fatalf("the create control is not rendered for user:create: %s", body)
+	}
+	requireStatus(t, s.postForm("/users", url.Values{
+		"email": {"minted@example.test"}, "name": {"Minted"}, "role": {"data_entry"},
+		"active": {"on"}, "password": {"MintedPass123"},
+	}), http.StatusSeeOther)
+	// …and cannot edit an existing user.
+	resp := s.postForm("/users", url.Values{
+		"id": {strconvFormat(subject.ID)}, "email": {"edited@example.test"},
+		"name": {"Renamed by a creator"}, "role": {"data_entry"}, "active": {"on"},
+	})
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+
+	// user:edit is the mirror image: it edits and it does not mint.
+	s.login("editor@example.test", "EditorPass123")
+	requireStatus(t, s.postForm("/users", url.Values{
+		"id": {strconvFormat(subject.ID)}, "email": {"edited@example.test"},
+		"name": {"Renamed by an editor"}, "role": {"data_entry"}, "active": {"on"},
+	}), http.StatusSeeOther)
+	resp = s.postForm("/users", url.Values{
+		"email": {"sneaky@example.test"}, "name": {"Sneaky"}, "role": {"data_entry"},
+		"active": {"on"}, "password": {"SneakyPass123"},
+	})
+	requireStatus(t, resp, http.StatusForbidden)
+	_ = responseBody(t, resp)
+	if _, err := s.st.UserByEmail(s.ctx, "sneaky@example.test"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("user:edit minted a user: %v", err)
+	}
+}
+
+// F-A-09 / F-D-02 — friendly() had no ErrForbidden branch, so a state conflict
+// read "Something went wrong".
+func TestFriendlyNamesAForbiddenRefusal(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"reservation lost", fmt.Errorf("%w: reserve this request before recording its payment", store.ErrForbidden),
+			"Reserve this request before recording its payment"},
+		{"already taken", store.ErrAlreadyReserved, "Someone else is already processing this request"},
+		{"on hold", store.ErrRequestOnHold, "This request is on hold"},
+		{"not approved", store.ErrRequestNotApproved, "Only an approved request can be taken for processing"},
+		{"bare sentinel", store.ErrForbidden, "You do not have permission to perform this action."},
+	}
+	for _, tc := range cases {
+		if got := friendly(tc.err); got != tc.want {
+			t.Errorf("friendly(%s) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	// The three reserve sentinels are distinguishable, which is what lets a
+	// screen name the real cause.
+	if friendly(store.ErrAlreadyReserved) == friendly(store.ErrRequestOnHold) {
+		t.Fatal("two different reserve refusals read the same")
+	}
+	// And nothing else changed: a validation failure still carries its own text.
+	if got := friendly(fmt.Errorf("%w: say why", store.ErrValidation)); !strings.Contains(got, "say why") {
+		t.Fatalf("friendly(ErrValidation) = %q", got)
+	}
+}
+
+// F-A-10 — POST /login is the one state-changing POST outside withCSRF, and was
+// therefore outside the body cap as well.
+func TestLoginPostIsCappedEvenThoughItIsCSRFExempt(t *testing.T) {
+	s := newAppTestServer(t)
+	// The exemption itself is deliberate and still holds: no token, no refusal.
+	form := url.Values{"email": {s.cfg.AdminEmail}, "password": {testAdminPassword}}
+	resp := s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+
+	// An unbounded body on an unauthenticated endpoint is not.
+	oversized := "email=a%40b.test&password=" + strings.Repeat("x", 22<<20)
+	resp = s.request(http.MethodPost, "/login", strings.NewReader(oversized), "application/x-www-form-urlencoded")
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusSeeOther {
+		t.Fatalf("an oversized login body was processed: %d", resp.StatusCode)
+	}
+	_ = responseBody(t, resp)
+}
+
+// F-G-004 / F-C-06 — the audit screen's filters could not reach the request
+// workflow at all, and `settings` rendered as a lower-case pill.
+func TestAuditFilterVocabulariesCoverWhatTheStoreWrites(t *testing.T) {
+	entities := map[string]bool{}
+	for _, opt := range auditEntities() {
+		entities[opt.Value] = true
+		if opt.Label == "" || opt.Label == opt.Value {
+			t.Errorf("entity option %q has no readable label", opt.Value)
+		}
+	}
+	for _, want := range []string{"payment_request", "payment", "vendor", "role", "recoverable_category", "app_setting", "notification_setting"} {
+		if !entities[want] {
+			t.Errorf("the Entity filter cannot reach %q", want)
+		}
+	}
+	actions := map[string]bool{}
+	for _, opt := range auditActions() {
+		actions[opt.Value] = true
+		if opt.Label == opt.Value {
+			t.Errorf("action %q renders as its raw identifier", opt.Value)
+		}
+	}
+	// The whole Phase-2/Phase-3 vocabulary, plus migration v9's reminder row.
+	for _, want := range []string{
+		"submit", "approve", "return", "reject", "withdraw", "reraise", "cancel",
+		"cancel_request", "approval_reassign", "process", "release", "reassign",
+		"hold", "unhold", "settle", "mark_partial", "accept_partial", "remind", "settings",
+	} {
+		if !actions[want] {
+			t.Errorf("the Action filter cannot reach %q", want)
+		}
+	}
+	if got := actionText("settings"); got != "Settings saved" {
+		t.Errorf("actionText(settings) = %q", got)
+	}
+	if got := actionText("remind"); got != "Reminder sent" {
+		t.Errorf("actionText(remind) = %q", got)
 	}
 }

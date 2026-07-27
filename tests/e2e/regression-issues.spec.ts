@@ -94,18 +94,53 @@ async function activeCheckboxFor(
 }
 
 test.describe('documented issue regression guards', () => {
-  test('ISS-001 rejects malformed budget rows atomically and preserves input', async ({ adminPage }) => {
+  // Was "rejects malformed budget rows atomically". The batch is deliberately no
+  // longer atomic: F-G-028 found that one unreadable field abandoned the whole
+  // save, and because unbudgeted heads render as ₹0.00 while ParsePaise refused
+  // zero, a month with any unbudgeted head could not be saved at all. budgetSave
+  // now applies every field it can read and names the ones it could not.
+  //
+  // What this test still protects is unchanged in substance: the malformed field
+  // is refused rather than coerced, the operator's typed text survives the
+  // round trip so nothing has to be retyped, and the banner says something
+  // happened. What changed is the last assertion — the readable row is now
+  // expected to persist, which is the fix.
+  //
+  // It restores both values before finishing. It did not need to while nothing
+  // persisted; now it does, because ISS-029 reads the same month and a leftover
+  // ₹123.45 makes it fail for a reason that has nothing to do with ISS-029.
+  test('ISS-001 refuses a malformed budget row, saves the readable ones, and preserves input', async ({
+    adminPage
+  }) => {
     await adminPage.goto('/budgets?month=2026-07');
     const inputs = adminPage.locator('input[name^="budget_"]');
-    const original = await inputs.nth(0).inputValue();
+    const originalFirst = await inputs.nth(0).inputValue();
+    const originalSecond = await inputs.nth(1).inputValue();
+
     await inputs.nth(0).fill('123.45');
     await inputs.nth(1).fill('bad-value');
     await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
+
     await expect(adminPage.getByRole('alert')).toContainText(/invalid budget/i);
-    await expect(inputs.nth(0)).toHaveValue('123.45');
-    await expect(inputs.nth(1)).toHaveValue('bad-value');
+    await expect(inputs.nth(0), 'the readable value is echoed back').toHaveValue('123.45');
+    await expect(inputs.nth(1), 'and so is the text the server could not read').toHaveValue('bad-value');
+
     await adminPage.goto('/budgets?month=2026-07');
-    await expect(adminPage.locator('input[name^="budget_"]').nth(0)).toHaveValue(original);
+    const reloaded = adminPage.locator('input[name^="budget_"]');
+    // The reloaded field carries formatted money — money.FormatPaise already
+    // includes the ₹ — so match the figure, not the exact string. Typing a bare
+    // 123.45 and reading back ₹123.45 is the form working, not a mismatch.
+    await expect(
+      reloaded.nth(0),
+      'the readable row was saved — one bad field no longer discards the batch'
+    ).toHaveValue(/123\.45/);
+    await expect(reloaded.nth(1), 'the unreadable row was left exactly as it was').toHaveValue(originalSecond);
+
+    // Put the month back, so a later test reading 2026-07 sees what it expects.
+    await reloaded.nth(0).fill(originalFirst);
+    await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
+    await adminPage.goto('/budgets?month=2026-07');
+    await expect(adminPage.locator('input[name^="budget_"]').nth(0)).toHaveValue(originalFirst);
   });
 
   test('ISS-002 keeps month-close counts independent of grid filters', async ({ adminPage }) => {
