@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The request lifecycle — Fervid Budget manual</title>
+<link rel="stylesheet" href="../assets/manual.css">
+</head>
+<body>
+<nav class="sidebar" aria-label="Manual contents">
+  <a class="brand" href="../index.html"><span class="mark">F</span><span><strong>Fervid Budget</strong><small>User manual</small></span></a>
+  <ul class="nav">
+<li class="nav-group">
+  <p class="nav-head">Getting started</p>
+  <ul>
+<li><a href="../getting-started/signing-in.html">Signing in</a></li>
+<li><a href="../getting-started/finding-your-way.html">Finding your way around</a></li>
+<li><a href="../getting-started/the-dashboard.html">Your home screen</a></li>
+<li><a href="../getting-started/a-request-in-detail.html">Anatomy of a request</a></li>
+<li><a href="../getting-started/notifications.html">Notifications</a></li>
+</ul>
+</li>
+<li class="nav-group">
+  <p class="nav-head">Raising requests</p>
+  <ul>
+<li><a href="../requester/what-you-can-do.html">What a requester can do</a></li>
+<li><a href="../requester/choosing-a-request-type.html">Choosing a request type</a></li>
+<li><a href="../requester/raising-a-request.html">Raising a request</a></li>
+<li><a href="../requester/budget-and-recoverable.html">Budget spend or money you expect back</a></li>
+<li><a href="../requester/attachments.html">Attaching documents</a></li>
+<li><a href="../requester/urgent-requests.html">Marking a request urgent</a></li>
+<li><a href="../requester/tracking-your-requests.html">Tracking your requests</a></li>
+<li><a href="../requester/when-a-request-is-returned.html">When a request comes back to you</a></li>
+<li><a href="../requester/editing-and-withdrawing.html">Changing or withdrawing a request</a></li>
+<li><a href="../requester/asking-to-cancel.html">Asking to cancel an approved request</a></li>
+<li><a href="../requester/after-a-rejection.html">After a rejection</a></li>
+<li><a href="../requester/getting-paid.html">Getting paid</a></li>
+</ul>
+</li>
+<li class="nav-group">
+  <p class="nav-head">Approving</p>
+  <ul>
+<li><a href="../manager/what-you-can-do.html">What an approver can do</a></li>
+<li><a href="../manager/the-approvals-queue.html">The approvals queue</a></li>
+<li><a href="../manager/reviewing-a-request.html">Reviewing a request</a></li>
+<li><a href="../manager/approving.html">Approving a request</a></li>
+<li><a href="../manager/returning-for-correction.html">Returning a request for correction</a></li>
+<li><a href="../manager/rejecting.html">Rejecting a request</a></li>
+<li><a href="../manager/reassigning.html">Reassigning an approval</a></li>
+<li><a href="../manager/cancellation-requests.html">Deciding a cancellation request</a></li>
+<li><a href="../manager/shortfall-review.html">Reviewing a shortfall</a></li>
+<li><a href="../manager/the-variance-grid.html">The variance grid</a></li>
+<li><a href="../manager/reports.html">Reports</a></li>
+<li><a href="../manager/limits-of-the-role.html">What an approver cannot see</a></li>
+</ul>
+</li>
+<li class="nav-group">
+  <p class="nav-head">Paying</p>
+  <ul>
+<li><a href="../accounts/what-you-can-do.html">What the accounts role can do</a></li>
+<li><a href="../accounts/the-payment-queue.html">The payment queue</a></li>
+<li><a href="../accounts/claiming-a-request.html">Taking a request for processing</a></li>
+<li><a href="../accounts/recording-a-payment.html">Recording a payment</a></li>
+<li><a href="../accounts/paying-part-of-a-request.html">Paying part of a request</a></li>
+<li><a href="../accounts/holding-a-request.html">Putting a request on hold</a></li>
+<li><a href="../accounts/raising-a-concern.html">Raising a concern</a></li>
+<li><a href="../accounts/reservations-and-conflicts.html">Reservations and conflicts</a></li>
+<li><a href="../accounts/the-payments-ledger.html">The payments ledger</a></li>
+<li><a href="../accounts/correcting-a-payment.html">Correcting or voiding a payment</a></li>
+<li><a href="../accounts/the-recoverables-register.html">The recoverables register</a></li>
+</ul>
+</li>
+<li class="nav-group">
+  <p class="nav-head">Administration</p>
+  <ul>
+<li><a href="../admin/what-you-can-do.html">What an administrator can do</a></li>
+<li><a href="../admin/people.html">People and accounts</a></li>
+<li><a href="../admin/roles-and-permissions.html">Roles and permissions</a></li>
+<li><a href="../admin/projects.html">Projects</a></li>
+<li><a href="../admin/expense-heads.html">Expense heads</a></li>
+<li><a href="../admin/budgets.html">Budgets</a></li>
+<li><a href="../admin/monthly-plans-and-locking.html">Monthly plans and locking</a></li>
+<li><a href="../admin/vendors.html">Vendors</a></li>
+<li><a href="../admin/vendor-bank-details.html">Vendor bank details</a></li>
+<li><a href="../admin/recoverable-categories.html">Recoverable categories</a></li>
+<li><a href="../admin/notification-rules.html">Notification rules and email</a></li>
+<li><a href="../admin/configuration.html">Configuration</a></li>
+<li><a href="../admin/the-audit-trail.html">The audit trail</a></li>
+<li><a href="../admin/backups.html">Backups</a></li>
+</ul>
+</li>
+<li class="nav-group">
+  <p class="nav-head">Reference</p>
+  <ul>
+<li><a href="../reference/request-lifecycle.html" class="here" aria-current="page">The request lifecycle</a></li>
+<li><a href="../reference/statuses-and-badges.html">Statuses and badges</a></li>
+<li><a href="../reference/permissions-matrix.html">The permission matrix</a></li>
+<li><a href="../reference/error-messages.html">Messages and refusals</a></li>
+<li><a href="../reference/glossary.html">Glossary</a></li>
+</ul>
+</li>
+<li class="nav-group">
+  <p class="nav-head">About the product</p>
+  <ul><li><a href="../ux-review.html">UX review</a></li></ul>
+</li>
+</ul>
+</nav>
+<main class="doc">
+<div class="wrap">
+<p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Reference</p>
+<header class="page-head"><h1>The request lifecycle</h1><p class="lede">Every status a request can hold, and every route between them.</p></header>
+<p>A request holds exactly one status at a time. There are eleven of them, and this page is the complete list of the moves between them: what each move is called on screen, who is allowed to make it, and what the product checks before it agrees.</p>
+<p>Two things are commonly mistaken for statuses and are not. <strong>On hold</strong> is a flag on an approved request — the status stays <code>approved</code> while the hold lasts. And there is no draft: creating a request and sending it for approval are one press, so a request exists only from the moment it is with an approver. The database refuses the value <code>draft</code> outright.</p>
+<h2 id="the-whole-table">The whole table</h2>
+<p>Read a row as &quot;from this status, this move takes it to that one&quot;. A move with the same status in both columns changes something else on the request and leaves the status alone.</p>
+<div class="table-wrap"><table><caption>Every move the product implements between request statuses.</caption><thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col">The move</th><th scope="col">Who may make it</th><th scope="col">What it requires</th></tr></thead><tbody>
+<tr><td>— (no request yet)</td><td><code>pending</code></td><td><strong>Submit request</strong> on the new-request form</td><td>Anybody holding <code>request:create</code></td><td>Every field the chosen type requires, and an approver who holds <code>approval:approve</code> and is not you. The request number and the submission time are written at this moment.</td></tr>
+<tr><td><code>pending</code></td><td><code>approved</code></td><td><strong>Approve</strong></td><td>The approver the request was sent to, holding <code>approval:approve</code></td><td>An approved amount above zero and no higher than the amount asked for. If the request carries a Needed by date, that month must not be locked.</td></tr>
+<tr><td><code>pending</code></td><td><code>returned</code></td><td><strong>Return for correction</strong></td><td>The approver the request was sent to, holding <code>approval:return</code></td><td>A comment. It is shown to the requester as the reason.</td></tr>
+<tr><td><code>pending</code></td><td><code>rejected</code></td><td><strong>Reject</strong></td><td>The approver the request was sent to, holding <code>approval:reject</code></td><td>A reason.</td></tr>
+<tr><td><code>pending</code></td><td><code>withdrawn</code></td><td><strong>Withdraw</strong></td><td>The person who raised it, holding <code>request:withdraw</code></td><td>Nothing else. This is the only status a request can be withdrawn from.</td></tr>
+<tr><td><code>pending</code></td><td><code>pending</code></td><td><strong>Reassign approval</strong></td><td>Anybody holding <code>approval:reassign</code> whose data scope reaches the request</td><td>A reason, and a new approver who holds <code>approval:approve</code> and is not the requester. Only a pending request can be reassigned.</td></tr>
+<tr><td><code>returned</code></td><td><code>pending</code></td><td><strong>Resubmit for approval</strong></td><td>The person who raised it, holding <code>request:edit</code></td><td>The corrected request has to pass the same checks the first submission did. <strong>Save corrections</strong> saves without resending.</td></tr>
+<tr><td><code>approved</code></td><td><code>processing</code></td><td><strong>Take for processing</strong></td><td>Anybody holding <code>reservation:reserve</code></td><td>The request must be approved, unclaimed and not on hold. Two people pressing at once: the first one wins and the second gets a conflict screen.</td></tr>
+<tr><td><code>approved</code></td><td><code>cancellation_requested</code></td><td><strong>Request cancellation</strong></td><td>The person who raised it, holding <code>request:cancel</code></td><td>A reason. Payment freezes the moment it succeeds.</td></tr>
+<tr><td><code>approved</code></td><td><code>cancelled</code></td><td><strong>Cancel with reason</strong></td><td>The approver the request was sent to, holding <code>approval:cancel</code></td><td>A reason. Nobody needs to have asked first.</td></tr>
+<tr><td><code>cancellation_requested</code></td><td><code>cancelled</code></td><td>Accept the cancellation, from <strong>Decide the cancellation</strong></td><td>The approver the request was sent to, holding <code>approval:cancel</code></td><td>A note is optional.</td></tr>
+<tr><td><code>cancellation_requested</code></td><td><code>approved</code></td><td>Decline the cancellation, from <strong>Decide the cancellation</strong></td><td>The approver the request was sent to, holding <code>approval:cancel</code></td><td>A written reason. This is the only route back to <code>approved</code> from the frozen state — approving again will not do it.</td></tr>
+<tr><td><code>processing</code></td><td><code>approved</code></td><td><strong>Release</strong> the reservation</td><td>The person holding it, with <code>reservation:release</code>. Releasing somebody else’s needs <code>reservation:reassign</code></td><td>A reason, and the tick confirming no payment was started.</td></tr>
+<tr><td><code>processing</code></td><td><code>processing</code></td><td><strong>Reassign</strong> the reservation</td><td>Anybody holding <code>reservation:reassign</code></td><td>A reason, the same confirmation, and an active colleague who holds <code>payment:process</code>. The request never returns to the open queue in between.</td></tr>
+<tr><td><code>processing</code></td><td><code>completed</code></td><td>Record the payment and confirm it as settled</td><td>The person holding the reservation, with <code>payment:create</code> and <code>payment:settle</code></td><td>An amount no greater than the approved amount, a payment date that is neither in the future nor in a locked month, and a live head unless the request is recoverable.</td></tr>
+<tr><td><code>processing</code></td><td><code>partial_review</code></td><td>Record the payment and mark it a partial settlement</td><td>The same person, and also <code>payment:mark_partial</code></td><td>Everything above, plus a written reason for paying short.</td></tr>
+<tr><td><code>partial_review</code></td><td><code>completed_partial</code></td><td><strong>Accept and close</strong></td><td>The approver the request was sent to, holding <code>approval:accept_partial</code></td><td>A note is optional. The unpaid balance is written off for good.</td></tr>
+<tr><td><code>partial_review</code></td><td><code>partial_review</code></td><td><strong>Raise a concern</strong></td><td>The approver the request was sent to, holding <code>approval:accept_partial</code></td><td>A comment. It goes into the conversation and the request stays in review.</td></tr>
+<tr><td><code>rejected</code></td><td>a new <code>pending</code> request</td><td><strong>Raise it again</strong></td><td>The person who raised it, holding <code>request:reraise</code></td><td>Only from <code>rejected</code>. It creates a fresh request with its own number; the rejected one stays rejected for ever.</td></tr>
+</tbody></table></div>
+<aside class="callout callout-note"><p class="callout-title">Where the road ends</p><p>Five statuses have no move out of them at all: <code>rejected</code>, <code>withdrawn</code>, <code>cancelled</code>, <code>completed</code> and <code>completed_partial</code>. Nothing reopens them. <strong>Raise it again</strong> is not an exception — it makes a second request and leaves the first one where it is.</p></aside>
+<h2 id="the-ordinary-path-end-to-end">The ordinary path, end to end</h2>
+<p>Most requests take five steps and nothing else: submitted, approved, taken for processing, paid, closed. This is that path.</p>
+<h3 id="1-submitted">1. Submitted</h3>
+<p>You fill in the form and press <strong>Submit request</strong>. There is no save-and-finish-later: the request is created already in <code>pending</code>, it takes its number at that instant, and it appears in the queue of the approver you chose. The badge reads <strong>Awaiting approval</strong> and the line beside it names the person it is waiting on.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/manager/request-pending.png" aria-label="Enlarge: A pending request as its approver sees it. The four decisions sit at the bottom: **Reject**, **Return for correction**, **Approve**, and **Reassign approval**.">
+    <img src="../assets/shots/manager/request-pending.png" alt="The request as its approver sees it, with the full action bar along the bottom." loading="lazy" width="1440">
+  </button>
+  <figcaption>A pending request as its approver sees it. The four decisions sit at the bottom: <strong>Reject</strong>, <strong>Return for correction</strong>, <strong>Approve</strong>, and <strong>Reassign approval</strong>. </figcaption>
+</figure>
+<h3 id="2-approved">2. Approved</h3>
+<p>The approver presses <strong>Approve</strong>. The amount on that sheet can be lowered but never raised — the approved amount is the ceiling Accounts may pay to, so raising it would create an obligation nobody asked for. The answer to needing more money is a new request.</p>
+<p>Or they press <strong>Return for correction</strong> instead. That is not a rejection: the request goes back to <code>returned</code>, keeps its number and its whole history, and the requester gets a correction form with the approver's comment above it. <strong>Save corrections</strong> keeps it with them; <strong>Resubmit for approval</strong> sends it back and returns the status to <code>pending</code>.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-returned.png" aria-label="Enlarge: A returned request. The banner carries the approver’s words, and the line under it says plainly that returned is not rejected.">
+    <img src="../assets/shots/requester/detail-returned.png" alt="The approver’s reason for returning a request, and the form to correct and resubmit it." loading="lazy" width="1440">
+  </button>
+  <figcaption>A returned request. The banner carries the approver’s words, and the line under it says plainly that returned is not rejected. </figcaption>
+</figure>
+<p>Once approved, the request is locked to the requester. It can no longer be edited or withdrawn; the only thing they may do is ask for it to be cancelled.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-approved.png" aria-label="Enlarge: An approved request. The banner spells out the lock, and the one control left is **Request cancellation**.">
+    <img src="../assets/shots/requester/detail-approved.png" alt="A request that has cleared approval and is waiting for the accounts team." loading="lazy" width="1440">
+  </button>
+  <figcaption>An approved request. The banner spells out the lock, and the one control left is <strong>Request cancellation</strong>. </figcaption>
+</figure>
+<h3 id="3-taken-for-processing">3. Taken for processing</h3>
+<p>Somebody in Accounts presses <strong>Take for processing</strong> from the payment queue. That claim is the whole point of the <code>processing</code> status: while one person holds it, nobody else can record a payment against it, so the same invoice cannot be paid twice. The badge the requester sees changes to <strong>With Accounts</strong>.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-processing.png" aria-label="Enlarge: A claimed request. The history shows the reservation as its own line: &quot;Reserved request for processing&quot;.">
+    <img src="../assets/shots/requester/detail-processing.png" alt="A request the accounts team has claimed and is working on." loading="lazy" width="1440">
+  </button>
+  <figcaption>A claimed request. The history shows the reservation as its own line: &quot;Reserved request for processing&quot;. </figcaption>
+</figure>
+<h3 id="4-paid">4. Paid</h3>
+<p>The accountant fills in the payment and confirms it. If the figure matches what was approved — or is short and they confirm the request as settled anyway — the request closes as <code>completed</code> in the same transaction that writes the payment. The two either both happen or neither does.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-completed.png" aria-label="Enlarge: A completed request. Payment outcome compares what was approved with what was paid, and the difference below it.">
+    <img src="../assets/shots/requester/detail-completed.png" alt="A finished request, showing the payment recorded against it." loading="lazy" width="1440">
+  </button>
+  <figcaption>A completed request. Payment outcome compares what was approved with what was paid, and the difference below it. </figcaption>
+</figure>
+<h3 id="5-or-paid-short-and-sent-back-to-the-approver">5. Or paid short, and sent back to the approver</h3>
+<p>The one outcome Accounts cannot close on its own is money still owed. Marking a payment a partial settlement moves the request to <code>partial_review</code> and puts it back in front of the approver with the shortfall and the accountant’s written reason. The approver either accepts the shortfall — closing the request as <code>completed_partial</code>, which stays visibly different from a clean <code>completed</code> for the life of the record — or raises a concern, which leaves the request in review and starts a conversation.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/manager/partial-review.png" aria-label="Enlarge: A shortfall waiting on its approver: approved against paid, what is still owed, and the two decisions at the bottom.">
+    <img src="../assets/shots/manager/partial-review.png" alt="What the approver sees when Accounts paid less than was approved." loading="lazy" width="1440">
+  </button>
+  <figcaption>A shortfall waiting on its approver: approved against paid, what is still owed, and the two decisions at the bottom. </figcaption>
+</figure>
+<aside class="callout callout-warning"><p>Neither decision moves money and neither can amend the payment. Accepting writes the balance off permanently. Raising a concern reverses nothing — the money has already left.</p></aside>
+<h2 id="the-cancellation-branch">The cancellation branch</h2>
+<p>An approved request cannot be taken back on the requester’s own say-so, because Accounts may already be acting on it. The requester asks instead, and the request moves to <code>cancellation_requested</code>. Payment freezes at that moment: no accountant can reserve or pay it while the approver is deciding.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-cancellation-asked.png" aria-label="Enlarge: A cancellation the requester has asked for. The banner names who has to decide and repeats the reason given.">
+    <img src="../assets/shots/requester/detail-cancellation-asked.png" alt="What the raiser sees after asking to cancel an approved request." loading="lazy" width="1440">
+  </button>
+  <figcaption>A cancellation the requester has asked for. The banner names who has to decide and repeats the reason given. </figcaption>
+</figure>
+<p>The approver accepts, and the request is <code>cancelled</code> for good. Or they decline with a written reason, and it returns to <code>approved</code> and becomes payable again. Declining is the only route back — an approver who tries to approve the frozen request instead is refused and told to decide the cancellation first.</p>
+<h2 id="holds-which-are-not-a-status">Holds, which are not a status</h2>
+<p>When Accounts needs something answered before they can pay — bank details that do not match the vendor master, an invoice number that does not exist — they put the request on hold with a question. The status stays <code>approved</code>. What changes is that the request drops out of the takeable set, so nobody can claim it, and the badge on every screen reads <strong>On hold</strong> instead.</p>
+<div class="table-wrap"><table><caption>The hold, and the one grant that governs both directions of it.</caption><thead><tr><th scope="col">Move</th><th scope="col">Control</th><th scope="col">Who</th><th scope="col">What it requires</th></tr></thead><tbody>
+<tr><td>Pause an approved request</td><td><strong>Put on hold</strong></td><td>Anybody holding <code>payment:hold</code></td><td>A written reason. The request must be approved and not already held.</td></tr>
+<tr><td>Lift the pause</td><td><strong>Release hold</strong></td><td>Anybody holding <code>payment:hold</code></td><td>Nothing. Lifting the hold is the answer to the question, so it does not ask for a second one.</td></tr>
+</tbody></table></div>
+<aside class="callout callout-note"><p>Only Accounts lifts a hold. A reader without <code>payment:hold</code> who opens a held request is told so on the request itself: &quot;Only Accounts can take this off hold.&quot;</p></aside>
+<aside class="callout callout-tip"><p>If a hold is in force when the requester asks for a cancellation, the pause is suspended rather than thrown away. Decline the cancellation and the hold comes back with the request, still carrying the question nobody answered.</p></aside>
+<h2 id="the-reservation-and-giving-it-up">The reservation, and giving it up</h2>
+<p>A reservation is a claim, not a decision, and it is the only thing standing between two accountants and a duplicate payment. There is no automatic release. A request sits in <code>processing</code> until the person holding it either records a payment or gives the claim up.</p>
+<p><strong>Release</strong> puts it back in the open queue as <code>approved</code>. <strong>Reassign</strong> hands it straight to a named colleague without it ever becoming takeable in between. Both demand a reason — the requester and the approver are told why their money stopped moving — and both demand the tick confirming no payment was started.</p>
+<p>A reservation held past the configured threshold is flagged as stale. Nothing is released automatically when that happens: a transfer that has been open a day may well be moving through a bank portal. The product only puts the choice in front of a person. Your administrator sets the threshold on the <a href="../admin/configuration.html">Configuration</a> screen.</p>
+<dl class="faq"><dt>Can I withdraw a request that was returned to me?</dt><dd><p>No. Withdrawal is only possible from <code>pending</code>. A returned request can be corrected and resubmitted, or left where it is — there is no route from <code>returned</code> to <code>withdrawn</code>.</p></dd>
+<dt>Can a rejected request be reopened?</dt><dd><p>No. Rejection is final by design. <strong>Raise it again</strong> copies the request into a new one with a new number, which starts the lifecycle over from <code>pending</code>. See <a href="../requester/after-a-rejection.html">After a rejection</a>.</p></dd>
+<dt>Why can my approver not approve more than I asked for?</dt><dd><p>Because the approved amount is the authority to pay, not a note. Accounts may not pay above it, so raising it on one signature would create an obligation nobody requested. The product refuses and suggests cancelling and raising a new request instead.</p></dd>
+<dt>What is the difference between <code>completed</code> and <code>completed_partial</code>?</dt><dd><p><code>completed</code> means the request was settled and closed by Accounts. <code>completed_partial</code> means less was paid than was approved and the approver accepted the shortfall. The two are deliberately distinct so a written-off balance stays visible for ever.</p></dd>
+<dt>A request is approved but nobody can pay it. Why?</dt><dd><p>Either it is on hold, or a cancellation has been asked for and payment is frozen while the approver decides. Both show a banner on the request saying which. See <a href="../accounts/reservations-and-conflicts.html">Reservations and conflicts</a>.</p></dd></dl>
+<nav class="pager" aria-label="Within this section"><a class="pager-next" href="../reference/statuses-and-badges.html"><span>Next</span>Statuses and badges</a></nav>
+</div>
+</main>
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" type="button" aria-label="Close">&times;</button>
+  <img src="" alt="">
+</div>
+<script src="../assets/manual.js"></script>
+</body>
+</html>

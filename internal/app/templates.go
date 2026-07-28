@@ -90,7 +90,7 @@ const templates = `
 </div>{{end}}
 
 {{define "login"}}
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Login - Fervid Budget</title><link rel="stylesheet" href="/static/fervid-ds.css"></head>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Login - Fervid Budget</title><link rel="stylesheet" href="/static/fervid-ds.css"></head>
 <body class="login-body"><main class="login-card"><h1>Fervid Budget</h1>{{if .Error}}<div class="alert error" role="alert" aria-live="assertive">{{.Error}}</div>{{end}}<form method="post" action="/login" class="stack"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Login</button></form></main></body></html>
 {{end}}
 
@@ -585,7 +585,16 @@ const templates = `
      Configuration if you ever need it." No such control exists, in this phase or
      any planned one, so that sentence is not shipped. */}}
 {{define "payment_pick_options"}}
-<div class="combo-list" id="picker-list" role="listbox" aria-label="Approved requests">
+{{/* role="group", not "listbox". A listbox promises a set of option children,
+     and these rows are neither options nor selectable: each is a <form> whose
+     button claims the request, or a plain link for a reader without
+     reservation:reserve. Declaring listbox here made assistive technology
+     announce a control that does not exist and tripped a critical
+     aria-required-children failure; "group" is what this actually is, and it
+     keeps the accessible name. The keyboard handling in fervid-app.js keys off
+     the .combo-list [data-id] selector, not the role, so nothing depends on
+     the old value. */}}
+<div class="combo-list" id="picker-list" role="group" aria-label="Approved requests">
   {{range .Linkable.Available}}
   {{/* Taking a request is reservation:reserve, exactly as it is in the queue.
        Without the grant the row is still worth reading, so it degrades to the

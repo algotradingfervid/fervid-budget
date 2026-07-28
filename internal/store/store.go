@@ -1405,7 +1405,10 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	// snapshot, filled only for reimbursement and employee advance, and Vendor is
 	// the display payee a vendor_invoice actually has. A screen that renders the
 	// snapshot asks the accountant to pay a blank.
-	q := `SELECT r.id, r.number, r.status, r.amount, r.approved_amount, COALESCE(r.vendor_payee,''),
+	// short_title is selected because the dashboard's work-area rows render
+	// "{{.Number}} · {{.ShortTitle}}". Without it every row on the Accounts and
+	// administrator home screens ended in a separator with nothing after it.
+	q := `SELECT r.id, r.number, COALESCE(r.short_title,''), r.status, r.amount, r.approved_amount, COALESCE(r.vendor_payee,''),
 		COALESCE(NULLIF(v.name,''),r.vendor_payee,''),
 		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
 		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
@@ -1482,7 +1485,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		var approved, processingBy, headID sql.NullInt64
 		var processingAt, approvedAt sql.NullTime
 		var onHold int
-		if err := rows.Scan(&r.ID, &r.Number, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
+		if err := rows.Scan(&r.ID, &r.Number, &r.ShortTitle, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
 			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
 			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
 			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt); err != nil {

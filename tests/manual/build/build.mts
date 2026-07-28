@@ -18,6 +18,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import type { Block, Page, SectionKey } from './schema.mts';
 import { SITE, SECTIONS, type SectionDef } from './site.mts';
+import { FINDINGS, METHOD, type Finding } from './ux-review.mts';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..');
 const OUT = join(ROOT, 'docs', 'manual');
@@ -250,9 +251,13 @@ function sidebar(current: string, depth: number): string {
   <ul>\n${items}\n</ul>
 </li>`;
   }).join('\n');
+  const review = `<li class="nav-group">
+  <p class="nav-head">About the product</p>
+  <ul><li><a href="${up(depth)}ux-review.html"${current === 'ux-review' ? ' class="here" aria-current="page"' : ''}>UX review</a></li></ul>
+</li>`;
   return `<nav class="sidebar" aria-label="Manual contents">
   <a class="brand" href="${up(depth)}index.html"><span class="mark">F</span><span><strong>Fervid Budget</strong><small>User manual</small></span></a>
-  <ul class="nav">\n${groups}\n</ul>
+  <ul class="nav">\n${groups}\n${review}\n</ul>
 </nav>`;
 }
 
@@ -337,8 +342,9 @@ async function main(): Promise<void> {
     writeFileSync(outFile, html);
   }
 
-  // Cover.
+  // Cover and the UX review.
   writeFileSync(join(OUT, 'index.html'), cover(shotList));
+  writeFileSync(join(OUT, 'ux-review.html'), uxReview(shots, used));
 
   // Every captured shot must earn its place in the repo.
   const unused = shotList.map((s) => s.id).filter((id) => !used.has(id));
@@ -369,6 +375,87 @@ function pager(decl: { section: SectionKey; slug: string }, depth: number): stri
   return `<nav class="pager" aria-label="Within this section">${link(prev, 'prev')}${link(next, 'next')}</nav>`;
 }
 
+/**
+ * The UX review. Rendered from the same chrome as the manual, but it is not a
+ * manual page: it is about the product rather than for using it, so it sits
+ * outside SITE and is linked from the cover.
+ */
+function uxReview(shots: Map<string, ShotMeta>, used: Set<string>): string {
+  const depth = 0;
+  const where = 'ux-review';
+  const open = FINDINGS.filter((f) => f.status === 'open');
+  const fixed = FINDINGS.filter((f) => f.status === 'fixed');
+  const rank = { high: 0, medium: 1, low: 2 };
+  const bySeverity = (a: Finding, b: Finding) => rank[a.severity] - rank[b.severity];
+
+  const card = (f: Finding): string => {
+    const pics = (f.shots ?? [])
+      .filter((id) => {
+        if (!shots.has(id)) {
+          errors.push(`ux-review: finding "${f.id}" names a screenshot that does not exist: ${id}`);
+          return false;
+        }
+        used.add(id);
+        return true;
+      })
+      .map((id) => {
+        const m = shots.get(id)!;
+        return `<figure class="shot"><button class="shot-btn" type="button" data-full="assets/shots/${esc(id)}.png" aria-label="Enlarge: ${esc(m.title)}"><img src="assets/shots/${esc(id)}.png" alt="${esc(m.shows)}" loading="lazy" width="1440"></button><figcaption>${esc(m.title)}</figcaption></figure>`;
+      })
+      .join('\n');
+
+    return `<article class="finding finding-${f.severity}" id="${esc(f.id)}">
+  <header>
+    <p class="tags">
+      <span class="tag sev-${f.severity}">${f.severity}</span>
+      <span class="tag st-${f.status}">${f.status === 'fixed' ? 'fixed in this pass' : 'open'}</span>
+      <span class="tag ev">${f.evidence === 'measured' ? 'machine-measured' : f.evidence === 'code' ? 'read from the source' : 'judgement'}</span>
+    </p>
+    <h3>${inline(f.title, depth, where)}</h3>
+    <p class="where"><code>${esc(f.where)}</code></p>
+  </header>
+  <div class="body">
+    <h4>What</h4>${paragraphs(f.what, depth, where)}
+    <h4>Why it matters</h4>${paragraphs(f.why, depth, where)}
+    <h4>${f.status === 'fixed' ? 'What was done' : 'What to do'}</h4>${paragraphs(f.fix, depth, where)}
+  </div>
+  ${pics}
+</article>`;
+  };
+
+  const counts = `<dl class="tally">
+    <div><dt>Screens photographed</dt><dd>${shots.size}</dd></div>
+    <div><dt>Findings</dt><dd>${FINDINGS.length}</dd></div>
+    <div><dt>Fixed in this pass</dt><dd>${fixed.length}</dd></div>
+    <div><dt>Left open</dt><dd>${open.length}</dd></div>
+  </dl>`;
+
+  const body = `<header class="page-head">
+  <h1>What photographing every screen turned up</h1>
+  <p class="lede">A review of Fervid Budget's interface, produced by driving all ${shots.size} screens as each of the four roles and measuring them.</p>
+</header>
+${counts}
+<h2 id="how-this-was-done">How this was done</h2>
+${paragraphs(METHOD, depth, where)}
+<aside class="callout callout-note"><p class="callout-title">How to read a finding</p><p>Each one says how it is known. <strong>Machine-measured</strong> was produced against the running product and can be re-run. <strong>Read from the source</strong> is cited to a file and line. <strong>Judgement</strong> is an opinion you may reasonably disagree with.</p></aside>
+
+<h2 id="still-open">Still open — ${open.length} findings</h2>
+<p>Each of these needs a product decision rather than a patch, so none was changed.</p>
+${open.sort(bySeverity).map(card).join('\n')}
+
+<h2 id="fixed">Fixed during the review — ${fixed.length} findings</h2>
+<p>These were repaired while the screenshots were being taken, and every fix was confirmed by re-running the capture. The screenshots throughout this manual show the product after the fixes.</p>
+${fixed.sort(bySeverity).map(card).join('\n')}`;
+
+  return shell({
+    title: 'UX review',
+    depth,
+    current: '',
+    breadcrumb: `<p class="crumb"><a href="index.html">Manual</a> <span>/</span> UX review</p>`,
+    body,
+  });
+}
+
 function cover(shotList: ShotMeta[]): string {
   const { sha, counts } = provenance();
   const cards = SECTIONS.map((sec) => {
@@ -387,6 +474,13 @@ function cover(shotList: ShotMeta[]): string {
   <p class="lede">How to raise, approve, pay and administer payment requests — every screen, photographed from the running product.</p>
 </header>
 <section class="roles">${cards}</section>
+<section class="review-link">
+  <a href="ux-review.html">
+    <h3>What photographing every screen turned up</h3>
+    <p>The interface review that came out of building this manual: ${FINDINGS.length} findings across ${shotList.length} screens, ${FINDINGS.filter((f) => f.status === 'fixed').length} of them fixed along the way.</p>
+    <span class="count">Read the UX review</span>
+  </a>
+</section>
 <section class="provenance">
   <h2 id="about-this-manual">About this manual</h2>
   <p>Every screenshot in these pages was captured from a running copy of Fervid Budget, not drawn or mocked up. Where a screen's appearance depends on your permissions or on the state of a record, the page says so.</p>

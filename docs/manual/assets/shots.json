@@ -97,12 +97,7 @@
       "headings": [
         "H1:Edit Payment"
       ],
-      "findings": [
-        {
-          "kind": "horizontal-overflow",
-          "detail": "scrolls sideways by 12px at 1024px wide"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "accounts/payment-form",
@@ -127,19 +122,14 @@
       "shows": "The picker shown when you open the payment form without naming a request.",
       "url": "/payments/new",
       "file": "accounts/payment-picker.png",
-      "bytes": 17014,
+      "bytes": 17013,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
         "H1:Which approved request is this for?",
         "H2:Recently paid by you"
       ],
-      "findings": [
-        {
-          "kind": "a11y:aria-required-children",
-          "detail": "critical — Certain ARIA roles must contain particular children (1 element)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "accounts/payments-ledger",
@@ -150,7 +140,7 @@
       "file": "accounts/payments-ledger.png",
       "bytes": 63693,
       "clipped": true,
-      "pageHeight": 5548,
+      "pageHeight": 5405,
       "headings": [
         "H1:Payments"
       ],
@@ -169,12 +159,7 @@
       "headings": [
         "H1:Payments"
       ],
-      "findings": [
-        {
-          "kind": "a11y:link-in-text-block",
-          "detail": "serious — Links must be distinguishable without relying on color (1 element)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "accounts/queue-approved",
@@ -199,8 +184,8 @@
       "url": "/accounts-queue?tab=hold",
       "file": "accounts/queue-hold.png",
       "bytes": 25805,
-      "clipped": false,
-      "pageHeight": 2034,
+      "clipped": true,
+      "pageHeight": 2219,
       "headings": [
         "H1:Payment queue"
       ],
@@ -376,9 +361,9 @@
       "shows": "Who did what and when, in a record that cannot be edited.",
       "url": "/audit",
       "file": "admin/audit.png",
-      "bytes": 67840,
+      "bytes": 63660,
       "clipped": true,
-      "pageHeight": 8856,
+      "pageHeight": 8483,
       "headings": [
         "H1:Audit Log"
       ],
@@ -430,15 +415,15 @@
       "findings": []
     },
     {
-      "id": "admin/grid-locked-month",
+      "id": "admin/grid-earlier-month",
       "role": "admin",
       "title": "The variance grid for an earlier month",
       "shows": "The same grid pointed at a month with budgets but little spending.",
       "url": "/grid?month=2026-03",
-      "file": "admin/grid-locked-month.png",
-      "bytes": 334765,
+      "file": "admin/grid-earlier-month.png",
+      "bytes": 344638,
       "clipped": true,
-      "pageHeight": 14595,
+      "pageHeight": 14541,
       "headings": [
         "H1:Variance grid",
         "H2:Recent Payments for 2026-03",
@@ -551,12 +536,7 @@
         "H2:Accounts",
         "H2:Copy Accounts"
       ],
-      "findings": [
-        {
-          "kind": "horizontal-overflow",
-          "detail": "scrolls sideways by 11px at 1024px wide"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "admin/role-new-sheet",
@@ -573,12 +553,7 @@
         "H2:Accounts",
         "H2:New role"
       ],
-      "findings": [
-        {
-          "kind": "horizontal-overflow",
-          "detail": "scrolls sideways by 11px at 1024px wide"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "admin/roles",
@@ -594,12 +569,7 @@
         "H1:Roles & permissions",
         "H2:Accounts"
       ],
-      "findings": [
-        {
-          "kind": "horizontal-overflow",
-          "detail": "scrolls sideways by 11px at 1024px wide"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "admin/user-edit-sheet",
@@ -721,12 +691,7 @@
       "headings": [
         "H1:Waiting on you"
       ],
-      "findings": [
-        {
-          "kind": "a11y:color-contrast",
-          "detail": "serious — Elements must meet minimum color contrast ratio thresholds (8 elements)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "manager/approvals-to-approve",
@@ -853,12 +818,7 @@
         "H2:Attachments",
         "H2:History and conversation"
       ],
-      "findings": [
-        {
-          "kind": "a11y:color-contrast",
-          "detail": "serious — Elements must meet minimum color contrast ratio thresholds (1 element)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "manager/grid",
@@ -1219,12 +1179,7 @@
         "H2:Attachments",
         "H2:History and conversation"
       ],
-      "findings": [
-        {
-          "kind": "a11y:color-contrast",
-          "detail": "serious — Elements must meet minimum color contrast ratio thresholds (1 element)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "requester/detail-returned",
@@ -1258,12 +1213,7 @@
         "H2:Attachments",
         "H2:History and conversation"
       ],
-      "findings": [
-        {
-          "kind": "a11y:color-contrast",
-          "detail": "serious — Elements must meet minimum color contrast ratio thresholds (1 element)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "requester/edit-form",
@@ -1328,13 +1278,13 @@
     {
       "id": "requester/form-validation",
       "role": "requester",
-      "title": "A form that was sent back for correction",
-      "shows": "What the form shows when required details are missing or wrong.",
+      "title": "A request the product would not accept",
+      "shows": "The refusal shown when a request is submitted without the details it requires.",
       "url": "/requests/new?type=reimbursement",
       "file": "requester/form-validation.png",
-      "bytes": 27288,
+      "bytes": 27362,
       "clipped": false,
-      "pageHeight": 1509,
+      "pageHeight": 1560,
       "headings": [
         "H1:Reimbursement"
       ],
@@ -1401,12 +1351,7 @@
       "headings": [
         "H1:My requests"
       ],
-      "findings": [
-        {
-          "kind": "a11y:color-contrast",
-          "detail": "serious — Elements must meet minimum color contrast ratio thresholds (6 elements)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "requester/requests-closed",
@@ -1421,12 +1366,7 @@
       "headings": [
         "H1:My requests"
       ],
-      "findings": [
-        {
-          "kind": "a11y:color-contrast",
-          "detail": "serious — Elements must meet minimum color contrast ratio thresholds (6 elements)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "requester/requests-needs-me",
@@ -1498,7 +1438,7 @@
       "shows": "The home screen for the accounts team, led by what is approved and waiting to be paid.",
       "url": "/",
       "file": "shared/dashboard-accounts.png",
-      "bytes": 7720,
+      "bytes": 7803,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1514,7 +1454,7 @@
       "shows": "The home screen for an administrator, who sees every queue in the product.",
       "url": "/",
       "file": "shared/dashboard-admin.png",
-      "bytes": 11268,
+      "bytes": 11351,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1580,18 +1520,13 @@
       "shows": "The sign-in form: an email field, a password field, and nothing else.",
       "url": "/login",
       "file": "shared/login.png",
-      "bytes": 597,
+      "bytes": 607,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
         "H1:Fervid Budget"
       ],
-      "findings": [
-        {
-          "kind": "a11y:html-has-lang",
-          "detail": "serious — <html> element must have a lang attribute (1 element)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "shared/login-rejected",
@@ -1600,18 +1535,13 @@
       "shows": "The message shown when the email and password do not match an account.",
       "url": "/login",
       "file": "shared/login-rejected.png",
-      "bytes": 688,
+      "bytes": 698,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
         "H1:Fervid Budget"
       ],
-      "findings": [
-        {
-          "kind": "a11y:html-has-lang",
-          "detail": "serious — <html> element must have a lang attribute (1 element)"
-        }
-      ]
+      "findings": []
     },
     {
       "id": "shared/not-found",
@@ -1637,7 +1567,7 @@
       "file": "shared/notifications.png",
       "bytes": 43285,
       "clipped": true,
-      "pageHeight": 6349,
+      "pageHeight": 6711,
       "headings": [
         "H1:Notifications"
       ],

@@ -2628,8 +2628,20 @@ pre {
 }
 
 .pill.discussion { border-style: dashed; }
+
+/* Closed states are deliberately quieter than live ones, but the quietening
+   used to be `opacity: .78` over the whole pill, which fades the text as well
+   as the frame: "Rejected — final" measured 3.2:1 against the card behind it
+   (#a57d78 on #f3f1eb) where AA asks for 4.5:1 at this size, and it is 11.5px
+   bold — small text, where legibility matters most. Fading only the frame keeps
+   the pill visually recessed while the words stay readable, which takes the
+   same label back over 5:1. This was the single cause of every colour-contrast
+   failure the capture run found. */
 .pill.rejected,
-.pill.cancelled { opacity: .78; }
+.pill.cancelled {
+  border-color: color-mix(in srgb, var(--line-2) 78%, transparent);
+  background-color: color-mix(in srgb, var(--surface-2) 78%, transparent);
+}
 .pill.no-dot::before { display: none; }
 
 /* The signature element: a plain sentence naming who owes the next action. */
@@ -3954,6 +3966,16 @@ td .t-sub {
   padding: 26px 14px;
   color: var(--muted);
   text-align: center;
+}
+
+/* Empty states put their one useful action inline in the sentence — "No
+   payments match these filters. Record a payment" — where the link was told
+   apart from the words around it by colour alone. Against this muted grey that
+   is 1.34:1, well under the 3:1 that colour-only differentiation needs, so an
+   underline carries the difference instead. Buttons are excluded: they already
+   look like controls. */
+.empty a:not(.btn) {
+  text-decoration: underline;
 }
 
 /* Mobile filter row. .filter-btn is a desktop-visible control too. */

@@ -257,16 +257,33 @@ export const SHOTS: Shot[] = [
   {
     id: 'requester/form-validation',
     role: 'requester',
-    title: 'A form that was sent back for correction',
-    shows: 'What the form shows when required details are missing or wrong.',
+    title: 'A request the product would not accept',
+    shows: 'The refusal shown when a request is submitted without the details it requires.',
     url: '/requests/new?type=reimbursement',
-    fullHeight: true,
     skipAxe: true,
+    // The new-request form carries no inline error banner: a refused submission
+    // renders the error page instead. Reaching it needs a real POST that the
+    // browser will not block, and every field is marked `required` — so this
+    // builds a deliberately incomplete submission and posts it, rather than
+    // trying to drive the form and quietly capturing a pristine one, which is
+    // what an earlier version of this shot did.
     prepare: async (page) => {
       await page.goto('/requests/new?type=reimbursement');
-      await page.waitForLoadState('networkidle').catch(() => undefined);
-      const submit = page.locator('form button[type="submit"]').last();
-      await submit.click().catch(() => undefined);
+      const cookies = await page.context().cookies();
+      const csrf = cookies.find((c) => c.name === 'fervid_csrf')?.value ?? '';
+      await page.evaluate((token) => {
+        const f = document.createElement('form');
+        f.method = 'POST';
+        f.action = '/requests';
+        for (const [name, value] of [['csrf', token], ['type', 'reimbursement'], ['treatment', 'budget']]) {
+          const i = document.createElement('input');
+          i.name = name;
+          i.value = value;
+          f.appendChild(i);
+        }
+        document.body.appendChild(f);
+        f.submit();
+      }, csrf);
       await page.waitForLoadState('domcontentloaded');
     },
   },
@@ -855,7 +872,7 @@ export const SHOTS: Shot[] = [
     url: '/backups',
   },
   {
-    id: 'admin/grid-locked-month',
+    id: 'admin/grid-earlier-month',
     role: 'admin',
     title: 'The variance grid for an earlier month',
     shows: 'The same grid pointed at a month with budgets but little spending.',

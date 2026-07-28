@@ -36,9 +36,21 @@ Only four things, and nothing else — no raw HTML, it will be escaped and shown
 
 - `**bold**` — for control labels the reader must find on screen: **Approve request**
 - `*italic*` — for emphasis, sparingly
-- `` `code` `` — for literal values, statuses and field names: `pending`
+- backtick-wrapped text — for literal values, statuses and field names
 - `[label](page:section/slug)` — a link to another manual page. The build fails on an
   unknown target, so you cannot link to a page that does not exist.
+
+> **Escape every backtick you write in prose.** Page text is written inside a backtick
+> template literal, so a bare backtick ends the string and breaks the file. Write `\``
+> (backslash backtick) each time:
+>
+> ```ts
+> prose(`The request stays at \`pending\` until somebody decides it.`)
+> ```
+>
+> This is the single most common way a content file fails to compile. If `npx tsc --noEmit`
+> reports `TS1005: ',' expected` or node reports `ERR_INVALID_TYPESCRIPT_SYNTAX`, an
+> unescaped backtick is why.
 
 External links use a full `https://` URL. Anchors use `#the-heading-id`.
 
