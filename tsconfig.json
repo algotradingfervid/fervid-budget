@@ -6,7 +6,11 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
+    // The manual's build scripts are .mts and run under plain `node`, which
+    // resolves the exact path it is given — so their imports carry a real .mts
+    // extension rather than the .mjs that NodeNext would otherwise demand.
+    "allowImportingTsExtensions": true,
     "types": ["node", "@playwright/test"]
   },
-  "include": ["playwright.config.ts", "tests/**/*.ts"]
+  "include": ["playwright.config.ts", "tests/**/*.ts", "tests/**/*.mts"]
 }
