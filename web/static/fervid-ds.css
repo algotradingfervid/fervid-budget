@@ -43,6 +43,11 @@
   --font-display: Georgia, "Times New Roman", serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
+  /* The single gutter between the sidebar and the page content. Every block in
+     the content column is inset by this, so the whole product lines up on one
+     vertical edge. Narrow screens override it below. */
+  --page-gutter: 28px;
+
   --r: 9px;
   --r-sm: 6px;
   --r-pill: 999px;
@@ -593,6 +598,21 @@ form {
   gap: 12px;
 }
 
+/* The tracks above can already shrink, but a grid item defaults to
+   min-width:auto — its content's intrinsic width — and an <input> refuses to go
+   narrower than roughly its `size`. Without this, a narrow window pushes the
+   whole document sideways instead of the field simply becoming narrower. */
+.form-grid > * {
+  min-width: 0;
+}
+
+.field input,
+.field select,
+.field textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .field,
 .form-field {
   display: grid;
@@ -701,6 +721,12 @@ legend {
 .budget-grid,
 .data-table {
   width: 100%;
+  /* `overflow: auto` only contains the table if the box is allowed to be
+     narrower than its contents. As a grid or flex item it is not: min-width
+     defaults to auto, i.e. the table's min-content width, so the wrapper grew to
+     the full width of the roles matrix and scrolled the page sideways instead of
+     itself. width:100% cannot override that — only a real min-width can. */
+  min-width: 0;
   overflow: auto;
   background: var(--fb-surface);
   border: 1px solid var(--fb-border);
@@ -2079,8 +2105,15 @@ tr.total .pctxt {
   min-height: 86px;
 }
 
+/* The three payment grids set their own column shapes. The lower bound of each
+   track used to be a pixel floor, which added up to more than the column is wide
+   between the 860px breakpoint and a full desktop — 766px of minimums inside a
+   666px container on the reference row — and the excess pushed the whole
+   document sideways. A floor of 0 leaves the proportions untouched wherever
+   there is room (the fr value wins whenever it is the larger of the two), and
+   lets the tracks shrink instead of overflowing when there is not. */
 .payment-core .form-grid {
-  grid-template-columns: minmax(280px, 2fr) minmax(170px, 1fr) minmax(170px, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .payment-core .field {
@@ -2088,7 +2121,7 @@ tr.total .pctxt {
 }
 
 .payment-reference .form-grid {
-  grid-template-columns: minmax(220px, 1.35fr) minmax(180px, 1fr) minmax(180px, 1fr) minmax(150px, .8fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr);
 }
 
 .payment-reference .field {
@@ -2096,7 +2129,7 @@ tr.total .pctxt {
 }
 
 .payment-proof .form-grid {
-  grid-template-columns: minmax(260px, .9fr) minmax(360px, 1.35fr);
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.35fr);
 }
 
 .payment-proof .field {
@@ -2317,8 +2350,39 @@ pre {
    New components — layout
    ========================================================================== */
 
+/* The gutter between the sidebar and the content lives here, on the column
+   itself, so every block inside it is inset by the same amount.
+
+   It used to be applied the other way round — an opt-in list of `.page > h1,
+   .page > .panel, …` selectors further up this file — which stopped matching
+   anything when this `.page-inner` wrapper was introduced between `.page` and
+   the content. The result was that only the two blocks carrying their own
+   padding (`.page-banner` and `.gridhead`) were indented; the other thirty-odd
+   block types sat flush against the sidebar, while the 1180px measure left a
+   gap on the right. Setting it once, here, is what keeps it consistent: a new
+   block cannot be forgotten because there is no list to add it to. */
 .page-inner {
-  width: min(100%, 1180px);
+  width: 100%;
+  max-width: calc(1180px + var(--page-gutter) * 2);
+  padding-inline: var(--page-gutter);
+}
+
+/* Bands drawn edge to edge — the page header and the grid header — cancel the
+   gutter and re-apply it as their own padding. They keep spanning the full
+   width of the column, and their text still lines up with the content below. */
+.page-inner > .page-banner,
+.page-inner > .gridhead {
+  margin-inline: calc(var(--page-gutter) * -1);
+}
+
+/* Three blocks predate the gutter and carry a hand-written 28px of their own.
+   Nested inside a card that margin is real spacing and must stay, so it is only
+   cancelled where the block sits directly in the content column and the gutter
+   has already done the job. */
+.page-inner > .timeline,
+.page-inner > .payments-table,
+.page-inner > .tabs {
+  margin-inline: 0;
 }
 
 .side-brand {
@@ -3662,6 +3726,12 @@ legend {
 }
 
 .perm-scope label {
+  /* Positioned so it becomes the containing block for the absolutely-positioned
+     radio below. Without this the radio resolves against the document instead,
+     which puts it outside the permission table's scrolling wrapper: it escapes
+     that wrapper's clipping and drags the whole page 39px sideways at narrower
+     desktop widths, even though the table itself scrolls correctly. */
+  position: relative;
   padding: 3px 8px;
   background: var(--surface);
   border: 1px solid var(--line-2);
@@ -4170,6 +4240,16 @@ td .t-sub {
    ========================================================================== */
 
 @media (max-width: 860px) {
+  /* The gutter exists to separate the content from the sidebar, and there is no
+     sidebar at this width — the navigation is the bottom tab bar instead. The
+     narrow layout already sets its own 14px insets per block, and adding a
+     column-level gutter on top of them narrowed the content enough to push the
+     last action button under the floating tab-bar control. Zero here keeps the
+     narrow layout exactly as it was. */
+  :root {
+    --page-gutter: 0px;
+  }
+
   body {
     font-size: 13px;
   }
