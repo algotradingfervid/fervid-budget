@@ -40,3 +40,5 @@ output/playwright/*.png
 
 # Local tooling scratch
 .playwright-cli/
+# Local server log from a background `make run`.
+output/*.log
