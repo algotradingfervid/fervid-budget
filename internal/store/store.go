@@ -66,7 +66,40 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) DB() *sql.DB  { return s.db }
 
+// RoleIDsIncludeAdmin reports whether any of these role ids is a system role
+// named Admin. It exists so the superseded users.role column can be kept in step
+// with the roles that actually grant permissions, rather than contradicting them.
+func (s *Store) RoleIDsIncludeAdmin(ctx context.Context, roleIDs []int64) bool {
+	for _, id := range roleIDs {
+		var name string
+		err := s.db.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, id).Scan(&name)
+		if err == nil && strings.EqualFold(name, "Admin") {
+			return true
+		}
+	}
+	return false
+}
+
+// CreateUser creates a user and lets the legacy role string decide their first
+// role, as it always has. Seeding and the tests use this shape.
 func (s *Store) CreateUser(ctx context.Context, email, name, hash, role string, active bool) (int64, error) {
+	return s.CreateUserWithRoles(ctx, email, name, hash, role, active, nil)
+}
+
+// CreateUserWithRoles creates a user and gives them exactly the roles named.
+//
+// The people screen used to offer a two-value "Data entry or Admin" dropdown
+// taken from the superseded users.role column, and assignDefaultRoleTx turned
+// anything that was not "admin" into the *Accounts* role — which carries
+// payment:settle and payment:void. So an administrator adding a colleague could
+// not create a requester or an approver at all, and the innocuous-sounding
+// option silently granted the ability to move money. The screen now asks for
+// real roles and passes them here.
+//
+// With no roles named the legacy derivation still applies, because seeding and
+// the tests create users that way and their first role has to come from
+// somewhere.
+func (s *Store) CreateUserWithRoles(ctx context.Context, email, name, hash, role string, active bool, roleIDs []int64) (int64, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	name = strings.TrimSpace(name)
 	if err := validateUserFields(email, name, role); err != nil {
@@ -89,8 +122,30 @@ func (s *Store) CreateUser(ctx context.Context, email, name, hash, role string, 
 	if err != nil {
 		return 0, err
 	}
-	if err := assignDefaultRoleTx(ctx, tx, id, role); err != nil {
-		return 0, err
+	wanted := make([]int64, 0, len(roleIDs))
+	seen := map[int64]struct{}{}
+	for _, rid := range roleIDs {
+		if rid == 0 {
+			continue
+		}
+		if _, dup := seen[rid]; dup {
+			continue
+		}
+		seen[rid] = struct{}{}
+		wanted = append(wanted, rid)
+	}
+	if len(wanted) == 0 {
+		if err := assignDefaultRoleTx(ctx, tx, id, role); err != nil {
+			return 0, err
+		}
+	} else {
+		for _, rid := range wanted {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO user_roles(user_id,role_id) VALUES(?,?) ON CONFLICT(user_id,role_id) DO NOTHING`,
+				id, rid); err != nil {
+				return 0, classify(err)
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err

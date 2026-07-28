@@ -43,6 +43,12 @@ type Shell struct {
 	Unread                                        int
 	Chrome                                        string // "app" | "none"
 	Title, Sub, BackHref, ActionLabel, ActionHref string
+	// RoleNames is what the caption under the signed-in person's name reads. It
+	// names the roles that actually grant permissions. It used to come from the
+	// superseded column on the user row, which carries the same value for every
+	// non-administrator — so approvers and the accounts team were all captioned
+	// identically, and wrongly, on every page they opened.
+	RoleNames string
 }
 
 // navSpec is the full navigation of the product, in the order the approved

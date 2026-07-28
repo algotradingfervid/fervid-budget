@@ -361,6 +361,42 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "notification_events_reassignment",
 		Up:      UpReassignmentNotificationEvents,
 	},
+	// An approver could not open the invoice on the request they were being
+	// asked to approve.
+	{
+		Version: 12,
+		Name:    "approver_can_view_attachments",
+		Up:      upApproverAttachmentView,
+	},
+}
+
+// upApproverAttachmentView lets the Manager role read the documents attached to
+// a request.
+//
+// Approving is the one moment in the workflow where somebody is asked to judge
+// whether a payment is justified, and it is the moment the supporting document
+// matters most. The Manager role held no attachment:view, and both download
+// routes are gated on exactly that permission, so the invoice behind a request
+// was unreachable for the person deciding it — pushing the check outside the
+// product, where it leaves no record.
+//
+// Scoped to the seeded system role by name, so a custom role somebody built
+// deliberately without the grant is left alone. Re-runnable: the insert is a
+// no-op if the row is already there, and it does nothing at all on a database
+// whose Manager role has been renamed or removed.
+func upApproverAttachmentView(tx *sql.Tx) error {
+	var roleID int64
+	err := tx.QueryRow(`SELECT id FROM roles WHERE lower(name)='manager' AND is_system=1`).Scan(&roleID)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(
+		`INSERT INTO role_permissions(role_id,resource,action) VALUES(?,'attachment','view')
+		 ON CONFLICT(role_id,resource,action) DO NOTHING`, roleID)
+	return err
 }
 
 // upPaymentsVendorID gives a payment the vendor it was made to, so the vendor

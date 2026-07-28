@@ -122,6 +122,19 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 		data.Shell = Shell{Chrome: chromeNone}
 	} else {
 		data.Shell = a.buildPageShell(r, data.User, data.Perms, data.Title)
+		// The caption under the signed-in person's name, filled here rather than
+		// in buildPageShell so that navigation stays purely permission-driven —
+		// nav.go must not read roles at all, and a test enforces it. There is
+		// deliberately no fallback to the superseded column on the user row: a
+		// caption that is merely absent is honest, and one naming a role the
+		// reader does not hold is not.
+		if roles, err := a.st.UserRoles(r.Context(), data.User.ID); err == nil {
+			names := make([]string, 0, len(roles))
+			for _, role := range roles {
+				names = append(names, role.Name)
+			}
+			data.Shell.RoleNames = strings.Join(names, " · ")
+		}
 	}
 
 	var body bytes.Buffer
@@ -187,7 +200,10 @@ func (a *App) respondStoreError(w http.ResponseWriter, r *http.Request, err erro
 	case errors.Is(err, store.ErrNotFound):
 		status, message = http.StatusNotFound, "The requested record was not found."
 	case errors.Is(err, store.ErrLockedMonth):
-		status, message = http.StatusConflict, "This month is locked and cannot be changed."
+		// Same sentence as app.go's in-place version and the banner on the budgets
+		// screen. One condition should not be explained three different ways, and
+		// this is the wording that says what to do about it.
+		status, message = http.StatusConflict, "This month is locked. Unlock it with a reason before changing budgets or payments."
 	case errors.Is(err, store.ErrForbidden):
 		// friendly, not a fixed sentence: a refusal that carries its own reason
 		// keeps it. "This request is on hold" and "reserve this request before

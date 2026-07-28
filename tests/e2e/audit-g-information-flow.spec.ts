@@ -323,6 +323,20 @@ async function setRolesByLabel(adminPage: Page, email: string, labels: Array<str
   await expect(adminPage).toHaveURL(/\/users$/);
 }
 
+/**
+ * The id of a seeded system role, read off the create form rather than assumed.
+ *
+ * A raw POST to /users has to name real roles now: the form stopped sending the
+ * superseded two-value account type, which could not express "requester" or
+ * "approver" and mapped its harmless-looking option to the role that settles and
+ * voids payments.
+ */
+async function systemRoleId(adminPage: Page, name: RegExp): Promise<string> {
+  await adminPage.goto('/users');
+  const value = await adminPage.locator('#user-new').getByRole('checkbox', { name }).getAttribute('value');
+  return value ?? '';
+}
+
 /** Creates a user holding exactly one custom role, signed in in its own context. */
 async function asCustomRole(adminPage: Page, browser: Browser, runId: string, prefix: string, role: CustomRole) {
   const email = `${prefix}-${runId}@example.test`.toLowerCase();
@@ -333,6 +347,10 @@ async function asCustomRole(adminPage: Page, browser: Browser, runId: string, pr
   await expect(sheet).toBeVisible();
   await sheet.getByLabel('Email').fill(email);
   await sheet.getByLabel('Name').fill(name);
+  // The create form insists on at least one role, so an account cannot be born
+  // able to do nothing. Requester is the least of them; setRolesByLabel replaces
+  // the set with the custom role immediately below.
+  await sheet.getByRole('checkbox', { name: /^Requester/ }).check();
   await sheet.getByLabel('Password').fill('StrongTestPassword!42');
   await sheet.getByRole('button', { name: 'Add User' }).click();
   await expect(adminPage).toHaveURL(/\/users$/);
@@ -4936,11 +4954,13 @@ test.describe('G · referential integrity', () => {
     expect(short.body, 'naming the rule it broke').toContain('12 characters');
 
     // The same password with one digit is accepted, which pins the real rule.
+    // The role has to be named for the create to be accepted at all, so it is
+    // supplied here and held constant across all three probes above.
     const ok = await probePost(adminPage, '/users', {
       id: '0',
       email,
       name: `Password rules ${runId}`,
-      role: 'data_entry',
+      role_ids: await systemRoleId(adminPage, /^Requester/),
       active: 'on',
       password: 'abcdefghijk1'
     });

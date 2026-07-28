@@ -71,6 +71,11 @@ export async function createUserWithExactRoles(
   const sheet = adminPage.locator('#user-new');
   await sheet.getByLabel('Email').fill(email);
   await sheet.getByLabel('Name').fill(name);
+  // The create form now insists on at least one role, so the account cannot be
+  // born able to do nothing. Requester is the least of them, and setExactRoles
+  // rewrites the set immediately afterwards — including to the empty set, which
+  // several of these probes depend on.
+  await sheet.getByRole('checkbox', { name: /^Requester/ }).check();
   await sheet.getByLabel('Password').fill(fixturePassword);
   await sheet.getByRole('button', { name: 'Add User' }).click();
   await expect(adminPage).toHaveURL(/\/users$/);

@@ -56,7 +56,10 @@ export async function createDataEntryUser(page: Page, runId: string) {
   const sheet = page.locator('#user-new');
   await sheet.getByLabel('Email').fill(email);
   await sheet.getByLabel('Name').fill(`Data Entry ${runId}`);
-  await sheet.getByLabel('Role').selectOption('data_entry');
+  // Accounts, ticked explicitly. The sheet used to offer a two-value account
+  // type whose "Data entry" option was silently mapped to this very role, so
+  // this is the same user these tests always got — now asked for by name.
+  await sheet.getByRole('checkbox', { name: /^Accounts/ }).check();
   await sheet.getByLabel('Password').fill(fixturePassword);
   await sheet.getByRole('button', { name: 'Add User' }).click();
   await expect(page).toHaveURL(/\/users$/);
@@ -71,9 +74,10 @@ export async function openNewUserSheet(page: Page) {
 /**
  * Creates a user and gives them one system role.
  *
- * The "Add user" sheet only offers the legacy account type; the roles that
- * actually carry permissions are ticked in the user's own edit sheet, which is
- * why this is two round trips and not one.
+ * One round trip. This used to take two, because the "Add user" sheet offered
+ * only a two-value legacy account type and the roles that actually carry
+ * permissions had to be ticked afterwards in the user's own edit sheet. The
+ * sheet now asks for the real roles, so the role is set where it is chosen.
  */
 async function createUserWithRole(page: Page, prefix: string, runId: string, role: RegExp) {
   const email = `${prefix}-${runId}@example.test`.toLowerCase();
@@ -83,14 +87,9 @@ async function createUserWithRole(page: Page, prefix: string, runId: string, rol
   const sheet = page.locator('#user-new');
   await sheet.getByLabel('Email').fill(email);
   await sheet.getByLabel('Name').fill(name);
+  await sheet.getByRole('checkbox', { name: role }).check();
   await sheet.getByLabel('Password').fill(fixturePassword);
   await sheet.getByRole('button', { name: 'Add User' }).click();
-  await expect(page).toHaveURL(/\/users$/);
-
-  await page.locator('tr', { hasText: email }).getByRole('button', { name: 'Edit' }).click();
-  const edit = page.locator('.overlay:not([hidden])');
-  await edit.getByRole('checkbox', { name: role }).check();
-  await edit.getByRole('button', { name: 'Save user' }).click();
   await expect(page).toHaveURL(/\/users$/);
   return { email, name, password: fixturePassword };
 }

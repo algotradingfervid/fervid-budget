@@ -91,15 +91,12 @@ async function createApprover(page: Page, runId: string) {
   const sheet = page.locator('#user-new');
   await sheet.getByLabel('Email').fill(email);
   await sheet.getByLabel('Name').fill(name);
+  // The role is ticked where the account is created. This used to need a second
+  // trip through the edit sheet, because the create form offered only a
+  // two-value legacy account type that could not name a real role.
+  await sheet.getByRole('checkbox', { name: /^Manager/ }).check();
   await sheet.getByLabel('Password').fill('StrongTestPassword!42');
   await sheet.getByRole('button', { name: 'Add User' }).click();
-  await expect(page).toHaveURL(/\/users$/);
-
-  const row = page.locator('tr', { hasText: email });
-  await row.getByRole('button', { name: 'Edit' }).click();
-  const edit = page.locator('.overlay:not([hidden])');
-  await edit.getByRole('checkbox', { name: /^Manager/ }).check();
-  await edit.getByRole('button', { name: 'Save user' }).click();
   await expect(page).toHaveURL(/\/users$/);
   return name;
 }
@@ -133,11 +130,23 @@ test.describe('raising a request', () => {
     await expect(adminPage.locator('select[name="type"]')).toHaveCount(0);
     problems.push(...(await qualityProblems(adminPage, '/requests/new?type=vendor_invoice')));
 
-    // The treatment radio swaps the middle of the form from the server.
+    // A vendor invoice is always a budget expense — the store refuses any other
+    // treatment for it — so the form states that rather than offering a choice
+    // it would reject after the requester had filled in the fields it reveals.
+    await expect(adminPage.getByRole('radio', { name: /Refundable or recoverable/ })).toHaveCount(0);
+    await expect(adminPage.locator('input[type="hidden"][name="treatment"][value="budget"]')).toHaveCount(1);
+    await expect(adminPage.locator('#form-fields select[name="head_id"]')).toBeVisible();
+
+    // The choice, and the server-side swap it drives, belong to the one type
+    // that may be recoverable.
+    await adminPage.goto('/requests/new?type=employee_advance');
     await adminPage.getByRole('radio', { name: /Refundable or recoverable/ }).check();
     await expect(adminPage.locator('#form-fields textarea[name="repayment_notes"]')).toBeVisible();
     await expect(adminPage.locator('#form-fields select[name="head_id"]')).toHaveCount(0);
     await adminPage.getByRole('radio', { name: /Budget expense/ }).check();
+    await expect(adminPage.locator('#form-fields select[name="head_id"]')).toBeVisible();
+
+    await adminPage.goto('/requests/new?type=vendor_invoice');
     await expect(adminPage.locator('#form-fields select[name="head_id"]')).toBeVisible();
 
     // Choosing a project narrows the heads to that project's own.

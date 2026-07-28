@@ -94,7 +94,13 @@ const SEEDED_GRANTS: Record<Exclude<CallerId, 'C-anon'>, string[]> = {
     'request:view', 'request:comment',
     'approval:approve', 'approval:reject', 'approval:return',
     'approval:reassign', 'approval:accept_partial', 'approval:cancel',
-    'grid:view', 'report:view'
+    'grid:view', 'report:view',
+    // Granted by migration 12. Approving is the one moment somebody is asked to
+    // judge whether a payment is justified, and it is the moment the supporting
+    // document matters most; the approver could not open it. The grant is still
+    // scoped — the download handlers check the caller can see the request the
+    // document belongs to before serving a byte.
+    'attachment:view'
   ],
   'C-acc': [
     'request:view', 'request:comment',
@@ -1222,9 +1228,16 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toBe(true);
   });
 
-  test('TC-A-93 — a Manager is refused the same attachment, because they hold no attachment:view', async () => {
+  test('TC-A-93 — a Manager reads the same attachment, and the scope check is what still guards it', async () => {
+    // Inverted by migration 12. The Manager role held no attachment:view, so an
+    // approver could not open the invoice on the request they were being asked
+    // to approve — the check moved outside the product, where it leaves no
+    // record. The grant is not a skeleton key: attachmentDownload still asks
+    // canReadPayment, which for a request-linked payment defers to whether the
+    // caller may see that request. A Manager may, so this resolves; the verb
+    // opened the door and the scope is what decides who walks through it.
     const probe = await probeGet(W.callers['C-mgr'].page, `/attachments/${W.payAttId}`);
-    expect(probe.status, 'the only thing standing between a reader and every attachment is the verb').toBe(403);
+    expect(probe.status, 'an approver can read the documents on a request they can see').toBe(200);
   });
 
   test('TC-A-94 — the Download link on a request document resolves to that document and nothing else', async () => {
@@ -1836,9 +1849,13 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       ).toBeVisible();
 
       const created = `late-${W.runId}@example.test`;
+      // role_ids, not the superseded account type. The create form asks for real
+      // roles now: the old two-value field could not name a requester or an
+      // approver, and its innocuous option was mapped to the role that settles
+      // and voids payments.
       const probe = await probePost(session.page, '/users', {
         id: '0', email: created, name: 'Late', password: fixturePassword, active: 'on',
-        role: 'data_entry'
+        role_ids: W.systemRoleIds.Requester
       });
       expect(
         probe.status,

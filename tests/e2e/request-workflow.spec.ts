@@ -102,15 +102,11 @@ async function createApprover(page: Page, runId: string) {
   const sheet = page.locator('#user-new');
   await sheet.getByLabel('Email').fill(email);
   await sheet.getByLabel('Name').fill(name);
+  // Ticked at creation. The create sheet used to offer only a two-value legacy
+  // account type, so the real role needed a second trip through the edit sheet.
+  await sheet.getByRole('checkbox', { name: /^Manager/ }).check();
   await sheet.getByLabel('Password').fill(APPROVER_PASSWORD);
   await sheet.getByRole('button', { name: 'Add User' }).click();
-  await expect(page).toHaveURL(/\/users$/);
-
-  const row = page.locator('tr', { hasText: email });
-  await row.getByRole('button', { name: 'Edit' }).click();
-  const edit = page.locator('.overlay:not([hidden])');
-  await edit.getByRole('checkbox', { name: /^Manager/ }).check();
-  await edit.getByRole('button', { name: 'Save user' }).click();
   await expect(page).toHaveURL(/\/users$/);
   return { email, name };
 }

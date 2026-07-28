@@ -387,7 +387,7 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<input type="hidden" name="type" value="vendor_invoice">`,
-		`class="choice"`, `money-field"`, `class="money-wrap"`, `class="in-words"`, `class="combo"`,
+		`money-field"`, `class="money-wrap"`, `class="in-words"`, `class="combo"`,
 		`class="uploader"`, `class="action-bar"`, `name="short_title"`, `name="urgency_reason"`,
 		`name="invoice_no"`, `name="invoice_date"`, `hx-get="/requests/new/fields"`,
 		`data-when="treatment:budget"`, `data-when="urgent:on"`, "<h1>",
@@ -397,6 +397,24 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 			t.Fatalf("the form is missing %q", want)
 		}
 	}
+	// The recoverable treatment is only offered where the store accepts it.
+	// store.validateRequestInput refuses it for a vendor invoice, a vendor
+	// advance and a reimbursement, so presenting the choice on those types means
+	// rejecting the requester after they have filled in the fields it reveals.
+	// A vendor invoice states the treatment; an employee advance chooses it.
+	if strings.Contains(form, `value="recoverable"`) {
+		t.Fatal("the vendor invoice form offered a recoverable treatment the store refuses")
+	}
+	if !strings.Contains(form, `<input type="hidden" name="treatment" value="budget">`) {
+		t.Fatal("the vendor invoice form must still submit a treatment")
+	}
+	advanceForm := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	for _, want := range []string{`class="choice"`, `value="recoverable"`, `value="budget"`} {
+		if !strings.Contains(advanceForm, want) {
+			t.Fatalf("the employee advance form is missing %q; it is the one type that may be recoverable", want)
+		}
+	}
+
 	// G8: the requester is never in their own approver list, and somebody else is.
 	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	if err != nil {

@@ -143,6 +143,23 @@ func (s *appTestServer) postForm(path string, form url.Values) *http.Response {
 	return s.request(http.MethodPost, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
 }
 
+// roleIDByName resolves a seeded role to the id the people form posts, so a test
+// can ask for "Requester" rather than hard-coding a number the seed decides.
+func (s *appTestServer) roleIDByName(t *testing.T, name string) string {
+	t.Helper()
+	roles, err := s.st.AllRoles(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range roles {
+		if strings.EqualFold(role.Name, name) {
+			return strconv.FormatInt(role.ID, 10)
+		}
+	}
+	t.Fatalf("no seeded role named %q", name)
+	return ""
+}
+
 func (s *appTestServer) seedHead(name string) (store.User, int64) {
 	s.t.Helper()
 	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
@@ -503,20 +520,44 @@ func TestLockedMonthRefusalIsAlwaysAConflict(t *testing.T) {
 func TestUserCreationEnforcesPasswordAndInactiveFlagWithCreateAudit(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
-	weak := url.Values{"email": {"weak@example.test"}, "name": {"Weak"}, "role": {"data_entry"}, "password": {"short"}, "active": {"on"}}
+	// The create form sends the same role checkboxes the edit form does. It used
+	// to send a two-value legacy string that could not express "requester" or
+	// "approver", and whose harmless-looking option was mapped to the role that
+	// can settle and void payments.
+	requester := s.roleIDByName(t, "Requester")
+
+	weak := url.Values{"email": {"weak@example.test"}, "name": {"Weak"}, "role_ids": {requester}, "password": {"short"}, "active": {"on"}}
 	resp := s.postForm("/users", weak)
 	requireStatus(t, resp, http.StatusBadRequest)
 	if !strings.Contains(responseBody(t, resp), "at least 12") {
 		t.Fatal("weak password error was not returned")
 	}
 
-	inactive := url.Values{"email": {"inactive@example.test"}, "name": {"Inactive"}, "role": {"data_entry"}, "password": {"ValidPassword123"}}
+	// A new account with no role at all would be able to sign in and do nothing,
+	// so the form refuses it rather than quietly picking one.
+	roleless := url.Values{"email": {"roleless@example.test"}, "name": {"Roleless"}, "password": {"ValidPassword123"}}
+	resp = s.postForm("/users", roleless)
+	requireStatus(t, resp, http.StatusBadRequest)
+	if !strings.Contains(responseBody(t, resp), "at least one role") {
+		t.Fatal("creating a user with no roles was not refused")
+	}
+
+	inactive := url.Values{"email": {"inactive@example.test"}, "name": {"Inactive"}, "role_ids": {requester}, "password": {"ValidPassword123"}}
 	resp = s.postForm("/users", inactive)
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	u, err := s.st.UserByEmail(s.ctx, "inactive@example.test")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The role asked for is the role granted — not whatever the legacy column
+	// would have derived, which for anything but "admin" was Accounts.
+	roles, err := s.st.UserRoles(s.ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 1 || roles[0].Name != "Requester" {
+		t.Fatalf("new user holds %#v, want exactly the Requester role", roles)
 	}
 	if u.Active {
 		t.Fatal("unchecked active box created an active user")
@@ -2328,7 +2369,7 @@ func TestUserSaveDemandsCreateToCreateAndEditToEdit(t *testing.T) {
 		t.Fatalf("the create control is not rendered for user:create: %s", body)
 	}
 	requireStatus(t, s.postForm("/users", url.Values{
-		"email": {"minted@example.test"}, "name": {"Minted"}, "role": {"data_entry"},
+		"email": {"minted@example.test"}, "name": {"Minted"}, "role_ids": {s.roleIDByName(t, "Requester")},
 		"active": {"on"}, "password": {"MintedPass123"},
 	}), http.StatusSeeOther)
 	// …and cannot edit an existing user.

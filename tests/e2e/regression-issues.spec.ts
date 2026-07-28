@@ -304,6 +304,7 @@ test.describe('documented issue regression guards', () => {
     const sheet = adminPage.locator('#user-new');
     await sheet.getByLabel('Email').fill(email);
     await sheet.getByLabel('Name').fill(`Inactive User ${runId}`);
+    await sheet.getByRole('checkbox', { name: /^Requester/ }).check();
     await sheet.getByLabel('Password').fill('InactivePassword42');
     await sheet.locator('form.setup-form input[name="active"]').uncheck();
     await sheet.getByRole('button', { name: 'Add User' }).click();
@@ -338,7 +339,7 @@ test.describe('documented issue regression guards', () => {
     const sheet = page.locator('#user-new');
     await sheet.getByLabel('Email').fill(email);
     await sheet.getByLabel('Name').fill('Lock Test');
-    await sheet.getByLabel('Role').selectOption('admin');
+    await sheet.getByRole('checkbox', { name: /^Admin/ }).check();
     await sheet.getByLabel('Password').fill('LockPassword42');
     await sheet.getByRole('button', { name: 'Add User' }).click();
     for (let attempt = 0; attempt < 5; attempt += 1) {

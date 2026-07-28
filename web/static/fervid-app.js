@@ -113,8 +113,73 @@
     return -1;
   }
 
+  /**
+   * Fills an approver picker from the one shared option list on the page.
+   *
+   * The people screen used to render every approver inside every user's panel,
+   * which is quadratic: 56 people meant ~3,000 option elements and 346 KB of
+   * markup before anything was opened. The options are now emitted once, and the
+   * panel being opened borrows them. Self-approval is not allowed, so the person
+   * the panel belongs to is left out of their own list.
+   */
+  function fillApproverPicker(root) {
+    var source = document.getElementById("approver-options");
+    if (!source) return;
+    var selects = root.querySelectorAll("select[data-approver-select]");
+    for (var i = 0; i < selects.length; i++) {
+      var sel = selects[i];
+      if (sel.dataset.filled === "1") continue;
+      var self = sel.getAttribute("data-self");
+      var chosen = sel.getAttribute("data-chosen") || "0";
+      var options = source.content.cloneNode(true).querySelectorAll("option");
+      for (var j = 0; j < options.length; j++) {
+        var opt = options[j];
+        if (opt.value === self) continue;
+        if (opt.value === chosen) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      sel.dataset.filled = "1";
+    }
+  }
+
+  /**
+   * Fills a project picker from the one shared option list on the page.
+   *
+   * The heads screen carries one picker per row and used to render every project
+   * inside every one of them: 229 heads against 24 projects is about 5,500
+   * option elements and 470 KB, of which a reader looks at one. Each row now
+   * ships only the project it is filed under, and borrows the rest the moment
+   * somebody reaches for the control.
+   */
+  function fillProjectPicker(sel) {
+    if (!sel || sel.dataset.filled === "1") return;
+    var source = document.getElementById("project-options");
+    if (!source) return;
+    var chosen = sel.getAttribute("data-chosen");
+    sel.innerHTML = "";
+    var options = source.content.cloneNode(true).querySelectorAll("option");
+    for (var i = 0; i < options.length; i++) {
+      if (options[i].value === chosen) options[i].selected = true;
+      sel.appendChild(options[i]);
+    }
+    sel.dataset.filled = "1";
+  }
+
+  // pointerdown as well as focusin: a mouse click opens the native dropdown, and
+  // pointerdown is the last moment before it does.
+  function projectPickerFrom(target) {
+    return target && target.closest ? target.closest("select[data-project-select]") : null;
+  }
+  document.addEventListener("pointerdown", function (e) {
+    fillProjectPicker(projectPickerFrom(e.target));
+  });
+  document.addEventListener("focusin", function (e) {
+    fillProjectPicker(projectPickerFrom(e.target));
+  });
+
   function openDialog(el, opener) {
     if (!el || dialogIndex(el) !== -1) return;
+    fillApproverPicker(el);
     el.hidden = false;
     openDialogs.push({ el: el, opener: opener || null });
 

@@ -1570,12 +1570,32 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 	active := r.FormValue("active") == "on"
 	var err error
 	var savedID int64
+	// Both branches read the same role checkboxes. The create form used to send a
+	// two-value legacy string instead, which could not express "requester" or
+	// "approver" at all and mapped its harmless-looking option to the Accounts
+	// role — the one that can settle and void payments.
+	roleIDs := make([]int64, 0, len(r.Form["role_ids"]))
+	for _, raw := range r.Form["role_ids"] {
+		if v := parseID(raw); v != 0 {
+			roleIDs = append(roleIDs, v)
+		}
+	}
 	if id == 0 {
 		if hash == "" {
 			a.respondError(w, r, http.StatusBadRequest, "A password is required.", nil)
 			return
 		}
-		savedID, err = a.st.CreateUser(r.Context(), r.FormValue("email"), r.FormValue("name"), hash, r.FormValue("role"), active)
+		if len(roleIDs) == 0 {
+			a.respondError(w, r, http.StatusBadRequest, "Choose at least one role for the new user.", nil)
+			return
+		}
+		// users.role is superseded but still written, so anything that reads it
+		// keeps agreeing with the roles that actually decide permissions.
+		legacy := "data_entry"
+		if a.st.RoleIDsIncludeAdmin(r.Context(), roleIDs) {
+			legacy = "admin"
+		}
+		savedID, err = a.st.CreateUserWithRoles(r.Context(), r.FormValue("email"), r.FormValue("name"), hash, legacy, active, roleIDs)
 	} else {
 		current := auth.CurrentUser(r)
 		if id == current.ID && (!active || r.FormValue("role") != "admin") {
@@ -1585,15 +1605,9 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 		// One form, one submit, one transaction. The profile, the role assignment
 		// and the default approver used to be three independent store calls, so a
 		// save refused by the second left the first one's rename committed and
-		// unaudited (F-G-034). Role assignment and the default approver apply only
-		// to an existing user; the create path relies on CreateUser's own
-		// default-role assignment.
-		var roleIDs []int64
-		for _, raw := range r.Form["role_ids"] {
-			if v := parseID(raw); v != 0 {
-				roleIDs = append(roleIDs, v)
-			}
-		}
+		// unaudited (F-G-034). The default approver applies only to an existing
+		// user; the roles are read once above, because both branches now take
+		// them from the same checkboxes.
 		err = a.st.SaveUser(r.Context(), current, store.UserSaveInput{
 			ID:                id,
 			Name:              r.FormValue("name"),

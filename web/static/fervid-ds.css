@@ -2145,6 +2145,18 @@ tr.total .pctxt {
   font-weight: 500;
 }
 
+/* Where a request type admits only one treatment, the form states it instead of
+   offering a choice it would refuse. Styled as a settled fact, not a control. */
+.fixed-treatment {
+  margin: 4px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
 .detail-grid.details {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -350,8 +350,12 @@ it.describe('A · every type and treatment, through the real form', () => {
       await expect(page.locator('select[name="type"]')).toHaveCount(0);
       await expect(page.locator('input[name="type"]')).toHaveValue('vendor_invoice');
 
-      // Treatment first, then the type's own fields (T1).
-      await expect(page.getByRole('radio', { name: /Budget expense/ })).toBeChecked();
+      // Treatment first, then the type's own fields (T1). A vendor invoice can
+      // only ever be a budget expense — the store refuses anything else for it —
+      // so the form states that and submits it, rather than offering a radio it
+      // would reject after the recoverable fields had been filled in.
+      await expect(page.getByRole('radio', { name: /Refundable or recoverable/ })).toHaveCount(0);
+      await expect(page.locator('input[type="hidden"][name="treatment"]')).toHaveValue('budget');
       await page.getByLabel('Short title').fill(`Switchgear ${world.runId}`);
       await page.locator('#project').selectOption({ label: 'Operations' });
       await expect(page.locator('#head option').filter({ hasNotText: 'Operations /' })).toHaveCount(1);
@@ -561,7 +565,11 @@ it.describe('A · every type and treatment, through the real form', () => {
         if (request.url().includes('/requests/new/fields')) swaps.push(request.url());
       });
 
-      await page.goto('/requests/new?type=vendor_invoice');
+      // An employee advance, because it is the one type the store accepts a
+      // recoverable treatment for and therefore the one type the form offers the
+      // choice on. A vendor invoice states its treatment instead of offering a
+      // radio it would reject — see TC-B-001.
+      await page.goto('/requests/new?type=employee_advance');
       await expect(page.locator('#form-fields select[name="head_id"]')).toBeVisible();
 
       await page.getByRole('radio', { name: /Refundable or recoverable/ }).check();

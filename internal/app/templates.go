@@ -63,7 +63,7 @@ const templates = `
   {{range .Shell.Groups}}{{if .Title}}<div class="sgroup">{{.Title}}</div>{{end}}
   <nav class="side-nav" aria-label="{{if .Title}}{{.Title}}{{else}}Primary{{end}}">{{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a class="{{if eq $.Shell.Active .Key}}active{{end}}" href="{{.Href}}"{{if eq $.Shell.Active .Key}} aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}</nav>
   {{end}}
-  <div class="side-user"><span class="avatar">{{.Initials}}</span><span><strong>{{.User.Name}}</strong><small>{{roleText .User.Role}}</small></span></div>
+  <div class="side-user"><span class="avatar">{{.Initials}}</span><span><strong>{{.User.Name}}</strong><small>{{.Shell.RoleNames}}</small></span></div>
   {{/* "Log out" here and in the More sheet: one action, one name on every device. */}}
   <form class="side-logout" method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Log out</button></form>
 </aside>{{end}}
@@ -788,7 +788,12 @@ const templates = `
                reservation this old, and this row is the only thing that knows
                which reservation it is. The count in the banner above is an
                aggregate and cannot. */}}
-          {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID)}}<a class="btn small" href="{{if stale .ProcessingAt}}/requests/{{.ID}}/reservation/stale{{else}}/payments/new?request={{.ID}}{{end}}">Resume</a>
+          {{/* Resume only while the request is still in flight. processing_by
+               survives settlement, so on the Paid tab this offered every row the
+               reader had settled themselves a link back to the payment form —
+               which answers a conflict, because the request is no longer
+               approved. Once it is paid, the useful destination is the request. */}}
+          {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID) (eq .Status "processing")}}<a class="btn small" href="{{if stale .ProcessingAt}}/requests/{{.ID}}/reservation/stale{{else}}/payments/new?request={{.ID}}{{end}}">Resume</a>
           {{else if and .ProcessingBy ($.Perms.Can "reservation" "reassign")}}<a class="btn small outline" href="/requests/{{.ID}}/reservation">Reassign</a>
           {{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}
         </td>
@@ -1004,7 +1009,7 @@ const templates = `
 <div class="overlay" id="concern-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/raise-concern">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <div class="sh-head"><div><h2>Raise a concern</h2><p class="sh-sub">The request stays open as Partial — under discussion</p></div><button class="sh-close" type="button" data-close="concern-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-head"><div><h2>Raise a concern</h2><p class="sh-sub">The request stays where it is; your objection is recorded on the thread</p></div><button class="sh-close" type="button" data-close="concern-sheet" aria-label="Close">✕</button></div>
     <div class="sh-body stack-12">
       <div class="field"><label for="cn-reason">What is wrong <span class="req" aria-hidden="true">*</span></label><textarea id="cn-reason" name="comment" required placeholder="Accounts can reply in the conversation, but the recorded payment cannot be changed."></textarea></div>
       <div class="banner warn" style="margin:0"><span class="b-ico" aria-hidden="true">i</span><div><b>This does not reverse anything</b><p>The {{money .Payment.Amount}} has left the bank. Raising a concern keeps the request open so the two of you can agree what happens next.</p></div></div>
@@ -1241,7 +1246,7 @@ const templates = `
 {{define "budgets"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Monthly plan</div><h1>Budgets</h1><p class="sub muted">Edit planned spend per head for the selected month.</p></div>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</section>
-<form class="toolbar" method="get"><label>Month<input type="month" name="month" value="{{.Month}}"></label><button>Open</button><a class="btn outline" href="/months">Month history</a><a class="btn outline" href="/grid?month={{.Month}}">View grid</a></form>{{if .Grid.Locked}}<div class="locked">This month is locked. Unlock it before changing budgets.</div>{{end}}
+<form class="toolbar" method="get"><label>Month<input type="month" name="month" value="{{.Month}}"></label><button>Open</button><a class="btn outline" href="/months">Month history</a><a class="btn outline" href="/grid?month={{.Month}}">View grid</a></form>{{if .Grid.Locked}}<div class="locked">This month is locked. Unlock it with a reason before changing budgets or payments.</div>{{end}}
 <form class="budget-editor" method="post" action="/budgets"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="month" value="{{.Month}}"><table class="t-cards"><thead><tr><th>Project</th><th>Head</th><th>Status</th><th>Budget</th><th class="num">Actual</th><th class="num">Used</th></tr></thead><tbody>{{range .Grid.Rows}}<tr><td data-label="Project">{{.Project}}</td><td class="t-lead" data-label="Head">{{.Head}}</td><td data-label="Status">{{if .Active}}<span class="pill good">Active</span>{{else}}<span class="pill neutral">Retired</span>{{end}}</td><td data-label="Budget"><span><input name="budget_{{.HeadID}}" aria-label="Budget for {{.Project}} / {{.Head}}" value="{{if $.BudgetInputs}}{{index $.BudgetInputs .HeadID}}{{else}}{{money .Budget}}{{end}}" {{if or $.Grid.Locked (not .Active)}}disabled{{end}}>{{if not .Active}}<span class="hint">Retired: kept for history, not editable.</span>{{end}}</span></td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No active heads for this month. <a href="/heads">Add a head</a> first.</td></tr>{{end}}</tbody></table><div class="form-actions"><button class="primary" {{if .Grid.Locked}}disabled{{end}}>Save Budgets</button></div></form>
 {{template "bottom" .}}
 {{end}}
@@ -1264,7 +1269,19 @@ const templates = `
      option, the browser selected the first one, and that row's own Save moved the
      head to a project nobody chose, taking every payment ever recorded against it
      into another project's variance (F-G-033). The "Add head" form above keeps the
-     active set: a *new* head may not be filed under a retired project. */}}<select form="head-{{.ID}}" name="project_id" aria-label="Project for {{.Name}}">{{range $.AllProjects}}<option value="{{.ID}}" {{if eq $head.ProjectID .ID}}selected{{end}}>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}</select></td><td class="t-lead" data-label="Head"><input form="head-{{.ID}}" name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Due"><input form="head-{{.ID}}" name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td><td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="head-{{.ID}}" name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update"><span><form id="head-{{.ID}}" method="post" action="/heads"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="head-{{.ID}}">Save</button></span></td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No heads yet. Add the first one above.</td></tr>{{end}}</tbody></table></div>
+     active set: a *new* head may not be filed under a retired project.
+
+     Only the project this head is filed under is rendered here. fervid-app.js
+     swaps in the full list from the shared <template> below the moment somebody
+     reaches for the control, because rendering all of them in all of the rows is
+     229 x 24 option elements and 470 KB, of which a reader ever reads one. The
+     one option that is rendered is looked up rather than taken from the head, so
+     it keeps its "(retired)" marker: which project a head is filed under is the
+     whole point of the column. */}}<select form="head-{{.ID}}" name="project_id" aria-label="Project for {{.Name}}" data-project-select data-chosen="{{$head.ProjectID}}">{{range $.AllProjects}}{{if eq .ID $head.ProjectID}}<option value="{{.ID}}" selected>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}</select></td><td class="t-lead" data-label="Head"><input form="head-{{.ID}}" name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Due"><input form="head-{{.ID}}" name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td><td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="head-{{.ID}}" name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update"><span><form id="head-{{.ID}}" method="post" action="/heads"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="head-{{.ID}}">Save</button></span></td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No heads yet. Add the first one above.</td></tr>{{end}}</tbody></table></div>
+{{/* Every project, once, for the row pickers above. Retired ones are included
+     and marked, because a head already filed under a retired project must keep
+     showing it — only the Add form above is restricted to the active set. */}}
+<template id="project-options">{{range .AllProjects}}<option value="{{.ID}}">{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}</template>
 {{template "bottom" .}}
 {{end}}
 
@@ -1297,7 +1314,7 @@ const templates = `
         <td data-label="Roles">{{$uid := .ID}}{{range $.AllRoles}}{{if index (index $.UserRoleIDs $uid) .ID}}<span class="pill neutral no-dot">{{.Name}}</span> {{end}}{{end}}</td>
         <td data-label="Default approver">{{if .DefaultApproverID}}{{index $.ApproverNames .DefaultApproverID}}{{else}}—{{end}}</td>
         <td class="c" data-label="Status"><span class="pill {{if .Active}}good{{else}}neutral{{end}}">{{boolText .Active}}</span></td>
-        <td class="c" data-label=""><button class="btn small outline" type="button" data-open="user-{{.ID}}">Edit</button></td>
+        <td class="c" data-label="">{{if $.Perms.Can "user" "edit"}}<button class="btn small outline" type="button" data-open="user-{{.ID}}">Edit</button>{{end}}</td>
       </tr>
       {{else}}
       <tr><td colspan="6" class="empty">No users yet.</td></tr>
@@ -1320,9 +1337,14 @@ const templates = `
           <div class="stack-8">{{$uid := .ID}}{{range $.AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}" {{if index (index $.UserRoleIDs $uid) .ID}}checked{{end}}> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}</div>
         </div>
         <div class="field"><label for="u-apr-{{.ID}}">Default approver for their own requests</label>
-          <select id="u-apr-{{.ID}}" name="default_approver_id">
+          {{/* Left empty on purpose. fervid-app.js fills it from the single
+               shared option list at the foot of this page when the panel opens.
+               Rendering every approver inside every user's panel is quadratic —
+               56 people produced about 3,000 option elements and 346 KB of
+               markup, none of it read until a panel is opened. */}}
+          <select id="u-apr-{{.ID}}" name="default_approver_id"
+                  data-approver-select data-self="{{.ID}}" data-chosen="{{.DefaultApproverID}}">
             <option value="0">None</option>
-            {{$self := .ID}}{{$chosen := .DefaultApproverID}}{{range $.Approvers}}{{if ne .ID $self}}<option value="{{.ID}}" data-approver-for="{{$self}}" {{if eq .ID $chosen}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}
           </select>
           <span class="hint">Self-approval is not allowed, so they never appear in their own list.</span>
         </div>
@@ -1336,6 +1358,13 @@ const templates = `
 </div>
 {{end}}
 
+{{/* Every approver, once. Each user's panel borrows these when it opens rather
+     than carrying its own copy — see the select above. A <template> is inert:
+     the browser parses it but does not render it or submit anything inside it. */}}
+<template id="approver-options">
+  {{range .Approvers}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+</template>
+
 <div class="overlay" id="user-new" hidden>
   <div class="sheet">
     <form class="setup-form" method="post" action="/users">
@@ -1344,7 +1373,15 @@ const templates = `
       <div class="sh-body stack-12">
         <div class="field"><label for="nu-email">Email</label><input id="nu-email" name="email" type="email" required></div>
         <div class="field"><label for="nu-name">Name</label><input id="nu-name" name="name" required></div>
-        <div class="field"><label for="nu-role">Role</label><select id="nu-role" name="role"><option value="data_entry">Data entry</option><option value="admin">Admin</option></select></div>
+        {{/* The real roles, the same ones the edit panel offers. This used to be
+             a two-value "Data entry / Admin" select taken from the superseded
+             users.role column: it could not create a requester or an approver,
+             and "Data entry" was mapped to the Accounts role, which can settle
+             and void payments. */}}
+        <div class="field"><span class="flabel">Roles <span class="req" aria-hidden="true">*</span></span>
+          <div class="stack-8">{{range .AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}"> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}</div>
+          <span class="hint">A person can hold several roles at once. Their permissions are everything their roles allow.</span>
+        </div>
         <div class="field"><label for="nu-pw">Password</label><input id="nu-pw" name="password" type="password" minlength="12" required></div>
         <label class="checkline"><input type="checkbox" name="active" checked> Active</label>
       </div>
@@ -1937,7 +1974,16 @@ const templates = `
         <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required>
         <span class="hint">What your approver will see in their approval list.</span>
       </div>
+      {{/* The recoverable treatment is only offered where the store will accept
+           it. internal/store/requests.go refuses it for a vendor invoice, a
+           vendor advance and a reimbursement, each with its own "... is a budget
+           expense" message — but this fieldset sits in the shared top of the
+           form, so it used to present the choice on all four types and reject it
+           on three of them after the requester had filled in the recoverable
+           fields it revealed. Where there is no choice, the form now says so
+           instead of offering one. */}}
       <div class="field span-12">
+        {{if eq .Request2.Type "employee_advance"}}
         <span class="flabel">How should this be treated <span class="req" aria-hidden="true">*</span></span>
         <div class="choice"
              hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
@@ -1950,6 +1996,12 @@ const templates = `
             <span><b>Refundable or recoverable</b><small>A deposit, guarantee, loan or advance you expect back. Kept out of budget actuals.</small></span>
           </label>
         </div>
+        {{else}}
+        <span class="flabel">How this is treated</span>
+        <input type="hidden" name="treatment" value="budget">
+        <p class="fixed-treatment"><b>Budget expense.</b> Money spent and gone. It counts against a project and head.</p>
+        <span class="hint">Only an employee advance can be marked refundable or recoverable.</span>
+        {{end}}
       </div>
     </div>
   </fieldset>
@@ -2922,6 +2974,11 @@ const templates = `
   <div class="action-bar">
     <span class="ab-note d-only">Saving keeps it with you; resubmitting sends it back to {{.Request2.ManagerName}}.</span>
     <span class="row-end"></span>
+    {{/* This screen replaces request_detail for a returned request, and with it
+         the Edit request control — so the full form was reachable only by typing
+         its address, even though the route permits it. The inline fields above
+         cover the common correction; this is the way to the rest of them. */}}
+    {{if .Perms.Can "request" "edit"}}<a class="btn outline" href="/requests/{{.Request2.ID}}/edit">Edit every field</a>{{end}}
     <button class="btn outline" type="submit" name="submit_action" value="save">Save corrections</button>
     <button class="btn primary" type="submit" name="submit_action" value="resubmit">Resubmit for approval</button>
   </div>
@@ -3473,7 +3530,7 @@ const templates = `
 
 {{define "reports"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Analysis</div><h1>Reports</h1><p class="sub muted">{{.From}} to {{.To}} · {{.Mode}} view</p></div><div class="head-actions">{{if .Perms.Can "budget" "view"}}<a class="btn outline" href="/months">Monthly plans</a>{{end}}<a class="btn outline" href="/reports/ytd.csv?from={{.From}}&to={{.To}}&level={{.Mode}}">Export CSV</a></div></section>
+<section class="page-banner"><div><div class="eyebrow">Analysis</div><h1>Reports</h1><p class="sub muted">{{.From}} to {{.To}} · {{.Mode}} view</p></div><div class="head-actions">{{if .Perms.Can "budget" "view"}}<a class="btn outline" href="/months">Monthly plans</a>{{end}}{{if .Perms.Can "report" "export"}}<a class="btn outline" href="/reports/ytd.csv?from={{.From}}&to={{.To}}&level={{.Mode}}">Export CSV</a>{{end}}</div></section>
 <div class="tabs"><a class="tab {{if eq .Mode "monthly"}}is-active{{end}}" href="/reports/monthly?from={{.From}}&to={{.To}}">Monthly</a><a class="tab {{if eq .Mode "projects"}}is-active{{end}}" href="/reports/projects?from={{.From}}&to={{.To}}">Projects</a><a class="tab {{if eq .Mode "heads"}}is-active{{end}}" href="/reports/heads?from={{.From}}&to={{.To}}">Heads</a></div>
 <form class="toolbar" method="get"><label>From<input type="month" name="from" value="{{.From}}"></label><label>To<input type="month" name="to" value="{{.To}}"></label><button>Run</button><a class="btn outline" href="/reports/{{.Mode}}?from={{.Month}}&to={{.Month}}">Current month</a></form>
 <div class="metric-strip"><div class="metric"><span class="metric-label">Budget</span><span class="metric-value">{{short .Summary.Budget}}</span></div><div class="metric"><span class="metric-label">Actual</span><span class="metric-value">{{short .Summary.Actual}}</span></div><div class="metric"><span class="metric-label">Remaining</span><span class="metric-value {{varClass .Summary.Variance}}">{{short .Summary.Variance}}</span></div><div class="metric"><span class="metric-label">Used</span><span class="metric-value">{{.Summary.UsedPercent}}</span></div></div>
