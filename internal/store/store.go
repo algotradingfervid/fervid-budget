@@ -2015,18 +2015,27 @@ func validatePaymentTx(ctx context.Context, q rowQuerier, in PaymentInput, headO
 	// F-D-06: paid_on records when money left the bank, so a date after today
 	// records something that has not happened.
 	//
-	// "Today" is in.Now when a caller injects a clock, and time.Now().UTC()
+	// "Today" is in.Now when a caller injects a clock, and the server's own clock
 	// when it does not. That default is the fix, not a detail: the check was
 	// written to skip on a zero Now, no production caller ever set the field,
 	// and so the rule shipped inert — present in the code, pinned by a store
 	// test, and enforced against nobody. Forgetting to inject a clock must mean
 	// "enforce", never "skip"; injection stays so a test can pin the day.
 	//
+	// It is deliberately LOCAL time rather than UTC, because it has to agree with
+	// the clock the rest of the product calls "now": validMonthOrCurrent defaults
+	// the ledger and the grid to time.Now().Format("2006-01") in the server's own
+	// zone (app.go:2051). While this read UTC the two disagreed for every zone
+	// ahead of Greenwich — between local midnight and the offset the ledger had
+	// rolled to the new day and this guard had not, so an accountant recording a
+	// payment dated the day the screen was showing them was told "paid on cannot
+	// be a future date". In IST that was every day from 00:00 to 05:30.
+	//
 	// paid_on and the formatted clock share the YYYY-MM-DD shape, so a plain
 	// string comparison is a correct date comparison.
 	now := in.Now
 	if now.IsZero() {
-		now = time.Now().UTC()
+		now = time.Now()
 	}
 	if in.PaidOn > now.Format("2006-01-02") {
 		return fmt.Errorf("%w: paid on cannot be a future date — money cannot have left the bank after today", ErrValidation)

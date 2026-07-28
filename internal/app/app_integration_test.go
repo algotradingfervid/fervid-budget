@@ -247,7 +247,7 @@ func TestMonthNormalizationAndReportRangeExport(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	body := responseBody(t, s.request(http.MethodGet, "/grid?month=not-a-month", nil, ""))
-	current := time.Now().UTC().Format("2006-01")
+	current := time.Now().Format("2006-01")
 	if !strings.Contains(body, `name="month" value="`+current+`"`) {
 		t.Fatalf("invalid grid month was not normalized to %s", current)
 	}
@@ -1858,11 +1858,11 @@ func TestAttachmentUploadObeysTheRequestScope(t *testing.T) {
 func TestGridIsGatedOnGridViewAndItsPaymentPanelOnPaymentView(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("GridGate")
-	if err := s.st.SetBudget(s.ctx, admin, headID, time.Now().UTC().Format("2006-01"), 85000000); err != nil {
+	if err := s.st.SetBudget(s.ctx, admin, headID, time.Now().Format("2006-01"), 85000000); err != nil {
 		t.Fatal(err)
 	}
 	s.login(s.cfg.AdminEmail, testAdminPassword)
-	paidOn := time.Now().UTC().Format("2006-01") + "-01"
+	paidOn := time.Now().Format("2006-01") + "-01"
 	s.settleOneRequest(1, headID, 6600000, "66000.00", "settled", paidOn)
 
 	// A Requester holds neither grid:view nor payment:view.
