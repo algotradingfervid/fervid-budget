@@ -1,7 +1,7 @@
 APP_NAME := fervid-budget
 GO ?= go
 
-.PHONY: help fmt vet test test-race test-cover typecheck test-e2e test-audit test-all run seed backup
+.PHONY: help fmt vet test test-race test-cover typecheck test-e2e test-audit test-all run seed backup manual
 
 help:
 	@echo "$(APP_NAME) targets:"
@@ -14,6 +14,7 @@ help:
 	@echo "  make test-e2e - run Playwright browser tests"
 	@echo "  make test-audit - run the QA audit suite, one server per area"
 	@echo "  make test-all - run Go and Playwright tests"
+	@echo "  make manual - re-photograph every screen and rebuild docs/manual"
 	@echo "  make run   - start the local server"
 	@echo "  make seed  - create admin/sample data if empty"
 	@echo "  make backup - create a local backup"
@@ -46,6 +47,19 @@ test-audit:
 	scripts/run-audit.sh
 
 test-all: vet test-race test-cover typecheck test-e2e
+
+# Re-photographs every screen and rebuilds the manual from the results.
+#
+# Unlike test-e2e, this needs YOUR server already running on :8080 against
+# data/fervid.db — the throwaway server the Playwright config starts is freshly
+# seeded with no requests, and a manual illustrated with empty queues would be
+# worthless. Start one with `make run` first.
+#
+# The build fails if a page names a screenshot that does not exist, if a
+# screenshot is never shown, or if an internal link points nowhere.
+manual:
+	npx playwright test --config tests/manual/playwright.manual.config.ts
+	node tests/manual/build/build.mts
 
 run:
 	$(GO) run ./cmd/server
