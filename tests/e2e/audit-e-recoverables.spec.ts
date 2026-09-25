@@ -104,6 +104,7 @@ type RecoverableFormOpts = {
   category: 'emd' | 'pbg' | 'icd' | 'employee_advance' | 'security_deposit' | 'other';
   projectLabel?: string; // fill '#rproject' when the category's fieldset shows it
   counterparty?: string; // fill '#counterparty' when the category's fieldset shows it
+  payee?: string; // 'Paid to' on the deposit form; defaults to the counterparty or an authority
   expectedReturn?: string; // '' explicitly omits the field
   notes?: string; // '' explicitly omits the field
   advanceReason?: string;
@@ -114,11 +115,16 @@ type RecoverableFormOpts = {
 };
 
 /**
- * Drives `/requests/new?type=employee_advance` up to (not including) the
- * submit click. This is the only request-type card that can carry
- * treatment=recoverable through the real UI (vendor_invoice/vendor_advance/
- * reimbursement are all hard-forced to treatment=budget by
- * validateRequestInput, internal/store/requests.go:194,210,223) — see F-E-02.
+ * Drives a recoverable request form up to (not including) the submit click.
+ *
+ * Two forms since form-1 / recoverables-1. An employee advance is
+ * `/requests/new?type=employee_advance`: it opens on the recoverable treatment
+ * with its category fixed to Employee advance and pays the requester. Every
+ * other category — EMD, PBG, ICD, a security deposit, Other, an admin-added one
+ * — is a deposit or guarantee, `/requests/new?type=recoverable`, which carries
+ * the category picker and asks who is paid. (Before that fix the employee
+ * advance was the only card carrying the recoverable treatment, so every
+ * deposit was recorded as paid to the employee.)
  */
 async function fillRecoverableRequestForm(page: Page, runId: string, opts: RecoverableFormOpts) {
   // The Approver <select> carries the `required` attribute (templates.go:2015), so a
@@ -127,9 +133,16 @@ async function fillRecoverableRequestForm(page: Page, runId: string, opts: Recov
   // when the caller does not already have a specific person it needs to approve as.
   const approverName = opts.approverName ?? (await createApproverUser(page, runId)).name;
 
-  await page.goto('/requests/new?type=employee_advance');
+  const advance = opts.category === 'employee_advance';
+  await page.goto(advance ? '/requests/new?type=employee_advance' : '/requests/new?type=recoverable');
   await page.getByLabel('Short title').fill(opts.shortTitle ?? `Recoverable ${opts.category} ${runId}`);
-  await page.locator('#rcategory').selectOption(opts.category);
+  if (!advance) {
+    await page.locator('#rcategory').selectOption(opts.category);
+    // The category change swaps #form-fields from the server; the swap is
+    // settled when the option comes back selected server-side.
+    await expect(page.locator(`#rcategory option[value="${opts.category}"]`)).toHaveAttribute('selected', '');
+    await page.locator('#payee').fill(opts.payee ?? opts.counterparty ?? `Tender authority ${runId}`);
+  }
   if (opts.projectLabel !== undefined) {
     await page.locator('#rproject').waitFor();
     if (opts.projectLabel) await page.locator('#rproject').selectOption({ label: opts.projectLabel });
@@ -144,7 +157,7 @@ async function fillRecoverableRequestForm(page: Page, runId: string, opts: Recov
   if (opts.notes !== undefined && opts.notes !== '') {
     await page.getByLabel('Repayment or refund terms').fill(opts.notes);
   }
-  await page.getByLabel('What the money is for').fill(opts.advanceReason ?? `Advance for ${opts.category} ${runId}`);
+  if (advance) await page.getByLabel('What the money is for').fill(opts.advanceReason ?? `Advance for ${opts.category} ${runId}`);
   await page.getByLabel('Amount').fill(opts.amount ?? '25000');
   await page.getByLabel('Purpose').fill(opts.purpose ?? `Purpose ${opts.category} ${runId}`);
   await page.getByLabel('Approver').selectOption({ label: approverName });
@@ -274,13 +287,24 @@ async function csvActual(
   return parseRupees(match[actualCol]);
 }
 
+/** The Configuration row for a category. Its name is an editable input (recoverables-5), so the row is found by that input's value. */
+function categoryRow(page: Page, name: string) {
+  return page.locator('tr').filter({ has: page.locator(`td.t-lead input[name="name"][value="${name}"]`) });
+}
+
+/** Every category name on the Configuration screen, in the order the table lists them. */
+async function categoryNames(page: Page): Promise<string[]> {
+  return page.locator('td.t-lead[data-label="Category"] input[name="name"]').evaluateAll(els => els.map(e => (e as HTMLInputElement).value));
+}
+
 async function categoryRowFields(page: Page, name: string): Promise<{ id: string; requires: string; sortOrder: string; active: boolean }> {
   await page.goto('/configuration');
-  const row = page.locator('tr').filter({ has: page.locator('td.t-lead', { hasText: name }) });
+  const row = categoryRow(page, name);
   await expect(row, `expected exactly one Configuration row for category "${name}"`).toHaveCount(1);
   const form = row.locator('form');
   const id = (await form.locator('input[name="id"]').getAttribute('value')) ?? '';
-  const requires = (await form.locator('input[name="requires"]').getAttribute('value')) ?? 'none';
+  // The rule is a visible select in the row since recoverables-5, not a hidden input.
+  const requires = (await row.locator('select[name="requires"]').inputValue()) || 'none';
   const sortOrder = (await form.locator('input[name="sort_order"]').getAttribute('value')) ?? '0';
   const active = await form.locator('input[name="active"]').isChecked();
   return { id, requires, sortOrder, active };
@@ -302,9 +326,9 @@ test.describe('TC-E — Recoverables', () => {
   test('TC-E-001 — Admin creates a recoverable category through the real screen', async ({ adminPage, runId }) => {
     const name = `Retention money ${runId}`;
     await createCategoryThroughScreen(adminPage, name, 'project');
-    const row = adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: name }) });
+    const row = categoryRow(adminPage, name);
     await expect(row, 'the new category must appear in the Configuration table').toHaveCount(1);
-    await expect(row.locator('td', { hasText: 'Related project' }), 'Requires must render the derived phrase').toHaveCount(1);
+    await expect(row.locator('select[name="requires"]'), 'Requires must show the rule chosen, editable in place').toHaveValue('project');
     await expect(row.locator('td[data-label="In use"]'), 'a brand-new category starts with zero usage').toHaveText('0');
   });
 
@@ -320,11 +344,10 @@ test.describe('TC-E — Recoverables', () => {
       const managerId = await approverIdFor(requester.page, managerSubject.subject.name);
       const submit = await probePost(requester.page, '/requests', {
         treatment: 'recoverable',
-        // employee_advance, not the UI-unreachable "recoverable" type (F-E-02): a rejected
-        // "recoverable" submission is masked by renderRejectedRequestForm's own type check
-        // (requests.go:180-184), which only knows the four chooser types.
-        type: 'employee_advance',
-        advance_reason: 'Escrow probe',
+        // The deposit-or-guarantee type: an admin-added category is a deposit,
+        // and an employee advance is always in its own category (form-1).
+        type: 'recoverable',
+        vendor_payee: `Escrow agent ${runId}`,
         recoverable_category: `escrow_${runId}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''),
         short_title: `Escrow request ${runId}`,
         purpose: 'Escrow test',
@@ -343,18 +366,15 @@ test.describe('TC-E — Recoverables', () => {
       let detail = await probeGet(adminPage, `/recoverables/${requestId}`);
       expect(detail.body).toContain(oldName);
 
-      // Rename via the same route the per-row form would use, with only `name` changed —
-      // there is no accessible text control for it: the row's own `name` input is hidden
-      // (internal/app/templates.go:3139), so this is the closest thing to "operating the
-      // screen" that exists for a rename.
-      const rename = await probePost(adminPage, '/configuration/recoverable-categories', {
-        id: before.id,
-        name: newName,
-        requires: before.requires,
-        sort_order: before.sortOrder,
-        active: before.active ? 'on' : ''
-      });
-      expect(rename.status, `expected the rename to redirect, got ${rename.outcome}`).toBe(303);
+      // Rename through the row's own name input and Save button (recoverables-5):
+      // the name used to travel as a hidden input with no control behind it.
+      await adminPage.goto('/configuration');
+      const row = categoryRow(adminPage, oldName);
+      await expect(row, 'the category row carries a visible name input').toHaveCount(1);
+      await row.getByLabel(`Name for ${oldName}`).fill(newName);
+      await row.getByRole('button', { name: `Save ${oldName}` }).click();
+      await expect(adminPage).toHaveURL(/\/configuration$/);
+      await expect(adminPage.locator(`input[name="name"][value="${newName}"]`), 'the rename is shown back').toHaveCount(1);
 
       detail = await probeGet(adminPage, `/recoverables/${requestId}`);
       expect(detail.body, 'the existing request must now show the NEW name').toContain(newName);
@@ -375,7 +395,7 @@ test.describe('TC-E — Recoverables', () => {
     await probePost(adminPage, '/configuration/recoverable-categories', { name: nameB, requires: 'none', active: 'on', sort_order: '98' });
 
     await adminPage.goto('/configuration');
-    let names = await adminPage.locator('td.t-lead[data-label="Category"]').allInnerTexts();
+    let names = await categoryNames(adminPage);
     expect(names.indexOf(nameA), 'A (sort_order 97) must precede B (sort_order 98)').toBeLessThan(names.indexOf(nameB));
 
     await adminPage.goto('/recoverables/list');
@@ -388,7 +408,7 @@ test.describe('TC-E — Recoverables', () => {
     await probePost(adminPage, '/configuration/recoverable-categories', { id: b.id, name: nameB, requires: 'none', active: 'on', sort_order: '97' });
 
     await adminPage.goto('/configuration');
-    names = await adminPage.locator('td.t-lead[data-label="Category"]').allInnerTexts();
+    names = await categoryNames(adminPage);
     expect(names.indexOf(nameB), 'after swapping sort_order, B must now precede A').toBeLessThan(names.indexOf(nameA));
   });
 
@@ -402,12 +422,8 @@ test.describe('TC-E — Recoverables', () => {
 
       const before = await probePost(requester.page, '/requests', {
         treatment: 'recoverable',
-        // employee_advance, not the UI-unreachable "recoverable" type — see F-E-02 and the
-        // comment in TC-E-002: a rejected "recoverable" submission is masked by
-        // renderRejectedRequestForm (requests.go:180-184), which this test's second call
-        // depends on NOT happening so the real validation message is visible.
-        type: 'employee_advance',
-        advance_reason: 'PBG probe',
+        type: 'recoverable',
+        vendor_payee: `Ridge Metro ${runId}`,
         recoverable_category: 'pbg',
         project_id: proj,
         short_title: `PBG before deactivate ${runId}`,
@@ -431,8 +447,8 @@ test.describe('TC-E — Recoverables', () => {
 
       const after = await probePost(requester.page, '/requests', {
         treatment: 'recoverable',
-        type: 'employee_advance',
-        advance_reason: 'PBG probe',
+        type: 'recoverable',
+        vendor_payee: `Ridge Metro ${runId}`,
         recoverable_category: 'pbg',
         project_id: proj,
         short_title: `PBG after deactivate ${runId}`,
@@ -476,7 +492,7 @@ test.describe('TC-E — Recoverables', () => {
     expect(dup.status, 'a case-insensitive duplicate name must be refused').toBe(400);
 
     await adminPage.goto('/configuration');
-    const count = await adminPage.locator('td.t-lead', { hasText: new RegExp(`^${name.toUpperCase()}$`, 'i') }).count();
+    const count = (await categoryNames(adminPage)).filter(n => n.toLowerCase() === name.toLowerCase()).length;
     expect(count, 'the duplicate must not have been created a second time').toBeLessThanOrEqual(1);
   });
 
@@ -494,6 +510,7 @@ test.describe('TC-E — Recoverables', () => {
         const resp = await probePost(requester.page, '/requests', {
           treatment: 'recoverable',
           type: 'recoverable',
+          vendor_payee: `Usage payee ${runId}`,
           recoverable_category: code,
           short_title: `Usage ${i} ${runId}`,
           purpose: 'usage test',
@@ -505,9 +522,9 @@ test.describe('TC-E — Recoverables', () => {
         expect(resp.status, `request ${i} against the new category must be accepted`).toBe(303);
       }
       void categoryId;
-      const row = (await categoryRowFields(adminPage, name), adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: name }) }));
+      const row = (await categoryRowFields(adminPage, name), categoryRow(adminPage, name));
       await adminPage.goto('/configuration');
-      const usageRow = adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: name }) });
+      const usageRow = categoryRow(adminPage, name);
       await expect(usageRow.locator('td[data-label="In use"]'), 'two requests were filed against this category').toHaveText('2');
       void row;
     } finally {
@@ -564,8 +581,8 @@ test.describe('TC-E — Recoverables', () => {
       const managerId = await approverIdFor(requester.page, managerSubject.subject.name);
       const filed = await probePost(requester.page, '/requests', {
         treatment: 'recoverable',
-        type: 'employee_advance',
-        advance_reason: 'Delete probe',
+        type: 'recoverable',
+        vendor_payee: `Delete probe payee ${runId}`,
         recoverable_category: inUseCode,
         short_title: `Delete probe request ${runId}`,
         purpose: 'Delete probe',
@@ -589,7 +606,7 @@ test.describe('TC-E — Recoverables', () => {
       ).not.toContain('You do not have permission to perform this action.');
 
       await adminPage.goto('/configuration');
-      const stillThere = adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: inUseName }) });
+      const stillThere = categoryRow(adminPage, inUseName);
       await expect(stillThere, 'and the refused row is still there').toHaveCount(1);
       await expect(stillThere.locator('td[data-label="In use"]'), 'with the count the refusal quoted').toHaveText('1');
     } finally {
@@ -604,10 +621,7 @@ test.describe('TC-E — Recoverables', () => {
     const deleted = await probePost(adminPage, `/configuration/recoverable-categories/${fresh.id}/delete`, {});
     expect(deleted.status, 'a category nothing names is a mistake to undo, and delete is what undoes it').toBe(303);
     await adminPage.goto('/configuration');
-    await expect(
-      adminPage.locator('td.t-lead', { hasText: new RegExp(`^${freshName}$`) }),
-      'the row is gone from Configuration'
-    ).toHaveCount(0);
+    await expect(categoryRow(adminPage, freshName), 'the row is gone from Configuration').toHaveCount(0);
 
     // An in-use seeded category can always be re-saved; usage blocks the delete,
     // never the save.
@@ -671,7 +685,9 @@ test.describe('TC-E — Recoverables', () => {
     await createCategoryThroughScreen(adminPage, name, 'none');
     const code = `selectable_probe_${runId}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
-    await adminPage.goto('/requests/new?type=employee_advance');
+    // The picker lives on the deposit form (form-1); the employee advance form
+    // states its one category instead.
+    await adminPage.goto('/requests/new?type=recoverable');
     const values = await adminPage.locator('#rcategory option').evaluateAll(opts => opts.map(o => (o as HTMLOptionElement).value));
     expect(
       values,
@@ -683,8 +699,9 @@ test.describe('TC-E — Recoverables', () => {
     ).toHaveText(name);
     expect(
       values,
-      'the six seeded codes are still offered — the new source is the table, not a replacement vocabulary'
-    ).toEqual(expect.arrayContaining(['emd', 'employee_advance', 'icd', 'other', 'pbg', 'security_deposit']));
+      'the seeded deposit codes are still offered — the new source is the table, not a replacement vocabulary'
+    ).toEqual(expect.arrayContaining(['emd', 'icd', 'other', 'pbg', 'security_deposit']));
+    expect(values, 'an advance to an employee is the employee advance type, never a deposit category').not.toContain('employee_advance');
 
     // The <select> is the table, so it can be *driven* to the new category too:
     // a hardcoded list would have made this selectOption throw.
@@ -710,7 +727,7 @@ test.describe('TC-E — Recoverables', () => {
       // active omitted -> deactivated
     });
     try {
-      await adminPage.goto('/requests/new?type=employee_advance');
+      await adminPage.goto('/requests/new?type=recoverable');
       await expect(
         adminPage.locator('#rcategory option[value="other"]'),
         'a deactivated category must not be offered — the refusal cannot be the first the requester hears of it'
@@ -809,6 +826,7 @@ test.describe('TC-E — Recoverables', () => {
     const { id } = await submitAndExpectAccepted(adminPage);
     const body = (await probeGet(adminPage, `/requests/${id}`)).body;
     expect(body, 'employee_advance forces VendorPayee to the requester — "Paid to" is the label used with no vendor row').toContain('Paid to');
+    expect(body, 'and the payee is the person who raised it').toContain('Fervid Admin');
   });
 
   test('TC-E-021 — Other needs neither project nor counterparty', async ({ adminPage, runId }) => {
@@ -848,12 +866,8 @@ test.describe('TC-E — Recoverables', () => {
       const proj = await projectId(requester.page, 'Operations');
       const base = {
         treatment: 'recoverable',
-        // employee_advance, not the UI-unreachable "recoverable" type (F-E-02): a rejected
-        // "recoverable" submission is masked by renderRejectedRequestForm's own type check
-        // (requests.go:180-184), which would hide the very validation message TC-E-024/025
-        // assert on.
-        type: 'employee_advance',
-        advance_reason: 'Retention combo probe',
+        type: 'recoverable',
+        vendor_payee: `Ridge Metro ${runId}`,
         recoverable_category: code,
         short_title: `Retention combo ${runId}`,
         purpose: 'Retention held on the contract',

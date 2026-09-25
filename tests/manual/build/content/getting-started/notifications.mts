@@ -108,7 +108,7 @@ export default page({
     ),
     prose(
       `How long is "too long" for each is set on the [Configuration](page:admin/configuration)
-       screen, in calendar days rather than working hours. A request put on hold is waiting on its
+       screen, in days rather than working hours. A request put on hold is waiting on its
        raiser by design, so it is never reminded about.`,
     ),
 

@@ -62,6 +62,7 @@ const (
 	conflictTaken       = "taken"        // somebody really does hold it
 	conflictHold        = "hold"         // approved, but paused by Accounts (L7)
 	conflictNotApproved = "not-approved" // any other status: completed, cancelled, frozen…
+	conflictUnclaimed   = "unclaimed"    // approved and free: the reader simply does not hold it
 )
 
 // reservationConflict renders G15: the losing accountant gets a screen naming
@@ -83,6 +84,8 @@ func (a *App) reservationConflict(w http.ResponseWriter, r *http.Request, req st
 		title = "On hold"
 	case conflictNotApproved:
 		title = "Not available to process"
+	case conflictUnclaimed:
+		title = "Not reserved by you"
 	}
 	a.renderStatus(w, r, http.StatusConflict, "reservation_conflict", PageData{
 		Title:         title,
@@ -112,11 +115,17 @@ func conflictCause(req store.Request, cause error) string {
 		return conflictHold
 	case req.Status == "processing" && req.ProcessingBy != nil:
 		return conflictTaken
-	case req.Status == "approved":
+	case req.Status == "approved" && cause != nil:
 		// Approved, unheld and unreserved by the time the row was re-read: the
 		// caller lost the race and the winner has already let go, so the race is
 		// still the honest answer.
 		return conflictTaken
+	case req.Status == "approved":
+		// Nothing refused anything: the reader opened the entry screen for a
+		// request nobody holds — after releasing it, or by URL. Calling that a
+		// lost race invented "Someone else" and a reservation that did not exist
+		// (settlement-2). The true answer is that it is free to take.
+		return conflictUnclaimed
 	default:
 		return conflictNotApproved
 	}
@@ -178,6 +187,11 @@ type SettlementPreview struct {
 	Settlement    string
 	PartialReason string
 	Fields        map[string]string // every entry-form field, carried to the confirm POST
+	// Fragment is true when the sheet is being swapped into #settle-mount
+	// inside the live entry form. Its closers then dismiss it in place, so the
+	// amount, mode and reference just typed survive (settlement-6); on the
+	// no-JS page the same closers are plain links back to the entry screen.
+	Fragment bool
 }
 
 // PaidRequestRow is one line of "Recently paid by you": enough to render the row
@@ -250,7 +264,9 @@ func (a *App) pickerData(r *http.Request) (PageData, error) {
 // newest-first, keep the caller's own linked rows, and name each one from the
 // request it settled.
 func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]PaidRequestRow, error) {
-	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Status: "all", Limit: 200})
+	// Scope "own": the panel is the actor's own entries, which is exactly the
+	// narrowing ListPayments makes, and an unscoped read now returns nothing.
+	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Status: "all", Limit: 200, Scope: "own", ViewerID: actorID})
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +434,7 @@ func (a *App) renderSettlement(w http.ResponseWriter, r *http.Request, status in
 	name := "settlement_confirm"
 	if isFragmentRequest(r) {
 		name = "settlement_sheet"
+		p.Fragment = true
 	}
 	a.renderStatus(w, r, status, name, PageData{
 		Title: "Confirm the payment", Request2: a.withHolderName(r, req), Settlement: p, Error: errMsg,

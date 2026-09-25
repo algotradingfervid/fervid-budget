@@ -129,23 +129,17 @@ func NextRequestNumber(tx *sql.Tx, year string) (string, error) {
 }
 
 // requestTypes is what validateRequestInput accepts. There are five, and the
-// fifth is the divergence F-D-14 reports: the product's type chooser
-// (`requestTypeOptions`, internal/app/requests.go) offers four cards, and
-// `/requests/new?type=recoverable` therefore falls back to the chooser with no
-// form behind it.
+// product's type chooser (`requestTypeOptions`, internal/app/requests.go) offers
+// all five since the 2026-09-25 fix wave (form-1 / recoverables-1).
 //
-// The type is kept, and its validation branch with it, because it is NOT dead
-// code: `POST /requests` reaches the store with whatever type the body carried,
-// so a `recoverable`-typed request is creatable today by anything that is not
-// the chooser — and the branch below is what makes such a submission be refused
-// for its real reason (the category's project rule) rather than accepted
-// unvalidated or refused for a type the store had just accepted. That is the
-// behaviour F-E-08's fix depends on, and both `internal/app` and the audit
-// suites drive it directly.
-//
-// So the reconciliation F-D-14 asks for belongs on the other side of the line:
-// either the chooser grows a fifth card or the handler refuses the type before
-// the store sees it. Neither is this file's to make. Reported, not fixed here.
+// The fifth, `recoverable`, is the deposit or guarantee — EMD, PBG, ICD, a
+// security deposit — and it exists as a type of its own for one reason: its
+// payee. An employee advance always pays the person raising it
+// (forcesRequesterPayee), so while it was the only card that could carry the
+// recoverable treatment, a ₹10 lakh inter-corporate deposit was recorded as
+// "Paid to Rhea Requester" and Accounts were told to pay the employee. A deposit
+// is paid to the counterparty or the tender authority, so it is raised as its
+// own type with a payee the requester names (phase-2 spec §3, design Figure 2).
 var requestTypes = map[string]bool{
 	"vendor_invoice": true, "vendor_advance": true, "reimbursement": true,
 	"employee_advance": true, "recoverable": true,
@@ -212,6 +206,27 @@ var legalTransitions = map[string]map[string]bool{
 
 func canTransition(from, to string) bool {
 	return legalTransitions[from][to]
+}
+
+// statusPhrase names a request in a status the way a refusal reads it: with
+// its article and in plain words. The transition refusals used to drop the raw
+// status code after a fixed "a", which produced "a approved request cannot be
+// withdrawn" and "a completed_partial request cannot be returned" — a code
+// nobody outside this package speaks, and a grammar nobody speaks at all.
+func statusPhrase(status string) string {
+	switch status {
+	case "approved":
+		return "an approved request"
+	case "cancellation_requested":
+		return "a request awaiting a cancellation decision"
+	case "processing":
+		return "a request with Accounts"
+	case "partial_review":
+		return "a request in partial review"
+	case "completed_partial":
+		return "a completed (partial accepted) request"
+	}
+	return "a " + strings.ReplaceAll(status, "_", " ") + " request"
 }
 
 type recoverableRule struct{ RequiresProject, RequiresCounterparty bool }
@@ -346,18 +361,42 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 		if in.Treatment == "budget" {
 			return needsProjectHead()
 		}
+		// The category is the type's, not the requester's to choose: an employee
+		// advance pays the person raising it, so an EMD, PBG or ICD filed under
+		// this type would be a deposit recorded as owed to the employee (form-1).
+		// The seeded code is the stable identity — renaming the category keeps it.
+		if in.RecoverableCategory != employeeAdvanceCategory {
+			return fmt.Errorf("%w: an employee advance is always in the Employee advance category — a deposit, guarantee or loan is raised as its own request type", ErrValidation)
+		}
 		return needsRecoverable()
 	case "recoverable":
 		if in.Treatment != "recoverable" {
 			return fmt.Errorf("%w: recoverable type requires recoverable treatment", ErrValidation)
 		}
-		return needsRecoverable()
+		if in.RecoverableCategory == employeeAdvanceCategory {
+			return fmt.Errorf("%w: an advance to an employee is raised as an Employee advance, which pays the person raising it", ErrValidation)
+		}
+		if err := needsRecoverable(); err != nil {
+			return err
+		}
+		// Free, but not blank: this is who Accounts pays, and a request that
+		// names nobody cannot be paid.
+		if strings.TrimSpace(in.VendorPayee) == "" {
+			return fmt.Errorf("%w: say who receives the money — the counterparty company or the authority holding the deposit", ErrValidation)
+		}
 	}
 	return nil
 }
 
+// employeeAdvanceCategory is the code of the seeded Employee advance category.
+// Codes never change (see RecoverableCategory), so it survives a rename.
+const employeeAdvanceCategory = "employee_advance"
+
 // forcesRequesterPayee reports whether the payee must equal the requester.
 // These types never carry a vendor row — the payee snapshot is the only payee.
+//
+// `recoverable` is deliberately not here: a deposit or guarantee is paid to the
+// counterparty or the tender authority the requester names (form-1).
 func forcesRequesterPayee(t string) bool {
 	return t == "reimbursement" || t == "employee_advance"
 }
@@ -397,6 +436,12 @@ func scrubFieldsNotOwned(in RequestInput) RequestInput {
 	}
 	if in.Type != "reimbursement" {
 		in.ExpenseDate = ""
+	}
+	// A deposit or guarantee names its payee in text. The form offers no vendor
+	// control for it, so a vendor_id in the body is a forged link to the vendor
+	// master that would put that vendor's name over the payee the requester typed.
+	if in.Type == "recoverable" {
+		in.VendorID = 0
 	}
 	return in
 }
@@ -459,6 +504,21 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 		if headActive != 1 || projectActive != 1 {
 			return fmt.Errorf("%w: that budget head has been retired — choose a head that is still open", ErrValidation)
 		}
+	} else if in.ProjectID > 0 {
+		// A recoverable's project link carries no head (recoverables-7), so the
+		// head check above never sees it and the project is checked on its own:
+		// the register groups recoverables by this id.
+		var active int
+		err := s.db.QueryRowContext(ctx, `SELECT active FROM projects WHERE id=?`, in.ProjectID).Scan(&active)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: that project does not exist", ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if active != 1 {
+			return fmt.Errorf("%w: that project has been retired — choose a project that is still open", ErrValidation)
+		}
 	}
 	if in.VendorID > 0 {
 		var status string
@@ -487,7 +547,7 @@ const requestSelect = `SELECT r.id,r.number,r.status,r.treatment,r.type,r.recove
  r.urgent,r.urgency_reason,r.attachment_exception_reason,
  r.requester_id,COALESCE(ru.name,''),r.manager_id,COALESCE(mu.name,''),
  r.approved_amount,r.approved_by,COALESCE(au.name,''),r.approved_at,
- r.decision_reason,r.cancel_reason,r.on_hold,r.hold_reason,r.processing_by,r.processing_at,
+ r.decision_reason,r.cancel_reason,r.on_hold,r.hold_reason,r.processing_by,COALESCE(pu.name,''),r.processing_at,r.concern_open,
  r.reminder_last_sent,r.submitted_at,r.created_at,r.updated_at
 FROM payment_requests r
 LEFT JOIN projects p ON p.id=r.project_id
@@ -495,13 +555,14 @@ LEFT JOIN heads h ON h.id=r.head_id
 LEFT JOIN vendors v ON v.id=r.vendor_id
 JOIN users ru ON ru.id=r.requester_id
 JOIN users mu ON mu.id=r.manager_id
-LEFT JOIN users au ON au.id=r.approved_by`
+LEFT JOIN users au ON au.id=r.approved_by
+LEFT JOIN users pu ON pu.id=r.processing_by`
 
 func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 	var r Request
 	var catID, projID, headID, vendorID, approvedAmt, approvedBy, processingBy sql.NullInt64
 	var approvedAt, reminder, submitted, processingAt sql.NullTime
-	var urgent, onHold int
+	var urgent, onHold, concernOpen int
 	err := sc.Scan(&r.ID, &r.Number, &r.Status, &r.Treatment, &r.Type, &r.RecoverableCategory, &catID,
 		&projID, &r.Project, &headID, &r.Head,
 		&vendorID, &r.Vendor, &r.VendorGSTIN, &r.VendorPayee, &r.ShortTitle,
@@ -511,7 +572,7 @@ func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 		&urgent, &r.UrgencyReason, &r.AttachmentExceptionReason,
 		&r.RequesterID, &r.RequesterName, &r.ManagerID, &r.ManagerName,
 		&approvedAmt, &approvedBy, &r.ApprovedByName, &approvedAt,
-		&r.DecisionReason, &r.CancelReason, &onHold, &r.HoldReason, &processingBy, &processingAt,
+		&r.DecisionReason, &r.CancelReason, &onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt, &concernOpen,
 		&reminder, &submitted, &r.CreatedAt, &r.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return r, ErrNotFound
@@ -521,6 +582,7 @@ func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 	}
 	r.Urgent = urgent == 1
 	r.OnHold = onHold == 1
+	r.ConcernOpen = concernOpen == 1
 	for _, p := range []struct {
 		src sql.NullInt64
 		dst **int64
@@ -711,7 +773,7 @@ func (s *Store) submitRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 		return ErrForbidden
 	}
 	if !canTransition(before.Status, "pending") {
-		return fmt.Errorf("%w: a %s request cannot be submitted", ErrValidation, before.Status)
+		return fmt.Errorf("%w: %s cannot be submitted", ErrValidation, statusPhrase(before.Status))
 	}
 	required, err := s.attachmentsRequired(ctx)
 	if err != nil {
@@ -940,7 +1002,7 @@ func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 		return ErrForbidden
 	}
 	if !editableStatuses[before.Status] {
-		return fmt.Errorf("%w: a %s request cannot be edited", ErrValidation, before.Status)
+		return fmt.Errorf("%w: %s cannot be edited", ErrValidation, statusPhrase(before.Status))
 	}
 	// Pending edits reset the reminder timer and reroute to the chosen approver.
 	// P5 hook: re-notify the (possibly new) approver here.
@@ -987,7 +1049,7 @@ func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error
 		return ErrForbidden
 	}
 	if !canTransition(before.Status, "withdrawn") {
-		return fmt.Errorf("%w: a %s request cannot be withdrawn", ErrValidation, before.Status)
+		return fmt.Errorf("%w: %s cannot be withdrawn", ErrValidation, statusPhrase(before.Status))
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='withdrawn', updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status=? AND requester_id=?`, id, before.Status, actor.ID)
@@ -1045,7 +1107,7 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 		return fmt.Errorf("%w: this request is waiting on your cancellation decision — decide that first, and declining it is what returns it to approved", ErrValidation)
 	}
 	if before.Status != "pending" {
-		return fmt.Errorf("%w: a %s request cannot be approved", ErrValidation, before.Status)
+		return fmt.Errorf("%w: %s cannot be approved", ErrValidation, statusPhrase(before.Status))
 	}
 	// F-C-01: the approved amount is not a note, it is the authority to pay —
 	// G13 caps a payment at it (store.go:900–910). Approving above the request
@@ -1096,7 +1158,7 @@ func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, act
 		return ErrForbidden
 	}
 	if !canTransition(before.Status, to) {
-		return fmt.Errorf("%w: a %s request cannot be %s", ErrValidation, before.Status, to)
+		return fmt.Errorf("%w: %s cannot be %s", ErrValidation, statusPhrase(before.Status), to)
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status=? AND manager_id=?`, to, reason, id, before.Status, actor.ID)
@@ -1128,13 +1190,43 @@ func (s *Store) RejectRequest(ctx context.Context, actor User, id int64, reason 
 	return s.decideRequest(ctx, actor, id, "rejected", "reject", reason, "a reason is required to reject a request")
 }
 
-func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerID int64, reason string) error {
+// reassignableStatuses are the states in which a request is somebody's to
+// decide, and so can be handed to somebody else. They are exactly the states
+// RequestsAwaitingApprover warns about when that person is deactivated
+// (approverOpenStatuses): the warning tells the administrator to reassign each
+// one, so each one has to be reassignable, or the way out it promises is a
+// dead end for a frozen cancellation or a partial review (F-G-025).
+var reassignableStatuses = map[string]bool{
+	"pending": true, "returned": true, "cancellation_requested": true, "partial_review": true,
+}
+
+// Reassignable reports whether ReassignRequest would move a request in this
+// status, so a screen can withhold the control where the POST would refuse.
+func Reassignable(status string) bool { return reassignableStatuses[status] }
+
+// ReassignRequest hands a request to a different approver. Whether the actor
+// is entitled to is the caller's question, and its answer arrives as
+// asAdministrator: false means the actor is the request's own approver handing
+// it on, true means a holder of the admin-level grant rescuing one whose
+// approver cannot act. The store asks the first case's question again on the
+// row it is about to change — the caller decided it on a read made before this
+// transaction, and between the two an administrator may already have moved the
+// request, in which case the actor is a former approver and has no say (rbac-8
+// review). The UPDATE matches the approver it read for the same reason.
+//
+// One rule is the store's whoever the actor is: nobody hands a request to
+// themselves. A manager who could not decide a request must not be able to
+// make it theirs and then decide it (A5).
+func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerID int64, reason string, asAdministrator bool) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return fmt.Errorf("%w: a reason is required to reassign", ErrValidation)
 	}
 	if newManagerID <= 0 {
 		return fmt.Errorf("%w: choose an approver to reassign to", ErrValidation)
+	}
+	if newManagerID == actor.ID {
+		return fmt.Errorf("%w: you cannot reassign a request to yourself", ErrValidation)
 	}
 	// Reassignment is F-A-08's recovery path, so it must not be a way back into
 	// the same hole: the new approver has to be able to approve.
@@ -1150,15 +1242,28 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	if err != nil {
 		return err
 	}
-	if before.Status != "pending" {
-		return fmt.Errorf("%w: only a pending request can be reassigned", ErrValidation)
+	if !reassignableStatuses[before.Status] {
+		return fmt.Errorf("%w: %s cannot be reassigned", ErrValidation, statusPhrase(before.Status))
+	}
+	if !asAdministrator && before.ManagerID != actor.ID {
+		return fmt.Errorf("%w: this request is with %s now, so it is not yours to reassign", ErrForbidden, before.ManagerName)
 	}
 	// G8 holds for reassignment too.
 	if newManagerID == before.RequesterID {
 		return fmt.Errorf("%w: a request cannot be reassigned to its own requester", ErrValidation)
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET manager_id=?, decision_reason=?, reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP
- WHERE id=? AND status='pending'`, newManagerID, reason, id)
+	// decision_reason is the reassignment's note only while the request is
+	// pending. On a returned request it is the correction the requester is
+	// reading, and on a frozen or partial one it is the approval note — the
+	// reason is in the audit row either way, so nothing is lost by leaving them.
+	reasonSQL := `decision_reason=?, `
+	args := []any{newManagerID, reason, id, before.Status, before.ManagerID}
+	if before.Status != "pending" {
+		reasonSQL = ``
+		args = []any{newManagerID, id, before.Status, before.ManagerID}
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET manager_id=?, `+reasonSQL+`reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP
+ WHERE id=? AND status=? AND manager_id=?`, args...)
 	if err != nil {
 		return classify(err)
 	}
@@ -1263,7 +1368,7 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 		return ErrForbidden
 	}
 	if !canTransition(before.Status, "cancellation_requested") {
-		return fmt.Errorf("%w: a %s request cannot be sent for cancellation", ErrValidation, before.Status)
+		return fmt.Errorf("%w: %s cannot be sent for cancellation", ErrValidation, statusPhrase(before.Status))
 	}
 	// The hold is suspended by the freeze, not destroyed by it (F-C-07).
 	//
@@ -1345,7 +1450,7 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 		return ErrForbidden
 	}
 	if before.Status != "cancellation_requested" || !canTransition(before.Status, to) {
-		return fmt.Errorf("%w: there is no cancellation to decide on a %s request", ErrValidation, before.Status)
+		return fmt.Errorf("%w: there is no cancellation to decide on %s", ErrValidation, statusPhrase(before.Status))
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?`+holdSQL+`, updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status='cancellation_requested' AND manager_id=?`, to, note, id, actor.ID)
@@ -1391,7 +1496,7 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 		return ErrForbidden
 	}
 	if !canTransition(before.Status, "cancelled") {
-		return fmt.Errorf("%w: a %s request cannot be cancelled", ErrValidation, before.Status)
+		return fmt.Errorf("%w: %s cannot be cancelled", ErrValidation, statusPhrase(before.Status))
 	}
 	// A cancelled request is dead, so nothing may still be "on hold" on it: the
 	// hold tab would keep listing it and offering "Read reply" on a request no
@@ -1427,7 +1532,8 @@ func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int
 		return 0, err
 	}
 	defer tx.Rollback()
-	if _, err := requestInTx(ctx, tx, requestID); err != nil {
+	before, err := requestInTx(ctx, tx, requestID)
+	if err != nil {
 		return 0, err
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO request_comments(request_id,author_id,body) VALUES(?,?,?)`, requestID, actor.ID, body)
@@ -1437,6 +1543,15 @@ func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int
 	id, err := res.LastInsertId()
 	if err != nil {
 		return 0, err
+	}
+	// A concern is a question put to the accountant who recorded the shortfall,
+	// so their reply is what answers it — not the manager's follow-up and not the
+	// requester's. Nothing but the display changes: the request stays in
+	// partial_review and the manager still owes the decision.
+	if before.Status == "partial_review" && before.ConcernOpen && before.ProcessingBy != nil && *before.ProcessingBy == actor.ID {
+		if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET concern_open=0, updated_at=CURRENT_TIMESTAMP WHERE id=?`, requestID); err != nil {
+			return 0, err
+		}
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "comment", EntityType: "payment_request", EntityID: &requestID,
@@ -1476,6 +1591,43 @@ func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID 
 		return 0, err
 	}
 	defer tx.Rollback()
+	id, err := addRequestAttachmentTx(ctx, tx, actor, requestID, in)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// AddHeldRequestAttachment is the requester's answer to a hold — "Need GST
+// receipt" — given as a document rather than a comment (Q6/L7). It is the one
+// way a document reaches a request after the edit form has closed, and it is
+// open exactly as wide as the hold: the request must be the actor's own and on
+// hold at the moment of the write, both checked on the row inside the write
+// transaction, because the handler's answer came from a read made before it
+// and Accounts may have lifted the hold since (hold-1 review). Nothing else on
+// the request changes.
+func (s *Store) AddHeldRequestAttachment(ctx context.Context, actor User, requestID int64, in AttachmentInput) (int64, error) {
+	if err := validateAttachment(in); err != nil {
+		return 0, err
+	}
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	req, err := requestInTx(ctx, tx, requestID)
+	if err != nil {
+		return 0, err
+	}
+	if req.RequesterID != actor.ID {
+		return 0, fmt.Errorf("%w: only the person who raised a request may add documents to it", ErrForbidden)
+	}
+	if !req.OnHold {
+		return 0, fmt.Errorf("%w: this request is not on hold, so no document can be added to it", ErrValidation)
+	}
 	id, err := addRequestAttachmentTx(ctx, tx, actor, requestID, in)
 	if err != nil {
 		return 0, err
@@ -1545,6 +1697,38 @@ func diffRequestAudit(beforeJSON, afterJSON string) []ThreadChange {
 	return out
 }
 
+// nameUsersInChanges turns the user ids a `manager_id` change carries into the
+// people they are. The audit serialises Request.ManagerID, so a reassignment or
+// an edit that moved the approver diffed as "Approver 3 → 4" — internal ids on
+// the one screen every reader of a request opens. A name that cannot be
+// resolved (a value that is not an id, or an id nobody has) is left as it was
+// rather than dropped, so the change is still recorded as a change.
+func (s *Store) nameUsersInChanges(ctx context.Context, changes []ThreadChange) ([]ThreadChange, error) {
+	for i, c := range changes {
+		if c.Field != "manager_id" {
+			continue
+		}
+		for _, side := range []*string{&changes[i].Was, &changes[i].Now} {
+			// JSON numbers unmarshal as float64, so the id printed as "3" or as
+			// "3e+00" depending on its size; ParseFloat reads both.
+			id, err := strconv.ParseFloat(*side, 64)
+			if err != nil || id <= 0 {
+				continue
+			}
+			var name string
+			err = s.db.QueryRowContext(ctx, `SELECT name FROM users WHERE id=?`, int64(id)).Scan(&name)
+			if err == sql.ErrNoRows {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			*side = name
+		}
+	}
+	return changes, nil
+}
+
 // auditFieldKey maps a column name to the key recordAuditTx serialised, which
 // is the Go field name on Request (Amount, NeededBy, …).
 func auditFieldKey(column string) string {
@@ -1609,9 +1793,13 @@ func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEnt
 		if a.ActorID != nil {
 			actorID = *a.ActorID
 		}
+		changes, err := s.nameUsersInChanges(ctx, diffRequestAudit(a.BeforeJSON, a.AfterJSON))
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, ThreadEntry{Kind: "event", Action: a.Action, ActorID: actorID,
 			ActorName: a.ActorName, Initials: initials(a.ActorName), Title: a.Summary,
-			Changes: diffRequestAudit(a.BeforeJSON, a.AfterJSON), CreatedAt: a.CreatedAt})
+			Changes: changes, CreatedAt: a.CreatedAt})
 	}
 	for _, c := range comments {
 		out = append(out, ThreadEntry{Kind: "comment", ActorID: c.AuthorID, ActorName: c.AuthorName,
@@ -1632,16 +1820,31 @@ var requestBuckets = map[string][]string{
 	"closed": {"rejected", "withdrawn", "cancelled"},
 }
 
+// requestWhere fails closed on the scope: only ScopeAll is unrestricted, and an
+// empty or unrecognised scope — the role editor's "None" is stored as no scope
+// row at all — reads no rows. It used to add no predicate for "", so a role
+// with request:view and no scope listed and exported every request while
+// canViewRequest 404ed each of them by id (fixwave rbac-2). recoverableScope
+// has always worked this way.
 func requestWhere(opts RequestListOptions) (string, []any) {
 	var where []string
 	var args []any
 	switch opts.Scope {
+	case ScopeAll:
 	case "own":
 		where = append(where, `r.requester_id=?`)
 		args = append(args, opts.ViewerID)
 	case "assigned":
 		where = append(where, `r.manager_id=?`)
 		args = append(args, opts.ViewerID)
+	case "held":
+		where = append(where, `r.processing_by=?`)
+		args = append(args, opts.ViewerID)
+	default:
+		where = append(where, `0`)
+	}
+	if opts.ConcernOpen {
+		where = append(where, `r.concern_open=1`)
 	}
 	placeholders := func(n int) string {
 		return strings.TrimSuffix(strings.Repeat("?,", n), ",")
@@ -1654,9 +1857,14 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 		}
 	case opts.Bucket == "needs-me":
 		// The one line the whole design turns on: who owes the next action.
+		//
+		// A partial review is the manager's decision, and an open concern on one is
+		// the holder's answer to give — both were missing, so a manager's "Needs me"
+		// said 0 while the request itself said "Waiting on you" (settlement-3/-8).
 		where = append(where, `((r.requester_id=? AND r.status='returned')
- OR (r.manager_id=? AND r.status IN ('pending','cancellation_requested')))`)
-		args = append(args, opts.ViewerID, opts.ViewerID)
+ OR (r.manager_id=? AND r.status IN ('pending','cancellation_requested','partial_review'))
+ OR (r.processing_by=? AND r.status='partial_review' AND r.concern_open=1))`)
+		args = append(args, opts.ViewerID, opts.ViewerID, opts.ViewerID)
 	case opts.Bucket != "" && opts.Bucket != "all":
 		statuses := requestBuckets[opts.Bucket]
 		if len(statuses) == 0 {

@@ -541,14 +541,60 @@
     handOver();
 
     /* A cell owns every canonical action behind it: toggling it toggles the
-       Advanced checkboxes it covers, so clearing a cell really does revoke. */
-    form.addEventListener("change", function (event) {
-      var cell = event.target;
-      if (!cell || !cell.matches || !cell.matches('input[name="cell"]')) return;
-      var selector = 'input[name="perm"][data-cell="' + window.CSS.escape(cell.value) + '"]';
-      Array.prototype.forEach.call(form.querySelectorAll(selector), function (box) {
-        box.checked = cell.checked;
+       Advanced checkboxes it covers, so clearing a cell really does revoke.
+       The sync runs both ways. An Advanced box unticked under a ticked cell
+       leaves the cell indeterminate and unchecked, so the cell is not
+       submitted and the boxes are what the server saves; the server draws
+       that partial state on load as data-partial. Both renderings are kept
+       equal so a resize mid-edit loses nothing. */
+    var all = function (selector) {
+      return Array.prototype.slice.call(form.querySelectorAll(selector));
+    };
+    var syncCell = function (value) {
+      var boxes = all('input[name="perm"][data-cell="' + window.CSS.escape(value) + '"]');
+      var ticked = boxes.filter(function (box) { return box.checked; }).length;
+      all('input[name="cell"][value="' + window.CSS.escape(value) + '"]').forEach(function (cell) {
+        cell.checked = boxes.length > 0 && ticked === boxes.length;
+        cell.indeterminate = ticked > 0 && !cell.checked;
       });
+    };
+    /* The accordion badge counts the row's held grants out of what it maps. */
+    var syncBadges = function () {
+      Array.prototype.forEach.call(mobile.querySelectorAll(".pa-item"), function (item) {
+        var badge = item.querySelector(".pa-head .n");
+        var boxes = item.querySelectorAll('input[name="perm"]');
+        var ticked = item.querySelectorAll('input[name="perm"]:checked').length;
+        if (badge) badge.textContent = ticked + " of " + boxes.length;
+      });
+    };
+    all('input[name="cell"][data-partial]').forEach(function (cell) {
+      cell.indeterminate = true;
+    });
+    form.addEventListener("change", function (event) {
+      var input = event.target;
+      if (!input || !input.matches) return;
+      if (input.matches('input[name="cell"]')) {
+        all('input[name="perm"][data-cell="' + window.CSS.escape(input.value) + '"]').forEach(function (box) {
+          box.checked = input.checked;
+        });
+        syncCell(input.value);
+        syncBadges();
+      } else if (input.matches('input[name="perm"]')) {
+        all('input[name="perm"][value="' + window.CSS.escape(input.value) + '"]').forEach(function (box) {
+          box.checked = input.checked;
+        });
+        if (input.getAttribute("data-cell")) syncCell(input.getAttribute("data-cell"));
+        syncBadges();
+      } else if (input.matches('.perm-scope input[type="radio"]')) {
+        /* The pills are lit by .is-on, which the server sets for the saved
+           scope; the highlight follows the selection from here on. */
+        var group = input.closest(".perm-scope");
+        if (!group) return;
+        Array.prototype.forEach.call(group.querySelectorAll("label"), function (label) {
+          var radio = label.querySelector("input");
+          label.classList.toggle("is-on", !!radio && radio.checked);
+        });
+      }
     });
   }
 
@@ -592,8 +638,46 @@
   }
 
   /* ---------------------------------------------------------------- */
+  /* [data-follows-select] — a label that names the chosen option      */
+  /* ---------------------------------------------------------------- */
+
+  /* An element carrying data-follows-select="<select id>" and
+     data-follows-text="… {name} …" re-reads its text from the selected
+     option whenever the select changes. The server renders the label for
+     the stored value, so the page reads correctly without this; it exists
+     because "Save and notify Mona" beside a select that now says Max is a
+     promise the submit will not keep. */
+  function initFollowSelects(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("[data-follows-select]"), function (label) {
+      if (label.dataset.followsBound) return;
+      var select = document.getElementById(label.getAttribute("data-follows-select"));
+      var text = label.getAttribute("data-follows-text");
+      if (!select || !text) return;
+      label.dataset.followsBound = "1";
+
+      function sync() {
+        var option = select.options[select.selectedIndex];
+        if (!option) return;
+        label.textContent = text.replace("{name}", option.textContent.trim());
+      }
+
+      select.addEventListener("change", sync);
+      sync();
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Boot, and re-boot after every htmx swap                           */
   /* ---------------------------------------------------------------- */
+
+  /* A sheet the server renders already open — a form it refused, sent back
+     with the reader's input and an inline error — joins the stack as if the
+     reader had opened it, so Escape, the focus trap and Cancel all work. */
+  function openServedDialogs(root) {
+    Array.prototype.forEach.call(root.querySelectorAll(".overlay[data-open-on-load]:not([hidden])"), function (el) {
+      openDialog(el, null);
+    });
+  }
 
   function init() {
     initAccordions(document);
@@ -601,7 +685,46 @@
     initMoneyFields(document);
     initDifferenceBanner(document);
     initRoleMatrix(document);
+    initFollowSelects(document);
+    reopenRefusedSheets(document);
+    openServedDialogs(document);
   }
+
+  /* A sheet whose form the server refused comes back with data-reopen and the
+     admin's own input, and opens again through openDialog so focus and Escape
+     behave as if they had opened it. The attribute is spent on first use, so a
+     later htmx swap never reopens a sheet the user has closed. */
+  function reopenRefusedSheets(root) {
+    var sheets = root.querySelectorAll ? root.querySelectorAll(".overlay[data-reopen]") : [];
+    Array.prototype.forEach.call(sheets, function (el) {
+      el.removeAttribute("data-reopen");
+      openDialog(el, null);
+    });
+  }
+
+  /* A filter form that pushes its URL (the grid's) can fire the same filters
+     more than once for one gesture: Enter in the search box commits a change
+     and then submits, and the live search fires again when its pause runs out.
+     Each extra request only swaps in the same rows and pushes a duplicate
+     history entry, so a request whose filters were the last ones sent is
+     dropped, and so is a live one whose filters the page already shows. Back
+     and Forward forget the last one sent, since the page then shows whatever
+     the server rendered for that URL. */
+  var lastFilters = new WeakMap();
+  document.addEventListener("htmx:configRequest", function (event) {
+    var form = event.detail && event.detail.elt;
+    if (!form || !form.matches || !form.matches("form[data-skip-shown-filters]")) return;
+    var trigger = event.detail.triggeringEvent;
+    var wanted = new URLSearchParams(new FormData(form)).toString();
+    var shown = form.getAttribute("action") === window.location.pathname &&
+      new URLSearchParams(window.location.search).toString() === wanted;
+    if (lastFilters.get(form) === wanted || (shown && !(trigger && trigger.type === "submit"))) {
+      event.preventDefault();
+      return;
+    }
+    lastFilters.set(form, wanted);
+  });
+  document.addEventListener("htmx:historyRestore", function () { lastFilters = new WeakMap(); });
 
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:load", function () { init(); });

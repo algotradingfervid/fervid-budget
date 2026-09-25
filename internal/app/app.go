@@ -40,6 +40,13 @@ type App struct {
 	mailer notify.Mailer
 }
 
+// Warning is one caution above a form, with the heading that says what it is
+// about. The body says what to do before saving.
+type Warning struct {
+	Title string
+	Body  string
+}
+
 type PageData struct {
 	Title string
 	User  store.User
@@ -84,6 +91,10 @@ type PageData struct {
 	AuditEntity    string
 	AuditAction    string
 	AuditActor     string
+	AuditFrom      string
+	AuditTo        string
+	AuditID        string
+	AuditPage      store.AuditPage
 	CloseGrid      store.GridData
 	Locked         bool
 	BudgetInputs   map[int64]string
@@ -103,6 +114,11 @@ type PageData struct {
 	UserRoleIDs   map[int64]map[int64]bool
 	Approvers     []store.User
 	ApproverNames map[int64]string
+	// CanReassignApprover is whether the reader may hand this request's approval
+	// on: mayReassignApprover's answer, settled once so the button and the sheet
+	// cannot disagree with the route (rbac-8).
+	CanReassignApprover bool
+	NewUser             newUserForm
 
 	// Vendor master. Vendor.Bank is nil for a caller without vendor_bank:view
 	// — the store leaves the columns out of the query rather than the template
@@ -169,8 +185,16 @@ type PageData struct {
 	ReserveMine bool
 	Holder      string
 	// ConflictCause is which of ReserveRequest's three refusals the conflict
-	// screen is reporting: "taken", "hold" or "not-approved" (F-D-02).
+	// screen is reporting: "taken", "hold" or "not-approved" (F-D-02) — or
+	// "unclaimed", when nothing refused anything and the reader simply does
+	// not hold a request that is free to take (settlement-2).
 	ConflictCause string
+	// Outcome is what the payment screen was reached by: "saved" straight after
+	// the confirming POST, "duplicate" after a repeat confirm the store refused,
+	// "immutable" after a blocked edit, "" on any later visit. It arrives as a
+	// one-shot cookie the redirect set and paymentDetail reads once; the
+	// "Payment saved … have been notified" banner is tied to it (settlement-5).
+	Outcome string
 	// Trail is the one screen whose history spans two entities. Thread is the
 	// request's merged stream and cannot carry the payment's audit rows, so the
 	// partial review merges the two-entity trail with the conversation itself
@@ -219,6 +243,21 @@ type PageData struct {
 	NotifSettings []store.NotificationSetting
 	MailCfg       store.MailSettings
 	NotifFields   []string
+
+	// Warnings are cautions above a form: act before saving. Each carries its
+	// own heading, because one form can need two at once (a legacy category and
+	// a retired project) and they are not about the same thing. Rendered by the
+	// page, not the shell.
+	Warnings []Warning
+	// LegacyCategory is the deposit category an employee advance was recorded
+	// under before deposits and guarantees were their own request type, or ""
+	// for every other request. The edit and returned screens use it to name what
+	// saving does on their buttons.
+	LegacyCategory string
+	// NotifDraft is a rule the rules screen refused, with what the admin typed;
+	// its sheet comes back open with NotifDraftError inside it (ux-2).
+	NotifDraft      *store.NotificationSetting
+	NotifDraftError string
 }
 
 type ReportSummary struct {
@@ -309,8 +348,11 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 			}
 		},
 		"notifGlyph":   notifGlyph,
+		"notifBody":    notifBody,
 		"pillClass":    pillClass,
 		"reqStatus":    requestStatusText,
+		"statusPill":   statusPill,
+		"rowPill":      rowStatusPill,
 		"typeLabel":    typeLabel,
 		"recoverable":  recoverableLabel,
 		"inWords":      money.InWords,
@@ -569,6 +611,11 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /requests/{id}/edit", a.auth.RequirePermission("request", "edit", http.HandlerFunc(a.requestEditForm)))
 	mux.Handle("POST /requests/{id}/edit", a.auth.RequirePermission("request", "edit", http.HandlerFunc(a.withCSRF(a.requestEdit))))
 	mux.Handle("POST /requests/{id}/comment", a.auth.RequirePermission("request", "comment", http.HandlerFunc(a.withCSRF(a.requestComment))))
+	// Q6/L7: a held request still accepts the requester's documents without the
+	// edit path, which is closed once a request is approved. The Phase-2 route
+	// table planned this door (attachment:create) and it was never built, so the
+	// document Accounts asked for had no way in (hold-1).
+	mux.Handle("POST /requests/{id}/attachments", a.auth.RequirePermission("attachment", "create", http.HandlerFunc(a.withCSRF(a.requestAttachmentUpload))))
 	mux.Handle("POST /requests/{id}/withdraw", a.auth.RequirePermission("request", "withdraw", http.HandlerFunc(a.withCSRF(a.requestWithdraw))))
 	mux.Handle("POST /requests/{id}/reraise", a.auth.RequirePermission("request", "reraise", http.HandlerFunc(a.withCSRF(a.requestReraise))))
 	mux.Handle("POST /requests/{id}/approve", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.withCSRF(a.requestApprove))))
@@ -779,15 +826,22 @@ func (a *App) grid(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	var payments []store.Payment
 	if a.auth.Can(u, "payment", "view") {
+		// ExcludeRecoverable: a recoverable is a deposit, not budget spend. The
+		// totals above already leave it out (V2), and so must this panel, or the
+		// grid lists a payment its own figures do not count (recoverables-2).
 		payments, err = a.st.ListPayments(r.Context(), store.PaymentListOptions{
 			Month: month, Status: "active", Limit: 10,
 			Scope: a.auth.Scope(u, "payment"), ViewerID: u.ID,
+			ExcludeRecoverable: true,
 		})
 		if err != nil {
 			a.respondStoreError(w, r, err)
 			return
 		}
 	}
+	// The filters swap the grid in over htmx and the same URL serves the full
+	// page, so a cache must key on the header that tells them apart.
+	w.Header().Add("Vary", "HX-Request")
 	a.render(w, r, "grid", PageData{Title: "Variance Grid", Grid: grid, CloseGrid: closeGrid, Month: month, Status: status, Query: q, Payments: payments})
 }
 
@@ -868,9 +922,11 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		removeStagedAttachment(a.log, r, attachmentPath)
 		// A double-confirm (back button, double tap) must not look like a
-		// failure: the payment this request needed already exists, so go to it.
+		// failure: the payment this request needed already exists, so go to it —
+		// saying that nothing new was written, because a repeat carrying a
+		// different figure otherwise landed under "Payment saved" (settlement-5).
 		if pay, perr := a.st.PaymentForRequest(r.Context(), linkedID); perr == nil {
-			http.Redirect(w, r, fmt.Sprintf("/payments/%d", pay.ID), http.StatusSeeOther)
+			a.redirectToPayment(w, r, pay.ID, "duplicate")
 			return
 		}
 		a.settlementError(w, r, linkedID, in, r.FormValue("amount"), settlement, partialReason, err)
@@ -884,7 +940,38 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.fire(r, notify.EventPaymentPartialReview, linkedID)
 	}
+	a.redirectToPayment(w, r, payID, "saved")
+}
+
+// paymentOutcomeCookie carries how the payment screen was reached across the
+// redirect from the write — "saved", "duplicate" or "immutable", bound to one
+// payment id. A cookie rather than a query token, so the landing URL stays
+// /payments/{id} and a refresh, a bookmark or a shared link never replays
+// "Payment saved" (settlement-5). It is read once and cleared.
+const paymentOutcomeCookie = "fervid_payment_outcome"
+
+var paymentOutcomes = map[string]bool{"saved": true, "duplicate": true, "immutable": true}
+
+func (a *App) redirectToPayment(w http.ResponseWriter, r *http.Request, payID int64, outcome string) {
+	http.SetCookie(w, &http.Cookie{Name: paymentOutcomeCookie, Value: fmt.Sprintf("%s:%d", outcome, payID),
+		Path: "/payments", MaxAge: 300, HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", payID), http.StatusSeeOther)
+}
+
+// takePaymentOutcome reads and clears the one-shot outcome. Anything not
+// issued by redirectToPayment for this very payment is ignored, never echoed.
+func (a *App) takePaymentOutcome(w http.ResponseWriter, r *http.Request, payID int64) string {
+	c, err := r.Cookie(paymentOutcomeCookie)
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: paymentOutcomeCookie, Value: "", Path: "/payments", MaxAge: -1,
+		HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
+	outcome, id, ok := strings.Cut(c.Value, ":")
+	if !ok || id != strconv.FormatInt(payID, 10) || !paymentOutcomes[outcome] {
+		return ""
+	}
+	return outcome
 }
 
 // paymentDetail is one screen with two readings. A payment linked to a request
@@ -944,8 +1031,17 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		a.render(w, r, "payment_detail", PageData{
 			Title: "Payment · " + req.Number, Payment: p, Request2: req,
-			Attachments: atts, RequestAtts: reqAtts, Audit: trail,
+			Attachments: atts, RequestAtts: reqAtts, Audit: trail, Outcome: a.takePaymentOutcome(w, r, p.ID),
 		})
+		return
+	}
+	// An unlinked payment obeys the payment scope the ledger obeys, as its
+	// attachment routes already do through canReadPayment: a row the ledger
+	// hides is not reachable by id either (fixwave rbac-2).
+	u := auth.CurrentUser(r)
+	if !paymentScopeReaches(a.auth.Scope(u, "payment"), u.ID, p) {
+		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
+			fmt.Errorf("payment %d is outside the caller's payment scope", p.ID))
 		return
 	}
 	audit, err := a.st.Audit(r.Context(), "payment", id, 50)
@@ -967,7 +1063,7 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 	// screen whose Save can only ever fail, so the URL goes where the payment
 	// actually lives.
 	if p.RequestID != nil {
-		http.Redirect(w, r, fmt.Sprintf("/payments/%d", p.ID), http.StatusSeeOther)
+		a.redirectToPayment(w, r, p.ID, "immutable")
 		return
 	}
 	heads, err := a.st.ListHeads(r.Context(), true)
@@ -1052,14 +1148,17 @@ func (a *App) canReadPayment(r *http.Request, p store.Payment) bool {
 
 // paymentScopeReaches mirrors ListPayments' scope filter exactly, so a caller
 // who cannot see a payment in the ledger cannot see it by id either: "own" and
-// "assigned" narrow to what the caller entered, and everything else — including
-// the empty scope — leaves the ledger unrestricted.
+// "assigned" narrow to what the caller entered, "all" reaches everything, and
+// anything else — including the empty scope, the role editor's "None" — reaches
+// nothing (fixwave rbac-2).
 func paymentScopeReaches(scope string, viewerID int64, p store.Payment) bool {
 	switch scope {
+	case store.ScopeAll:
+		return true
 	case "own", "assigned":
 		return p.EnteredBy == viewerID
 	default:
-		return true
+		return false
 	}
 }
 
@@ -1512,16 +1611,53 @@ func (a *App) headSave(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/heads", http.StatusSeeOther)
 }
 
+// newUserForm is the Add user drawer as the server hands it back after refusing
+// a create: open, with an inline error and what was typed. The password is
+// never echoed into the page; it is the one field the reader types again.
+type newUserForm struct {
+	Open    bool
+	Error   string
+	Email   string
+	Name    string
+	Active  bool
+	RoleIDs map[int64]bool
+}
+
 func (a *App) users(w http.ResponseWriter, r *http.Request) {
-	users, err := a.st.ListUsers(r.Context())
+	data, err := a.usersPageData(r)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	roles, err := a.st.AllRoles(r.Context())
+	a.render(w, r, "users", data)
+}
+
+// refuseNewUser answers a create the server will not make with the users page
+// and the Add user drawer still open, rather than the full-page error screen:
+// that screen's Go back closed the drawer and lost the password (ui-1).
+func (a *App) refuseNewUser(w http.ResponseWriter, r *http.Request, message string, roleIDs []int64) {
+	data, err := a.usersPageData(r)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
+	}
+	ticked := make(map[int64]bool, len(roleIDs))
+	for _, id := range roleIDs {
+		ticked[id] = true
+	}
+	data.NewUser = newUserForm{Open: true, Error: message, Email: r.FormValue("email"), Name: r.FormValue("name"),
+		Active: r.FormValue("active") == "on", RoleIDs: ticked}
+	a.renderStatus(w, r, http.StatusBadRequest, "users", data)
+}
+
+func (a *App) usersPageData(r *http.Request) (PageData, error) {
+	users, err := a.st.ListUsers(r.Context())
+	if err != nil {
+		return PageData{}, err
+	}
+	roles, err := a.st.AllRoles(r.Context())
+	if err != nil {
+		return PageData{}, err
 	}
 	assigned := map[int64]map[int64]bool{}
 	names := map[int64]string{}
@@ -1533,8 +1669,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 		}
 		urs, err := a.st.UserRoles(r.Context(), u.ID)
 		if err != nil {
-			a.respondStoreError(w, r, err)
-			return
+			return PageData{}, err
 		}
 		set := map[int64]bool{}
 		for _, ur := range urs {
@@ -1542,14 +1677,14 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 		}
 		assigned[u.ID] = set
 	}
-	a.render(w, r, "users", PageData{
+	return PageData{
 		Title:         "Users",
 		Users:         users,
 		AllRoles:      roles,
 		UserRoleIDs:   assigned,
 		Approvers:     approvers,
 		ApproverNames: names,
-	})
+	}, nil
 }
 
 func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
@@ -1565,9 +1700,23 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusForbidden, "You do not have permission to perform this action.", nil)
 		return
 	}
+	// Both branches read the same role checkboxes. The create form used to send a
+	// two-value legacy string instead, which could not express "requester" or
+	// "approver" at all and mapped its harmless-looking option to the Accounts
+	// role — the one that can settle and void payments.
+	roleIDs := make([]int64, 0, len(r.Form["role_ids"]))
+	for _, raw := range r.Form["role_ids"] {
+		if v := parseID(raw); v != 0 {
+			roleIDs = append(roleIDs, v)
+		}
+	}
 	hash := ""
 	if pw := r.FormValue("password"); pw != "" {
 		if err := validatePassword(pw); err != nil {
+			if id == 0 {
+				a.refuseNewUser(w, r, err.Error(), roleIDs)
+				return
+			}
 			a.respondError(w, r, http.StatusBadRequest, err.Error(), nil)
 			return
 		}
@@ -1581,23 +1730,13 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 	active := r.FormValue("active") == "on"
 	var err error
 	var savedID int64
-	// Both branches read the same role checkboxes. The create form used to send a
-	// two-value legacy string instead, which could not express "requester" or
-	// "approver" at all and mapped its harmless-looking option to the Accounts
-	// role — the one that can settle and void payments.
-	roleIDs := make([]int64, 0, len(r.Form["role_ids"]))
-	for _, raw := range r.Form["role_ids"] {
-		if v := parseID(raw); v != 0 {
-			roleIDs = append(roleIDs, v)
-		}
-	}
 	if id == 0 {
 		if hash == "" {
-			a.respondError(w, r, http.StatusBadRequest, "A password is required.", nil)
+			a.refuseNewUser(w, r, "A password is required.", roleIDs)
 			return
 		}
 		if len(roleIDs) == 0 {
-			a.respondError(w, r, http.StatusBadRequest, "Choose at least one role for the new user.", nil)
+			a.refuseNewUser(w, r, "Choose at least one role for the new user.", roleIDs)
 			return
 		}
 		// users.role is superseded but still written, so anything that reads it
@@ -1659,11 +1798,13 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 // This is also the repair for a request routed to somebody who cannot approve
 // (F-A-08) and for a stranded approval (F-G-025).
 //
-// Who may do it: the route asks for `approval:reassign`, and the caller's request
-// data scope must reach the row. That admits the request's own approver handing
-// it on, and an administrator rescuing one whose approver cannot act — which is
-// the case that needs rescuing, so requiring `manager_id == actor` here would
-// close the only door out of it.
+// Who may do it: the route asks for `approval:reassign`, the caller's request
+// data scope must reach the row, and then mayReassignApprover decides — the
+// request's own approver handing it on, or a holder of user:edit rescuing one
+// whose approver cannot act. The gate used to stop at the scope, and the seeded
+// Manager role holds both approval:reassign and request scope `all`, so any
+// manager could take another manager's request for themselves and approve it
+// (rbac-8). The store refuses the self-assignment as well, whoever the actor is.
 func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	req, err := a.st.Request(r.Context(), pathID(r))
@@ -1677,6 +1818,11 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)
 		return
 	}
+	if !a.mayReassignApprover(u, req) {
+		a.respondError(w, r, http.StatusForbidden,
+			"Only the approver this request was sent to, or an administrator, can reassign it.", nil)
+		return
+	}
 	to := parseID(r.FormValue("manager_id"))
 	if to == 0 {
 		a.respondError(w, r, http.StatusBadRequest, "Choose the approver this request should go to.", nil)
@@ -1686,7 +1832,10 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusBadRequest, "Give a reason for the reassignment.", nil)
 		return
 	}
-	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason")); err != nil {
+	// The store re-checks "is this still the approver" on the row inside its
+	// write transaction, because req above was read before it; only the
+	// admin-level grant mayReassignApprover honours lets that check be skipped.
+	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason"), a.auth.Can(u, "user", "edit")); err != nil {
 		status := storeErrorStatus(err)
 		if status >= http.StatusInternalServerError {
 			a.respondStoreError(w, r, err)
@@ -1748,18 +1897,19 @@ func (a *App) rolesPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// rolesSave persists the matrix. Grants are the union of the cells that were
-// ticked — each expanding to every canonical action behind it — and the
-// individual Advanced checkboxes. The union is order-independent, and it is
-// what lets a cell be only partially granted. UpdateRolePermissions then
-// replaces the role's whole grant set, so anything absent here is revoked.
+// rolesSave persists the matrix. The Advanced checkboxes are the grant set:
+// what is ticked there is saved and what is unticked is revoked, even under a
+// cell that is still ticked. The save used to start from every ticked cell
+// expanded, so unticking one Advanced box under a ticked cell was silently
+// re-granted (fixwave rbac-1). A ticked cell counts only when none of the
+// boxes behind it is ticked — the JavaScript-less path, where ticking a cell
+// cannot tick its boxes — and then expands to every canonical action behind
+// it. UpdateRolePermissions then replaces the role's whole grant set, so
+// anything absent here is revoked.
 func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 	roleID := parseID(r.FormValue("role_id"))
-	grants := expandCells(r.Form["cell"])
+	var grants []store.Grant
 	seen := map[store.Grant]bool{}
-	for _, g := range grants {
-		seen[g] = true
-	}
 	for _, raw := range r.Form["perm"] {
 		parts := strings.SplitN(raw, ":", 2)
 		if len(parts) != 2 {
@@ -1771,6 +1921,23 @@ func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[g] = true
 		grants = append(grants, g)
+	}
+	for _, raw := range r.Form["cell"] {
+		behind := cellGrants(raw)
+		spoken := false
+		for _, g := range behind {
+			if seen[g] {
+				spoken = true
+				break
+			}
+		}
+		if spoken {
+			continue
+		}
+		for _, g := range behind {
+			seen[g] = true
+			grants = append(grants, g)
+		}
 	}
 	// The two matrices carry two scope radio groups. They must not share a name:
 	// same-name radios are one group across the whole form, so enabling the
@@ -1845,32 +2012,103 @@ func (a *App) roleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
-	entity := strings.TrimSpace(r.URL.Query().Get("entity"))
-	action := strings.TrimSpace(r.URL.Query().Get("action"))
-	actor := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("actor")))
-	audit, err := a.st.Audit(r.Context(), entity, parseID(r.URL.Query().Get("id")), 1000)
+	// Every filter, the dates included, runs in SQL over the whole log and the
+	// result is paged (audit-1). It used to read the newest 1000 rows, filter
+	// action and actor in Go, and cut the list at 200 without a word, so older
+	// rows could not be reached at all. from/to are local days, inclusive, as
+	// the When column shows local time.
+	qs := r.URL.Query()
+	q := store.AuditQuery{
+		EntityType: strings.TrimSpace(qs.Get("entity")),
+		EntityID:   parseID(qs.Get("id")),
+		Action:     strings.TrimSpace(qs.Get("action")),
+		Actor:      qs.Get("actor"),
+		Offset:     int(parseID(qs.Get("offset"))),
+	}
+	from, to := auditDay(qs.Get("from")), auditDay(qs.Get("to"))
+	if !from.IsZero() {
+		q.From = from
+	}
+	if !to.IsZero() {
+		q.To = to.AddDate(0, 0, 1)
+	}
+	fetch := func(offset int) (store.AuditPage, error) {
+		if a.auth.Scope(auth.CurrentUser(r), "request") == store.ScopeAll {
+			q.Limit, q.Offset = auditPageSize, offset
+			return a.st.AuditPage(r.Context(), q)
+		}
+		// A scoped reader's request rows are withheld in Go (below), so the
+		// page is cut after that, over every matching row, to keep the count
+		// and the pages honest. No seeded holder of audit:view takes this path.
+		page, err := a.st.AuditPage(r.Context(), store.AuditQuery{EntityType: q.EntityType, EntityID: q.EntityID,
+			Action: q.Action, Actor: q.Actor, From: q.From, To: q.To})
+		if err != nil {
+			return page, err
+		}
+		return pageAuditEntries(a.auditWithinRequestScope(r, page.Entries), offset), nil
+	}
+	page, err := fetch(q.Offset)
+	// An offset past the end — a stale or hand-edited URL — used to show the
+	// empty state as "Showing 0 of N" with a Newer link to a page that was
+	// just as empty (audit-1 review). It lands on the last real page instead.
+	if err == nil && len(page.Entries) == 0 && page.Total > 0 && q.Offset > 0 {
+		page, err = fetch(lastAuditPageOffset(page.Total))
+	}
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	if action != "" || actor != "" {
-		filtered := audit[:0]
-		for _, entry := range audit {
-			if action != "" && entry.Action != action {
-				continue
-			}
-			if actor != "" && !strings.Contains(strings.ToLower(entry.ActorName), actor) {
-				continue
-			}
-			filtered = append(filtered, entry)
-		}
-		audit = filtered
+	data := PageData{Title: "Audit Log", Audit: page.Entries, AuditEntity: q.EntityType, AuditAction: q.Action, AuditActor: qs.Get("actor")}
+	data.AuditPage, data.AuditID = page, qs.Get("id")
+	if !from.IsZero() {
+		data.AuditFrom = from.Format("2006-01-02")
 	}
-	audit = a.auditWithinRequestScope(r, audit)
-	if len(audit) > 200 {
-		audit = audit[:200]
+	if !to.IsZero() {
+		data.AuditTo = to.Format("2006-01-02")
 	}
-	a.render(w, r, "audit", PageData{Title: "Audit Log", Audit: audit, AuditEntity: entity, AuditAction: action, AuditActor: r.URL.Query().Get("actor")})
+	a.render(w, r, "audit", data)
+}
+
+// auditPageSize is how many audit rows one /audit page shows.
+const auditPageSize = 100
+
+// auditDay reads a from/to date as the start of that local day; anything else
+// leaves that side of the range open.
+func auditDay(v string) time.Time {
+	d, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(v), time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	return d
+}
+
+// lastAuditPageOffset is the offset of the last /audit page that still has a
+// row on it; 0 when there are none.
+func lastAuditPageOffset(total int) int {
+	if total <= 0 {
+		return 0
+	}
+	return (total - 1) / auditPageSize * auditPageSize
+}
+
+// pageAuditEntries cuts one /audit page out of an already-filtered list. An
+// offset past the end is clamped to the last page with rows, as the SQL path
+// in auditLog does.
+func pageAuditEntries(entries []store.AuditEntry, offset int) store.AuditPage {
+	page := store.AuditPage{Total: len(entries), Limit: auditPageSize}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(entries) {
+		offset = lastAuditPageOffset(len(entries))
+	}
+	end := offset + auditPageSize
+	if end > len(entries) {
+		end = len(entries)
+	}
+	page.Offset, page.Entries = offset, entries[offset:end]
+	page.Truncated = end < len(entries)
+	return page
 }
 
 // auditWithinRequestScope applies the request row scope to the audit log.
@@ -1946,7 +2184,7 @@ func (a *App) backupCreate(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusInternalServerError, "The backup could not be created.", err)
 		return
 	}
-	if err := store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, time.Now()); err != nil {
+	if err := store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, a.cfg.BackupKeepMonths, time.Now()); err != nil {
 		a.log.WarnContext(r.Context(), "backup pruning failed", "request_id", requestID(r), "error", err)
 	}
 	u := auth.CurrentUser(r)

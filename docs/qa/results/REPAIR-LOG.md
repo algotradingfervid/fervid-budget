@@ -153,6 +153,121 @@ behaviour, never deleted.
 
 ---
 
+## Fix wave 2026-09-25 (coverage re-verification)
+
+The 2026-09-25 coverage re-verification confirmed **60** defects, grouped into eight
+clusters, A–H. Each cluster was fixed on its own branch, reviewed independently, and
+merged one at a time into the integration branch `integration/fixwave-2026-09-25`, in
+the order H, A, B, C, D, E, F, G. The per-cluster files under
+`docs/qa/results/fixwave-2026-09-25/` are kept as the detailed record: browser
+evidence, tests changed because they pinned the old behaviour, and the verification runs.
+Defect ids are per cluster, so `copy-1`, `test-1` and `recoverables-1` each name
+different defects in different clusters, while `audit-2` is one defect that both F and G
+fixed (see the integration notes).
+
+| Cluster | Defect | Status | How it was fixed | Tests |
+|---|---|---|---|---|
+| H | ux-mobile-1 | **Fixed** | Below 860px `--page-gutter` was `0px`; it is now `16px`, so `.page-inner` insets every block, and the two full-width bands use `var(--page-gutter)` instead of a hand-written 14px. An `.action-bar` button whose label names a person ("Save and notify …") now wraps at phone width. | `ux.spec.ts` › "every navigable screen is reachable, fits, and is accessible" (new gutter check at 1280 and 393) |
+| H | rbac-11 | **Fixed** | The phone half is the same gutter fix. On desktop `.page-inner` gains `padding-top: var(--page-gutter)`, so a page that opens on a card no longer draws it along the top of the window; an opening banner or grid header cancels the padding and stays flush. | `ux.spec.ts` › "request detail and the deactivation warning keep the gutter at 390 and 1440"; the nav walk's top-inset and flush-band checks |
+| H | deactivation-1 | **Fixed** | `.checkline` had `white-space: nowrap`; it is now `white-space: normal; max-width: 100%`, so the deactivation confirmation wraps inside the column. | `ux.spec.ts` › "request detail and the deactivation warning keep the gutter at 390 and 1440" |
+| A | rbac-1 | **Fixed** | The Advanced boxes are the grant set: `rolesSave` expands a ticked `cell` only when none of its boxes is ticked (the no-JavaScript path), so unticking one box under a ticked cell revokes that grant. `initRoleMatrix` syncs cell and boxes both ways and draws a half-held cell as `indeterminate`. | `TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell`; e2e `rbac-1 — an Advanced box unticked under a ticked cell is revoked, and the cell shows the partial state` |
+| A | rbac-2 | **Fixed** | An empty or unknown scope now fails closed everywhere a scope is read in SQL — `requestWhere`, `LinkablePaymentRequests`, `ListPayments` and `paymentScopeReaches` — the way `recoverableScope` already did; `/payments/{id}` for an unlinked payment checks it too. | `TestEmptyScopeReadsNoRequestsOrPayments`, `TestRequestScopeNoneShowsNoRowsAnywhere`, `TestPaymentScopeNoneShowsNoLedgerRows`; e2e `rbac-2 — a request scope of None lists and exports nothing, as the detail page already 404s` |
+| A | rbac-4 | **Fixed** | `initRoleMatrix` moves the `is-on` class to the checked scope pill on `change`, on the desktop table and the phone accordion alike. | e2e `rbac-4 — the scope pill highlight follows the selection` |
+| A | rbac-5 | **Fixed** | Both cell renderings mark a partially held cell `data-partial="1"`, drawn as `indeterminate`, and the accordion badge counts grants rather than cells ("4 of 15", not "0 of 7"). | `TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell`, `TestBuildPermMatrixMarksGrantedPartialAndUnavailableCells` (updated); e2e `rbac-5 — a row held only through Advanced shows partial cells and counts its grants` |
+| A | rbac-6 | **Fixed** | The delete sheet for a role somebody holds explains that it cannot be deleted yet, offers "Open Users" and has no submit button; the pill and note use `plural` ("1 user"). | `TestRoleDeleteSheetExplainsAHeldRole`; e2e `rbac-6 — the delete sheet for a held role explains itself instead of dead-ending on a 403` |
+| B | rbac-8 | **Fixed** | Only the request's current approver (with `approval:reassign`) or a holder of `user:edit` may reassign, and nobody may reassign to themselves. Review fix-up: `ReassignRequest` takes `asAdministrator` and re-checks the current approver inside the write transaction, with the UPDATE also matching `manager_id`, so a former approver racing an administrator is refused. | `TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval`, `TestApproverReassignmentRoute` (updated), `TestReassignmentIsRefusedToAnApproverTheRequestHasAlreadyLeft` |
+| B | rbac-9 | **Fixed** | `store.RequestThread` resolves the ids in a `manager_id` change to names (`nameUsersInChanges`), so the chip reads "Approver Mona Manager → Max Manager". | `TestHistoryNamesTheApproversAChangeMovedBetween` |
+| B | rbac-10 | **Fixed** | The edit form's banner and submit button follow the chosen approver through `data-follows-select` and `initFollowSelects`. | `TestEditFormLabelsFollowTheChosenApprover` |
+| B | deactivation-2 | **Fixed** | `ReassignRequest` accepts every status the deactivation warning lists (pending, returned, cancellation_requested, partial_review), and the warning names the "Reassign approval" control. Review fix-up: the `approval_reassigned` notice now reads "{{number}} was reassigned to you as its approver"; migration **v13** (`UpReassignedNotificationWording`) carries it onto installed databases only where the row still reads as v11 wrote it. | `TestReassignmentRescuesEveryStatusTheDeactivationWarningLists`, `TestMigrationV13RewordsTheReassignmentNoticeWithoutTouchingAnAdminsEdit` |
+| B | history-1 | **Fixed** | The eight payment-side audit summaries start with the actor's name ("Aarav Accounts lifted the hold"), like the request-side ones. Review fix-up: TC-G-063 now matches `'reserved the request for processing'`, the new wording in full. | `TestDetailThreadNamesTheActorForAccountsEvents`, `TestTrailBodyDropsTheActorNameTheHeadAlreadyCarries`; TC-G-063 in `tests/e2e/audit-g-information-flow.spec.ts` |
+| B | copy-1 | **Fixed** | `statusPhrase` names a status with its article in plain words, and all eight transition refusals use it ("an approved request cannot be returned"). | `TestIllegalTransitionRefusalsReadAsSentences` |
+| B | copy-2 | **Fixed** | Same change: "an approved request cannot be withdrawn". | `TestIllegalTransitionRefusalsReadAsSentences` |
+| B | hold-1 | **Fixed** | New route `POST /requests/{id}/attachments` lets the requester add a document without changing the request. Review fix-up: it is open on hold only — the handler checks `req.OnHold` and `store.AddHeldRequestAttachment` re-reads the row inside the write transaction, so a hold lifted between page load and upload refuses too. | `TestRequesterCanAddADocumentWhileTheRequestIsOnHold`, `TestHeldRequestAttachmentIsOpenExactlyAsWideAsTheHold` |
+| C | form-1 / recoverables-1 | **Fixed** | The store's `recoverable` type has its own chooser card ("Deposit or guarantee") and form with a free "Paid to"; only the employee advance forces payee = requester and fixes its category, and `validateRequestInput` enforces both. Review fix-up: a legacy employee advance filed under a deposit category now carries its notice on the returned screen too, whose buttons read "Resubmit as an Employee advance", so the reclassification is stated before the press. | `TestValidateRequestInputPerType`, `TestEmployeeAdvancePayeeIsForcedAndADepositPayeeIsFree`, `TestDepositIsItsOwnTypeAndPaysTheCounterparty`, `TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen`, `TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced`, `TestRequestNewTypeChooser`, `TestRecoverableCategoryPickerRendersTheLiveCategories`, `TestLegacyEmployeeAdvanceUnderADepositCategoryStaysEditable`, `TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes`, `TestEditFormWarningsCarryTheirOwnHeadings`, `TestRetiringTheEmployeeAdvanceCategoryIsNotMistakenForALegacyRow` |
+| C | form-3 | **Fixed** | `offerRetiredRefs` puts a project or head retired since the request was raised back into the edit form, marked "(retired)", with a banner; saving it is refused with "that budget head has been retired" instead of "project and head are required". | `TestEditFormOffersARetiredProjectBackAndSaysWhy` |
+| C | form-7 | **Fixed** | An appended block in `fervid-ds.css` sets `align-content: start` on fields and makes `.m-half` fields span the one-column grid at ≤860px, so controls line up. | None automated; browser measurements in the cluster file |
+| C | form-6 | **Fixed** | Coverage rows T10, T11 and T12 now cite tests that prove the whole requirement, and the missing tests were written. | `TestCompulsoryAttachmentsAreEnforcedOnSubmit`, `TestEmployeeAdvancePayeeIsForcedAndADepositPayeeIsFree`, `TestRetiredProjectIsHiddenFromNewRequestsAndKeptOnHistory` |
+| C | recoverables-7 | **Fixed** | Every recoverable category may link a project; it is required only where the category's `RequiresProject` says so, and a retired project is refused. | `TestEveryRecoverableCategoryMayLinkAProject` |
+| C | recoverables-5 | **Fixed** | Each recoverable category row on `/configuration` has a name input, a Requires select and a Save button; the code stays fixed as the stable identity. | `TestRecoverableCategoriesAreEditableInPlace` |
+| C | recoverables-10 | **Fixed** (removed) | The dead `allow_direct_payments` toggle is gone from `configSections`, with a note that every payment starts from an approved request; the seeded row stays, unread. | `TestConfigurationScreenReadsAndWritesAppSettings` |
+| C | recoverables-9 | **Fixed** | `TestNoForfeitureRoute` also reflects over `*store.Store`'s methods, so coverage row X4's "no store method" claim is true. | `TestNoForfeitureRoute` |
+| C | tests-1 | **Fixed** | A test pins that the F-E-07 hint says the employee advance fills in the payee, never the counterparty. | `TestConfigurationHintNamesThePayeeNotTheCounterparty` |
+| D | settlement-1 | **Fixed** | The four settlement notifications name the amount actually paid (`{{paid_amount}}`, `{{paid_on}}`) beside the approved figure. Migration **v14** (`UpPaidAmountTemplates`) rewrites only rows still on the old seeded default. | `TestSettlementNotificationsNameTheAmountActuallyPaid`, `TestMigrationV14RewritesOnlyTheUneditedSettlementTemplates` |
+| D | settlement-2 | **Fixed** | `conflictCause` has an `unclaimed` cause: the screen says nobody holds the request, shows the true pill and offers "Take it for processing". Still 409, as TC-A-102 pins. | `TestUnclaimedEntryScreenSaysNobodyHoldsItAndOffersToTake` |
+| D | settlement-3 | **Fixed** | Partial reviews appear in an Approvals tab, a Home metric and area, the nav badge and the needs-me count for a holder of `approval:accept_partial`. | `TestManagerHomeAndApprovalsQueueListPartialReviews`, `TestNeedsMeCountsPartialReviewsForTheManagerAndOpenConcernsForTheHolder` |
+| D | settlement-4 | **Fixed** | Request detail offers "Record payment" (`POST /requests/{id}/record-payment`) to a holder of `reservation:reserve` on an approved, unclaimed request not on hold. | `TestRequestDetailOffersRecordPaymentToAccounts` |
+| D | settlement-5 | **Fixed** | The "Payment saved" banner is tied to a one-shot outcome cookie (`fervid_payment_outcome`), so a refresh or bookmark never replays it; the read-only card says the payment can no longer be edited on every visit. | `TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost`; TC-D-084 (updated) |
+| D | settlement-6 | **Fixed** | On the htmx path the settle sheet's ✕ and "Go back" carry `data-close`, so the sheet closes in place and the typed values survive. | `TestSettlementSheetClosersDismissInPlaceOnTheHtmxPath`; TC-D-062 (extended) |
+| D | settlement-7 | **Fixed** | Request rows carry `ProcessingByName`; `statusPill` reads "With Accounts — taken by {name}" and `waitingOn` names the holder. | `TestProcessingRequestNamesTheHolderEverywhere`, `TestRequestRowsCarryTheHolderName`, `TestWaitingOnNamesWhoeverOwesTheNextAction` |
+| D | settlement-8 | **Fixed** | A `concern_open` flag (migration **v15**) marks a raised concern until the holding accountant answers or the manager accepts; the pill reads "Partial — under discussion" and the screens say whose turn it is. The status is untouched. | `TestConcernDisplaysAsUnderDiscussionUntilAccountsAnswers`, `TestRaiseConcernMarksTheRequestUnderDiscussionUntilAccountsAnswers` |
+| D | queue-1 | **Fixed** | The stale-reservation screen names the holder to a non-holder and, when the reader cannot act, replaces "Pick one" with who can. | `TestStaleScreenTellsANonHolderWhoCanAct` |
+| D | queue-2 | **Fixed** | "Payment settled →" is gated on `payment:settle`, like the preview and the write; a role without it sees why. | `TestEntryScreenWithholdsSettleFromAPayerWithoutTheVerb` |
+| D | partial-1 | **Fixed** | The partial review says "Still owed to the payee", its comment prompt follows the reader's seat, and an accepted shortfall reads "Balance written off". | `TestPartialScreensNameThePayeeAndStopOwingAfterAcceptance`, `TestPartialReviewScreenAndManagerDecision` (updated) |
+| E | notify-1 | **Fixed** | Email and in-app now share one routing rule, `routesToHolder`: the seven reservation events go to the accountant holding the reservation, falling back to the group only when nobody holds it. | `TestRunRemindersNotifiesTheAssignedAccountant`, `TestNotifyResolvesRecipientsForTheAuditEvents` (both gained email assertions) |
+| E | notify-2 | **Fixed** | `renderInAppBody` drops lines whose field came out empty; the centre keeps line breaks and shows the row's own link as link text. | `TestNotifyInAppBodyDropsEmptyFieldLinesAndKeepsLineBreaks`, `TestRenderInAppBody`, `TestNotificationCentreRendersBodyLinesAndLink`, `TestNotifBodyOnlyLinksTheRowsOwnTarget` |
+| E | notify-3 | **Fixed** | `buildRFC822` Q-encodes a non-ASCII Subject and From name per RFC 2047. | `TestBuildRFC822EncodesNonASCIIHeaders` |
+| E | ux-2 | **Fixed** | The rules screen's duplicate callouts are gone; a rule refused for an unknown field reopens its sheet with the typed values and the reason. | `TestAdminNotificationsShowsEachResultOnceAndKeepsARefusedRule` |
+| E | test-1 | **Fixed** | A missing test: management recipients are copied on the `request_approved` email, and mutation-checked. | `TestNotifyCopiesManagementOnTheApprovalEmail` |
+| E | urgent-1 | **Fixed** | `LinkablePaymentRequests` selects `urgent` and sorts it first on every tab but Paid; the queue, dashboard and picker show the Urgent pill. | `TestAccountsQueueMarksAndSurfacesUrgentRequests` |
+| E | notifications-1 | **Fixed** | On a returned request, the full edit form's "Save and notify {approver}" sends `submit_action=resubmit`, so one press saves, resubmits and fires `request_edited`, as the label promises. | `TestFullEditOfAReturnedRequestResubmitsAndNotifies` |
+| E | copy-1 | **Fixed** | The Configuration note reads "Reminders are counted in days, not working hours", and three manual pages match. | `TestReminderCopyReadsTheConfiguredThresholds` (extended) |
+| F | recoverables-2 | **Fixed** | Payment readers return the linked request's `Treatment`; `ListPayments` takes `ExcludeRecoverable` for the grid's Recent Payments, and a head-less recoverable is labelled "Recoverable", never "/". | `TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment`, `TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed` |
+| F | grid-2 | **Fixed** | Same root cause and fix as recoverables-2: the grid panel no longer lists recoverables. | as recoverables-2 |
+| F | recoverables-1 | **Fixed** | `RecoverableRollups` and the register's `ageing=overdue` filter count a row overdue only once paid, so rollups add up to the Total and the tile. | `TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft` |
+| F | recoverables-6 | **Fixed** | Empty tfoot spacer cells on `/recoverables/list` and `/vendors` are `.d-only`, so the phone total is a compact card. | `TestTCardsTotalRowsCarryNoEmptyMobileCells` |
+| F | grid-1 | **Fixed** | Recent Payments renders only with `payment:view`, instead of claiming the month is empty. | `TestGridHidesThePaymentsPanelRatherThanClaimingItIsEmpty`, `TestGridIsGatedOnGridViewAndItsPaymentPanelOnPaymentView` (updated) |
+| F | grid-pill-1 | **Fixed** | `.pill.on-track` is green and uses `var(--track)`, matching the legend and the bar. | e2e in `tests/e2e/grid-reports.spec.ts` |
+| F | grid-htmx-1 | **Fixed** | The grid filters swap over htmx with a pushed URL and still work without JavaScript. Review fix-ups: `hx-sync="this:queue last"` plus a dedupe so one gesture sends one request with no abort errors (TC-G-042), and `hx-history="false"` so Back and Forward re-render the rows and controls together. | `TestGridFiltersSwapOverHTMXAndStillWorkWithoutIt`; e2e "grid-htmx-1: search then Enter logs no errors…"; TC-G-042 (unchanged) |
+| F | ui-1 | **Fixed** | Head counts pluralise on the grid and `/months`, `td.actions-cell` stays a table cell, and a refused Add user keeps the drawer open with the input (but not the password). | `TestGridAndMonthsPluraliseHeadCounts`, `TestAddUserValidationKeepsTheDrawerAndTheInput` |
+| F | audit-2 | **Fixed** | `SetBudgets` skips an unchanged head and names the change ("Operations / Utilities 2026-08: ₹0.00 → ₹1,000.00", or "set to ₹X"). Review fix-up: on the first save of an empty month, a head with no budget submitted at ₹0 is neither written nor audited. | `TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary` |
+| G | backup-1 | **Fixed** | `RestoreBackup` moves the target's `-wal` and `-shm` aside with the old database, so SQLite cannot replay the pre-restore WAL over the restored file. | `TestRestoreBackupOverDatabaseWithLiveWALServesTheBackup` |
+| G | backup-2 | **Fixed** | New `store.DailyBackup`, started by `cmd/server`, makes one backup a day after `FERVID_BACKUP_HOUR` (default 2) and prunes. | `TestDailyBackupRunsOncePerDayAfterTheConfiguredHour`, `TestDailyBackupCountsOnlyBackupsMadeAfterTheHourToday`, `TestDailyBackupPrunesWithTheRetentionRules`, `TestDailyBackupSchedulerRunsOnStartAndStopsOnCancel`, `TestLoadDefaultsAndEnvironmentOverrides` (extended) |
+| G | backup-3 | **Fixed** | `PruneBackups` keeps 30 days plus the newest backup of each of the previous `FERVID_BACKUP_KEEP_MONTHS` (12) months, ageing a backup by the timestamp in its name. | `TestPruneBackupsKeepsThirtyDaysAndTheNewestBackupOfTwelveMonths`, `TestPruneBackupsAgesByTheTimestampInTheName` |
+| G | audit-1 | **Fixed** | `Store.AuditPage` filters the whole log in SQL, including a from/to date range, and `/audit` pages 100 rows at a time with the scope applied before paging. | `TestAuditLogFiltersEveryRowAndPages`, `TestAuditLogFiltersByDate` |
+| G | audit-2 | **Fixed** | Fixed here too; the merged `SetBudgets` keeps F's wording and G's ordering, so an unknown head still fails the batch. See the integration notes. | `TestSetBudgetsRefusesAnUnknownHeadEvenAtZero`, `TestSetBudgetsIsAtomic` |
+| G | docs-1 | **Fixed** | The design notes' §14 is rewritten against the code (no Authboss, Casbin or JSON seed), and `docs/OPERATIONS.md` and the Backups manual page describe the daily job, retention and WAL handling. | `TestSeedCreatesTheAdminAndThreeSampleProjects` |
+| G | test-1 | **Fixed** (for the promises that hold) | Tests added for restore over a WAL, daily scheduling, monthly retention, seed content and "Paid on" defaulting to today. The Accounts `/export.csv` item was refuted: RT-21 already asserts the 403. | the backup and seed tests above, `TestRecordPaymentPaidOnDefaultsToToday` |
+
+### Integration notes
+
+- **Migrations.** B's `notification_reassigned_wording` stays **v13**. D's
+  `notification_paid_amount` was written as v13 on its branch and is now **v14**, and
+  D's `request_concern_open` is now **v15** (was v14). Every cluster file that says
+  "v13" for the paid-amount rewrite means v14 in the merged tree; the store test is
+  `TestMigrationV14RewritesOnlyTheUneditedSettlementTemplates`.
+- **audit-2 was fixed by both F and G in `SetBudgets`.** The merged implementation
+  keeps F's wording (`Project / Head YYYY-MM: set to ₹X` for a new budget,
+  `… ₹A → ₹B` for a change), F's rule that untouched heads submitted at ₹0 with no
+  budget are neither written nor audited, and G's ordering: the head lookup runs before
+  the skip, so an unknown head still fails the batch, with the message
+  `unknown budget head`. G's duplicate test
+  `TestSetBudgetsAuditsOnlyChangedBudgetsAndNamesHeadAndMonth` was removed; F's
+  `TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary` and the new
+  `TestSetBudgetsRefusesAnUnknownHeadEvenAtZero` cover it.
+- F's `TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment` now passes
+  `Scope: ScopeAll`, because A's rbac-2 made an empty payment scope fail closed.
+- **Minor issues the reviewers reported, fixed at integration:**
+  - the `PaymentListOptions.Scope` comment now says the ledger fails closed;
+  - the reservation-conflict "taken" screen and the reservation-stale, request-cancel,
+    request-submitted, similar-request-card, recoverables-register and
+    recoverable-detail pills all go through `statusPill`/`rowPill`, so they read
+    "With Accounts — taken by {name}" and "Partial — under discussion"
+    (`TestLesserScreensShareTheStatusPill`, and the extended
+    `TestUnclaimedEntryScreenSaysNobodyHoldsItAndOffersToTake`);
+  - `/audit` with an offset past the end lands on the last real page
+    (`TestAuditLogFiltersEveryRowAndPages`, `TestPageAuditEntriesClampsAnOffsetPastTheEnd`);
+  - a flash `.alert` rendered ahead of a `.page-banner`/`.gridhead` now opens the page
+    as a full-width strip with the band flush beneath it (`ux.spec.ts` › "a flash ahead
+    of the page banner opens the page as a strip").
+- **Already covered by B's fix-up, and only verified at integration:** rbac-8's
+  in-transaction "current approver" check (`requests_test.go`, the former-approver
+  stale-read case), hold-1's hold-only attachment route
+  (`TestRequesterCanAddADocumentWhileTheRequestIsOnHold`), and the
+  `approval_reassigned` wording
+  (`TestMigrationV13RewordsTheReassignmentNoticeWithoutTouchingAnAdminsEdit`).
+
+---
+
 ## Still open
 
 Nothing rated critical or high. What remains, each verified against source rather than inferred from a green test:
@@ -161,14 +276,14 @@ Nothing rated critical or high. What remains, each verified against source rathe
 |---|---|
 | F-G-011 | `/requests/export.csv` has no approved-amount column. |
 | F-G-024 | A head with an approved request against it can be deactivated with no check and no warning. The resulting refusal is coherent — a 400 with a sentence, never a 5xx. |
-| F-G-025, open half | Deactivating a user is not pre-checked against the approvals waiting on them. The *recovery* is now possible (A7's route exists); the *warning* is not. |
-| Coverage matrix **V6**, **A8** re-notify half | Marked `UNVERIFIED` rather than ticked: the tests they cited no longer exist and no replacement was found. |
 
 ### Closed since this table was written
 
 | Finding | How it was closed |
 |---|---|
 | F-G-020, remaining edge | **Fixed.** The payment form warned only about the month it *opens* on; a locked month picked in "Paid on" afterwards was met at the confirmation. `#paid_on` now re-asks `GET /payments/lock-status?paid_on=` on `change` (gated `payment:create`, like `/payments/new`) and swaps `#lock-banner` for the fragment `payment_lock_banner`, which the form also renders on load — one template, one sentence. The handler reads `store.MonthIsLocked`, so a failed read is a store error rather than a silent "open"; an empty or malformed date answers the empty wrapper. The banner moved into the Payment fieldset, directly above "Paid on", so it is on screen beside the field at phone width too. Proved by `TestPaymentLockStatusFollowsTheDateField` (red first: 404, no route) and the e2e case *"F-G-020 warns about a locked month as soon as Paid on names it"* in `tests/e2e/regression-issues.spec.ts`. |
+| F-G-025, open half | **Fixed** in fix wave 2026-09-25 (cluster B, deactivation-2): the deactivation warning lists the approvals waiting on the person, every status it lists (pending, returned, cancellation requested, partial review) can now be reassigned, and its copy names the "Reassign approval" control; cluster H's deactivation-1 made its confirmation wrap at phone width. Proved by `TestReassignmentRescuesEveryStatusTheDeactivationWarningLists`. |
+| Coverage matrix **V6**, **A8** re-notify half | **Pinned**, and the coverage matrix now marks both rows Verified. A8's re-notify half is proved by `TestEditingAPendingRequestReNotifiesTheApprover` (a pending edit notifies the assigned approver, mutation-checked), and fix wave 2026-09-25 (cluster E, notifications-1) added the returned-request path, `TestFullEditOfAReturnedRequestResubmitsAndNotifies`. V6 is proved by `TestRecoverableCreateRecordsCounterpartyReturnDateAndNotes`, which cluster C kept green after deposits gained a payee. |
 
 ### Found during the Wave 5 documentation pass, not by the audit
 

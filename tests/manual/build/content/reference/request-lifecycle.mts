@@ -221,7 +221,7 @@ export default page({
     ),
     shot(
       'requester/detail-processing',
-      'A claimed request. The history shows the reservation as its own line: "Reserved request for processing".',
+      'A claimed request. The history shows the reservation as its own line, naming who took it: "Harsh Agarwal reserved the request for processing".',
     ),
 
     subsection('4. Paid'),

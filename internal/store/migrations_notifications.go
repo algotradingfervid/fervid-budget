@@ -1,6 +1,9 @@
 package store
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // NotificationSetting is one admin-configurable event rule.
 //
@@ -54,11 +57,11 @@ var defaultNotificationSettings = []NotificationSetting{
 		BodyTemplate:    "{{requester}} asked to cancel {{number}} ({{approved_amount}} to {{payee}}). The payment is frozen until you accept or decline.\n\nOpen it: {{link}}"},
 	{Event: "payment_settled", Label: "Payment recorded and settled", Audience: "Requester + approver",
 		IncludeRequester: true, IncludeManager: true,
-		SubjectTemplate: "{{number}} has been paid — {{amount}} to {{payee}}",
-		BodyTemplate:    "{{number}} was paid in full: {{amount}} to {{payee}}. The request is now complete.\n\nOpen it: {{link}}"},
+		SubjectTemplate: "{{number}} has been paid — {{paid_amount}} to {{payee}}",
+		BodyTemplate:    "{{number}} was paid {{paid_amount}} to {{payee}} and Accounts confirmed it as fully settled ({{approved_amount}} was approved). The request is now complete.\n\nOpen it: {{link}}"},
 	{Event: "payment_partial_review", Label: "Partial payment sent for review", Audience: "Approver", IncludeManager: true,
 		SubjectTemplate: "{{number}} was partly paid — your review is needed",
-		BodyTemplate:    "{{number}} was approved for {{approved_amount}} but only {{amount}} was paid to {{payee}}. Accept the difference or raise a concern.\n\nOpen it: {{link}}"},
+		BodyTemplate:    "{{number}} was approved for {{approved_amount}} but only {{paid_amount}} was paid to {{payee}}. Accept the difference or raise a concern.\n\nOpen it: {{link}}"},
 	{Event: "reminder_pending", Label: "Pending reminder", Audience: "Whoever it is waiting on", IncludeManager: true,
 		SubjectTemplate: "Reminder: {{number}} is still waiting on you",
 		BodyTemplate:    "{{number}} for {{amount}} has been pending since {{submitted_on}}.\n\nOpen it: {{link}}"},
@@ -105,10 +108,10 @@ var auditNotificationSettings = []NotificationSetting{
 	{Event: "payment_partial_accepted", Label: "Partial payment accepted", Audience: "Requester + assigned accountant",
 		IncludeRequester: true, IncludeAccounts: true,
 		SubjectTemplate: "{{number}} is closed — the shortfall was accepted",
-		BodyTemplate:    "{{approver}} accepted that {{number}} was paid {{amount}} against {{approved_amount}} approved. The balance will not be paid and the request is closed.\n\nOpen it: {{link}}"},
+		BodyTemplate:    "{{approver}} accepted that {{number}} was paid {{paid_amount}} against {{approved_amount}} approved. The balance will not be paid and the request is closed.\n\nOpen it: {{link}}"},
 	{Event: "payment_partial_concern", Label: "Concern raised about a partial payment", Audience: "Assigned accountant", IncludeAccounts: true,
 		SubjectTemplate: "{{approver}} raised a concern about the partial payment on {{number}}",
-		BodyTemplate:    "{{approver}} is not satisfied with the shortfall on {{number}}: {{amount}} paid against {{approved_amount}} approved. The request stays in review until the concern is answered.\n\nOpen it: {{link}}"},
+		BodyTemplate:    "{{approver}} is not satisfied with the shortfall on {{number}}: {{paid_amount}} paid against {{approved_amount}} approved. The request stays in review until the concern is answered.\n\nOpen it: {{link}}"},
 	{Event: "request_cancellation_accepted", Label: "Cancellation accepted", Audience: "Requester + assigned accountant",
 		IncludeRequester: true, IncludeAccounts: true,
 		SubjectTemplate: "{{number}} was cancelled — the payment will not be made",
@@ -117,6 +120,57 @@ var auditNotificationSettings = []NotificationSetting{
 		IncludeRequester: true, IncludeAccounts: true,
 		SubjectTemplate: "{{number}} stands — the cancellation was declined",
 		BodyTemplate:    "{{approver}} declined the ask to cancel {{number}}. It is approved again for {{approved_amount}} to {{payee}} and the payment is no longer frozen.\n\nOpen it: {{link}}"},
+}
+
+// oldSettlementTemplates are the four settlement rules exactly as v7 and v9
+// seeded them, before settlement-1 (2026-09-25) found that every one of them
+// filled the amount *paid* from {{amount}} — the amount *requested*. "Approved
+// for ₹12,000 but only ₹12,345.67 was paid" was the sentence an approver read
+// about an ₹8,000 payment. The map is what lets UpPaidAmountTemplates tell a
+// row still on the seeded default from one an administrator rewrote.
+var oldSettlementTemplates = map[string]struct{ Subject, Body string }{
+	"payment_settled": {
+		Subject: "{{number}} has been paid — {{amount}} to {{payee}}",
+		Body:    "{{number}} was paid in full: {{amount}} to {{payee}}. The request is now complete.\n\nOpen it: {{link}}"},
+	"payment_partial_review": {
+		Subject: "{{number}} was partly paid — your review is needed",
+		Body:    "{{number}} was approved for {{approved_amount}} but only {{amount}} was paid to {{payee}}. Accept the difference or raise a concern.\n\nOpen it: {{link}}"},
+	"payment_partial_accepted": {
+		Subject: "{{number}} is closed — the shortfall was accepted",
+		Body:    "{{approver}} accepted that {{number}} was paid {{amount}} against {{approved_amount}} approved. The balance will not be paid and the request is closed.\n\nOpen it: {{link}}"},
+	"payment_partial_concern": {
+		Subject: "{{approver}} raised a concern about the partial payment on {{number}}",
+		Body:    "{{approver}} is not satisfied with the shortfall on {{number}}: {{amount}} paid against {{approved_amount}} approved. The request stays in review until the concern is answered.\n\nOpen it: {{link}}"},
+}
+
+// UpPaidAmountTemplates is migration v14 (v13 on the settlement branch; renumbered
+// at integration behind UpReassignedNotificationWording).
+//
+// It rewrites a settlement rule's subject and body only when both still read
+// exactly as they were seeded, so an administrator's own wording — even wording
+// that happens to use {{amount}} on purpose — is never touched. The replacement
+// text is the current seeded default, so a fresh database and a migrated one
+// end up identical. Re-runnable: a row already rewritten no longer matches.
+func UpPaidAmountTemplates(tx *sql.Tx) error {
+	current := map[string]NotificationSetting{}
+	for _, n := range defaultNotificationSettings {
+		current[n.Event] = n
+	}
+	for _, n := range auditNotificationSettings {
+		current[n.Event] = n
+	}
+	for event, old := range oldSettlementTemplates {
+		want, ok := current[event]
+		if !ok {
+			return fmt.Errorf("migration v14: %s has no seeded default", event)
+		}
+		if _, err := tx.Exec(`UPDATE notification_settings SET subject_template=?, body_template=?
+			WHERE event=? AND subject_template=? AND body_template=?`,
+			want.SubjectTemplate, want.BodyTemplate, event, old.Subject, old.Body); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // reassignmentNotificationSettings are the two events migration v11 adds.
@@ -135,12 +189,50 @@ var auditNotificationSettings = []NotificationSetting{
 // Same conventions as v9's nine: email off by default so delivery stays opt-in
 // per event, and the management recipient list untouched.
 var reassignmentNotificationSettings = []NotificationSetting{
+	// Not "needs your approval": a request can be handed on while it is
+	// returned, awaiting a cancellation decision or in partial review as well as
+	// while pending, and what the new approver is being asked for differs in
+	// each. The wording names what is true in all four — they are its approver
+	// now — and the body says what that can mean (deactivation-2 review). v13
+	// carries this onto databases v11 already seeded.
 	{Event: "approval_reassigned", Label: "Sent to a different approver", Audience: "The new approver", IncludeManager: true,
-		SubjectTemplate: "{{number}} needs your approval — it was reassigned to you",
-		BodyTemplate:    "{{number}} ({{amount}} to {{payee}}) was moved to you for approval.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"},
+		SubjectTemplate: "{{number}} was reassigned to you as its approver",
+		BodyTemplate:    "{{number}} ({{amount}} to {{payee}}) was reassigned to you. You are its approver now: whatever it is waiting on from its approver — the approval itself, a cancellation request or a partial-settlement review — is yours to decide, and if it was returned for correction it comes to you once it is resubmitted.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"},
 	{Event: "request_cancelled", Label: "Cancelled by the approver", Audience: "Requester", IncludeRequester: true,
 		SubjectTemplate: "{{number}} was cancelled by {{approver}}",
 		BodyTemplate:    "{{approver}} cancelled {{number}} ({{amount}} to {{payee}}). Nothing will be paid against it, and it needs nothing further from you.\n\nOpen it: {{link}}"},
+}
+
+// The approval_reassigned wording v11 seeded, kept so v13 can recognise a row
+// nobody has edited.
+const (
+	v11ReassignedSubject = "{{number}} needs your approval — it was reassigned to you"
+	v11ReassignedBody    = "{{number}} ({{amount}} to {{payee}}) was moved to you for approval.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"
+)
+
+// UpReassignedNotificationWording is migration v13: the approval_reassigned
+// notice stops saying "needs your approval".
+//
+// Fix wave B made a request reassignable while returned, awaiting a
+// cancellation decision or in partial review — every status the deactivation
+// warning promises can be handed on — and the notice v11 seeded was written
+// for the pending case alone: it told the new approver a returned request
+// needed their approval when it was waiting on the requester, and a frozen one
+// when it was waiting on a cancellation decision. The seed now carries wording
+// that is true in all four states; this migration brings an installed database
+// to the same text.
+//
+// Only where the row still reads exactly as v11 wrote it. The template columns
+// are an administrator's to edit, and seedNotificationSettings' whole contract
+// is that a migration never resets what they typed — so a row whose subject or
+// body differs from the v11 default is theirs and is left alone. Re-runnable
+// by construction: once rewritten, the WHERE matches nothing.
+func UpReassignedNotificationWording(tx *sql.Tx) error {
+	_, err := tx.Exec(`UPDATE notification_settings SET subject_template=?, body_template=?
+		WHERE event=? AND subject_template=? AND body_template=?`,
+		reassignmentNotificationSettings[0].SubjectTemplate, reassignmentNotificationSettings[0].BodyTemplate,
+		"approval_reassigned", v11ReassignedSubject, v11ReassignedBody)
+	return err
 }
 
 // UpReassignmentNotificationEvents is migration v11.

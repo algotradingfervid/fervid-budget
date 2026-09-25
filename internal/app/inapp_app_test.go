@@ -23,6 +23,46 @@ func seedNotification(t *testing.T, s *appTestServer, userID int64, event, kind,
 	return id
 }
 
+// notify-2: the body keeps its line breaks and shows the request link as a
+// link, not as flattened text. The row itself is the <a> that opens the
+// request, so the link is drawn as link text inside it (a nested <a> is not
+// valid HTML), and everything else in the body stays escaped.
+func TestNotificationCentreRendersBodyLinesAndLink(t *testing.T) { // N1
+	s := newAppTestServer(t)
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO notifications(user_id,event,kind,title,body,href) VALUES(?,?,?,?,?,?)`,
+		admin.ID, "request_submitted", "activity", "PR-2026-000005 needs your approval",
+		"Rhea raised PR-2026-000005 <b>now</b>.\n\nProject: Ops / Rent\n\nOpen it: https://budget.test/requests/5.", "/requests/5"); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, "/notifications", nil, ""))
+	want := `<p>Rhea raised PR-2026-000005 &lt;b&gt;now&lt;/b&gt;.<br><br>Project: Ops / Rent<br><br>Open it: <span class="n-link">https://budget.test/requests/5</span>.</p>`
+	if !strings.Contains(body, want) {
+		t.Fatalf("notification body not rendered with its lines and link; want %s", want)
+	}
+}
+
+func TestNotifBodyOnlyLinksTheRowsOwnTarget(t *testing.T) { // N1
+	cases := []struct{ body, href, want string }{
+		{"Open it: /requests/1", "/requests/1", `Open it: <span class="n-link">/requests/1</span>`},
+		// /requests/10 is a different request: no partial match.
+		{"See /requests/10", "/requests/1", `See /requests/10`},
+		// A URL that is not where the row goes stays text, because the row's
+		// own <a> would take a click on it somewhere else.
+		{"Policy: https://intranet.test/p", "/requests/1", `Policy: https://intranet.test/p`},
+		{"a\r\nb", "/requests/1", `a<br>b`},
+	}
+	for _, tc := range cases {
+		if got := string(notifBody(tc.body, tc.href)); got != tc.want {
+			t.Fatalf("notifBody(%q) = %q, want %q", tc.body, got, tc.want)
+		}
+	}
+}
+
 func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
 	s := newAppTestServer(t)
 	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
@@ -232,6 +272,57 @@ func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D
 	}
 	if mail.SMTPHost != "smtp.example.test" || mail.SMTPPort != 2525 {
 		t.Fatalf("smtp settings = %#v", mail)
+	}
+}
+
+// ux-2: every result on the rules screen used to show twice — the layout's
+// flash and the page's own callout (a pink "Done", or "That did not save" even
+// for a failed test email) — and a rule refused for a bad field closed its
+// sheet and threw away what the admin had typed.
+func TestAdminNotificationsShowsEachResultOnceAndKeepsARefusedRule(t *testing.T) { // N2, N8
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// No SMTP host is configured, so the test send fails: one error, no
+	// "did not save" heading for something that was never a save.
+	resp := s.postForm("/admin/notifications/test", url.Values{"test_to": {"x@example.test"}})
+	body := responseBody(t, resp)
+	if n := strings.Count(body, "The test email could not be sent"); n != 1 {
+		t.Fatalf("the test-email failure is shown %d times, want once", n)
+	}
+	if strings.Contains(body, "That did not save") {
+		t.Fatal("a failed test email is reported as a failed save")
+	}
+
+	// A refused rule: one message, inside the sheet, which comes back open with
+	// the admin's own text in it; the stored rule and the other sheets are
+	// untouched.
+	resp = s.postForm("/admin/notifications/events/request_approved", url.Values{
+		"email_enabled": {"on"}, "to_recipients": {"ops@example.test"},
+		"subject_template": {"Hello {{numbr}}"}, "body_template": {"typed body {{number}}"},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body = responseBody(t, resp)
+	if n := strings.Count(body, "unknown template field(s): numbr"); n != 1 {
+		t.Fatalf("the refused-rule error is shown %d times, want once", n)
+	}
+	if !strings.Contains(body, `<div class="overlay" id="ev-request_approved" hidden data-reopen>`) {
+		t.Fatal("the refused rule's sheet is not marked to reopen")
+	}
+	if !strings.Contains(body, `<div class="overlay" id="ev-request_submitted" hidden>`) {
+		t.Fatal("another event's sheet was reopened too")
+	}
+	for _, want := range []string{`value="Hello {{numbr}}"`, `typed body {{number}}</textarea>`, `value="ops@example.test"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the reopened sheet lost what the admin typed: missing %s", want)
+		}
+	}
+	stored, err := s.st.NotificationSetting(s.ctx, "request_approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored.SubjectTemplate, "numbr") || stored.ToRecipients == "ops@example.test" {
+		t.Fatalf("a refused rule was stored: %#v", stored)
 	}
 }
 

@@ -234,6 +234,44 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 	_ = open
 }
 
+// urgent-1: once approved, an urgent request is Accounts' to pay, and the design
+// says "Urgent requests surface here" — but the queue query never selected the
+// flag, so neither the queue nor the Accounts dashboard area could mark it, and
+// it sorted behind every older ordinary request.
+func TestAccountsQueueMarksAndSurfacesUrgentRequests(t *testing.T) { // N6
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("UrgentQueue")
+	// Raised by someone else, so the only place the accountant's dashboard can
+	// show these rows is its Accounts area.
+	requester := s.seedRequester("urq@example.test", "Urgent Requester", "UrgentPass1234")
+	s.seedColleague("uracct@example.test", "Urgent Accountant", "UrgentAcct1234")
+	normal := s.seedApprovedRequest(1, requester.ID, admin.ID, headID, 500000)
+	urgent := s.seedApprovedRequest(2, requester.ID, admin.ID, headID, 700000)
+	if _, err := s.st.DB().ExecContext(s.ctx, `UPDATE payment_requests SET approved_at=datetime('now','-2 days') WHERE id=?`, normal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.DB().ExecContext(s.ctx, `UPDATE payment_requests SET urgent=1 WHERE id=?`, urgent); err != nil {
+		t.Fatal(err)
+	}
+	s.login("uracct@example.test", "UrgentAcct1234")
+
+	// The queue, the Accounts area of the dashboard, and the payment form's
+	// request picker are the three places Accounts chooses what to pay next.
+	for _, path := range []string{"/accounts-queue", "/", "/payments/new"} {
+		body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+		u, n := strings.Index(body, "PR-2026-000002"), strings.Index(body, "PR-2026-000001")
+		if u < 0 || n < 0 {
+			t.Fatalf("%s is missing a request row", path)
+		}
+		if u > n {
+			t.Errorf("%s lists the urgent request after an older ordinary one", path)
+		}
+		if strings.Count(body, `<span class="pill urgent">Urgent</span>`) != 1 {
+			t.Errorf("%s does not mark exactly the one urgent request Urgent", path)
+		}
+	}
+}
+
 func TestAccountsQueueSearchNarrowsRows(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("QueueSearch")
@@ -750,9 +788,13 @@ func TestPickerOffersNoTakeControlWithoutTheReservationGrant(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("PickerGate")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.seedUserWithGrants("ledger@example.test", "LedgerPassword123", "Ledger only", []store.Grant{
+	// A request scope of All: the picker reads the caller's request scope, and
+	// since fixwave rbac-2 an empty scope (the editor's "None") lists nothing
+	// rather than everything. The case under test is the missing reservation
+	// grant, not the missing scope.
+	s.seedProbeUser("ledger@example.test", "Ledger", "LedgerPassword123", "Ledger only", []store.Grant{
 		{Resource: "payment", Action: "view"}, {Resource: "payment", Action: "create"},
-	})
+	}, []store.ScopeGrant{{Resource: "request", Scope: store.ScopeAll}})
 
 	s.login("ledger@example.test", "LedgerPassword123")
 	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
@@ -810,9 +852,12 @@ func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.seedUserWithGrants("auditor@example.test", "AuditorPassword123", "Ledger reader", []store.Grant{
+	// Payment scope All and no request scope: the ledger is fully theirs, the
+	// request behind a linked row is not. (Since fixwave rbac-2 an empty
+	// payment scope reads no ledger row at all, so the scope is explicit.)
+	s.seedProbeUser("auditor@example.test", "Auditor", "AuditorPassword123", "Ledger reader", []store.Grant{
 		{Resource: "payment", Action: "view"},
-	})
+	}, []store.ScopeGrant{{Resource: "payment", Scope: store.ScopeAll}})
 
 	s.login("auditor@example.test", "AuditorPassword123")
 	resp := s.request(http.MethodGet, fmt.Sprintf("/payments/%d", linkedID), nil, "")
@@ -830,12 +875,15 @@ func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", histID), nil, ""), http.StatusOK)
 }
 
-// The trail's head already names the actor. Most request-side audit summaries
-// are written to start with the same name, so the body repeated it.
+// The trail's head already names the actor. Every payment_request audit summary
+// is written to start with the same name — the payment-side ones since the
+// detail thread started naming who held, reserved and settled (history-1) — so
+// the body would repeat it.
 func TestTrailBodyDropsTheActorNameTheHeadAlreadyCarries(t *testing.T) {
 	for _, tc := range []struct{ name, actor, summary, want string }{
 		{"request side", "Priya Nair", "Priya Nair approved request PR-2026-000001 for ₹1,00,000.00", "Approved request PR-2026-000001 for ₹1,00,000.00"},
-		{"payment side", "Priya Nair", "Reserved request for processing", "Reserved request for processing"},
+		{"payment side", "Priya Nair", "Priya Nair reserved the request for processing", "Reserved the request for processing"},
+		{"summary without the actor", "Priya Nair", "Reserved request for processing", "Reserved request for processing"},
 		{"no actor", "", "Recorded payment ₹98,000.00", "Recorded payment ₹98,000.00"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -917,7 +965,9 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, ""))
 	for _, want := range []string{
 		`class="req-head"`, `class="pill partial"`, `class="waiting you"`,
-		`class="compare"`, "Still owed to the vendor", "35,000.00",
+		// "payee", as every other screen says: the request may be a
+		// reimbursement owed to an employee (partial-1).
+		`class="compare"`, "Still owed to the payee", "35,000.00",
 		`class="banner warn"`, "Vendor delivered 700 of the 1,000 copies.",
 		`class="pill neutral no-dot"`, "Cannot be edited",
 		`<ol class="thread">`, `class="comment-box"`,

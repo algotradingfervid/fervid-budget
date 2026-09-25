@@ -52,7 +52,7 @@ var notifyTokenVocabulary = map[string]bool{
 	"number": true, "amount": true, "approved_amount": true, "payee": true,
 	"requester": true, "approver": true, "project": true, "head": true,
 	"purpose": true, "status": true, "needed_by": true, "submitted_on": true,
-	"processing_on": true, "link": true,
+	"processing_on": true, "link": true, "paid_amount": true, "paid_on": true,
 }
 
 var seededTokenPattern = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
@@ -254,6 +254,69 @@ func TestMigrationV9FillsGapsWithoutDuplicating(t *testing.T) { // F-F-06
 		}
 		if n != 1 {
 			t.Fatalf("event %q rows = %d, want exactly 1", event, n)
+		}
+	}
+}
+
+// v13 rewords the approval_reassigned notice. Since fix wave B a request is
+// reassignable while returned, awaiting a cancellation decision or in partial
+// review, and "needs your approval" is wrong for all three (deactivation-2
+// review). The seed carries the new wording for a fresh database; v13 carries
+// it onto an installed one — and only where the row still reads exactly as v11
+// wrote it, so an administrator's own wording is never overwritten.
+func TestMigrationV13RewordsTheReassignmentNoticeWithoutTouchingAnAdminsEdit(t *testing.T) {
+	s := newTestStore(t)
+	read := func() (subject, body string) {
+		t.Helper()
+		if err := s.DB().QueryRow(`SELECT subject_template, body_template FROM notification_settings WHERE event='approval_reassigned'`).Scan(&subject, &body); err != nil {
+			t.Fatal(err)
+		}
+		return subject, body
+	}
+	want := reassignmentNotificationSettings[0]
+	if want.Event != "approval_reassigned" {
+		t.Fatalf("reassignmentNotificationSettings[0] is %q", want.Event)
+	}
+	for _, bad := range []string{"needs your approval", "for approval"} {
+		if strings.Contains(want.SubjectTemplate, bad) || strings.Contains(want.BodyTemplate, bad) {
+			t.Fatalf("the seeded approval_reassigned notice still says %q, which is wrong for a returned, frozen or partial-review request", bad)
+		}
+	}
+	if subject, body := read(); subject != want.SubjectTemplate || body != want.BodyTemplate {
+		t.Fatalf("fresh database: subject=%q body=%q, want the seed", subject, body)
+	}
+
+	// An installed database that still carries v11's wording is brought forward.
+	if _, err := s.DB().Exec(`UPDATE notification_settings SET subject_template=?, body_template=? WHERE event='approval_reassigned'`,
+		v11ReassignedSubject, v11ReassignedBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`PRAGMA user_version = 12`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("v13: %v", err)
+	}
+	if subject, body := read(); subject != want.SubjectTemplate || body != want.BodyTemplate {
+		t.Fatalf("after v13: subject=%q body=%q, want the new wording", subject, body)
+	}
+
+	// An administrator's own wording is theirs, whichever half they changed.
+	for _, edit := range []struct{ subject, body string }{
+		{"Please look at {{number}}", v11ReassignedBody},
+		{v11ReassignedSubject, "{{number}} is yours now: {{link}}"},
+	} {
+		if _, err := s.DB().Exec(`UPDATE notification_settings SET subject_template=?, body_template=? WHERE event='approval_reassigned'`, edit.subject, edit.body); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB().Exec(`PRAGMA user_version = 12`); err != nil {
+			t.Fatal(err)
+		}
+		if err := migrate(s.DB()); err != nil {
+			t.Fatalf("re-running v13: %v", err)
+		}
+		if subject, body := read(); subject != edit.subject || body != edit.body {
+			t.Fatalf("v13 overwrote an administrator's edit: subject=%q body=%q", subject, body)
 		}
 	}
 }

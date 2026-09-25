@@ -2252,7 +2252,12 @@ pre {
   min-width: auto !important;
   font-size: 13px;
   font-weight: 650;
-  white-space: nowrap;
+  /* A label is as long as its sentence, and a confirmation sentence is longer
+     than a phone is wide. nowrap made the label as wide as its text, so the
+     head-deactivation warning scrolled 103px sideways at 390px (F-G-024). Short
+     labels still sit on one line wherever there is room for them. */
+  max-width: 100%;
+  white-space: normal;
 }
 
 .checkline input {
@@ -2285,6 +2290,13 @@ pre {
   align-items: center;
   min-width: 220px;
 }
+
+/* On a <td> the flex box took the cell out of table layout: it stopped
+   stretching to the row's height, so its bottom rule sat above the row's
+   (ui-1). The cell stays a cell and its single wrapper lays the buttons out.
+   The phone restack (table.t-cards tbody td) outranks this and keeps its flex. */
+td.actions-cell { display: table-cell; }
+td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 
 .inline-danger {
   position: relative;
@@ -2377,6 +2389,10 @@ pre {
   width: 100%;
   max-width: calc(1180px + var(--page-gutter) * 2);
   padding-inline: var(--page-gutter);
+  /* The same gutter above the first block. A page that opens on a card rather
+     than a banner — a request, a payment — otherwise drew that card's border
+     along the very top of the window. */
+  padding-top: var(--page-gutter);
 }
 
 /* Bands drawn edge to edge — the page header and the grid header — cancel the
@@ -2385,6 +2401,35 @@ pre {
 .page-inner > .page-banner,
 .page-inner > .gridhead {
   margin-inline: calc(var(--page-gutter) * -1);
+}
+
+/* …and a band that opens the page cancels the top gutter too, so it still
+   meets the top of the window. */
+.page-inner > .page-banner:first-child,
+.page-inner > .gridhead:first-child {
+  margin-top: calc(var(--page-gutter) * -1);
+}
+
+/* The layout draws its flash (.alert.error / .alert.success) ahead of the
+   page's own content, so on a page that opens with a band the band is no
+   longer :first-child: the flash took the top gutter and the band sat under
+   it, off the top edge (rbac-11 review). When a flash — or the pair of them —
+   is followed by a band, the flash opens the page in the band's place: it
+   takes the top gutter and the full column width, drops its rounded corners
+   and side borders, and the band follows it flush. A flash ahead of a card
+   keeps the gutter, as the card would. */
+.page-inner > .alert:first-child:has(+ .page-banner, + .gridhead, + .alert + .page-banner, + .alert + .gridhead),
+.page-inner > .alert:first-child + .alert:has(+ .page-banner, + .gridhead) {
+  margin-inline: calc(var(--page-gutter) * -1);
+  margin-bottom: 0;
+  padding-inline: var(--page-gutter);
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+}
+
+.page-inner > .alert:first-child:has(+ .page-banner, + .gridhead, + .alert + .page-banner, + .alert + .gridhead) {
+  margin-top: calc(var(--page-gutter) * -1);
 }
 
 /* Three blocks predate the gutter and carry a hand-written 28px of their own.
@@ -2608,9 +2653,12 @@ pre {
 /* Variance-grid tones. The grid renders statusFor() straight into the class,
    so these five names are fixed by internal/app.statusForView, not chosen
    here. They carry the same values the .badge equivalents did, so retiring
-   .badge (decision D5) recolours nothing. */
+   .badge (decision D5) recolours nothing — except On track, whose copied
+   brand rust read as a cousin of Over while its legend swatch and bar are the
+   green --track. The pill is that green now, dot and rule included (BV22). */
 .pill.under      { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
-.pill.on-track   { color: var(--brand-2); background: var(--brand-tint); border-color: var(--brand-tint-2); }
+.pill.on-track   { color: #25603a;        background: #e9f5ed;           border-color: var(--track); }
+.pill.on-track::before { background: var(--track); }
 .pill.over       { color: var(--bad);     background: var(--bad-soft);   border-color: var(--bad-line); }
 .pill.unbudgeted { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
 .pill.not-paid   { color: var(--muted);   background: var(--surface-2);  border-color: var(--line-2); }
@@ -3583,6 +3631,16 @@ legend {
   font-size: 12.5px;
 }
 
+/* The request link inside a row's body. The row is itself the <a> to that
+   request, so this is link text rather than a nested anchor; underline and
+   the link colour say it is clickable, and a long URL may break anywhere so it
+   never widens the row at 390px. */
+.notif .n-link {
+  color: var(--fb-accent-strong);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
 .notif time {
   flex: none;
   margin-left: auto;
@@ -4274,14 +4332,14 @@ td .t-sub {
    ========================================================================== */
 
 @media (max-width: 860px) {
-  /* The gutter exists to separate the content from the sidebar, and there is no
-     sidebar at this width — the navigation is the bottom tab bar instead. The
-     narrow layout already sets its own 14px insets per block, and adding a
-     column-level gutter on top of them narrowed the content enough to push the
-     last action button under the floating tab-bar control. Zero here keeps the
-     narrow layout exactly as it was. */
+  /* There is no sidebar at this width, but the content still needs an edge.
+     This used to be 0px, on the belief that each narrow block set its own 14px
+     inset. Only the page banner and the grid header did; every card, list,
+     filter row and heading sat flush against the glass with its border and
+     corners clipped. The column carries the gutter here as it does on desktop,
+     and the two bands re-apply the same value as their own padding below. */
   :root {
-    --page-gutter: 0px;
+    --page-gutter: 16px;
   }
 
   body {
@@ -4344,6 +4402,15 @@ td .t-sub {
 
   .action-bar .btn { flex: 1 1 auto; }
   .action-bar .btn.wide { flex-basis: 100%; }
+
+  /* Some actions carry a person's name ("Save and notify …"), so a label has
+     no length a template can promise. A button that refused to wrap was as
+     wide as its name and ran off the right edge of the bar. */
+  .action-bar .btn {
+    max-width: 100%;
+    text-align: center;
+    white-space: normal;
+  }
 
   .work-areas {
     grid-template-columns: 1fr;
@@ -4711,8 +4778,8 @@ td .t-sub {
 
   .gridhead,
   .gridwrap {
-    padding-right: 14px;
-    padding-left: 14px;
+    padding-right: var(--page-gutter);
+    padding-left: var(--page-gutter);
   }
 
   .page > h1,
@@ -4732,8 +4799,8 @@ td .t-sub {
 
   .page-banner {
     flex-direction: column;
-    padding-right: 14px;
-    padding-left: 14px;
+    padding-right: var(--page-gutter);
+    padding-left: var(--page-gutter);
   }
 
   .page-banner h1,
@@ -4777,5 +4844,32 @@ td .t-sub {
 
   .error-state {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   form-7 (2026-09-25 fix wave): sibling controls share a height and a width.
+
+   Height. .field is a grid, and a .form-grid row stretches every field in it
+   to the tallest — the one carrying a hint or the amount-in-words line. With
+   align-content left at its default the leftover height was shared out across
+   the field's rows, so the control in a hint-less field grew and sat lower
+   than its neighbour (Head 47px beside Project 35px, Needed by 62px beside
+   Amount). Rows keep their natural height; the field still fills the row.
+
+   Width. Below 860px the form is one column, but `.form-grid > .field.m-half
+   { grid-column: span 6 }` (0,3,0) outranked `.field.span-* { grid-column:
+   1 / -1 }` (0,2,0), so an m-half field still spanned six tracks of a
+   one-track grid — five implicit zero-width columns plus five 12px gaps —
+   and every other field in the same grid came out 60px narrower than it.
+   ========================================================================== */
+.field,
+.form-field {
+  align-content: start;
+}
+
+@media (max-width: 860px) {
+  .form-grid > .field.m-half {
+    grid-column: 1 / -1;
   }
 }

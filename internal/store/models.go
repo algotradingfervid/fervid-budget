@@ -125,6 +125,10 @@ type Payment struct {
 	RequestID     *int64
 	Settlement    string // "" (historical) | "settled" | "partial"
 	PartialReason string
+	// Treatment is the linked request's treatment ("" for a historical payment).
+	// A "recoverable" payment has no head (v8), so a screen reads this to name it
+	// rather than print an empty "Project / Head" (recoverables-2).
+	Treatment string
 }
 
 type Attachment struct {
@@ -245,11 +249,19 @@ type RecoverableRow struct {
 	Status             string
 	Requester          string
 	OnHold             bool
-	HasReturnDate      bool
-	Overdue            bool
-	DaysToReturn       int    // whole calendar days from AsOf; negative when overdue
-	AgeingLabel        string // "25 days overdue", "174 days to go", "Awaiting payment", …
-	AgeingTone         string // pill modifier: "bad" | "neutral" | "approved" | "hold"
+	// ProcessingBy, ProcessingByName and ConcernOpen are what the status pill
+	// turns on beyond the status itself — who holds the reservation, and
+	// whether a partial review has an unanswered concern — so the register
+	// reads "With Accounts — taken by …" and "Partial — under discussion"
+	// exactly as the request behind it does (settlement-7/-8 review).
+	ProcessingBy     *int64
+	ProcessingByName string
+	ConcernOpen      bool
+	HasReturnDate    bool
+	Overdue          bool
+	DaysToReturn     int    // whole calendar days from AsOf; negative when overdue
+	AgeingLabel      string // "25 days overdue", "174 days to go", "Awaiting payment", …
+	AgeingTone       string // pill modifier: "bad" | "neutral" | "approved" | "hold"
 }
 
 type RecoverableReportOptions struct {
@@ -347,10 +359,17 @@ type PaymentListOptions struct {
 	// Scope + ViewerID enforce the `payment` data scope (F-A-04 / F-G-003),
 	// mirroring RequestListOptions: "own" (and "assigned", which has no
 	// routed-to meaning on the ledger and narrows the same way rather than
-	// silently widening) filter on entered_by = ViewerID; "", "all" and any
-	// other value leave the list unrestricted, exactly as requestWhere does.
+	// silently widening) filter on entered_by = ViewerID; only "all" leaves
+	// the list unrestricted. "" and any other value read no rows at all — the
+	// ledger fails closed, exactly as requestWhere does (fixwave rbac-2), so a
+	// role with payment:view and no scope sees an empty ledger, never every
+	// payment. Callers that mean "everything" say ScopeAll.
 	Scope    string
 	ViewerID int64
+	// ExcludeRecoverable leaves out payments that settle a recoverable request.
+	// The variance grid sets it: a recoverable is a deposit, not budget spend,
+	// and its totals already leave them out (V2, recoverables-2).
+	ExcludeRecoverable bool
 }
 
 type Request struct {
@@ -398,10 +417,15 @@ type Request struct {
 	ProcessingBy              *int64
 	ProcessingAt              *time.Time
 	ProcessingByName          string // joined name of the reserver; "" when unreserved
-	ReminderLastSent          *time.Time
-	SubmittedAt               *time.Time
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	// ConcernOpen is set by RaiseConcern and cleared when the accountant who
+	// holds the request answers in the conversation. It is a flag, not a status
+	// (the request stays 'partial_review'), exactly as on_hold is a flag on
+	// 'approved': the display reads "Partial — under discussion" from it.
+	ConcernOpen      bool
+	ReminderLastSent *time.Time
+	SubmittedAt      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type RequestInput struct {
@@ -437,16 +461,19 @@ type RequestInput struct {
 }
 
 type RequestListOptions struct {
-	Scope     string // "own" | "assigned" | "all"
-	ViewerID  int64
-	Status    string   // "" or "all" = any status; otherwise exact status
-	Statuses  []string // optional explicit set; wins over Status when non-empty
-	Bucket    string   // "" | "open" | "closed" | "needs-me" | "all"
-	Type      string
-	Treatment string
-	ProjectID int64
-	Query     string
-	Limit     int
+	Scope    string // "own" | "assigned" | "held" | "all" — "held" is the viewer's own reservations
+	ViewerID int64
+	Status   string   // "" or "all" = any status; otherwise exact status
+	Statuses []string // optional explicit set; wins over Status when non-empty
+	Bucket   string   // "" | "open" | "closed" | "needs-me" | "all"
+	// ConcernOpen narrows to partial reviews whose concern Accounts has not
+	// yet answered — the accountant's "concerns to answer" list.
+	ConcernOpen bool
+	Type        string
+	Treatment   string
+	ProjectID   int64
+	Query       string
+	Limit       int
 }
 
 // StaleReservation is how long a reservation may sit before the queue nudges.

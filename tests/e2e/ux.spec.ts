@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from './fixtures';
+import { createApprovedRequest, expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 
 /**
@@ -22,6 +22,46 @@ async function navRoutes(page: Page): Promise<string[]> {
   const hrefs = await page.locator(selector).evaluateAll(nodes =>
     nodes.map(n => (n as HTMLAnchorElement).getAttribute('href') || '').filter(Boolean));
   return [...new Set(hrefs)];
+}
+
+const GUTTER_PX = 16; // the narrowest side gutter the content column may have, at any width
+
+/**
+ * Blocks of the content column that sit against an edge of the screen, or
+ * against its top. Every direct child of .page-inner must be inset from both
+ * sides of main.page by at least GUTTER_PX, and the first one must not start at
+ * the top of main.page. The page banner and grid header are the exception: they
+ * are bands drawn edge to edge on purpose, and carry the gutter as padding.
+ */
+async function flushBlocks(page: Page, min: number): Promise<string[]> {
+  return page.evaluate((min: number) => {
+    const main = document.querySelector('main.page');
+    const inner = main?.querySelector(':scope > .page-inner');
+    if (!main || !inner) return ['no main.page > .page-inner'];
+    const m = main.getBoundingClientRect();
+    const bad: string[] = [];
+    let first = true;
+    for (const el of Array.from(inner.children)) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      // A flash that opens the page ahead of a band is drawn as a strip on top
+      // of that band (fervid-ds.css), so it is measured as a band too.
+      const isBand = (e: Element | null) => !!e && e.matches('.page-banner, .gridhead');
+      const next = el.nextElementSibling;
+      const flashStrip = first && el.matches('.alert') &&
+        (isBand(next) || (!!next && next.matches('.alert') && isBand(next.nextElementSibling)));
+      const band = isBand(el) || flashStrip;
+      const label = `${el.tagName.toLowerCase()}.${Array.from(el.classList).join('.')}`;
+      if (first && !band && r.top - m.top < min - 0.5) bad.push(`${label} starts ${Math.round(r.top - m.top)}px from the top`);
+      if (first && band && Math.abs(r.top - m.top) > 0.5) bad.push(`${label} band starts ${Math.round(r.top - m.top)}px below the top`);
+      first = false;
+      if (band) continue;
+      const left = r.left - m.left;
+      const right = m.right - r.right;
+      if (left < min - 0.5 || right < min - 0.5) bad.push(`${label} inset ${Math.round(left)}px/${Math.round(right)}px`);
+    }
+    return bad;
+  }, min);
 }
 
 test.describe('UI/UX quality', () => {
@@ -63,6 +103,7 @@ test.describe('UI/UX quality', () => {
       if (mobile && state.sidebar) problems.push(`${route}: sidebar visible on a phone`);
       if (mobile && !state.tabbar) problems.push(`${route}: tab bar missing on a phone`);
       if (!mobile && !state.sidebar) problems.push(`${route}: sidebar missing on desktop`);
+      for (const flush of await flushBlocks(adminPage, GUTTER_PX)) problems.push(`${route}: ${flush}`);
 
       // Nothing may be trapped under the fixed tab bar. Mid-scroll the bar
       // covers content by design -- that is what scrolling is for -- so the
@@ -118,6 +159,50 @@ test.describe('UI/UX quality', () => {
     expect(problems, `checked ${routes.length} screens:\n${problems.join('\n')}`).toEqual([]);
   });
 
+  // The nav walk above never reaches a request's own page or a confirmation
+  // step, and those are the two screens that open without a page banner and
+  // carry the longest lines. Both are checked at the phone and desktop widths
+  // the product is designed for.
+  test('request detail and the deactivation warning keep the gutter at 390 and 1440', async ({ adminPage, runId }) => {
+    const raised = await createApprovedRequest(adminPage, runId, { amount: '1200.00' });
+    const problems: string[] = [];
+
+    for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+      await adminPage.setViewportSize(viewport);
+      const at = `${viewport.width}px`;
+
+      await adminPage.goto(`/requests/${raised.id}`);
+      for (const flush of await flushBlocks(adminPage, GUTTER_PX)) problems.push(`${at} /requests/${raised.id}: ${flush}`);
+
+      // Switching off the head the request is filed under stops on a warning
+      // page. Nothing is saved until it is confirmed, and it is not confirmed.
+      await adminPage.goto('/heads');
+      const row = adminPage.locator('tbody tr:has(input[value="Office Rent"])').filter({
+        has: adminPage.locator('select[name="project_id"] option:checked', { hasText: /^Operations$/ })
+      });
+      await row.locator('input[name="active"]').uncheck();
+      await row.getByRole('button', { name: 'Save' }).click();
+      await expect(adminPage.locator('h1')).toHaveText('Deactivate Office Rent?');
+
+      const fit = await adminPage.evaluate(() => {
+        const label = document.querySelector('main label.checkline')!.getBoundingClientRect();
+        return {
+          overflow: document.documentElement.scrollWidth - window.innerWidth,
+          labelRight: label.right,
+          width: window.innerWidth
+        };
+      });
+      if (fit.overflow > 0) problems.push(`${at} deactivation warning: scrolls sideways by ${fit.overflow}px`);
+      if (fit.labelRight > fit.width) problems.push(`${at} deactivation warning: confirm label runs ${Math.round(fit.labelRight - fit.width)}px off screen`);
+      for (const flush of await flushBlocks(adminPage, GUTTER_PX)) problems.push(`${at} deactivation warning: ${flush}`);
+
+      await adminPage.getByRole('link', { name: 'Cancel' }).click();
+      await expect(adminPage).toHaveURL(/\/heads$/);
+    }
+
+    expect(problems, problems.join('\n')).toEqual([]);
+  });
+
   test('keyboard focus is always visible', async ({ adminPage }) => {
     await adminPage.goto('/');
     const invisible: string[] = [];
@@ -134,5 +219,37 @@ test.describe('UI/UX quality', () => {
       if (info && !info.visible) invisible.push(info.label);
     }
     expect(invisible, `focusable elements with no visible focus ring: ${invisible.join(', ')}`).toEqual([]);
+  });
+
+  // The layout's flash renders ahead of the page's own content, so on a page
+  // that opens with a band the band stops being :first-child. The flash then
+  // opens the page in the band's place: it meets the top of the window and
+  // spans the column, and the band follows it flush (rbac-11 review). Sending
+  // a test email with no SMTP configured is the one flash the walk can raise on
+  // a banner page without changing anything.
+  test('a flash ahead of the page banner opens the page as a strip', async ({ adminPage }) => {
+    await adminPage.goto('/admin/notifications');
+    await adminPage.getByRole('button', { name: 'Send a test email' }).click();
+    await expect(adminPage.locator('.page-inner > .alert').first()).toBeVisible();
+
+    const layout = await adminPage.evaluate(() => {
+      const main = document.querySelector('main.page')!.getBoundingClientRect();
+      const flash = document.querySelector('.page-inner > .alert:first-child')!.getBoundingClientRect();
+      const band = document.querySelector('.page-inner > .alert:first-child + .page-banner')!.getBoundingClientRect();
+      return {
+        flashTop: flash.top - main.top,
+        flashLeft: flash.left - main.left,
+        flashRight: main.right - flash.right,
+        bandGap: band.top - flash.bottom,
+        overflow: document.documentElement.scrollWidth - window.innerWidth
+      };
+    });
+    expect(Math.abs(layout.flashTop), 'the flash meets the top of the page').toBeLessThanOrEqual(0.5);
+    expect(Math.abs(layout.flashLeft), 'the flash spans to the left edge').toBeLessThanOrEqual(0.5);
+    expect(Math.abs(layout.flashRight), 'the flash spans to the right edge').toBeLessThanOrEqual(0.5);
+    expect(Math.abs(layout.bandGap), 'the banner follows the flash flush').toBeLessThanOrEqual(1);
+    expect(layout.overflow, 'no sideways scroll').toBeLessThanOrEqual(0);
+    // Everything after the band is still inset by the gutter.
+    expect(await flushBlocks(adminPage, GUTTER_PX)).toEqual([]);
   });
 });

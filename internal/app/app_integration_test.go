@@ -1933,8 +1933,11 @@ func TestGridIsGatedOnGridViewAndItsPaymentPanelOnPaymentView(t *testing.T) {
 	if paymentDetailLink.MatchString(body) {
 		t.Fatalf("the Recent Payments panel served payment links to a caller with no payment:view: %v", paymentDetailLink.FindString(body))
 	}
-	if !strings.Contains(body, "No payments in this month.") {
-		t.Fatalf("the payments panel was handed rows rather than nothing: %s", body)
+	// Nor the panel itself: an empty one told this caller "No payments in this
+	// month." beside actuals the page showed as paid (grid-1; PE-03 expects the
+	// grid "without `Recent Payments for`").
+	if strings.Contains(body, "Recent Payments for") || strings.Contains(body, "No payments in this month.") {
+		t.Fatalf("a caller without payment:view was shown the Recent Payments panel: %s", body)
 	}
 
 	// And with both verbs the panel is back, so the gate narrows nothing it
@@ -2276,16 +2279,19 @@ func TestApproverReassignmentRoute(t *testing.T) {
 	_ = responseBody(t, resp)
 
 	// And the real thing: the approver changes, and the trail records it as its
-	// own event rather than as an anonymous update.
+	// own event rather than as an anonymous update. The target is a third
+	// approver, not the administrator: nobody may hand a request to themselves
+	// (rbac-8), and this test used to do exactly that.
+	coverApprover := seedThirdApprover(t, s)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{
-		"manager_id": {strconvFormat(admin.ID)}, "reason": {"Kavita is on leave this week"},
+		"manager_id": {strconvFormat(coverApprover)}, "reason": {"Kavita is on leave this week"},
 	}), http.StatusSeeOther)
 	req, err := s.st.Request(s.ctx, reqID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.ManagerID != admin.ID {
-		t.Fatalf("manager after reassignment = %d, want %d", req.ManagerID, admin.ID)
+	if req.ManagerID != coverApprover {
+		t.Fatalf("manager after reassignment = %d, want %d", req.ManagerID, coverApprover)
 	}
 	trail, err := s.st.Audit(s.ctx, "payment_request", reqID, 20)
 	if err != nil {

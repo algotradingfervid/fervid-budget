@@ -389,12 +389,14 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 		` + recoverableAmount + ` AS amt,
 		COALESCE(py.paid_on,''), COALESCE(pr.expected_return_date,''), COALESCE(pr.repayment_notes,''),
 		pr.status, COALESCE(u.name,''), COALESCE(pr.on_hold,0),
+		pr.processing_by, COALESCE(pu.name,''), COALESCE(pr.concern_open,0),
 		CAST(julianday(COALESCE(NULLIF(pr.expected_return_date,''),?)) - julianday(?) AS INTEGER) AS days
 		FROM payment_requests pr
 		LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
 		LEFT JOIN recoverable_categories rc ON rc.id=pr.recoverable_category_id
 		LEFT JOIN projects p ON p.id=pr.project_id
 		LEFT JOIN users u ON u.id=pr.requester_id
+		LEFT JOIN users pu ON pu.id=pr.processing_by
 		WHERE ` + recoverableBaseWhere
 	args := []any{today, today}
 
@@ -426,7 +428,9 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 	}
 	switch opts.Ageing {
 	case "overdue":
-		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?`
+		// Paid rows only, as recoverableAgeing and RecoverableMetrics decide it:
+		// the tile links here, so the filter must list what the tile counts.
+		q += ` AND COALESCE(py.paid_on,'') <> '' AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?`
 		args = append(args, today)
 	case "due30":
 		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date >= ?
@@ -466,12 +470,19 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 	var out []RecoverableRow
 	for rows.Next() {
 		var r RecoverableRow
-		var onHold int
+		var onHold, concernOpen int
+		var processingBy sql.NullInt64
 		if err := rows.Scan(&r.RequestID, &r.Number, &r.Category, &r.Counterparty, &r.Project, &r.Amount,
-			&r.PaidOn, &r.ExpectedReturnDate, &r.RepaymentNotes, &r.Status, &r.Requester, &onHold, &r.DaysToReturn); err != nil {
+			&r.PaidOn, &r.ExpectedReturnDate, &r.RepaymentNotes, &r.Status, &r.Requester, &onHold,
+			&processingBy, &r.ProcessingByName, &concernOpen, &r.DaysToReturn); err != nil {
 			return nil, err
 		}
 		r.OnHold = onHold == 1
+		r.ConcernOpen = concernOpen == 1
+		if processingBy.Valid {
+			v := processingBy.Int64
+			r.ProcessingBy = &v
+		}
 		r.HasReturnDate = r.ExpectedReturnDate != ""
 		if !r.HasReturnDate {
 			// The days expression substitutes today for an undated row so
@@ -545,11 +556,14 @@ func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Tim
 	default:
 		return nil, fmt.Errorf("%w: unknown recoverable rollup dimension %q", ErrValidation, by)
 	}
+	// The overdue column carries the same `paid <> ''` guard as the tile
+	// (F-E-05): the category and counterparty rows sit above a Total row that
+	// reads RecoverableMetrics, and must add up to it (recoverables-1).
 	scopeClause, scopeArgs := recoverableScope(viewer)
 	args := append([]any{today}, scopeArgs...)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+label+` AS grp, `+detail+`,
 		COUNT(*), COALESCE(SUM(`+recoverableAmount+`),0),
-		COALESCE(SUM(CASE WHEN COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?
+		COALESCE(SUM(CASE WHEN COALESCE(py.paid_on,'') <> '' AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?
 			THEN `+recoverableAmount+` ELSE 0 END),0),
 		COALESCE(MIN(NULLIF(COALESCE(py.paid_on,''),'')),''),
 		COALESCE(MIN(NULLIF(COALESCE(pr.expected_return_date,''),'')),'')

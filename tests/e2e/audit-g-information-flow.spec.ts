@@ -211,15 +211,10 @@ async function raiseVendorRequest(page: Page, opts: RaiseOptions): Promise<{ id:
 /**
  * Raises a recoverable request through the real form.
  *
- * `type=recoverable` exists in the store's vocabulary
- * (internal/store/requests.go:78-81) but NOT in the UI's
- * (`requestTypeLabels`, internal/app/requests.go:42-66), so
- * `/requests/new?type=recoverable` answers 400 with the chooser and a reason —
- * it used to bounce silently to the chooser as though nothing had been asked
- * for (F-D-14, `unofferedRequestType` at internal/app/requests.go:100). The only
- * route to a recoverable through the shipped screens is `employee_advance`,
- * which `requestNew` opens with the recoverable treatment already selected
- * (internal/app/requests.go:129-132).
+ * Two forms since form-1 / recoverables-1: an employee advance
+ * (`/requests/new?type=employee_advance`, category fixed, paid to the
+ * requester) and a deposit or guarantee (`/requests/new?type=recoverable`,
+ * category chosen, paid to whoever the requester names). An ICD is the latter.
  */
 async function raiseRecoverable(
   page: Page,
@@ -235,25 +230,27 @@ async function raiseRecoverable(
     approverName: string;
   }
 ): Promise<{ id: number; number: string }> {
-  await page.goto('/requests/new?type=employee_advance');
-  await page.getByLabel('Short title').fill(opts.title);
-  await expect(
-    page.locator('input[name="treatment"][value="recoverable"]'),
-    'an employee advance opens on the recoverable treatment'
-  ).toBeChecked();
-
   const category = opts.category ?? 'employee_advance';
-  if (category !== 'employee_advance') {
+  const advance = category === 'employee_advance';
+  await page.goto(advance ? '/requests/new?type=employee_advance' : '/requests/new?type=recoverable');
+  await page.getByLabel('Short title').fill(opts.title);
+  if (advance) {
+    await expect(
+      page.locator('input[name="treatment"][value="recoverable"]'),
+      'an employee advance opens on the recoverable treatment'
+    ).toBeChecked();
+  } else {
     await page.locator('#rcategory').selectOption(category);
     // The category change swaps #form-fields from the server; waiting for the
     // field the new category needs is waiting for the swap itself.
     await expect(page.locator('#counterparty')).toBeVisible();
+    await page.locator('#payee').fill(opts.counterparty ?? `Deposit holder ${opts.title}`);
   }
   if (opts.counterparty) await page.locator('#counterparty').fill(opts.counterparty);
   await page.locator('#expected-return').fill(opts.expectedReturn);
   await page.locator('#terms').fill(opts.terms);
   await page.getByLabel('Amount').fill(opts.amount);
-  await page.locator('#adv-reason').fill(opts.advanceReason ?? opts.title);
+  if (advance) await page.locator('#adv-reason').fill(opts.advanceReason ?? opts.title);
   await page.getByLabel('Purpose').fill(opts.purpose ?? `${opts.title} purpose.`);
   await page.getByLabel('Approver').selectOption({ label: opts.approverName });
   await page.getByRole('button', { name: 'Submit request' }).click();
@@ -398,13 +395,11 @@ async function asCustomRole(adminPage: Page, browser: Browser, runId: string, pr
 /**
  * The audit rows an actor wrote against payment requests.
  *
- * `/audit` reads the newest 1000 rows of the entity, filters actor and action in
- * Go, then caps at 200 (internal/app/app.go:1364-1389). Actor names carry the
- * runId, so this is a per-test view — but the 1000-row pre-filter is applied
- * BEFORE the actor filter, so a long run can push a subject's rows out of the
- * window entirely. Passing `entityID` narrows the SQL itself
- * (`Store.Audit`, internal/store/store.go:1594-1600) and makes the read exact
- * regardless of how much history the database has accumulated.
+ * `/audit` applies entity, id, action, actor and date in SQL over the whole log
+ * and pages the result (`Store.AuditPage`, audit-1). Actor names carry the
+ * runId, so this is a per-test view; it reads the first page only, which is
+ * enough for the handful of rows one subject writes. Passing `entityID` narrows
+ * it further.
  */
 async function auditRows(page: Page, actorName: string, entity = 'payment_request', entityID?: number) {
   const id = entityID ? `&id=${entityID}` : '';
@@ -3835,8 +3830,11 @@ test.describe('G · idempotence', () => {
       `reserving twice must not create a second reservation — got ${second.outcome}`
     ).toBe(true);
     const rows = await auditRows(adminPage, 'Fervid Admin', 'payment_request', request.id);
+    // The summary names the actor ("Fervid Admin reserved the request for
+    // processing") since fix wave B (history-1); the wording is asserted so a
+    // regression to the bare "Reserved request for processing" is caught.
     expect(
-      rows.filter(r => r.action === 'process' && r.summary.includes('Reserved')).length >= 1,
+      rows.filter(r => r.action === 'process' && r.summary.includes('reserved the request for processing')).length >= 1,
       'the reservation is audited'
     ).toBe(true);
 

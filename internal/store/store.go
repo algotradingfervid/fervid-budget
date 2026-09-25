@@ -644,6 +644,27 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		} else if err != sql.ErrNoRows {
 			return err
 		}
+		// The head lookup comes before the skip below, so an unknown head still
+		// fails the whole batch even when it arrives at ₹0 with no budget behind
+		// it; the label it yields names the head in the audit summary.
+		var label string
+		if err := tx.QueryRowContext(ctx, `SELECT p.name || ' / ' || h.name FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, input.HeadID).Scan(&label); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("%w: unknown budget head", ErrValidation)
+			}
+			return err
+		}
+		// Saving the form re-submits every head on it. A budget whose amount did
+		// not move is not a mutation: writing it anyway put an "update" row in
+		// the audit log for every head on every save, which buried the real
+		// changes and pushed history out of the audit view (audit-2).
+		// The same holds for a head with no budget submitted at ₹0: an absent
+		// budget already reads as ₹0 on every screen (the grid COALESCEs it), so
+		// the first save of a month used to log "set to ₹0.00" for every head the
+		// user never touched.
+		if (before != nil && before.Amount == input.Amount) || (before == nil && input.Amount == 0) {
+			continue
+		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO budgets(head_id,month,amount) VALUES(?,?,?) ON CONFLICT(head_id,month) DO UPDATE SET amount=excluded.amount, updated_at=CURRENT_TIMESTAMP`, input.HeadID, month, input.Amount)
 		if err != nil {
 			return classify(err)
@@ -653,13 +674,17 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 			return err
 		}
 		after := Budget{ID: id, HeadID: input.HeadID, Month: month, Amount: input.Amount}
+		// The summary names what changed — head, month and both amounts — because
+		// it is the only column the audit screen shows without expanding the row.
 		action := "create"
+		summary := label + " " + month + ": set to " + money.FormatPaise(input.Amount)
 		if before != nil {
 			action, after.ID = "update", before.ID
+			summary = label + " " + month + ": " + money.FormatPaise(before.Amount) + " → " + money.FormatPaise(input.Amount)
 		}
 		beforeJSON, _ := json.Marshal(before)
 		afterJSON, _ := json.Marshal(after)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID, "Saved budget "+money.FormatPaise(input.Amount), nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID, summary, nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
 			return err
 		}
 	}
@@ -971,14 +996,16 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 // Payment reads one ledger row. The heads/projects joins are LEFT joins with
 // COALESCE because a payment settling a recoverable request has head_id NULL
 // (v8): its detail screen must still resolve, with an empty project and head.
+// The request's treatment rides along so that screen can say "Recoverable"
+// where a budget payment names its project and head.
 func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.id=?`, id)
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.id=?`, id)
 	var p Payment
-	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
+	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
 	if err == sql.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -991,10 +1018,10 @@ func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment
 	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.request_id=?`, requestID)
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.request_id=?`, requestID)
 	var p Payment
-	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
+	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
 	if err == sql.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -1081,7 +1108,11 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 			return ErrRequestNotApproved
 		}
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "process", EntityType: "payment_request", EntityID: &id, Summary: "Reserved request for processing", After: map[string]any{"processing_by": actor.ID}}); err != nil {
+	// Every payment_request summary written on this side starts with the actor,
+	// as the request-module ones do: the detail thread shows the summary as the
+	// line's whole title, so a summary that leaves the name out is a line that
+	// says what happened and not who did it (L7–L10).
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "process", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " reserved the request for processing", After: map[string]any{"processing_by": actor.ID}}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1123,7 +1154,7 @@ func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason
 	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='approved', processing_by=NULL, processing_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing'`, id); err != nil {
 		return err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "release", EntityType: "payment_request", EntityID: &id, Summary: "Released reservation: " + reason, Before: map[string]any{"processing_by": processingBy.Int64}}); err != nil {
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "release", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " released the reservation: " + reason, Before: map[string]any{"processing_by": processingBy.Int64}}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1184,7 +1215,7 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 		return fmt.Errorf("%w: the reservation changed while you were deciding", ErrForbidden)
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "reassign", EntityType: "payment_request", EntityID: &id,
-		Summary: "Reassigned reservation to " + toName + ": " + reason,
+		Summary: actor.Name + " reassigned the reservation to " + toName + ": " + reason,
 		Before:  map[string]any{"processing_by": processingBy.Int64},
 		After:   map[string]any{"processing_by": toUserID}}); err != nil {
 		return err
@@ -1317,9 +1348,9 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment", EntityID: &id, Summary: "Recorded payment " + money.FormatPaise(in.Amount), After: after}); err != nil {
 		return 0, err
 	}
-	reqAction, reqSummary := "settle", "Settled request as completed"
+	reqAction, reqSummary := "settle", actor.Name+" settled the request as completed"
 	if settlement == "partial" {
-		reqAction, reqSummary = "mark_partial", "Partial settlement: "+partialReason
+		reqAction, reqSummary = "mark_partial", actor.Name+" recorded a partial settlement: "+partialReason
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: reqAction, EntityType: "payment_request", EntityID: &requestID, Summary: reqSummary, After: map[string]any{"status": newStatus, "payment_id": id}}); err != nil {
 		return 0, err
@@ -1361,7 +1392,8 @@ func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note st
 	if before.ManagerID != actor.ID {
 		return ErrForbidden
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='completed_partial', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='partial_review'`, id)
+	// concern_open goes with it: the discussion ends with the decision.
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='completed_partial', concern_open=0, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='partial_review'`, id)
 	if err != nil {
 		return err
 	}
@@ -1370,7 +1402,7 @@ func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note st
 	} else if n == 0 {
 		return fmt.Errorf("%w: only a partial-review request can be accepted", ErrForbidden)
 	}
-	summary := "Accepted partial settlement — completed, partial accepted"
+	summary := actor.Name + " accepted the partial settlement — completed, partial accepted"
 	if note != "" {
 		summary += ": " + note
 	}
@@ -1409,6 +1441,12 @@ func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO request_comments(request_id,author_id,body) VALUES(?,?,?)`, id, actor.ID, comment); err != nil {
 		return classify(err)
 	}
+	// The concern is now open until the holder answers (AddRequestComment
+	// clears it). The status is untouched: "under discussion" is how the
+	// request is displayed, not a state it moves to.
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET concern_open=1, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+		return err
+	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "concern", EntityType: "payment_request", EntityID: &id, Summary: "Raised concern: " + comment}); err != nil {
 		return err
 	}
@@ -1435,7 +1473,7 @@ func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason st
 	} else if n == 0 {
 		return fmt.Errorf("%w: only an approved, not-already-held request can be held", ErrForbidden)
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "hold", EntityType: "payment_request", EntityID: &id, Summary: "On hold: " + reason}); err != nil {
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "hold", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " put the request on hold: " + reason}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1458,7 +1496,7 @@ func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
 	} else if n == 0 {
 		return fmt.Errorf("%w: request is not on hold", ErrForbidden)
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unhold", EntityType: "payment_request", EntityID: &id, Summary: "Hold lifted"}); err != nil {
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unhold", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " lifted the hold"}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1480,12 +1518,17 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	staleCutoff := now.UTC().Add(-StaleReservation).Format("2006-01-02 15:04:05")
 	var out LinkableSet
 
+	// The same fail-closed rule as requestWhere: only "all" is unrestricted, and
+	// an empty or unrecognised scope reads nothing (fixwave rbac-2).
 	scopeSQL, scopeArgs := "", []any(nil)
 	switch opts.Scope {
+	case ScopeAll:
 	case "own":
 		scopeSQL, scopeArgs = ` AND r.requester_id=?`, []any{opts.ViewerID}
 	case "assigned":
 		scopeSQL, scopeArgs = ` AND r.manager_id=?`, []any{opts.ViewerID}
+	default:
+		scopeSQL = ` AND 0`
 	}
 
 	// Counts first: one aggregate pass over the scope, independent of the tab,
@@ -1521,7 +1564,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		COALESCE(NULLIF(v.name,''),r.vendor_payee,''),
 		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
 		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
-		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at
+		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at, r.concern_open, r.urgent
 		FROM payment_requests r
 		LEFT JOIN projects p ON p.id=r.project_id
 		LEFT JOIN heads h ON h.id=r.head_id
@@ -1579,7 +1622,17 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	}
 	// CURRENT_TIMESTAMP is second-resolution, so a burst of approvals shares one
 	// timestamp; id breaks the tie and keeps the order stable.
-	q += ` ORDER BY r.approved_at, r.id`
+	//
+	// Urgent first, as every other request list sorts: the design's approved
+	// stage reads "In the Accounts queue. Urgent requests surface here", and
+	// the dashboard's Accounts area shows only the first few of these rows, so
+	// an urgent request behind older ordinary ones did not surface at all
+	// (urgent-1). The Paid tab is history, not work, and keeps approval order.
+	if opts.Status == "paid" {
+		q += ` ORDER BY r.approved_at, r.id`
+	} else {
+		q += ` ORDER BY r.urgent DESC, r.approved_at, r.id`
+	}
 	if opts.Limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, opts.Limit)
@@ -1593,13 +1646,14 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		var r Request
 		var approved, processingBy, headID sql.NullInt64
 		var processingAt, approvedAt sql.NullTime
-		var onHold int
+		var onHold, concernOpen, urgent int
 		if err := rows.Scan(&r.ID, &r.Number, &r.ShortTitle, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
 			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
 			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
-			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt); err != nil {
+			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt, &concernOpen, &urgent); err != nil {
 			return out, err
 		}
+		r.ConcernOpen = concernOpen == 1
 		if approved.Valid {
 			v := approved.Int64
 			r.ApprovedAmount = &v
@@ -1621,6 +1675,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 			r.ApprovedAt = &v
 		}
 		r.OnHold = onHold == 1
+		r.Urgent = urgent == 1
 		// Availability is re-derived from the row, never from the tab, so no tab
 		// can ever hand the UI a "Take for processing" button it must not have.
 		if r.Status == "approved" && !processingBy.Valid && !r.OnHold {
@@ -1661,24 +1716,32 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	q := `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by`
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id`
 	var where []string
 	var args []any
 	// F-A-04 / F-G-003: the payment data scope. "own" narrows the ledger to
 	// rows the viewer entered; "assigned" has no routed-to meaning on payments
 	// and narrows the same way rather than silently widening to everything —
-	// an administrator who chose either narrowing gets a narrowing. "", "all"
-	// and anything else are unrestricted, exactly as requestWhere treats the
-	// request scope. The handler wires the caller's scope in a later wave.
+	// an administrator who chose either narrowing gets a narrowing. Only "all"
+	// is unrestricted: "" (the role editor's "None") and anything else read no
+	// rows, exactly as requestWhere treats the request scope (fixwave rbac-2).
 	switch opts.Scope {
+	case ScopeAll:
 	case "own", "assigned":
 		where = append(where, `py.entered_by=?`)
 		args = append(args, opts.ViewerID)
+	default:
+		where = append(where, `0`)
 	}
 	if validMonth(opts.Month) {
 		where = append(where, `substr(py.paid_on,1,7)=?`)
 		args = append(args, opts.Month)
+	}
+	// The same COALESCE Grid uses, so a historical payment (no request at all)
+	// stays in, exactly as it still counts as an actual there.
+	if opts.ExcludeRecoverable {
+		where = append(where, `COALESCE(pr.treatment,'') <> 'recoverable'`)
 	}
 	switch opts.Status {
 	case "voided":
@@ -1711,7 +1774,7 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 		// linked payment from a historical one: the linked one is immutable
 		// (S12), and a screen that cannot see the difference offers an Edit
 		// button the store would refuse.
-		if err := rows.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason); err != nil {
+		if err := rows.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -2103,6 +2166,96 @@ func (s *Store) Audit(ctx context.Context, entityType string, entityID int64, li
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// AuditQuery is every /audit filter, all applied in SQL over the whole log.
+// From is inclusive and To exclusive; the zero time leaves that side open.
+// Limit 0 returns every matching row.
+type AuditQuery struct {
+	EntityType string
+	EntityID   int64
+	Action     string
+	// Actor matches a case-insensitive substring of actor_name.
+	Actor  string
+	From   time.Time
+	To     time.Time
+	Limit  int
+	Offset int
+}
+
+// AuditPage is a window onto the matching audit rows with the total the same
+// filter matches, so the screen can say what it is not showing.
+type AuditPage struct {
+	Entries   []AuditEntry
+	Total     int
+	Offset    int
+	Limit     int
+	Truncated bool
+}
+
+// AuditPage replaces reading the newest N rows and filtering them in Go: that
+// window hid every older row from the action and actor filters (audit-1).
+func (s *Store) AuditPage(ctx context.Context, q AuditQuery) (AuditPage, error) {
+	where := []string{"1=1"}
+	var args []any
+	if q.EntityType != "" {
+		where = append(where, "entity_type=?")
+		args = append(args, q.EntityType)
+		if q.EntityID > 0 {
+			where = append(where, "entity_id=?")
+			args = append(args, q.EntityID)
+		}
+	}
+	if q.Action != "" {
+		where = append(where, "action=?")
+		args = append(args, q.Action)
+	}
+	if actor := strings.ToLower(strings.TrimSpace(q.Actor)); actor != "" {
+		where = append(where, "instr(lower(COALESCE(actor_name,'')),?)>0")
+		args = append(args, actor)
+	}
+	// created_at is CURRENT_TIMESTAMP, i.e. UTC text; datetime() normalises it
+	// so the comparison does not depend on how a row's timestamp was spelled.
+	if !q.From.IsZero() {
+		where = append(where, "datetime(created_at)>=datetime(?)")
+		args = append(args, q.From.UTC().Format("2006-01-02 15:04:05"))
+	}
+	if !q.To.IsZero() {
+		where = append(where, "datetime(created_at)<datetime(?)")
+		args = append(args, q.To.UTC().Format("2006-01-02 15:04:05"))
+	}
+	cond := strings.Join(where, " AND ")
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE `+cond, args...).Scan(&total); err != nil {
+		return AuditPage{}, err
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	query := `SELECT id,actor_id,COALESCE(actor_name,''),action,COALESCE(entity_type,''),entity_id,COALESCE(summary,''),COALESCE(before_json,''),COALESCE(after_json,''),COALESCE(ip,''),created_at FROM audit_log WHERE ` +
+		cond + ` ORDER BY created_at DESC, id DESC`
+	rowArgs := append([]any{}, args...)
+	if q.Limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		rowArgs = append(rowArgs, q.Limit, q.Offset)
+	} else {
+		q.Offset = 0
+	}
+	rows, err := s.db.QueryContext(ctx, query, rowArgs...)
+	if err != nil {
+		return AuditPage{}, err
+	}
+	defer rows.Close()
+	page := AuditPage{Total: total, Offset: q.Offset, Limit: q.Limit}
+	for rows.Next() {
+		var a AuditEntry
+		if err := rows.Scan(&a.ID, &a.ActorID, &a.ActorName, &a.Action, &a.EntityType, &a.EntityID, &a.Summary, &a.BeforeJSON, &a.AfterJSON, &a.IP, &a.CreatedAt); err != nil {
+			return AuditPage{}, err
+		}
+		page.Entries = append(page.Entries, a)
+	}
+	page.Truncated = page.Offset+len(page.Entries) < total
+	return page, rows.Err()
 }
 
 // validatePayment runs the check against the pool, for the callers that have not

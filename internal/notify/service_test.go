@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -247,6 +248,107 @@ func TestNotifyResolvesAccountsGroup(t *testing.T) {
 	}
 }
 
+// N3: the approval email goes To the requester and Accounts and is copied (Cc)
+// to the management list. The list is set only in MailSettings — not in the
+// event's own To or Cc — so the Cc below can only have come from the N3 rule
+// (test-1: no earlier test pinned it).
+func TestNotifyCopiesManagementOnTheApprovalEmail(t *testing.T) { // N3
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	must(t, st.SetMailSettings(ctx, actor, store.MailSettings{
+		SMTPHost: "smtp.test", SMTPFromAddr: "no@reply.test",
+		ManagementRecipients: "Boss@T.test; cfo@t.test",
+	}))
+	requester := mustUser(t, st, "mc-req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "mc-mgr@test", "Manav", "admin")
+	reqID := insertRequest(t, st, "PR-2026-000970", "approved", requester, manager, time.Now().UTC(), nil)
+	enableEvent(t, st, actor, store.NotificationSetting{
+		Event: EventRequestApproved, EmailEnabled: true, IncludeRequester: true, IncludeAccounts: true,
+		SubjectTemplate: "{{number}} approved", BodyTemplate: "b",
+	})
+	mailer := &fakeMailer{}
+	svc := NewService(st, mailer)
+	req, err := st.Request(ctx, reqID)
+	must(t, err)
+	must(t, svc.Notify(ctx, EventRequestApproved, req))
+
+	msgs := mailer.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("emails = %d, want 1", len(msgs))
+	}
+	if got := strings.Join(msgs[0].Cc, ","); got != "boss@t.test,cfo@t.test" {
+		t.Fatalf("approval Cc = %q, want the management list boss@t.test,cfo@t.test", got)
+	}
+	contains(t, strings.Join(msgs[0].To, ","), "mc-req@test")
+	for _, e := range msgs[0].To {
+		if e == "boss@t.test" || e == "cfo@t.test" {
+			t.Fatalf("management is in To %v, want it only in Cc", msgs[0].To)
+		}
+	}
+}
+
+// notify-2: the in-app body is the email body minus what only makes sense on
+// paper. Its line breaks are kept (the centre renders them), and a line whose
+// template field came out empty is dropped rather than shown as a bare label —
+// a request raised with no Needed-by date used to read "Needed by:" with
+// nothing after it.
+func TestNotifyInAppBodyDropsEmptyFieldLinesAndKeepsLineBreaks(t *testing.T) { // N1
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	requester := mustUser(t, st, "ib-req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "ib-mgr@test", "Manav", "admin")
+	reqID := insertRequest(t, st, "PR-2026-000980", "pending", requester, manager, time.Now().UTC(), nil)
+	enableEvent(t, st, actor, store.NotificationSetting{
+		Event: EventRequestSubmitted, IncludeManager: true,
+		SubjectTemplate: "{{number}} needs your approval",
+		// The seeded default body (migrations_notifications.go).
+		BodyTemplate: "{{requester}} raised {{number}} for {{amount}} to {{payee}}.\n\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}",
+	})
+	mailer := &fakeMailer{}
+	svc := NewService(st, mailer)
+	req, err := st.Request(ctx, reqID)
+	must(t, err)
+	req.Project, req.Head = "Operations", "Office Rent"
+	must(t, svc.Notify(ctx, EventRequestSubmitted, req))
+
+	rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: manager})
+	must(t, err)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	want := "Rhea raised PR-2026-000980 for ₹5,000.00 to Acme.\n\nProject: Operations / Office Rent\n\nOpen it: /requests/" + itoa(reqID)
+	if rows[0].Body != want {
+		t.Fatalf("in-app body =\n%q\nwant\n%q", rows[0].Body, want)
+	}
+}
+
+func TestRenderInAppBody(t *testing.T) {
+	v := RequestView{Number: "PR-1", Payee: "Acme", Link: "/requests/1"}
+	cases := []struct{ tmpl, want string }{
+		// A field on its own line that is empty takes the line with it, and
+		// the blank lines around it collapse to one paragraph break.
+		{"{{number}} to {{payee}}.\n\n{{purpose}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}", "PR-1 to Acme.\n\nOpen it: /requests/1"},
+		// Admin text with no tokens is kept as written.
+		{"Hello\nthere", "Hello\nthere"},
+		// Every line empty leaves no body at all, not whitespace.
+		{"Needed by: {{needed_by}}", ""},
+	}
+	for _, tc := range cases {
+		got, err := renderInAppBody(tc.tmpl, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("renderInAppBody(%q) = %q, want %q", tc.tmpl, got, tc.want)
+		}
+	}
+	if _, err := renderInAppBody("{{nope}}", v); err == nil {
+		t.Fatal("unknown token accepted")
+	}
+}
+
 // An unknown event is a no-op, not an error: nothing is configured for it.
 func TestNotifyUnknownEventIsANoOp(t *testing.T) {
 	ctx := context.Background()
@@ -279,6 +381,8 @@ func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
 	holder := mustUser(t, st, "ae-holder@test", "Anil Holder", "data_entry")
 	otherAcct := mustUser(t, st, "ae-other@test", "Other Accountant", "data_entry")
 	grantAccounts(t, st, holder, otherAcct)
+	emailOf := map[int64]string{requester: "ae-req@test", manager: "ae-mgr@test",
+		holder: "ae-holder@test", otherAcct: "ae-other@test"}
 
 	cases := []struct {
 		event    string
@@ -363,12 +467,35 @@ func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
 			cfg.Event = tc.event
 			cfg.SubjectTemplate = "{{number}} — " + tc.event
 			cfg.BodyTemplate = "{{amount}} to {{payee}}. Open it: {{link}}"
+			// Email on, so the email audience is checked against the in-app one:
+			// the two must reach the same people (notify-1).
+			cfg.EmailEnabled = true
 			enableEvent(t, st, actor, cfg)
 
-			svc := NewService(st, &fakeMailer{})
+			mailer := &fakeMailer{}
+			svc := NewService(st, mailer)
 			req, err := st.Request(ctx, reqID)
 			must(t, err)
 			must(t, svc.Notify(ctx, tc.event, req))
+
+			msgs := mailer.messages()
+			if len(msgs) != 1 {
+				t.Fatalf("%s: emails = %d, want 1", tc.event, len(msgs))
+			}
+			to := map[string]bool{}
+			for _, e := range append(append([]string{}, msgs[0].To...), msgs[0].Cc...) {
+				to[e] = true
+			}
+			for _, uid := range tc.want {
+				if !to[emailOf[uid]] {
+					t.Fatalf("%s: email To %v is missing %s", tc.event, msgs[0].To, emailOf[uid])
+				}
+			}
+			for _, uid := range tc.notWant {
+				if to[emailOf[uid]] {
+					t.Fatalf("%s: email To %v includes %s, who has no in-app row for it", tc.event, msgs[0].To, emailOf[uid])
+				}
+			}
 
 			for _, uid := range tc.want {
 				rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: uid, Limit: 200})
@@ -497,5 +624,65 @@ func TestAuditEventsDoNotCopyManagementByThemselves(t *testing.T) { // F-F-06
 	}
 	if rows != 0 {
 		t.Fatalf("in-app rows for the management list = %d, want 0", rows)
+	}
+}
+
+// settlement-1: every settlement notification states the amount actually
+// paid, and the approved figure where it differs. The four seeded templates
+// used {{amount}} — the requested figure — so an approver was told "only
+// ₹12,345.67 was paid" about an ₹8,000 payment, and "paid in full: ₹50,000"
+// about ₹45,000.
+func TestSettlementNotificationsNameTheAmountActuallyPaid(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t)
+	requester := mustUser(t, st, "req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "mgr@test", "Manav", "admin")
+	accountant := mustUser(t, st, "acc@test", "Asha", "admin")
+	acc, err := st.UserByID(ctx, accountant)
+	must(t, err)
+	// Requested 12,345.67, approved 12,000, paid 8,000 — three different
+	// figures, so the wrong one cannot pass by coincidence. A recoverable
+	// request, because it is the one shape that needs no budget head.
+	reqID := insertRequest(t, st, "PR-2026-000002", "approved", requester, manager, time.Now().UTC(), nil)
+	_, err = st.DB().ExecContext(ctx, `UPDATE payment_requests SET amount=1234567, approved_amount=1200000, approved_by=?, approved_at=CURRENT_TIMESTAMP,
+		treatment='recoverable', type='employee_advance', recoverable_category='other' WHERE id=?`, manager, reqID)
+	must(t, err)
+	must(t, st.ReserveRequest(ctx, acc, reqID))
+	_, err = st.RecordPaymentForRequest(ctx, acc, reqID, store.PaymentInput{PaidOn: "2026-07-20", Amount: 800000, VendorPayee: "Acme", PaymentMode: "bank_transfer"}, "partial", "Retention held back", nil)
+	must(t, err)
+
+	svc := NewService(st, &fakeMailer{})
+	req, err := st.Request(ctx, reqID)
+	must(t, err)
+	for _, event := range []string{EventPaymentPartialReview, EventPaymentPartialConcern, EventPaymentPartialAccepted, EventPaymentSettled} {
+		must(t, svc.Notify(ctx, event, req))
+	}
+	for _, uid := range []int64{manager, requester, accountant} {
+		rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: uid})
+		must(t, err)
+		if len(rows) == 0 {
+			t.Fatalf("user %d received nothing", uid)
+		}
+		for _, row := range rows {
+			if strings.Contains(row.Body, "12,345.67") || strings.Contains(row.Title, "12,345.67") {
+				t.Fatalf("%s tells user %d the requested amount was paid: %q / %q", row.Event, uid, row.Title, row.Body)
+			}
+			if !strings.Contains(row.Body, "₹8,000.00") {
+				t.Fatalf("%s never names the ₹8,000.00 that was paid: %q", row.Event, row.Body)
+			}
+			if !strings.Contains(row.Body, "₹12,000.00") {
+				t.Fatalf("%s never names the ₹12,000.00 approved beside it: %q", row.Event, row.Body)
+			}
+		}
+	}
+	// The vocabulary itself: a template may ask for the paid figure by name,
+	// and it is listed for the administrator editing the rules.
+	out, err := renderTemplate("{{paid_amount}} on {{paid_on}}", RequestView{PaidAmount: 800000, PaidOn: "2026-07-20"})
+	must(t, err)
+	if out != "₹8,000.00 on 2026-07-20" {
+		t.Fatalf("render = %q", out)
+	}
+	if !slices.Contains(NotifyFieldNames(), "paid_amount") {
+		t.Fatalf("the admin sheet's hint does not list paid_amount: %v", NotifyFieldNames())
 	}
 }

@@ -207,6 +207,59 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	}
 }
 
+// notifications-1 — "Edit every field" on a returned request opens the full
+// edit form, whose banner says editing notifies the approver and whose button
+// reads "Save and notify <approver>". That button sent no submit_action, so it
+// saved without resubmitting: the request stayed returned and nobody was told.
+// It now resubmits, as its label promises, and the approver is told.
+func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Full edit returned")
+	requester := s.seedRequester("fulledit@example.test", "Full Editor", "FullEdit12345")
+	approver := s.seedRequester("fullapprover@example.test", "Apra Approver", "FullAppr12345")
+	s.assignRole(approver.ID, "Manager")
+	id := s.seedPendingRequest(923, requester.ID, approver.ID, headID, 180000)
+
+	s.login("fullapprover@example.test", "FullAppr12345")
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", id),
+		url.Values{"comment": {"Add GST split"}}), http.StatusSeeOther)
+
+	s.login("fulledit@example.test", "FullEdit12345")
+	page := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	// The same button also follows the approver select (rbac-10), so the
+	// markup carries both: the resubmit action and the follow-select hooks.
+	button := `<button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}" name="submit_action" value="resubmit">Save and notify Apra Approver</button>`
+	if !strings.Contains(page, button) {
+		t.Fatalf("the full edit form's button does not resubmit; want %s", button)
+	}
+	// Post exactly what that form sends: its fields plus the button's value.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"},
+		"short_title": {"Site visit"}, "project_id": {itoa64(projectOf(t, s, headID))},
+		"head_id": {itoa64(headID)}, "amount": {"1,800.00"},
+		"purpose":      {"flights and cabs, with the GST split out"},
+		"expense_date": {"2026-07-01"}, "manager_id": {itoa64(approver.ID)},
+		"submit_action": {"resubmit"},
+	}), http.StatusSeeOther)
+	var status string
+	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		t.Fatalf("status after Save and notify = %q, want pending (back with the approver)", status)
+	}
+	if !hasEvent(notificationTitles(t, s, approver.ID), notify.EventRequestEdited) {
+		t.Fatal("Save and notify did not notify the approver")
+	}
+
+	// Editing a pending request still saves in place: no submit_action there,
+	// and it notifies as TestEditingAPendingRequestReNotifiesTheApprover pins.
+	page = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	if !strings.Contains(page, `<button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}">Save and notify Apra Approver</button>`) {
+		t.Fatal("the pending edit form's button changed")
+	}
+}
+
 // A8 (coverage matrix) — editing a request that is still *pending* re-notifies
 // the approver: the request is already in their queue and the figures they are
 // about to decide on have changed. The approver here is a plain Manager, not
@@ -509,23 +562,36 @@ func TestRecoverableCategoryPickerRendersTheLiveCategories(t *testing.T) {
 	}
 
 	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	// The picker lives on the deposit-or-guarantee form since form-1: an employee
+	// advance is always in the Employee advance category, so that form states
+	// its category rather than offering the list.
+	body := responseBody(t, s.request(http.MethodGet, "/requests/new?type=recoverable", nil, ""))
 	if !strings.Contains(body, `value="retention_money"`) {
 		t.Fatalf("an admin-added category is not selectable on the real form: %s", firstLines(body))
 	}
 	if strings.Contains(body, `value="other"`) {
 		t.Fatal("a deactivated category is still offered, and will be refused after the form is filled in")
 	}
+	if strings.Contains(body, `value="employee_advance"`) {
+		t.Fatal("the deposit form offers the Employee advance category, which the store refuses for this type")
+	}
+	advance := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	if !strings.Contains(advance, `<input type="hidden" name="recoverable_category" value="employee_advance">`) {
+		t.Fatalf("the employee advance form does not fix its category: %s", firstLines(advance))
+	}
+	if strings.Contains(advance, `id="rcategory"`) {
+		t.Fatal("the employee advance form still offers a category picker, which is how an EMD was paid to the employee")
+	}
 	// The new category requires a project, so the form asks for one — the reveal
 	// is driven by the category's own flags, not by a hardcoded emd|pbg pair.
-	fields := responseBody(t, s.htmxGet("/requests/new/fields?type=employee_advance&treatment=recoverable&recoverable_category=retention_money"))
+	fields := responseBody(t, s.htmxGet("/requests/new/fields?type=recoverable&treatment=recoverable&recoverable_category=retention_money"))
 	if !strings.Contains(fields, `id="rproject"`) {
 		t.Fatalf("the project field an admin-added category requires is not rendered: %s", firstLines(fields))
 	}
 
 	// No silent substitution. An unrecognised code resolves to "nothing chosen"
 	// rather than to earnest money deposit.
-	unknown := responseBody(t, s.htmxGet("/requests/new/fields?type=employee_advance&treatment=recoverable&recoverable_category=made_up"))
+	unknown := responseBody(t, s.htmxGet("/requests/new/fields?type=recoverable&treatment=recoverable&recoverable_category=made_up"))
 	if strings.Contains(unknown, `value="emd" selected`) || strings.Contains(unknown, `value="emd"  selected`) {
 		t.Fatal("an unrecognised category is silently rewritten to emd")
 	}
@@ -577,6 +643,15 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	}
 	if strings.Contains(stale, "one-day mark") || strings.Contains(stale, "calendar day") {
 		t.Error("the stale banner still asserts a hardcoded, calendar-day threshold")
+	}
+	// copy-1: the Configuration note under these same three fields still said
+	// "calendar days" after decision 2 made the thresholds elapsed days.
+	config := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	if strings.Contains(config, "calendar day") {
+		t.Error("the Configuration reminders note still says calendar days")
+	}
+	if !strings.Contains(config, "Reminders are counted in days") {
+		t.Errorf("the Configuration reminders note is missing: %s", firstLines(config))
 	}
 
 	s.login("copy@example.test", "CopyPass12345")
@@ -1347,11 +1422,12 @@ func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
 	}
 }
 
-// F-D-14 — the store has five request types and the chooser four, and
-// `/requests/new?type=recoverable` used to answer the chooser with no
-// explanation at all. The reconciliation is the refusal, not a fifth card:
-// recoverable is a TREATMENT on this form, and the type is kept in the store so
-// a hand-rolled POST is refused for its real reason (F-E-08).
+// F-D-14 — `/requests/new?type=recoverable` used to answer the chooser with no
+// explanation at all, and then (F-D-14's first reconciliation) a 400 on the
+// premise that "recoverable" was a treatment every card carried. It was not:
+// only the employee advance carried the radio, and that type pays the
+// requester, so the store's fifth type has its own card now (form-1). A ?type=
+// naming nothing is still a 400 on the chooser with the reason above it.
 func TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
@@ -1363,29 +1439,27 @@ func TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced(t *testing.T) {
 		t.Fatalf("the plain chooser reports an error: %s", firstLines(body))
 	}
 
-	for _, kind := range []string{"recoverable", "mystery"} {
-		resp := s.request(http.MethodGet, "/requests/new?type="+kind, nil, "")
-		requireStatus(t, resp, http.StatusBadRequest)
-		body := responseBody(t, resp)
-		if !strings.Contains(body, "not a request type this system raises") {
-			t.Fatalf("?type=%s was bounced without an explanation: %s", kind, firstLines(body))
-		}
-		if !strings.Contains(body, "marked recoverable on the next screen") {
-			t.Fatalf("?type=%s does not say where the treatment lives: %s", kind, firstLines(body))
-		}
-		// It is still the chooser: the reader lands on the four cards they can
-		// actually use, with the reason above them.
-		if !strings.Contains(body, `class="type-grid"`) || strings.Count(body, `class="type-card"`) != 4 {
-			t.Fatalf("?type=%s did not render the four-card chooser: %s", kind, firstLines(body))
-		}
+	resp := s.request(http.MethodGet, "/requests/new?type=mystery", nil, "")
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "not a request type this system raises") {
+		t.Fatalf("?type=mystery was bounced without an explanation: %s", firstLines(body))
+	}
+	// It is still the chooser: the reader lands on the cards they can actually
+	// use, with the reason above them.
+	if !strings.Contains(body, `class="type-grid"`) || strings.Count(body, `class="type-card"`) != 5 {
+		t.Fatalf("?type=mystery did not render the five-card chooser: %s", firstLines(body))
 	}
 
-	// The fifth type is deliberately still the store's, so a submission that
-	// reaches it is refused for the rule it broke rather than for its type.
-	// TestARefusedUnlabelledTypeKeepsItsRealReason pins that half; this only
-	// proves the chooser did not grow a card for it.
-	if _, offered := requestTypeLabels["recoverable"]; offered {
-		t.Fatal("the chooser grew a recoverable card; the refusal above is now unreachable")
+	// Every store type has a card, so the two vocabularies cannot drift apart
+	// again without this failing.
+	if _, offered := requestTypeLabels["recoverable"]; !offered {
+		t.Fatal("the store's recoverable type has no chooser card; a deposit can only be raised as an employee advance again")
+	}
+	form := s.request(http.MethodGet, "/requests/new?type=recoverable", nil, "")
+	requireStatus(t, form, http.StatusOK)
+	if body := responseBody(t, form); !strings.Contains(body, `name="vendor_payee"`) || !strings.Contains(body, `<input type="hidden" name="treatment" value="recoverable">`) {
+		t.Fatalf("the deposit form does not ask who is paid on a fixed recoverable treatment: %s", firstLines(body))
 	}
 }
 

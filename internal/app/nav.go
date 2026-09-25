@@ -195,8 +195,15 @@ func (a *App) buildPageShell(r *http.Request, user store.User, perms store.Permi
 // never computed. A failure costs the badge and never the page.
 func (a *App) workQueueBadges(r *http.Request, user store.User, perms store.PermissionSet, badges map[string]int) {
 	if can(perms, "approval", "approve") {
+		// The badge counts what the queue lists as waiting on this approver.
+		// A partial review is one of those (settlement-3), for a holder of
+		// the verb that decides it.
+		statuses := []string{"pending"}
+		if can(perms, "approval", "accept_partial") {
+			statuses = append(statuses, "partial_review")
+		}
 		n, err := a.st.CountRequests(r.Context(), store.RequestListOptions{
-			Scope: "assigned", ViewerID: user.ID, Statuses: []string{"pending"}})
+			Scope: "assigned", ViewerID: user.ID, Statuses: statuses})
 		if err != nil {
 			a.log.WarnContext(r.Context(), "approvals badge unavailable",
 				"request_id", requestID(r), "error", err)

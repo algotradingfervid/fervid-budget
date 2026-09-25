@@ -152,24 +152,52 @@ func TestValidateRequestInputPerType(t *testing.T) {
 				Amount: 1000, Purpose: "buy", ManagerID: 7, AdvanceReason: "site cash",
 				RecoverableCategory: "employee_advance", ExpectedReturnDate: "2026-12-01", RepaymentNotes: "monthly"}
 		}), true},
+		// An employee advance is always in the Employee advance category. A deposit
+		// or guarantee in any other category is its own request type with its own
+		// payee, so the category cannot smuggle an EMD into a request that pays the
+		// requester (form-1 / recoverables-1).
+		{"employee_advance recoverable must be in the Employee advance category", base(func(i *RequestInput) {
+			*i = RequestInput{Treatment: "recoverable", Type: "employee_advance", ShortTitle: "ICD to Meridian",
+				Amount: 1000, Purpose: "deposit", ManagerID: 7, AdvanceReason: "deposit",
+				RecoverableCategory: "icd", Counterparty: "Meridian Holdings Pvt Ltd",
+				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on maturity"}
+		}), false},
 		{"recoverable EMD ok with a project", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
 				Amount: 1000, Purpose: "tender", ManagerID: 7, RecoverableCategory: "emd", ProjectID: 4,
+				VendorPayee:        "Ridge Metro Rail Corporation",
 				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on tender close"}
 		}), true},
 		{"recoverable EMD without a project is rejected", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
 				Amount: 1000, Purpose: "tender", ManagerID: 7, RecoverableCategory: "emd",
+				VendorPayee:        "Ridge Metro Rail Corporation",
 				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on tender close"}
+		}), false},
+		// The payee of a deposit or guarantee is free, but it is not optional: it is
+		// who Accounts pays, and a request that names nobody cannot be paid.
+		{"recoverable type needs a payee", base(func(i *RequestInput) {
+			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
+				Amount: 1000, Purpose: "tender", ManagerID: 7, RecoverableCategory: "emd", ProjectID: 4,
+				VendorPayee:        "  ",
+				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on tender close"}
+		}), false},
+		{"recoverable type refuses the Employee advance category", base(func(i *RequestInput) {
+			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Float",
+				Amount: 1000, Purpose: "float", ManagerID: 7, RecoverableCategory: "employee_advance",
+				VendorPayee:        "Rhea Requester",
+				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on return"}
 		}), false},
 		{"recoverable ICD without a counterparty is rejected", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Meridian",
 				Amount: 1000, Purpose: "deposit", ManagerID: 7, RecoverableCategory: "icd",
+				VendorPayee:        "Meridian Holdings Pvt Ltd",
 				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on maturity"}
 		}), false},
 		{"recoverable ICD with a counterparty ok", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Meridian",
 				Amount: 1000, Purpose: "deposit", ManagerID: 7, RecoverableCategory: "icd",
+				VendorPayee:  "Meridian Holdings Pvt Ltd",
 				Counterparty: "Meridian Holdings Pvt Ltd", ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on maturity"}
 		}), true},
 		{"unknown recoverable category", base(func(i *RequestInput) {
@@ -308,6 +336,68 @@ func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
 	audit, err := s.Audit(ctx, "payment_request", id, 5)
 	if err != nil || len(audit) == 0 || audit[0].Action != "submit" {
 		t.Fatalf("audit = %#v, %v; want a submit entry on payment_request", audit, err)
+	}
+}
+
+// T9/T11 (form-1 / recoverables-1): the payee rule is the TYPE's. An employee
+// advance pays the person raising it whatever the form said, and a deposit or
+// guarantee — the `recoverable` type — pays whoever the requester named, because
+// that money goes to a counterparty or a tender authority, never to the employee.
+func TestEmployeeAdvancePayeeIsForcedAndADepositPayeeIsFree(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, _ := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+
+	advance, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "employee_advance", ShortTitle: "Site float",
+		RecoverableCategory: "employee_advance", Amount: 2500000, Purpose: "site float",
+		AdvanceReason: "float", ExpectedReturnDate: "2027-03-31", RepaymentNotes: "against bills",
+		ManagerID: mgr.ID, VendorID: vendorID, VendorPayee: "Somebody Else",
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest employee_advance: %v", err)
+	}
+	got, err := s.Request(ctx, advance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VendorPayee != req.Name || got.Vendor != req.Name || got.VendorID != nil {
+		t.Fatalf("employee advance payee = %q/%q vendor=%v, want the requester %q and no vendor row", got.VendorPayee, got.Vendor, got.VendorID, req.Name)
+	}
+
+	deposit, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Meridian",
+		RecoverableCategory: "icd", Counterparty: "Meridian Holdings Pvt Ltd", Amount: 100000000,
+		Purpose: "inter-corporate deposit", VendorPayee: "Meridian Holdings Pvt Ltd",
+		ExpectedReturnDate: "2027-03-31", RepaymentNotes: "returned at maturity with interest",
+		ManagerID: mgr.ID, VendorID: vendorID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest recoverable: %v", err)
+	}
+	got, err = s.Request(ctx, deposit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VendorPayee != "Meridian Holdings Pvt Ltd" || got.Vendor != "Meridian Holdings Pvt Ltd" {
+		t.Fatalf("deposit payee = %q/%q, want the counterparty the requester named", got.VendorPayee, got.Vendor)
+	}
+	if got.VendorID != nil {
+		t.Fatalf("a deposit names its payee in text; a vendor row %d was stored from a field the form never offers", *got.VendorID)
+	}
+	if got.Type != "recoverable" || got.RecoverableCategory != "icd" {
+		t.Fatalf("stored as %s/%s, want recoverable/icd", got.Type, got.RecoverableCategory)
+	}
+
+	// The category cannot turn a deposit into an employee advance on the way in.
+	if _, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "employee_advance", ShortTitle: "EMD as an advance",
+		RecoverableCategory: "emd", ProjectID: 1, Amount: 25000000, Purpose: "tender",
+		AdvanceReason: "tender", ExpectedReturnDate: "2027-03-31", RepaymentNotes: "on award",
+		ManagerID: mgr.ID,
+	}); !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "Employee advance category") {
+		t.Fatalf("an EMD raised as an employee advance was not refused for its category: %v", err)
 	}
 }
 
@@ -814,10 +904,10 @@ func TestReassignAndReraise(t *testing.T) {
 	}
 	id := mk(mgr.ID, 1000)
 
-	if err := s.ReassignRequest(ctx, admin, id, newMgrID, ""); !errors.Is(err, ErrValidation) {
+	if err := s.ReassignRequest(ctx, admin, id, newMgrID, "", true); !errors.Is(err, ErrValidation) {
 		t.Fatalf("reassign without reason = %v, want ErrValidation", err)
 	}
-	if err := s.ReassignRequest(ctx, admin, id, newMgrID, "manager on leave"); err != nil {
+	if err := s.ReassignRequest(ctx, admin, id, newMgrID, "manager on leave", true); err != nil {
 		t.Fatalf("ReassignRequest: %v", err)
 	}
 	got, _ := s.Request(ctx, id)
@@ -1772,7 +1862,7 @@ func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 		t.Fatalf("rerouting to a non-approver = %v, want ErrValidation", err)
 	}
 	// So is reassignment, which is this finding's own recovery path.
-	if err := s.ReassignRequest(ctx, mgr, id, strangerID, "Take this over."); !errors.Is(err, ErrValidation) {
+	if err := s.ReassignRequest(ctx, mgr, id, strangerID, "Take this over.", false); !errors.Is(err, ErrValidation) {
 		t.Fatalf("reassigning to a non-approver = %v, want ErrValidation", err)
 	}
 	still, _ := s.Request(ctx, id)
@@ -2029,5 +2119,109 @@ func TestEditRequestCommitsTheWholePressOrNoneOfIt(t *testing.T) {
 	}
 	if len(atts) != 1 {
 		t.Fatalf("attachments = %d, want the one this press carried", len(atts))
+	}
+}
+
+// A former approver who read the request before an administrator moved it must
+// not be able to move it again on that stale read (rbac-8 review). The route's
+// "is this the current approver" answer is taken outside the write
+// transaction, so the store has to ask the question again, on the row it is
+// about to change, and only an administrator's override skips it.
+func TestReassignmentIsRefusedToAnApproverTheRequestHasAlreadyLeft(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	adminID, err := s.CreateUser(ctx, "root@example.com", "Root Admin", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := s.UserByID(ctx, adminID)
+	secondID, err := s.CreateUser(ctx, "second@example.com", "Second Manager", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := s.UserByID(ctx, secondID)
+	thirdID, err := s.CreateUser(ctx, "third@example.com", "Third Manager", "hash", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+
+	// The administrator hands it from mgr to second.
+	if err := s.ReassignRequest(ctx, admin, id, secondID, "Manav is on leave", true); err != nil {
+		t.Fatalf("administrator reassign: %v", err)
+	}
+	// mgr, acting on the page they loaded before that, tries to hand it on too.
+	if err := s.ReassignRequest(ctx, mgr, id, thirdID, "Handing it to Third", false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("former approver reassign = %v, want ErrForbidden", err)
+	}
+	got, _ := s.Request(ctx, id)
+	if got.ManagerID != secondID {
+		t.Fatalf("a refused reassignment moved the approver to %d, want %d", got.ManagerID, secondID)
+	}
+	// The approver it actually sits with may hand it on without any override.
+	if err := s.ReassignRequest(ctx, second, id, thirdID, "Away next week", false); err != nil {
+		t.Fatalf("current approver reassign: %v", err)
+	}
+	got, _ = s.Request(ctx, id)
+	if got.ManagerID != thirdID {
+		t.Fatalf("after the current approver's reassignment manager=%d, want %d", got.ManagerID, thirdID)
+	}
+	// Nothing about the refusal reached the audit trail; the two moves did.
+	audit, _ := s.Audit(ctx, "payment_request", id, 10)
+	var moves int
+	for _, a := range audit {
+		if a.Action == "approval_reassign" {
+			moves++
+		}
+	}
+	if moves != 2 {
+		t.Fatalf("approval_reassign audit rows = %d, want 2", moves)
+	}
+}
+
+// The hold-only document door is decided on the row inside the write
+// transaction, not on whatever the handler read first (hold-1 review).
+func TestHeldRequestAttachmentIsOpenExactlyAsWideAsTheHold(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, headID := seedRequestActors(t, s, ctx)
+	otherID, err := s.CreateUser(ctx, "other@example.com", "Other Requester", "hash", "data_entry", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.UserByID(ctx, otherID)
+	id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+	doc := AttachmentInput{OriginalName: "gst.pdf", StoredPath: "/tmp/gst.pdf", MimeType: "application/pdf", SizeBytes: 7}
+
+	// Pending, approved and released: not on hold, so refused, and nothing written.
+	if _, err := s.AddHeldRequestAttachment(ctx, req, id, doc); !errors.Is(err, ErrValidation) {
+		t.Fatalf("pending: err = %v, want ErrValidation", err)
+	}
+	if err := s.ApproveRequest(ctx, mgr, id, 1000, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddHeldRequestAttachment(ctx, req, id, doc); !errors.Is(err, ErrValidation) {
+		t.Fatalf("approved, not held: err = %v, want ErrValidation", err)
+	}
+	if err := s.HoldRequest(ctx, mgr, id, "Need GST receipt"); err != nil {
+		t.Fatal(err)
+	}
+	// On hold: only the requester's own.
+	if _, err := s.AddHeldRequestAttachment(ctx, other, id, doc); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stranger on a held request: err = %v, want ErrForbidden", err)
+	}
+	if _, err := s.AddHeldRequestAttachment(ctx, req, id, doc); err != nil {
+		t.Fatalf("requester on a held request: %v", err)
+	}
+	if err := s.UnholdRequest(ctx, mgr, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddHeldRequestAttachment(ctx, req, id, doc); !errors.Is(err, ErrValidation) {
+		t.Fatalf("after the hold is lifted: err = %v, want ErrValidation", err)
+	}
+	atts, err := s.RequestAttachments(ctx, id)
+	if err != nil || len(atts) != 1 || atts[0].UploadedBy != req.ID {
+		t.Fatalf("attachments = %+v, %v; want the one held-time upload", atts, err)
 	}
 }

@@ -51,7 +51,16 @@ var requestTypeOptions = []requestTypeOption{
 		Tag:   "Paid to you · needs the expense date", TagClass: "neutral no-dot"},
 	{Key: "employee_advance", Label: "Employee advance", Icon: "₹",
 		Blurb: "Money to you up front for organisation spending you are about to make.",
-		Tag:   "Usually recoverable", TagClass: "recoverable"},
+		Tag:   "Paid to you · usually recoverable", TagClass: "recoverable"},
+	// The store's fifth type, and the only one whose payee is both free and not
+	// a vendor: an EMD, PBG, ICD or security deposit is paid to a counterparty
+	// or a tender authority and expected back. Until this card existed the only
+	// way to raise one was the employee advance, which pays the requester — so a
+	// ₹10 lakh inter-corporate deposit was recorded as owed to the employee
+	// (form-1 / recoverables-1; phase-2 spec §3, design Figure 2).
+	{Key: "recoverable", Label: "Deposit or guarantee", Icon: "⇄",
+		Blurb: "EMD, PBG, ICD or a security deposit — money paid to another company or authority that comes back.",
+		Tag:   "Paid to the counterparty · always recoverable", TagClass: "recoverable"},
 }
 
 // requestTypeLabels is derived from the ordered vocabulary above, so a type is
@@ -66,38 +75,17 @@ var requestTypeLabels = func() map[string]string {
 }()
 
 // unofferedRequestType is what `/requests/new?type=` says when the type names no
-// card. It is F-D-14's reconciliation, and the decision behind it is this:
+// card. A URL naming something the system will not raise is a client error about
+// that URL (F-D-14), so it answers 400 on the chooser rather than pretending the
+// URL said nothing.
 //
-// The store has five request types and this chooser offers four. The fifth,
-// `recoverable`, is kept deliberately — `internal/store/requests.go`'s comment
-// above `requestTypes` explains that `POST /requests` reaches the store with
-// whatever type the body carried, so the type and its validation branch are what
-// give a hand-rolled `recoverable` submission its real refusal instead of an
-// unvalidated write, and F-E-08's fix depends on that branch existing. The
-// reconciliation was therefore always on this side of the line: a fifth card, or
-// an explicit refusal here.
-//
-// It is the refusal, because a fifth card would be a second way to say something
-// the form already says better. "Recoverable" is a TREATMENT on this product's
-// form — the radio every one of the four types carries — and the recoverable
-// category, the return date and the repayment terms all hang off that radio, not
-// off the type. A "Recoverable" card would ask a requester to choose between
-// "Employee advance, usually recoverable" and "Recoverable" for the same money,
-// and the store's own branch for the type requires `treatment=recoverable`
-// anyway, so the card would render a form whose treatment radio had one legal
-// position. It would also have to invent a payee rule the type does not have:
-// `forcesRequesterPayee` covers reimbursement and employee advance, and a
-// `recoverable`-typed request names nobody unless it carries a vendor.
-//
-// So four cards stay four cards, and the silence goes. The chooser is still the
-// screen the reader lands on — it is the nearest useful thing, and its own info
-// banner is the guidance they need — but it now arrives with the reason and a
-// 400, rather than pretending the URL said nothing.
-//
-// The message does not echo the requested type and does not name the store's
-// vocabulary: re-typing that list here is how the two drift, which is the defect
-// this comment sits on top of.
-const unofferedRequestType = "That is not a request type this system raises. Pick one below — money you expect back is one of these four, marked recoverable on the next screen."
+// F-D-14's original reconciliation kept the chooser at four cards on the premise
+// that "recoverable" was only a treatment every type carried. That premise was
+// false — only the employee advance carries the radio, and that type pays the
+// requester — so the store's fifth type has its own card now (form-1). The
+// message does not echo the requested type and does not name the vocabulary:
+// re-typing that list here is how the two drift.
+const unofferedRequestType = "That is not a request type this system raises. Pick one below — a deposit or guarantee has its own card, and an advance to yourself is an employee advance."
 
 // requestNew is both steps of the new-request flow on one route. With no ?type=
 // it is the chooser; with a known type it is the form for that type and nothing
@@ -123,10 +111,12 @@ func (a *App) requestNew(w http.ResponseWriter, r *http.Request) {
 	data.FormType = kind
 	data.Request2.Type = kind
 	data.Request2.Treatment = "budget"
+	data.Categories = categoriesForType(kind, data.Categories)
 	// An employee advance is money the organisation expects to see accounted
 	// for, so it opens on the recoverable treatment already categorised. The
-	// requester can still switch it to a budget expense.
-	if kind == "employee_advance" {
+	// requester can still switch it to a budget expense. A deposit or guarantee
+	// is recoverable by definition and opens with the category still to choose.
+	if kind == "employee_advance" || kind == "recoverable" {
 		data.Request2.Treatment = "recoverable"
 		data.Request2.RecoverableCategory = normalizeRecoverableCategory("", kind, data.Categories)
 	}
@@ -153,6 +143,7 @@ func (a *App) requestFormFields(w http.ResponseWriter, r *http.Request) {
 	data.FormType = q.Get("type")
 	data.Request2.Type = data.FormType
 	data.Request2.Treatment = "budget"
+	data.Categories = categoriesForType(data.FormType, data.Categories)
 	if q.Get("treatment") == "recoverable" {
 		data.Request2.Treatment = "recoverable"
 		data.Request2.RecoverableCategory = normalizeRecoverableCategory(q.Get("recoverable_category"), data.FormType, data.Categories)
@@ -194,6 +185,29 @@ func normalizeRecoverableCategory(code, formType string, cats []store.Recoverabl
 		}
 	}
 	return ""
+}
+
+// categoriesForType is the category vocabulary a request type may choose from.
+//
+// The category and the type agree on who is paid, so they cannot be chosen
+// independently: an employee advance pays the requester and is always in the
+// Employee advance category, and a deposit or guarantee pays a counterparty and
+// is never in it. validateRequestInput refuses the other combinations; this is
+// the same rule on the form, so a requester is not offered a choice that is
+// refused after the whole form has been filled in (form-1 / recoverables-1).
+// Every other type keeps the full active list — it is only rendered on the
+// recoverable treatment, which those types do not carry.
+func categoriesForType(kind string, cats []store.RecoverableCategory) []store.RecoverableCategory {
+	if kind != "employee_advance" && kind != "recoverable" {
+		return cats
+	}
+	out := make([]store.RecoverableCategory, 0, len(cats))
+	for _, c := range cats {
+		if (c.Code == "employee_advance") == (kind == "employee_advance") {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // resolveRecoverableCategory finds the row behind a code so the form can reveal
@@ -249,16 +263,13 @@ func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
 func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, status int, in store.RequestInput, message string) {
 	label, known := requestTypeLabels[in.Type]
 	if !known {
-		// Two different situations, and they used to answer the same way.
-		//
 		// A type the *store* does not recognise is a client error about the type,
 		// and "that is not a kind of request this system raises" is the right
-		// sentence for it. But the store's fifth type, `recoverable`, has no
-		// chooser card and therefore no label, while CreateRequest accepts it
-		// happily — so a refused one lost both the real reason and the whole form,
-		// and was told the system does not raise a kind of request it had raised
-		// seconds earlier (F-E-08/F-B-02). That one keeps the rule that refused it
-		// and comes back on the chooser, which is the nearest screen there is.
+		// sentence for it. A type the store knows but this chooser does not carry
+		// used to fall in here too and lose both its real reason and the whole
+		// form (F-E-08/F-B-02); every store type has a card now, so that branch
+		// only guards against the two vocabularies drifting apart again, and a
+		// refusal there keeps the rule that refused it and lands on the chooser.
 		//
 		// The two are told apart by the store's own message rather than by a
 		// second copy of the type vocabulary here: duplicating that list is how it
@@ -281,6 +292,7 @@ func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, 
 	data.Error = message
 	data.FormType = in.Type
 	data.Request2 = requestFromInput(in)
+	data.Categories = categoriesForType(in.Type, data.Categories)
 	data.RecCategory = resolveRecoverableCategory(in.RecoverableCategory, data.Categories)
 	if data.Vendors, err = a.vendorChoices(r, in.Type); err != nil {
 		a.respondStoreError(w, r, err)
@@ -554,8 +566,27 @@ func waitingOn(req store.Request, viewerID int64) Waiting {
 		if req.ProcessingBy != nil && *req.ProcessingBy == viewerID {
 			return you
 		}
+		// The assigned accountant by name (uiux design §4, "Waiting on Priya
+		// Nair (Accounts)"), not the department: the reader wants to know who to
+		// ask. The generic line stays for a row read without the join.
+		if req.ProcessingByName != "" {
+			return Waiting{Text: "Waiting on " + req.ProcessingByName + " (Accounts)"}
+		}
 		return Waiting{Text: "Waiting on Accounts"}
 	case "partial_review":
+		// An open concern is a question the manager put to Accounts, so both
+		// owe something: Accounts an answer, the manager the decision that
+		// follows it (owner decision, settlement-8). The holder is who answers.
+		if req.ConcernOpen {
+			switch {
+			case req.ProcessingBy != nil && *req.ProcessingBy == viewerID:
+				return you
+			case req.ManagerID == viewerID:
+				return Waiting{Text: "Waiting on you and Accounts", Class: "you"}
+			default:
+				return Waiting{Text: "Waiting on " + req.ManagerName + " and Accounts"}
+			}
+		}
 		if req.ManagerID == viewerID {
 			return you
 		}
@@ -694,8 +725,9 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 	// requester — which is the same list the request form offers and the same rule
 	// store.ReassignRequest enforces, so the select can never name a target the
 	// POST would refuse. It is loaded only for a caller who may actually use the
-	// control (F-A-06/F-C-02).
-	if a.auth.Can(auth.CurrentUser(r), "approval", "reassign") {
+	// control (F-A-06/F-C-02): the same answer the route gives, so nobody is
+	// offered a sheet whose submit answers 403 (rbac-8).
+	if data.CanReassignApprover = a.mayReassignApprover(auth.CurrentUser(r), req); data.CanReassignApprover {
 		approvers, aerr := a.st.ListApprovers(r.Context(), req.RequesterID)
 		if aerr != nil {
 			return PageData{}, aerr
@@ -713,6 +745,22 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 		return PageData{}, perr
 	}
 	return data, nil
+}
+
+// mayReassignApprover is the one answer to who may hand this request's approval
+// on, asked by the detail screen and by the route. The request's own approver
+// may, because it is theirs to decide (A5). So may a holder of user:edit — the
+// grant that deactivates a person is the grant that rescues what they leave
+// behind (F-G-025) — because an administrator is the only door out of a request
+// whose approver cannot act. Nobody else: the seeded Manager role holds
+// approval:reassign and sees every request, and with no more than that any
+// manager could make another manager's request theirs and approve it (rbac-8).
+// Only in a status the store will move, so the control is never a dead end.
+func (a *App) mayReassignApprover(u store.User, req store.Request) bool {
+	if !a.auth.Can(u, "approval", "reassign") || !store.Reassignable(req.Status) {
+		return false
+	}
+	return req.ManagerID == u.ID || a.auth.Can(u, "user", "edit")
 }
 
 // requestEditForm is the correction screen. Only the person who raised a
@@ -778,7 +826,12 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 	}
 	data.Request2 = req
 	data.FormType = req.Type
+	data.Categories = categoriesForType(req.Type, data.Categories)
 	data.RecCategory = resolveRecoverableCategory(req.RecoverableCategory, data.Categories)
+	noteLegacyDeposit(&data, req)
+	if err := a.offerRetiredRefs(r, &data, req); err != nil {
+		return PageData{}, err
+	}
 	if data.Thread, err = a.st.RequestThread(r.Context(), req.ID); err != nil {
 		return PageData{}, err
 	}
@@ -789,6 +842,141 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 		return PageData{}, err
 	}
 	return data, nil
+}
+
+// legacyDepositCategory is the deposit category an employee advance was
+// recorded under before deposits and guarantees were their own request type
+// (form-1), or "" for any other row. The test is the stored code itself, not
+// whether it resolves in the active list: retiring the Employee advance
+// category does not turn every employee advance into a legacy deposit.
+func legacyDepositCategory(req store.Request) string {
+	if req.Type == "employee_advance" && req.Treatment == "recoverable" &&
+		req.RecoverableCategory != "" && req.RecoverableCategory != "employee_advance" {
+		return req.RecoverableCategory
+	}
+	return ""
+}
+
+// noteLegacyDeposit is the edit and returned screens' handling of a row from
+// before deposits were their own type: an employee advance filed under EMD, ICD
+// or another deposit category. It still reads as it was recorded, but both
+// screens fix the category, so it is offered back as an Employee advance, and
+// the banner says what saving will do *before* the press (form-1, kept
+// readable). The returned screen's one-press resubmit used to do this without
+// a word, because the banner was rendered on the full edit form only.
+//
+// The way out for money that goes to a counterparty depends on the status: a
+// pending request can be withdrawn now, while a returned one can only be
+// resubmitted first (returned → pending is its one legal transition), so the
+// sentence says so rather than pointing at a control the screen does not have.
+func noteLegacyDeposit(data *PageData, req store.Request) {
+	code := legacyDepositCategory(req)
+	if code == "" || data.LegacyCategory != "" {
+		return
+	}
+	data.LegacyCategory = code
+	data.Request2.RecoverableCategory = normalizeRecoverableCategory("", req.Type, data.Categories)
+	data.RecCategory = resolveRecoverableCategory(data.Request2.RecoverableCategory, data.Categories)
+	body := "This employee advance was recorded under the " + recoverableLabel(code) +
+		" category before deposits and guarantees became their own request type. Saving files it as an Employee advance, which pays the person raising it — " + req.RequesterName + ", not "
+	if strings.TrimSpace(req.Counterparty) != "" {
+		body += req.Counterparty + ". "
+	} else {
+		body += "a counterparty. "
+	}
+	if req.Status == "returned" {
+		body += "If the money goes to a counterparty, resubmit it, withdraw it, and raise a deposit or guarantee instead."
+	} else {
+		body += "If the money goes to a counterparty, withdraw it and raise a deposit or guarantee instead."
+	}
+	data.Warnings = append(data.Warnings, Warning{
+		Title: "Recorded before deposits and guarantees were their own request type",
+		Body:  body,
+	})
+}
+
+// offerRetiredRefs puts a project or head that was retired after the request was
+// raised back into the edit form's selects, marked, and says why it has to be
+// chosen again (T12, form-3).
+//
+// The selects are built from the active set, so a retired project or head had no
+// option to select: the control fell back to "Choose a project", the browser
+// posted nothing, and a requester who changed only the purpose was refused with
+// "project and head are required for this type" — a sentence about a request
+// that had both. The historical value is offered back so the form shows what the
+// request charges today, and the banner names the retirement, because the store
+// still refuses a retired head (validateRequestRefs) and the reader has to know
+// that re-choosing is the way through. The head is flagged inactive here even
+// when only its project was retired: ListHeads(ctx, true) treats the two alike,
+// and "retired" is what the option has to say either way.
+func (a *App) offerRetiredRefs(r *http.Request, data *PageData, req store.Request) error {
+	var retired []string
+	if pid := deref(req.ProjectID); pid > 0 && !hasProject(data.Projects, pid) {
+		all, err := a.st.ListProjects(r.Context(), false)
+		if err != nil {
+			return err
+		}
+		for _, p := range all {
+			if p.ID == pid {
+				p.Active = false
+				data.Projects = append(data.Projects, p)
+				retired = append(retired, "project "+p.Name)
+			}
+		}
+	}
+	if hid := deref(req.HeadID); hid > 0 && !hasHead(data.Heads, hid) {
+		all, err := a.st.ListHeads(r.Context(), false)
+		if err != nil {
+			return err
+		}
+		for _, h := range all {
+			if h.ID == hid {
+				h.Active = false
+				data.Heads = append(data.Heads, h)
+				retired = append(retired, "head "+h.Name)
+			}
+		}
+	}
+	var warning string
+	switch len(retired) {
+	case 0:
+	case 1:
+		warning = "The " + retired[0] + " this request charges was retired after it was raised. Choose a project and head that are still open before saving."
+	default:
+		warning = "The " + strings.Join(retired, " and ") + " this request charges were retired after it was raised. Choose a project and head that are still open before saving."
+	}
+	if warning != "" {
+		data.Warnings = append(data.Warnings, Warning{
+			Title: "This request charges something that has since been retired",
+			Body:  warning,
+		})
+	}
+	return nil
+}
+
+func hasProject(projects []store.Project, id int64) bool {
+	for _, p := range projects {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasHead(heads []store.Head, id int64) bool {
+	for _, h := range heads {
+		if h.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func deref(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // requestEdit saves a correction. "resubmit" is the returned screen's primary
@@ -853,6 +1041,10 @@ func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored 
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The posted values already say Employee advance, so the edited row is not
+	// legacy — but the stored one still is, and the notice about what saving
+	// does must not vanish because one field was refused.
+	noteLegacyDeposit(&data, stored)
 	data.Error = message
 	name := "request_edit"
 	if stored.Status == "returned" {
@@ -1000,6 +1192,49 @@ func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
+// requestAttachmentUpload adds one document to a request without touching a
+// field on it. It is the requester's answer to a hold — "Need GST receipt" —
+// which the design says they may give as a comment or an attachment (Q6/L7),
+// and which the edit path cannot carry once the request is approved. Only the
+// person who raised the request may add to it, and only while it is on hold:
+// that is the one moment the design grants, the only one the detail screen
+// offers, and the server allows no more than it shows (hold-1 review). The
+// checks here answer before a file is staged for nothing; the store makes them
+// again on the row inside its transaction, which is where they count.
+func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	u := auth.CurrentUser(r)
+	if req.RequesterID != u.ID {
+		a.respondError(w, r, http.StatusForbidden, "Only the person who raised a request may add documents to it.", nil)
+		return
+	}
+	if !req.OnHold {
+		how := "Add a comment if there is something to say about it."
+		if req.Status == "pending" || req.Status == "returned" {
+			how = "Edit the request to attach it instead."
+		}
+		a.respondError(w, r, http.StatusBadRequest, "This request is not on hold, so no document can be added to it. "+how, nil)
+		return
+	}
+	attachment, stagedPath, err := a.stageUploadedAttachment(r)
+	if err == nil && attachment == nil {
+		err = fmt.Errorf("%w: choose a file to attach", store.ErrValidation)
+	}
+	if err == nil {
+		_, err = a.st.AddHeldRequestAttachment(r.Context(), u, req.ID, *attachment)
+	}
+	if err != nil {
+		// Nothing was written, so nothing may be left on disk either.
+		removeStagedAttachment(a.log, r, stagedPath)
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+}
+
 // The cancellation flow (G1, G2, G3). An approved request cannot be withdrawn
 // on the requester's own say-so: they ask, payment freezes at that moment, and
 // the approver accepts or declines. The approver may also cancel outright with
@@ -1105,6 +1340,11 @@ type approvalTab struct {
 var approvalTabs = []approvalTab{
 	{"to-approve", "To approve", []string{"pending"}},
 	{"cancellations", "Cancellations", []string{"cancellation_requested"}},
+	// S11: a shortfall waits on the same manager, so it is listed in the same
+	// queue (phase-2 spec §N1, mockups/screens/approvals-list.html). Without
+	// this tab a partial review was reachable only through a notification link
+	// while the request itself read "Waiting on you" (settlement-3).
+	{"partial-review", "Partial review", []string{"partial_review"}},
 	{"decided", "Decided", []string{"approved", "rejected", "cancelled"}},
 }
 
@@ -1263,6 +1503,45 @@ func requestStatusText(status string) string {
 	default:
 		return status
 	}
+}
+
+// Pill is the status pill as a reader sees it: the `.pill` modifier and the
+// sentence inside it.
+type Pill struct{ Class, Text string }
+
+// statusPill reads the row, not only the status, because two of the design's
+// states are not statuses (uiux design §4): "Processing — taken by *name*"
+// names the holder, and "Partial — under discussion" is a partial review with
+// an open concern. Every screen that shows a request's pill uses this, so the
+// detail head, the cards, the queue and the dashboard cannot disagree about
+// who has it. pillClass/requestStatusText stay for the places that only have
+// a status string.
+func statusPill(req store.Request, viewerID int64) Pill {
+	switch {
+	case req.Status == "processing" && req.ProcessingByName != "":
+		holder := req.ProcessingByName
+		if req.ProcessingBy != nil && *req.ProcessingBy == viewerID {
+			holder = "you"
+		}
+		return Pill{Class: "processing", Text: requestStatusText(req.Status) + " — taken by " + holder}
+	case req.Status == "partial_review" && req.ConcernOpen:
+		return Pill{Class: "discussion", Text: "Partial — under discussion"}
+	default:
+		return Pill{Class: pillClass(req.Status), Text: requestStatusText(req.Status)}
+	}
+}
+
+// rowStatusPill is statusPill for a recoverables register row, which is not a
+// store.Request but carries the same three facts the pill turns on — status,
+// holder and open concern — so the register cannot describe a request that is
+// taken or under discussion differently from the detail page behind it.
+func rowStatusPill(row store.RecoverableRow, viewerID int64) Pill {
+	return statusPill(store.Request{
+		Status:           row.Status,
+		ProcessingBy:     row.ProcessingBy,
+		ProcessingByName: row.ProcessingByName,
+		ConcernOpen:      row.ConcernOpen,
+	}, viewerID)
 }
 
 func typeLabel(t string) string {

@@ -145,45 +145,144 @@ func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 		return errors.Join(err, os.Remove(newDB))
 	}
 
-	dbOld, err := replacePath(opts.DBPath, newDB, stamp)
+	// The -wal and -shm files belong to the database being replaced. Left beside
+	// the restored file, SQLite would replay that WAL into it on the next open —
+	// after an unclean stop the WAL holds most of the live data — so the restore
+	// would silently serve the old database. They move aside with it and come
+	// back with it on rollback.
+	sidecarsOld, err := moveDBSidecars(opts.DBPath, opts.DBPath+".restore-old-"+stamp)
 	if err != nil {
 		_ = os.Remove(newDB)
 		_ = os.RemoveAll(newAttachments)
 		return err
 	}
+	dbOld, err := replacePath(opts.DBPath, newDB, stamp)
+	if err != nil {
+		_ = os.Remove(newDB)
+		_ = os.RemoveAll(newAttachments)
+		return errors.Join(err, restoreDBSidecars(opts.DBPath, sidecarsOld))
+	}
 	attachmentsOld, err := replacePath(opts.AttachmentDir, newAttachments, stamp)
 	if err != nil {
 		rollbackErr := rollbackReplace(opts.DBPath, dbOld)
+		sidecarErr := restoreDBSidecars(opts.DBPath, sidecarsOld)
 		cleanupErr := os.RemoveAll(newAttachments)
-		return errors.Join(err, rollbackErr, cleanupErr)
+		return errors.Join(err, rollbackErr, sidecarErr, cleanupErr)
 	}
-	return errors.Join(os.RemoveAll(dbOld), os.RemoveAll(attachmentsOld))
+	cleanupErrs := []error{os.RemoveAll(dbOld), os.RemoveAll(attachmentsOld)}
+	for _, old := range sidecarsOld {
+		cleanupErrs = append(cleanupErrs, os.RemoveAll(old))
+	}
+	return errors.Join(cleanupErrs...)
 }
 
-func PruneBackups(backupDir string, keepDays int, now time.Time) error {
+var dbSidecarSuffixes = []string{"-wal", "-shm"}
+
+// moveDBSidecars renames dbPath's -wal and -shm files to sit beside oldBase and
+// returns the suffix → moved path of each one that existed.
+func moveDBSidecars(dbPath, oldBase string) (map[string]string, error) {
+	moved := map[string]string{}
+	for _, suffix := range dbSidecarSuffixes {
+		src := dbPath + suffix
+		if _, err := os.Stat(src); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, errors.Join(err, restoreDBSidecars(dbPath, moved))
+		}
+		dst := oldBase + suffix
+		if err := os.RemoveAll(dst); err != nil {
+			return nil, errors.Join(err, restoreDBSidecars(dbPath, moved))
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return nil, errors.Join(err, restoreDBSidecars(dbPath, moved))
+		}
+		moved[suffix] = dst
+	}
+	return moved, nil
+}
+
+func restoreDBSidecars(dbPath string, moved map[string]string) error {
+	var errs []error
+	for suffix, old := range moved {
+		errs = append(errs, os.Rename(old, dbPath+suffix))
+	}
+	return errors.Join(errs...)
+}
+
+// PruneBackups applies the §10 retention: every backup younger than keepDays is
+// kept, and so is the newest backup of each of the keepMonths calendar months
+// before the current one. Everything else named backup-* is removed. A backup's
+// age is the timestamp in its folder name (the time CreateBackup stamped on it),
+// which survives a copy to another disk; a folder whose name carries no time
+// falls back to its mtime and is never a month's backup.
+func PruneBackups(backupDir string, keepDays, keepMonths int, now time.Time) error {
 	if backupDir == "" || keepDays <= 0 {
 		return nil
 	}
-	cutoff := now.AddDate(0, 0, -keepDays)
+	dayCutoff := now.AddDate(0, 0, -keepDays)
+	firstMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -keepMonths, 0)
 	entries, err := os.ReadDir(backupDir)
 	if err != nil {
 		return err
 	}
+	type candidate struct {
+		name     string
+		at       time.Time
+		fromName bool
+	}
+	var backups []candidate
+	newestOfMonth := map[string]candidate{}
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "backup-") {
 			continue
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if info.ModTime().Before(cutoff) {
-			if err := os.RemoveAll(filepath.Join(backupDir, entry.Name())); err != nil {
+		c := candidate{name: entry.Name()}
+		c.at, c.fromName = backupTimeFromName(entry.Name(), now.Location())
+		if !c.fromName {
+			info, err := entry.Info()
+			if err != nil {
 				return err
+			}
+			c.at = info.ModTime()
+		}
+		backups = append(backups, c)
+		if c.fromName && keepMonths > 0 && !c.at.Before(firstMonth) {
+			month := c.at.Format("2006-01")
+			if cur, ok := newestOfMonth[month]; !ok || c.at.After(cur.at) || (c.at.Equal(cur.at) && c.name > cur.name) {
+				newestOfMonth[month] = c
 			}
 		}
 	}
+	for _, c := range backups {
+		if !c.at.Before(dayCutoff) {
+			continue
+		}
+		if c.fromName && newestOfMonth[c.at.Format("2006-01")].name == c.name {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(backupDir, c.name)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// backupTimeFromName reads the time from a folder named by uniqueBackupPath:
+// backup-YYYYMMDD-HHMMSS, optionally followed by a -NN collision suffix.
+func backupTimeFromName(name string, loc *time.Location) (time.Time, bool) {
+	const layout = "20060102-150405"
+	rest := strings.TrimPrefix(name, "backup-")
+	if len(rest) < len(layout) {
+		return time.Time{}, false
+	}
+	if tail := rest[len(layout):]; tail != "" && !strings.HasPrefix(tail, "-") {
+		return time.Time{}, false
+	}
+	at, err := time.ParseInLocation(layout, rest[:len(layout)], loc)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
 }
 
 type backupManifest struct {
