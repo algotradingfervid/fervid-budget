@@ -117,3 +117,34 @@ func (s *appTestServer) headActive(id int64) bool {
 	}
 	return active == 1
 }
+
+// F-G-011: the requests export carries the approved figure beside the
+// requested one, so an approved-down request no longer exports only the amount
+// nobody approved. A request not yet decided leaves the column empty.
+func TestRequestsExportCarriesTheApprovedAmount(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Export")
+	requester := s.seedRequester("export.req@example.test", "Export Requester", "ExportPass12345")
+	approved := s.seedPendingRequest(971, requester.ID, admin.ID, headID, 120000)
+	s.seedPendingRequest(972, requester.ID, admin.ID, headID, 50000)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/approve", approved),
+		url.Values{"approved_amount": {"1000.00"}, "reason": {"Capped at the policy rate"}}), http.StatusSeeOther)
+
+	body := responseBody(t, s.request(http.MethodGet, "/requests/export.csv?bucket=all", nil, ""))
+	if !strings.HasPrefix(body, "Number,Status,Type,Title,Amount,Approved amount,Payee,") {
+		t.Fatalf("export header lacks the approved-amount column: %s", strings.SplitN(body, "\n", 2)[0])
+	}
+	for _, line := range strings.Split(body, "\n") {
+		switch {
+		case strings.HasPrefix(line, "PR-2026-000971,"):
+			if !strings.Contains(line, ",1200.00,1000.00,") {
+				t.Errorf("approved-down row = %q, want requested 1200.00 then approved 1000.00", line)
+			}
+		case strings.HasPrefix(line, "PR-2026-000972,"):
+			if !strings.Contains(line, ",500.00,,") {
+				t.Errorf("undecided row = %q, want an empty approved amount", line)
+			}
+		}
+	}
+}
