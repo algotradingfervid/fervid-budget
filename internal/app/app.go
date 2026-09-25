@@ -2031,20 +2031,27 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 	if !to.IsZero() {
 		q.To = to.AddDate(0, 0, 1)
 	}
-	var page store.AuditPage
-	var err error
-	if a.auth.Scope(auth.CurrentUser(r), "request") == store.ScopeAll {
-		q.Limit = auditPageSize
-		page, err = a.st.AuditPage(r.Context(), q)
-	} else {
+	fetch := func(offset int) (store.AuditPage, error) {
+		if a.auth.Scope(auth.CurrentUser(r), "request") == store.ScopeAll {
+			q.Limit, q.Offset = auditPageSize, offset
+			return a.st.AuditPage(r.Context(), q)
+		}
 		// A scoped reader's request rows are withheld in Go (below), so the
 		// page is cut after that, over every matching row, to keep the count
 		// and the pages honest. No seeded holder of audit:view takes this path.
-		page, err = a.st.AuditPage(r.Context(), store.AuditQuery{EntityType: q.EntityType, EntityID: q.EntityID,
+		page, err := a.st.AuditPage(r.Context(), store.AuditQuery{EntityType: q.EntityType, EntityID: q.EntityID,
 			Action: q.Action, Actor: q.Actor, From: q.From, To: q.To})
-		if err == nil {
-			page = pageAuditEntries(a.auditWithinRequestScope(r, page.Entries), q.Offset)
+		if err != nil {
+			return page, err
 		}
+		return pageAuditEntries(a.auditWithinRequestScope(r, page.Entries), offset), nil
+	}
+	page, err := fetch(q.Offset)
+	// An offset past the end — a stale or hand-edited URL — used to show the
+	// empty state as "Showing 0 of N" with a Newer link to a page that was
+	// just as empty (audit-1 review). It lands on the last real page instead.
+	if err == nil && len(page.Entries) == 0 && page.Total > 0 && q.Offset > 0 {
+		page, err = fetch(lastAuditPageOffset(page.Total))
 	}
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -2074,11 +2081,25 @@ func auditDay(v string) time.Time {
 	return d
 }
 
-// pageAuditEntries cuts one /audit page out of an already-filtered list.
+// lastAuditPageOffset is the offset of the last /audit page that still has a
+// row on it; 0 when there are none.
+func lastAuditPageOffset(total int) int {
+	if total <= 0 {
+		return 0
+	}
+	return (total - 1) / auditPageSize * auditPageSize
+}
+
+// pageAuditEntries cuts one /audit page out of an already-filtered list. An
+// offset past the end is clamped to the last page with rows, as the SQL path
+// in auditLog does.
 func pageAuditEntries(entries []store.AuditEntry, offset int) store.AuditPage {
 	page := store.AuditPage{Total: len(entries), Limit: auditPageSize}
-	if offset < 0 || offset > len(entries) {
+	if offset < 0 {
 		offset = 0
+	}
+	if offset >= len(entries) {
+		offset = lastAuditPageOffset(len(entries))
 	}
 	end := offset + auditPageSize
 	if end > len(entries) {

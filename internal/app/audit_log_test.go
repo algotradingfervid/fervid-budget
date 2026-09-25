@@ -69,6 +69,18 @@ func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 	if !strings.Contains(last, "Newer") {
 		t.Fatal("the last page offers no way back")
 	}
+	// An offset past the end — a stale or hand-edited URL — lands on that same
+	// last page, not on "Showing 0 of N" with a Newer link to another empty
+	// page (audit-1 review).
+	past := responseBody(t, s.request(http.MethodGet, "/audit?offset=5000", nil, ""))
+	lastOffset := (total - 1) / auditPageSize * auditPageSize
+	if !strings.Contains(past, "Created project Facilities") ||
+		!strings.Contains(past, fmt.Sprintf("Showing %d–%d of %d", lastOffset+1, total, total)) {
+		t.Fatalf("an offset past the end does not land on the last page (want rows %d–%d of %d)", lastOffset+1, total, total)
+	}
+	if strings.Contains(past, "Showing 0 of") {
+		t.Fatal("an offset past the end still shows an empty page")
+	}
 
 	// Page links keep every filter, so a page boundary never widens the set.
 	filtered := responseBody(t, s.request(http.MethodGet, "/audit?action=login_failed&actor=flood&from=2020-01-01&to=2100-12-31", nil, ""))
@@ -76,6 +88,26 @@ func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 		if !strings.Contains(filtered, want+"&amp;offset=") && !strings.Contains(filtered, want+"&amp;") {
 			t.Errorf("page link drops %s", want)
 		}
+	}
+}
+
+// The scoped reader's path pages in Go; it clamps an offset past the end the
+// same way the SQL path does.
+func TestPageAuditEntriesClampsAnOffsetPastTheEnd(t *testing.T) {
+	entries := make([]store.AuditEntry, 2*auditPageSize+50)
+	page := pageAuditEntries(entries, 9000)
+	if page.Offset != 2*auditPageSize || len(page.Entries) != 50 || page.Truncated || page.Total != len(entries) {
+		t.Fatalf("offset past the end = offset %d, %d rows, truncated %v, total %d; want the last page of 50",
+			page.Offset, len(page.Entries), page.Truncated, page.Total)
+	}
+	if page := pageAuditEntries(entries, len(entries)); page.Offset != 2*auditPageSize || len(page.Entries) != 50 {
+		t.Fatalf("offset exactly past the end = offset %d, %d rows", page.Offset, len(page.Entries))
+	}
+	if page := pageAuditEntries(nil, 9000); page.Offset != 0 || len(page.Entries) != 0 || page.Truncated {
+		t.Fatalf("no rows at all = offset %d, %d rows, truncated %v", page.Offset, len(page.Entries), page.Truncated)
+	}
+	if page := pageAuditEntries(entries, -5); page.Offset != 0 || len(page.Entries) != auditPageSize || !page.Truncated {
+		t.Fatalf("negative offset = offset %d, %d rows, truncated %v", page.Offset, len(page.Entries), page.Truncated)
 	}
 }
 
