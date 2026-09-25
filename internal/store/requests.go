@@ -1163,12 +1163,20 @@ var reassignableStatuses = map[string]bool{
 // status, so a screen can withhold the control where the POST would refuse.
 func Reassignable(status string) bool { return reassignableStatuses[status] }
 
-// ReassignRequest hands a request to a different approver. Who may call it is
-// the caller's question — the request's own approver, or an administrator
-// rescuing one whose approver cannot act — but one rule is the store's, whoever
-// the actor is: nobody hands a request to themselves. A manager who could not
-// decide a request must not be able to make it theirs and then decide it (A5).
-func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerID int64, reason string) error {
+// ReassignRequest hands a request to a different approver. Whether the actor
+// is entitled to is the caller's question, and its answer arrives as
+// asAdministrator: false means the actor is the request's own approver handing
+// it on, true means a holder of the admin-level grant rescuing one whose
+// approver cannot act. The store asks the first case's question again on the
+// row it is about to change — the caller decided it on a read made before this
+// transaction, and between the two an administrator may already have moved the
+// request, in which case the actor is a former approver and has no say (rbac-8
+// review). The UPDATE matches the approver it read for the same reason.
+//
+// One rule is the store's whoever the actor is: nobody hands a request to
+// themselves. A manager who could not decide a request must not be able to
+// make it theirs and then decide it (A5).
+func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerID int64, reason string, asAdministrator bool) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return fmt.Errorf("%w: a reason is required to reassign", ErrValidation)
@@ -1196,6 +1204,9 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	if !reassignableStatuses[before.Status] {
 		return fmt.Errorf("%w: %s cannot be reassigned", ErrValidation, statusPhrase(before.Status))
 	}
+	if !asAdministrator && before.ManagerID != actor.ID {
+		return fmt.Errorf("%w: this request is with %s now, so it is not yours to reassign", ErrForbidden, before.ManagerName)
+	}
 	// G8 holds for reassignment too.
 	if newManagerID == before.RequesterID {
 		return fmt.Errorf("%w: a request cannot be reassigned to its own requester", ErrValidation)
@@ -1205,13 +1216,13 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	// reading, and on a frozen or partial one it is the approval note — the
 	// reason is in the audit row either way, so nothing is lost by leaving them.
 	reasonSQL := `decision_reason=?, `
-	args := []any{newManagerID, reason, id, before.Status}
+	args := []any{newManagerID, reason, id, before.Status, before.ManagerID}
 	if before.Status != "pending" {
 		reasonSQL = ``
-		args = []any{newManagerID, id, before.Status}
+		args = []any{newManagerID, id, before.Status, before.ManagerID}
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET manager_id=?, `+reasonSQL+`reminder_last_sent=NULL, updated_at=CURRENT_TIMESTAMP
- WHERE id=? AND status=?`, args...)
+ WHERE id=? AND status=? AND manager_id=?`, args...)
 	if err != nil {
 		return classify(err)
 	}
@@ -1529,6 +1540,43 @@ func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID 
 		return 0, err
 	}
 	defer tx.Rollback()
+	id, err := addRequestAttachmentTx(ctx, tx, actor, requestID, in)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// AddHeldRequestAttachment is the requester's answer to a hold — "Need GST
+// receipt" — given as a document rather than a comment (Q6/L7). It is the one
+// way a document reaches a request after the edit form has closed, and it is
+// open exactly as wide as the hold: the request must be the actor's own and on
+// hold at the moment of the write, both checked on the row inside the write
+// transaction, because the handler's answer came from a read made before it
+// and Accounts may have lifted the hold since (hold-1 review). Nothing else on
+// the request changes.
+func (s *Store) AddHeldRequestAttachment(ctx context.Context, actor User, requestID int64, in AttachmentInput) (int64, error) {
+	if err := validateAttachment(in); err != nil {
+		return 0, err
+	}
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	req, err := requestInTx(ctx, tx, requestID)
+	if err != nil {
+		return 0, err
+	}
+	if req.RequesterID != actor.ID {
+		return 0, fmt.Errorf("%w: only the person who raised a request may add documents to it", ErrForbidden)
+	}
+	if !req.OnHold {
+		return 0, fmt.Errorf("%w: this request is not on hold, so no document can be added to it", ErrValidation)
+	}
 	id, err := addRequestAttachmentTx(ctx, tx, actor, requestID, in)
 	if err != nil {
 		return 0, err

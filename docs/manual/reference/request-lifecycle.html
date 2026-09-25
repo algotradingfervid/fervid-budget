@@ -164,10 +164,10 @@
 <h3 id="3-taken-for-processing">3. Taken for processing</h3>
 <p>Somebody in Accounts presses <strong>Take for processing</strong> from the payment queue. That claim is the whole point of the <code>processing</code> status: while one person holds it, nobody else can record a payment against it, so the same invoice cannot be paid twice. The badge the requester sees changes to <strong>With Accounts</strong>.</p>
 <figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-processing.png" aria-label="Enlarge: A claimed request. The history shows the reservation as its own line: &quot;Reserved request for processing&quot;.">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-processing.png" aria-label="Enlarge: A claimed request. The history shows the reservation as its own line, naming who took it: &quot;Harsh Agarwal reserved the request for processing&quot;.">
     <img src="../assets/shots/requester/detail-processing.png" alt="A request the accounts team has claimed and is working on." loading="lazy" width="1440">
   </button>
-  <figcaption>A claimed request. The history shows the reservation as its own line: &quot;Reserved request for processing&quot;. </figcaption>
+  <figcaption>A claimed request. The history shows the reservation as its own line, naming who took it: &quot;Harsh Agarwal reserved the request for processing&quot;. </figcaption>
 </figure>
 <h3 id="4-paid">4. Paid</h3>
 <p>The accountant fills in the payment and confirms it. If the figure matches what was approved — or is short and they confirm the request as settled anyway — the request closes as <code>completed</code> in the same transaction that writes the payment. The two either both happen or neither does.</p>

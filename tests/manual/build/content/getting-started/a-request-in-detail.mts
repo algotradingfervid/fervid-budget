@@ -142,9 +142,10 @@ export default page({
     prose(
       `The finished request above shows four entries: "Rahul Gupta submitted request PR-2026-000537
        for ₹5,300.00", "Manish Patel approved request PR-2026-000537 for ₹5,300.00" with the field
-       it changed shown underneath as **Approved amount** and its new value, then "Reserved request
-       for processing" and "Settled request as completed". Each carries the date and time it
-       happened.`,
+       it changed shown underneath as **Approved amount** and its new value, then the accountant's
+       two lines — "Harsh Agarwal reserved the request for processing" and "Harsh Agarwal settled
+       the request as completed". Every line starts with the name of the person who did it, and
+       each carries the date and time it happened.`,
     ),
     prose(
       `Comments and attached documents appear in the same stream, in place. Below it, if you are

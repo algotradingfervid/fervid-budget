@@ -1702,7 +1702,10 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusBadRequest, "Give a reason for the reassignment.", nil)
 		return
 	}
-	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason")); err != nil {
+	// The store re-checks "is this still the approver" on the row inside its
+	// write transaction, because req above was read before it; only the
+	// admin-level grant mayReassignApprover honours lets that check be skipped.
+	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason"), a.auth.Can(u, "user", "edit")); err != nil {
 		status := storeErrorStatus(err)
 		if status >= http.StatusInternalServerError {
 			a.respondStoreError(w, r, err)

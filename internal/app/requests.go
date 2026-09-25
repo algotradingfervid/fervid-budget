@@ -1021,8 +1021,11 @@ func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
 // field on it. It is the requester's answer to a hold — "Need GST receipt" —
 // which the design says they may give as a comment or an attachment (Q6/L7),
 // and which the edit path cannot carry once the request is approved. Only the
-// person who raised the request may add to it, and only while it is still
-// going somewhere: a closed request is a record, and records are not amended.
+// person who raised the request may add to it, and only while it is on hold:
+// that is the one moment the design grants, the only one the detail screen
+// offers, and the server allows no more than it shows (hold-1 review). The
+// checks here answer before a file is staged for nothing; the store makes them
+// again on the row inside its transaction, which is where they count.
 func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
@@ -1033,9 +1036,12 @@ func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusForbidden, "Only the person who raised a request may add documents to it.", nil)
 		return
 	}
-	if closedStatuses[req.Status] {
-		a.respondError(w, r, http.StatusBadRequest,
-			"This request is closed, so no more documents can be added to it. "+reqStatusExplain(req.Status), nil)
+	if !req.OnHold {
+		how := "Add a comment if there is something to say about it."
+		if req.Status == "pending" || req.Status == "returned" {
+			how = "Edit the request to attach it instead."
+		}
+		a.respondError(w, r, http.StatusBadRequest, "This request is not on hold, so no document can be added to it. "+how, nil)
 		return
 	}
 	attachment, stagedPath, err := a.stageUploadedAttachment(r)
@@ -1043,7 +1049,7 @@ func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 		err = fmt.Errorf("%w: choose a file to attach", store.ErrValidation)
 	}
 	if err == nil {
-		_, err = a.st.AddRequestAttachment(r.Context(), u, req.ID, *attachment)
+		_, err = a.st.AddHeldRequestAttachment(r.Context(), u, req.ID, *attachment)
 	}
 	if err != nil {
 		// Nothing was written, so nothing may be left on disk either.
@@ -1052,12 +1058,6 @@ func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
-}
-
-// closedStatuses are the states nothing more happens in: no decision is
-// pending, no payment is coming, and no document could change either.
-var closedStatuses = map[string]bool{
-	"rejected": true, "withdrawn": true, "cancelled": true, "completed": true, "completed_partial": true,
 }
 
 // The cancellation flow (G1, G2, G3). An approved request cannot be withdrawn

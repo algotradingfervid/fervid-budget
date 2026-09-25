@@ -3835,8 +3835,11 @@ test.describe('G · idempotence', () => {
       `reserving twice must not create a second reservation — got ${second.outcome}`
     ).toBe(true);
     const rows = await auditRows(adminPage, 'Fervid Admin', 'payment_request', request.id);
+    // The summary names the actor ("Fervid Admin reserved the request for
+    // processing") since fix wave B (history-1); the wording is asserted so a
+    // regression to the bare "Reserved request for processing" is caught.
     expect(
-      rows.filter(r => r.action === 'process' && r.summary.includes('Reserved')).length >= 1,
+      rows.filter(r => r.action === 'process' && r.summary.includes('reserved the request for processing')).length >= 1,
       'the reservation is audited'
     ).toBe(true);
 

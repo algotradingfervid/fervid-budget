@@ -329,6 +329,11 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 	s.assignRole(aarav.ID, "Accounts")
 	reqID := s.seedApprovedRequest(4, rita.ID, admin.ID, headID, 100000)
 	closedID := s.seedApprovedRequest(5, rita.ID, admin.ID, headID, 100000)
+	openID := s.seedApprovedRequest(6, rita.ID, admin.ID, headID, 100000)
+	pendingID := s.seedApprovedRequest(7, rita.ID, admin.ID, headID, 100000)
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET status='pending', approved_amount=NULL WHERE id=?`, pendingID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET status='cancelled' WHERE id=?`, closedID); err != nil {
 		t.Fatal(err)
 	}
@@ -386,6 +391,24 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 	resp = upload(closedID, "late.pdf")
 	requireStatus(t, resp, http.StatusBadRequest)
 	_ = responseBody(t, resp)
+	// Nor does one that is not on hold: the door exists for the hold's question
+	// and for nothing else, so an approved request Accounts has not paused, and
+	// a pending one the edit form still serves, refuse it — and neither offers
+	// the control (hold-1 review).
+	for _, id := range []int64{openID, pendingID} {
+		body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+		if strings.Contains(body, fmt.Sprintf(`action="/requests/%d/attachments"`, id)) {
+			t.Fatalf("request %d is not on hold but offers the upload:\n%s", id, between(t, body, "<main", "</main>"))
+		}
+		resp = upload(id, "early.pdf")
+		requireStatus(t, resp, http.StatusBadRequest)
+		if body := responseBody(t, resp); !strings.Contains(body, "not on hold") {
+			t.Fatalf("the refusal does not say the request is not on hold:\n%s", between(t, body, "<main", "</main>"))
+		}
+		if atts, err := s.st.RequestAttachments(s.ctx, id); err != nil || len(atts) != 0 {
+			t.Fatalf("request %d took a document while not on hold: %+v %v", id, atts, err)
+		}
+	}
 
 	// Somebody who is not the requester is refused: outside their scope it is
 	// 404, and a colleague who can read it still may not plant a document on it.

@@ -368,6 +368,14 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "approver_can_view_attachments",
 		Up:      upApproverAttachmentView,
 	},
+	// The approver-reassignment notice said "needs your approval" for every
+	// status a request can now be handed on in, three of which need no such
+	// thing.
+	{
+		Version: 13,
+		Name:    "notification_reassigned_wording",
+		Up:      UpReassignedNotificationWording,
+	},
 }
 
 // upApproverAttachmentView lets the Manager role read the documents attached to
