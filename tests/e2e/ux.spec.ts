@@ -44,7 +44,13 @@ async function flushBlocks(page: Page, min: number): Promise<string[]> {
     for (const el of Array.from(inner.children)) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
-      const band = el.matches('.page-banner, .gridhead');
+      // A flash that opens the page ahead of a band is drawn as a strip on top
+      // of that band (fervid-ds.css), so it is measured as a band too.
+      const isBand = (e: Element | null) => !!e && e.matches('.page-banner, .gridhead');
+      const next = el.nextElementSibling;
+      const flashStrip = first && el.matches('.alert') &&
+        (isBand(next) || (!!next && next.matches('.alert') && isBand(next.nextElementSibling)));
+      const band = isBand(el) || flashStrip;
       const label = `${el.tagName.toLowerCase()}.${Array.from(el.classList).join('.')}`;
       if (first && !band && r.top - m.top < min - 0.5) bad.push(`${label} starts ${Math.round(r.top - m.top)}px from the top`);
       if (first && band && Math.abs(r.top - m.top) > 0.5) bad.push(`${label} band starts ${Math.round(r.top - m.top)}px below the top`);
@@ -213,5 +219,37 @@ test.describe('UI/UX quality', () => {
       if (info && !info.visible) invisible.push(info.label);
     }
     expect(invisible, `focusable elements with no visible focus ring: ${invisible.join(', ')}`).toEqual([]);
+  });
+
+  // The layout's flash renders ahead of the page's own content, so on a page
+  // that opens with a band the band stops being :first-child. The flash then
+  // opens the page in the band's place: it meets the top of the window and
+  // spans the column, and the band follows it flush (rbac-11 review). Sending
+  // a test email with no SMTP configured is the one flash the walk can raise on
+  // a banner page without changing anything.
+  test('a flash ahead of the page banner opens the page as a strip', async ({ adminPage }) => {
+    await adminPage.goto('/admin/notifications');
+    await adminPage.getByRole('button', { name: 'Send a test email' }).click();
+    await expect(adminPage.locator('.page-inner > .alert').first()).toBeVisible();
+
+    const layout = await adminPage.evaluate(() => {
+      const main = document.querySelector('main.page')!.getBoundingClientRect();
+      const flash = document.querySelector('.page-inner > .alert:first-child')!.getBoundingClientRect();
+      const band = document.querySelector('.page-inner > .alert:first-child + .page-banner')!.getBoundingClientRect();
+      return {
+        flashTop: flash.top - main.top,
+        flashLeft: flash.left - main.left,
+        flashRight: main.right - flash.right,
+        bandGap: band.top - flash.bottom,
+        overflow: document.documentElement.scrollWidth - window.innerWidth
+      };
+    });
+    expect(Math.abs(layout.flashTop), 'the flash meets the top of the page').toBeLessThanOrEqual(0.5);
+    expect(Math.abs(layout.flashLeft), 'the flash spans to the left edge').toBeLessThanOrEqual(0.5);
+    expect(Math.abs(layout.flashRight), 'the flash spans to the right edge').toBeLessThanOrEqual(0.5);
+    expect(Math.abs(layout.bandGap), 'the banner follows the flash flush').toBeLessThanOrEqual(1);
+    expect(layout.overflow, 'no sideways scroll').toBeLessThanOrEqual(0);
+    // Everything after the band is still inset by the gutter.
+    expect(await flushBlocks(adminPage, GUTTER_PX)).toEqual([]);
   });
 });

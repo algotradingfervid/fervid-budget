@@ -2410,6 +2410,28 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   margin-top: calc(var(--page-gutter) * -1);
 }
 
+/* The layout draws its flash (.alert.error / .alert.success) ahead of the
+   page's own content, so on a page that opens with a band the band is no
+   longer :first-child: the flash took the top gutter and the band sat under
+   it, off the top edge (rbac-11 review). When a flash — or the pair of them —
+   is followed by a band, the flash opens the page in the band's place: it
+   takes the top gutter and the full column width, drops its rounded corners
+   and side borders, and the band follows it flush. A flash ahead of a card
+   keeps the gutter, as the card would. */
+.page-inner > .alert:first-child:has(+ .page-banner, + .gridhead, + .alert + .page-banner, + .alert + .gridhead),
+.page-inner > .alert:first-child + .alert:has(+ .page-banner, + .gridhead) {
+  margin-inline: calc(var(--page-gutter) * -1);
+  margin-bottom: 0;
+  padding-inline: var(--page-gutter);
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+}
+
+.page-inner > .alert:first-child:has(+ .page-banner, + .gridhead, + .alert + .page-banner, + .alert + .gridhead) {
+  margin-top: calc(var(--page-gutter) * -1);
+}
+
 /* Three blocks predate the gutter and carry a hand-written 28px of their own.
    Nested inside a card that margin is real spacing and must stay, so it is only
    cancelled where the block sits directly in the content column and the gutter
