@@ -2514,6 +2514,17 @@ const templates = `
     <b>This request is on hold</b>
     <p>“{{.Request2.HoldReason}}”</p>
     <p>Payment is blocked until Accounts lifts the hold.</p>
+    {{/* Q6: the answer may be a document as well as a comment. The edit path is
+         closed once a request is approved, so this is the requester's only way to
+         supply what Accounts asked for (hold-1). The route refuses anybody but the
+         requester, which is why only they see it. */}}
+    {{if and (eq .Request2.RequesterID .User.ID) (.Perms.Can "attachment" "create")}}
+    <form class="cluster" method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/attachments" style="margin-top:8px">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label class="field" for="hold-attachment" style="margin:0"><span class="flabel">Add a document</span><input type="file" id="hold-attachment" name="attachment" required></label>
+      <button class="btn small primary" type="submit">Attach it</button>
+    </form>
+    {{end}}
   </div>
 </div>
 {{end}}
@@ -2665,16 +2676,16 @@ const templates = `
        built POST /requests/{id}/reassign-approver, and this is the control for it
        (F-A-06/F-C-02). It is the recovery path for a request routed to somebody who
        cannot decide it — a deactivated approver (F-G-025), or one who lost
-       approval:approve (F-A-08) — so it is offered to whoever holds
-       approval:reassign, not only to the request's own approver: requiring
-       manager_id == actor would close the one door out of exactly that case. Only
-       on a pending request, because that is the only status the store will move. */}}
-  {{if and (eq .Request2.Status "pending") (.Perms.Can "approval" "reassign") .Approvers}}
+       approval:approve (F-A-08). CanReassignApprover is mayReassignApprover's
+       answer — the request's own approver, or a holder of user:edit rescuing it —
+       in a status the store will move; the route asks the same question, so a
+       manager who is not this request's approver is offered nothing (rbac-8). */}}
+  {{if and .CanReassignApprover .Approvers}}
     <button class="btn outline" type="button" data-open="reassign-approver-sheet">Reassign approval</button>
   {{end}}
 </div>
 
-{{if and (eq .Request2.Status "pending") (.Perms.Can "approval" "reassign") .Approvers}}
+{{if and .CanReassignApprover .Approvers}}
 <div class="overlay" id="reassign-approver-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/reassign-approver">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -2688,7 +2699,9 @@ const templates = `
              POST would refuse. */}}
         <select id="ra-manager" name="manager_id" required>
           <option value="">Choose an approver</option>
-          {{range .Approvers}}<option value="{{.ID}}" {{if eq $.Request2.ManagerID .ID}}disabled{{end}}>{{.Name}}</option>{{end}}
+          {{/* The reader's own name is disabled as well as the current approver's:
+               nobody hands a request to themselves, and the store refuses it. */}}
+          {{range .Approvers}}<option value="{{.ID}}" {{if or (eq $.Request2.ManagerID .ID) (eq $.User.ID .ID)}}disabled{{end}}>{{.Name}}</option>{{end}}
         </select>
       </div>
       <div class="field"><label for="ra-reason">Why <span class="req" aria-hidden="true">*</span></label><textarea id="ra-reason" name="reason" required placeholder="Recorded in the history and visible to everyone who can see this request."></textarea></div>
@@ -2786,7 +2799,10 @@ const templates = `
 <div class="banner info">
   <span class="b-ico" aria-hidden="true">i</span>
   <div>
-    <b>Editing tells {{.Request2.ManagerName}} again</b>
+    {{/* Both labels that name the approver follow the #apr select (rbac-10):
+         the request moves to whoever is chosen, so a label fixed at render
+         time named somebody the save would not notify. */}}
+    <b data-follows-select="apr" data-follows-text="Editing tells {name} again">Editing tells {{.Request2.ManagerName}} again</b>
     <p>Every change is recorded in the history, notifies your approver, and restarts the
       {{.Reminders.PendingAfterDays}}-{{plural .Reminders.PendingAfterDays "day" "day"}} reminder clock. Change the approver and it moves to that person instead.</p>
   </div>
@@ -2912,7 +2928,7 @@ const templates = `
     <span class="ab-note d-only">Every change is recorded in the history.</span>
     <span class="row-end"></span>
     <a class="btn outline" href="/requests/{{.Request2.ID}}">Discard changes</a>
-    <button class="btn primary" type="submit">Save and notify {{.Request2.ManagerName}}</button>
+    <button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}">Save and notify {{.Request2.ManagerName}}</button>
   </div>
 </form>
 {{template "bottom" .}}

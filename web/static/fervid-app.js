@@ -592,6 +592,35 @@
   }
 
   /* ---------------------------------------------------------------- */
+  /* [data-follows-select] — a label that names the chosen option      */
+  /* ---------------------------------------------------------------- */
+
+  /* An element carrying data-follows-select="<select id>" and
+     data-follows-text="… {name} …" re-reads its text from the selected
+     option whenever the select changes. The server renders the label for
+     the stored value, so the page reads correctly without this; it exists
+     because "Save and notify Mona" beside a select that now says Max is a
+     promise the submit will not keep. */
+  function initFollowSelects(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("[data-follows-select]"), function (label) {
+      if (label.dataset.followsBound) return;
+      var select = document.getElementById(label.getAttribute("data-follows-select"));
+      var text = label.getAttribute("data-follows-text");
+      if (!select || !text) return;
+      label.dataset.followsBound = "1";
+
+      function sync() {
+        var option = select.options[select.selectedIndex];
+        if (!option) return;
+        label.textContent = text.replace("{name}", option.textContent.trim());
+      }
+
+      select.addEventListener("change", sync);
+      sync();
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Boot, and re-boot after every htmx swap                           */
   /* ---------------------------------------------------------------- */
 
@@ -601,6 +630,7 @@
     initMoneyFields(document);
     initDifferenceBanner(document);
     initRoleMatrix(document);
+    initFollowSelects(document);
   }
 
   document.addEventListener("htmx:afterSwap", function () { init(); });

@@ -97,7 +97,7 @@ func (a *App) userDeactivationNeedsConfirm(w http.ResponseWriter, r *http.Reques
 	a.confirmDeactivation(w, r, DeactivationConfirm{
 		Heading:     "Deactivate " + name + "?",
 		Lead:        fmt.Sprintf("%s waiting on %s to decide.", countRequests(len(waiting), "is", "are"), name),
-		Consequence: "Once deactivated they cannot sign in, so these requests stay stuck until someone reassigns them. Open each one and use Reassign approver.",
+		Consequence: "Once deactivated they cannot sign in, so these requests stay stuck until someone reassigns them. Open each one and use Reassign approval.",
 		ConfirmText: "I will reassign these requests to another approver",
 		Action:      "/users",
 		Back:        "/users",
