@@ -68,12 +68,16 @@ var configSections = []ConfigSection{
 		{Key: "allow_approver_choice", Label: "Let the employee choose a different approver", Kind: "toggle", Span: 12,
 			Hint: "Off means everyone must use the default approver set on their user record."},
 	}, Note: "Self-approval is blocked always. A person can never approve a request they raised, whatever roles they hold."},
+	// No "allow direct payments" toggle. The mockup carried one and this table
+	// copied it, but nothing ever read the key: paymentCreate refuses a payment
+	// with no request whatever the setting says (X5), and the hint promised a
+	// written reason and an audit flag that were never built. A control that
+	// saves and does nothing, under a hint that is false, is worse than none
+	// (recoverables-10). The seeded app_settings row is left in place unread.
 	{Title: "Payments", Fields: []ConfigField{
-		{Key: "allow_direct_payments", Label: "Allow direct payments without a request", Kind: "toggle", Span: 12,
-			Hint: "Off. Every new payment starts from an approved request. Turning this on demands a written reason and is flagged in the audit log."},
 		{Key: "payment_modes", Label: "Payment modes offered", Kind: "text", Span: 12,
 			Hint: "Comma separated, in the order the payment form should offer them."},
-	}},
+	}, Note: "Every payment starts from an approved request. There is no direct-entry path, and no setting that opens one."},
 	// Phase 5. These were hardcoded 3-day and 1-day waits inside the scheduler;
 	// they are data now, read through store.ReminderThresholds. A blank or
 	// non-positive value falls back to the default rather than silently

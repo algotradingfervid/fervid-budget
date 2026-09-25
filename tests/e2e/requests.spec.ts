@@ -119,7 +119,8 @@ test.describe('raising a request', () => {
 
     // Step 1 — the chooser. Picking a type is a navigation, so the card is a link.
     await adminPage.goto('/requests/new');
-    await expect(adminPage.locator('.type-grid .type-card')).toHaveCount(4);
+    // Five since form-1: the deposit or guarantee has a card of its own.
+    await expect(adminPage.locator('.type-grid .type-card')).toHaveCount(5);
     problems.push(...(await qualityProblems(adminPage, '/requests/new')));
 
     await adminPage.getByRole('link', { name: /Vendor invoice payment/ }).click();

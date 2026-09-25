@@ -40,6 +40,13 @@ type App struct {
 	mailer notify.Mailer
 }
 
+// Warning is one caution above a form, with the heading that says what it is
+// about. The body says what to do before saving.
+type Warning struct {
+	Title string
+	Body  string
+}
+
 type PageData struct {
 	Title string
 	User  store.User
@@ -223,6 +230,17 @@ type PageData struct {
 	NotifSettings []store.NotificationSetting
 	MailCfg       store.MailSettings
 	NotifFields   []string
+
+	// Warnings are cautions above a form: act before saving. Each carries its
+	// own heading, because one form can need two at once (a legacy category and
+	// a retired project) and they are not about the same thing. Rendered by the
+	// page, not the shell.
+	Warnings []Warning
+	// LegacyCategory is the deposit category an employee advance was recorded
+	// under before deposits and guarantees were their own request type, or ""
+	// for every other request. The edit and returned screens use it to name what
+	// saving does on their buttons.
+	LegacyCategory string
 }
 
 type ReportSummary struct {

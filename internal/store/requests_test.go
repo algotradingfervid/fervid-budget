@@ -152,24 +152,52 @@ func TestValidateRequestInputPerType(t *testing.T) {
 				Amount: 1000, Purpose: "buy", ManagerID: 7, AdvanceReason: "site cash",
 				RecoverableCategory: "employee_advance", ExpectedReturnDate: "2026-12-01", RepaymentNotes: "monthly"}
 		}), true},
+		// An employee advance is always in the Employee advance category. A deposit
+		// or guarantee in any other category is its own request type with its own
+		// payee, so the category cannot smuggle an EMD into a request that pays the
+		// requester (form-1 / recoverables-1).
+		{"employee_advance recoverable must be in the Employee advance category", base(func(i *RequestInput) {
+			*i = RequestInput{Treatment: "recoverable", Type: "employee_advance", ShortTitle: "ICD to Meridian",
+				Amount: 1000, Purpose: "deposit", ManagerID: 7, AdvanceReason: "deposit",
+				RecoverableCategory: "icd", Counterparty: "Meridian Holdings Pvt Ltd",
+				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on maturity"}
+		}), false},
 		{"recoverable EMD ok with a project", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
 				Amount: 1000, Purpose: "tender", ManagerID: 7, RecoverableCategory: "emd", ProjectID: 4,
+				VendorPayee:        "Ridge Metro Rail Corporation",
 				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on tender close"}
 		}), true},
 		{"recoverable EMD without a project is rejected", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
 				Amount: 1000, Purpose: "tender", ManagerID: 7, RecoverableCategory: "emd",
+				VendorPayee:        "Ridge Metro Rail Corporation",
 				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on tender close"}
+		}), false},
+		// The payee of a deposit or guarantee is free, but it is not optional: it is
+		// who Accounts pays, and a request that names nobody cannot be paid.
+		{"recoverable type needs a payee", base(func(i *RequestInput) {
+			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
+				Amount: 1000, Purpose: "tender", ManagerID: 7, RecoverableCategory: "emd", ProjectID: 4,
+				VendorPayee:        "  ",
+				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on tender close"}
+		}), false},
+		{"recoverable type refuses the Employee advance category", base(func(i *RequestInput) {
+			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "Float",
+				Amount: 1000, Purpose: "float", ManagerID: 7, RecoverableCategory: "employee_advance",
+				VendorPayee:        "Rhea Requester",
+				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on return"}
 		}), false},
 		{"recoverable ICD without a counterparty is rejected", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Meridian",
 				Amount: 1000, Purpose: "deposit", ManagerID: 7, RecoverableCategory: "icd",
+				VendorPayee:        "Meridian Holdings Pvt Ltd",
 				ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on maturity"}
 		}), false},
 		{"recoverable ICD with a counterparty ok", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Meridian",
 				Amount: 1000, Purpose: "deposit", ManagerID: 7, RecoverableCategory: "icd",
+				VendorPayee:  "Meridian Holdings Pvt Ltd",
 				Counterparty: "Meridian Holdings Pvt Ltd", ExpectedReturnDate: "2026-12-01", RepaymentNotes: "on maturity"}
 		}), true},
 		{"unknown recoverable category", base(func(i *RequestInput) {
@@ -308,6 +336,68 @@ func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
 	audit, err := s.Audit(ctx, "payment_request", id, 5)
 	if err != nil || len(audit) == 0 || audit[0].Action != "submit" {
 		t.Fatalf("audit = %#v, %v; want a submit entry on payment_request", audit, err)
+	}
+}
+
+// T9/T11 (form-1 / recoverables-1): the payee rule is the TYPE's. An employee
+// advance pays the person raising it whatever the form said, and a deposit or
+// guarantee — the `recoverable` type — pays whoever the requester named, because
+// that money goes to a counterparty or a tender authority, never to the employee.
+func TestEmployeeAdvancePayeeIsForcedAndADepositPayeeIsFree(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, _ := seedRequestActors(t, s, ctx)
+	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+
+	advance, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "employee_advance", ShortTitle: "Site float",
+		RecoverableCategory: "employee_advance", Amount: 2500000, Purpose: "site float",
+		AdvanceReason: "float", ExpectedReturnDate: "2027-03-31", RepaymentNotes: "against bills",
+		ManagerID: mgr.ID, VendorID: vendorID, VendorPayee: "Somebody Else",
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest employee_advance: %v", err)
+	}
+	got, err := s.Request(ctx, advance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VendorPayee != req.Name || got.Vendor != req.Name || got.VendorID != nil {
+		t.Fatalf("employee advance payee = %q/%q vendor=%v, want the requester %q and no vendor row", got.VendorPayee, got.Vendor, got.VendorID, req.Name)
+	}
+
+	deposit, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Meridian",
+		RecoverableCategory: "icd", Counterparty: "Meridian Holdings Pvt Ltd", Amount: 100000000,
+		Purpose: "inter-corporate deposit", VendorPayee: "Meridian Holdings Pvt Ltd",
+		ExpectedReturnDate: "2027-03-31", RepaymentNotes: "returned at maturity with interest",
+		ManagerID: mgr.ID, VendorID: vendorID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest recoverable: %v", err)
+	}
+	got, err = s.Request(ctx, deposit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VendorPayee != "Meridian Holdings Pvt Ltd" || got.Vendor != "Meridian Holdings Pvt Ltd" {
+		t.Fatalf("deposit payee = %q/%q, want the counterparty the requester named", got.VendorPayee, got.Vendor)
+	}
+	if got.VendorID != nil {
+		t.Fatalf("a deposit names its payee in text; a vendor row %d was stored from a field the form never offers", *got.VendorID)
+	}
+	if got.Type != "recoverable" || got.RecoverableCategory != "icd" {
+		t.Fatalf("stored as %s/%s, want recoverable/icd", got.Type, got.RecoverableCategory)
+	}
+
+	// The category cannot turn a deposit into an employee advance on the way in.
+	if _, err := s.CreateRequest(ctx, req, RequestInput{
+		Treatment: "recoverable", Type: "employee_advance", ShortTitle: "EMD as an advance",
+		RecoverableCategory: "emd", ProjectID: 1, Amount: 25000000, Purpose: "tender",
+		AdvanceReason: "tender", ExpectedReturnDate: "2027-03-31", RepaymentNotes: "on award",
+		ManagerID: mgr.ID,
+	}); !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "Employee advance category") {
+		t.Fatalf("an EMD raised as an employee advance was not refused for its category: %v", err)
 	}
 }
 

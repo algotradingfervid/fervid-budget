@@ -273,14 +273,10 @@ async function subjectWithGrants(
  * question here is specifically about a recoverable whose category needs no
  * project — the one shape that reaches the settlement with no head at all.
  *
- * `type=employee_advance` is the vehicle: with a recoverable treatment its
- * validation asks for the advance reason plus the recoverable rules and nothing
- * else (`internal/store/requests.go:231-238`), and it forces the payee to the
- * requester so the payment still has somebody to pay. The store's fifth type,
- * `recoverable`, cannot be used — it is in `requestTypes`
- * (`internal/store/requests.go:78-81`) but has no card in `requestTypeOptions`
- * (`internal/app/requests.go:42-55`), so `/requests/new?type=recoverable` falls
- * back to the chooser and renders no form at all.
+ * Two forms since form-1 / recoverables-1: an employee advance is its own
+ * type, category fixed, paid to the requester; every other category is a
+ * deposit or guarantee (`/requests/new?type=recoverable`) with a payee the
+ * requester names. Neither form ever offers a head.
  */
 async function createApprovedRecoverable(
   adminPage: Page,
@@ -291,26 +287,29 @@ async function createApprovedRecoverable(
 ): Promise<Ref> {
   const approver = await createApproverUser(adminPage, `rec-${category}-${runId}`);
 
-  await adminPage.goto('/requests/new?type=employee_advance');
+  const advance = category === 'employee_advance';
+  await adminPage.goto(advance ? '/requests/new?type=employee_advance' : '/requests/new?type=recoverable');
   await adminPage.getByLabel('Short title').fill(`Deposit ${category} ${runId}`);
-  // The treatment radios swap #form-fields from the server; the recoverable
-  // fieldset does not exist until this is checked.
-  await adminPage.getByRole('radio', { name: /Refundable or recoverable/ }).check();
-  await expect(adminPage.locator('#rcategory'), 'choosing recoverable reveals the category').toBeVisible();
-
-  // Choosing a category swaps again. The reliable signal is the server-rendered
-  // `selected` attribute: before the swap no option carries one, because the
-  // first render had no category to select.
-  await adminPage.locator('#rcategory').selectOption(category);
   await expect(
-    adminPage.locator(`#rcategory option[value="${category}"]`),
-    'and the swap comes back with the category selected server-side'
-  ).toHaveAttribute('selected', '');
+    adminPage.locator('input[name="treatment"][value="recoverable"]'),
+    'both forms open on the recoverable treatment'
+  ).toHaveCount(1);
+  if (!advance) {
+    // Choosing a category swaps #form-fields. The reliable signal is the
+    // server-rendered `selected` attribute: before the swap no option carries
+    // one, because the first render had no category to select.
+    await adminPage.locator('#rcategory').selectOption(category);
+    await expect(
+      adminPage.locator(`#rcategory option[value="${category}"]`),
+      'and the swap comes back with the category selected server-side'
+    ).toHaveAttribute('selected', '');
+    await adminPage.locator('#payee').fill(`Counterparty ${runId}`);
+  }
   await expect(
     adminPage.locator('#rproject'),
-    `${category} requires no project, so the form offers no project — and therefore no head`
-  ).toHaveCount(0);
-  await expect(adminPage.locator('#head'), 'nor a head selector anywhere on the form').toHaveCount(0);
+    `${category} requires no project, so the link is optional and left empty`
+  ).not.toHaveAttribute('aria-required', 'true');
+  await expect(adminPage.locator('#head'), 'no head selector anywhere on the form').toHaveCount(0);
 
   await adminPage.getByLabel('Expected return date').fill('2027-03-31');
   if (category === 'icd' || category === 'security_deposit') {
@@ -318,7 +317,7 @@ async function createApprovedRecoverable(
   }
   await adminPage.getByLabel('Repayment or refund terms').fill(`Refundable on completion ${runId}`);
   await adminPage.getByLabel('Amount').fill(amount);
-  await adminPage.getByLabel('What the money is for').fill(`Site deposit ${runId}`);
+  if (advance) await adminPage.getByLabel('What the money is for').fill(`Site deposit ${runId}`);
   await adminPage.getByLabel('Purpose').fill(`Recoverable ${category} for ${runId}.`);
   await adminPage.getByLabel('Approver').selectOption({ label: approver.name });
   await adminPage.getByRole('button', { name: 'Submit request' }).click();

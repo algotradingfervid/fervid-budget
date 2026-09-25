@@ -235,6 +235,8 @@ function validBody(w: World, type: string, extra: Record<string, string> = {}): 
       treatment: 'recoverable',
       recoverable_category: 'emd',
       project_id: w.operationsId,
+      // The deposit's payee is free but not blank: it is who Accounts pay (form-1).
+      vendor_payee: 'Ridge Metro Rail Corporation',
       expected_return_date: '2026-12-31',
       repayment_notes: 'Refunded when the tender closes.'
     }
@@ -342,7 +344,8 @@ it.describe('A · every type and treatment, through the real form', () => {
     const failures = capturePageErrors(page);
     try {
       await page.goto('/requests/new');
-      await expect(page.locator('.type-grid .type-card')).toHaveCount(4);
+      // Five since form-1: the deposit or guarantee has a card of its own.
+      await expect(page.locator('.type-grid .type-card')).toHaveCount(5);
       await page.getByRole('link', { name: /Vendor invoice payment/ }).click();
       await expect(page).toHaveURL(/\/requests\/new\?type=vendor_invoice$/);
 
@@ -455,7 +458,11 @@ it.describe('A · every type and treatment, through the real form', () => {
     try {
       await page.goto('/requests/new?type=employee_advance');
       await expect(page.getByRole('radio', { name: /Refundable or recoverable/ })).toBeChecked();
-      await expect(page.locator('#rcategory')).toHaveValue('employee_advance');
+      // The category is the type's, stated rather than chosen (form-1): the
+      // picker lives on the deposit-or-guarantee form.
+      await expect(page.locator('#rcategory-fixed')).toHaveValue('Employee advance');
+      await expect(page.locator('input[name="recoverable_category"]')).toHaveValue('employee_advance');
+      await expect(page.locator('#rcategory')).toHaveCount(0);
       // The recoverable fieldset replaces the budget one — it does not hide it.
       await expect(page.locator('#form-fields select[name="head_id"]')).toHaveCount(0);
 
@@ -511,31 +518,32 @@ it.describe('A · every type and treatment, through the real form', () => {
     }
   });
 
-  // REWRITTEN. This case was named "…and no form, yet POST /requests accepts
-  // it" and its middle assertion said an unknown `?type=` "falls back to the
-  // chooser". That silent fallback is gone: `requestNew`
-  // (internal/app/requests.go:105-117) answers **400** for any `?type=` naming
-  // no card, carrying `unofferedRequestType` (:100) as the reason, and only a
-  // bare /requests/new is the ordinary 200 chooser. A URL that names something
-  // the system will not raise is a client error about that URL, and answering
-  // 200 said the opposite.
-  //
-  // The gap the case exists for is unchanged and still pinned below: the
-  // store's fifth type has no way in through the UI, and a hand-rolled POST
-  // raising one is accepted and stored.
-  it('TC-B-006 — the recoverable type has no card, ?type=recoverable is refused, yet POST /requests accepts it', async ({
+  // REWRITTEN twice. First the silent fallback went: `requestNew` answers
+  // **400** for any `?type=` naming no card, carrying `unofferedRequestType`
+  // as the reason. Then the gap this case pinned — the store's fifth type had
+  // no way in through the UI — was closed (form-1 / recoverables-1): a deposit
+  // or guarantee has its own card and its own form, with a payee the requester
+  // names, because the only card that used to carry the recoverable treatment
+  // was the employee advance, which pays the requester.
+  it('TC-B-006 — the recoverable type has its own card and form; an unknown ?type= is still refused', async ({
     world
   }) => {
-    // requestTypeOptions (internal/app/requests.go:42) carries four types;
-    // store.requestTypes (internal/store/requests.go:78) carries five.
     const page = world.requester.page;
     await page.goto('/requests/new');
     await expect(
-      page.getByRole('link', { name: /Recoverable payment/ }),
-      'there is no chooser card for the recoverable type'
-    ).toHaveCount(0);
+      page.getByRole('link', { name: /Deposit or guarantee/ }),
+      'the fifth store type has a chooser card'
+    ).toHaveCount(1);
+    await expect(page.locator('.type-card')).toHaveCount(5);
 
-    const refused = await probeGet(page, '/requests/new?type=recoverable');
+    const form = await probeGet(page, '/requests/new?type=recoverable');
+    expect(form.status, `the deposit form renders; got ${form.outcome}`).toBe(200);
+    expect(form.body, 'the treatment is fixed, not a radio').toContain(
+      '<input type="hidden" name="treatment" value="recoverable">'
+    );
+    expect(form.body, 'the form asks who is paid').toContain('name="vendor_payee"');
+
+    const refused = await probeGet(page, '/requests/new?type=mystery');
     expect(
       refused.status,
       `a ?type= naming no card is refused, never quietly ignored; got ${refused.outcome}`
@@ -550,8 +558,11 @@ it.describe('A · every type and treatment, through the real form', () => {
     const id = await raiseOk(page, validBody(world, 'recoverable'));
     await page.goto(`/requests/${id}`);
     await expect(page.locator('.card-head .pill')).toHaveText('Recoverable · EMD — earnest money deposit');
-    // typeLabel falls through to the raw enum for a type with no label.
-    await expect(page.locator('.rh-meta')).toContainText('recoverable');
+    await expect(page.locator('.rh-meta')).toContainText('Deposit or guarantee');
+    await expect(
+      page.locator('.dl div:has(dt:text-is("Paid to")) dd'),
+      'a deposit is paid to whoever the requester named, not to the requester'
+    ).toHaveText('Ridge Metro Rail Corporation');
   });
 
   it('TC-B-007 — the treatment radio swaps #form-fields and the fieldsets are alternatives', async ({
@@ -601,7 +612,9 @@ it.describe('A · every type and treatment, through the real form', () => {
     const page = await world.requester.ctx.newPage();
     const failures = capturePageErrors(page);
     try {
-      await page.goto('/requests/new?type=employee_advance');
+      // The picker lives on the deposit form (form-1): an employee advance is
+      // always in the Employee advance category and states it instead.
+      await page.goto('/requests/new?type=recoverable');
 
       // Every pick waits for the swap it depends on — see swapSettled.
       const pick = async (category: string) => {
@@ -622,14 +635,17 @@ it.describe('A · every type and treatment, through the real form', () => {
 
       await pick('icd');
       await expect(page.locator('#counterparty'), 'an ICD needs a counterparty').toBeVisible();
-      await expect(page.locator('#rproject')).toHaveCount(0);
+      // Every category may link a project; only EMD/PBG must (recoverables-7).
+      await expect(page.locator('#rproject'), 'the project link is offered').toBeVisible();
+      await expect(page.locator('#rproject')).not.toHaveAttribute('aria-required', 'true');
 
       await pick('security_deposit');
       await expect(page.locator('#counterparty'), 'so does a security deposit').toBeVisible();
 
       await pick('other');
       await expect(page.locator('#counterparty'), '"Other" asks for neither').toHaveCount(0);
-      await expect(page.locator('#rproject')).toHaveCount(0);
+      await expect(page.locator('#rproject'), 'but may still link a project').toBeVisible();
+      await expect(page.locator('#rproject')).not.toHaveAttribute('aria-required', 'true');
       expect(failures, failures.join('\n')).toEqual([]);
     } finally {
       await page.close();
@@ -663,9 +679,10 @@ it.describe('A · every type and treatment, through the real form', () => {
   it('TC-B-010 — GET /requests/new/fields answers a bare fragment and needs request:create', async ({
     world
   }) => {
+    // The deposit type: an ICD is never an employee advance (form-1).
     const fragment = await probeGet(
       world.requester.page,
-      `/requests/new/fields?type=employee_advance&treatment=recoverable&recoverable_category=icd`
+      `/requests/new/fields?type=recoverable&treatment=recoverable&recoverable_category=icd`
     );
     expect(fragment.status, 'the fragment is a read').toBe(200);
     expect(fragment.body, 'a partial carries no shell').not.toContain('<!doctype html>');
@@ -1060,24 +1077,16 @@ it.describe('B · the required, forced and optional matrix', () => {
   // vocabulary sentence, and a refused `recoverable` keeps **the rule that
   // refused it** and comes back on the chooser.
   //
-  // WHAT THIS CASE NO LONGER ASSERTS, and why that is not a weakening. It
-  // demanded the form come back "with their typing still in it". There is no
-  // form to come back to: `recoverable` has no chooser card, and TC-B-006 pins
-  // that `/requests/new?type=recoverable` is refused outright — so the product
-  // answered the second half of F-B-02 by removing the screen rather than by
-  // repopulating it. The typing-survives-a-refusal rule is real and is asserted
-  // below against a type that *does* have a form, which is where it can hold.
+  // The deposit has its own form since form-1, so a refused submit comes back
+  // on it with the typing kept — asserted here as well as for the other types.
   it('TC-B-091 — a refused recoverable-type submit names the rule that refused it', async ({ world }) => {
     const probe = await raise(world.requester.page, validBody(world, 'recoverable', { repayment_notes: '' }));
     expect(probe.status, 'it is refused, which is the rule working').toBe(400);
     expect(message(probe), 'the requester must be told which rule refused them').toContain(
       'repayment or refund terms are required'
     );
-    expect(
-      message(probe),
-      'and where to go, since this type has no form of its own to be returned to'
-    ).toContain('start again from a request type');
-    expect(probe.body, 'which is the chooser').toContain('What are you asking to be paid?');
+    expect(probe.body, 'and the deposit form comes back with the typing still in it').toContain('name="vendor_payee" value="Ridge Metro Rail Corporation"');
+    expect(probe.body, 'on its own form, not the chooser').toContain('<h1>Deposit or guarantee</h1>');
     expect(
       probe.body,
       'never the vocabulary sentence: the store raises this type, so saying it does not is the defect'
@@ -1166,7 +1175,9 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
         head_id: world.officeRentId
       })
     );
-    expectRefused(probe, 'choose a recoverable category', 'budget fieldset on a recoverable advance');
+    // The category is the type's since form-1, so an advance with no category is
+    // told which category it is always in.
+    expectRefused(probe, 'always in the Employee advance category', 'budget fieldset on a recoverable advance');
   });
 
   it('TC-B-053 — a budget employee advance carrying only the recoverable fieldset is refused', async ({
@@ -1304,7 +1315,8 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     // cells in the one row. The lead cell is the listing; the second is the
     // accessible name of a button, and counting it as a second listing would be
     // reading the fix as a duplicate.
-    await expect(world.adminPage.locator('td.t-lead', { hasText: name })).toHaveCount(1);
+    // The name is an editable input in the row since recoverables-5.
+    await expect(world.adminPage.locator(`td.t-lead input[name="name"][value="${name}"]`)).toHaveCount(1);
 
     const refused = await raise(
       world.requester.page,
@@ -1354,8 +1366,10 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     });
     expect(added.status, `the category must be created; got ${added.outcome}`).toBeLessThan(400);
 
+    // The picker lives on the deposit-or-guarantee form (form-1); an admin-added
+    // category is a deposit, never an employee advance.
     const page = world.requester.page;
-    await page.goto('/requests/new?type=employee_advance');
+    await page.goto('/requests/new?type=recoverable');
     await expect(
       page.locator(`#rcategory option[value="${code}"]`),
       'the form must offer every active category'
@@ -1363,7 +1377,7 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
 
     const fragment = await probeGet(
       page,
-      `/requests/new/fields?type=employee_advance&treatment=recoverable&recoverable_category=${code}`
+      `/requests/new/fields?type=recoverable&treatment=recoverable&recoverable_category=${code}`
     );
     expect(fragment.body, 'and the swap must keep the category it was given').toContain(
       `value="${code}" selected`

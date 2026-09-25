@@ -4804,3 +4804,30 @@ td .t-sub {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   form-7 (2026-09-25 fix wave): sibling controls share a height and a width.
+
+   Height. .field is a grid, and a .form-grid row stretches every field in it
+   to the tallest — the one carrying a hint or the amount-in-words line. With
+   align-content left at its default the leftover height was shared out across
+   the field's rows, so the control in a hint-less field grew and sat lower
+   than its neighbour (Head 47px beside Project 35px, Needed by 62px beside
+   Amount). Rows keep their natural height; the field still fills the row.
+
+   Width. Below 860px the form is one column, but `.form-grid > .field.m-half
+   { grid-column: span 6 }` (0,3,0) outranked `.field.span-* { grid-column:
+   1 / -1 }` (0,2,0), so an m-half field still spanned six tracks of a
+   one-track grid — five implicit zero-width columns plus five 12px gaps —
+   and every other field in the same grid came out 60px narrower than it.
+   ========================================================================== */
+.field,
+.form-field {
+  align-content: start;
+}
+
+@media (max-width: 860px) {
+  .form-grid > .field.m-half {
+    grid-column: 1 / -1;
+  }
+}

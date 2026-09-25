@@ -303,6 +303,7 @@ func TestCreateRequestLinksRecoverableCategoryID(t *testing.T) {
 	id, err := s.CreateRequest(ctx, req, RequestInput{
 		Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
 		RecoverableCategory: "emd", ProjectID: 1, Amount: 500000, Purpose: "Tender EMD",
+		VendorPayee:        "Ridge Metro Rail Corporation",
 		ExpectedReturnDate: "2027-03-31", RepaymentNotes: "Refund on award", ManagerID: mgr.ID,
 	})
 	if err != nil {
@@ -369,6 +370,7 @@ func TestAdminAddedCategoryRulesAreEnforced(t *testing.T) {
 		return RequestInput{
 			Treatment: "recoverable", Type: "recoverable", ShortTitle: "Retention",
 			RecoverableCategory: "retention_money", Amount: 250000, Purpose: "Retention held",
+			VendorPayee:        "Ridge Metro Rail Corporation",
 			ExpectedReturnDate: "2027-06-30", RepaymentNotes: "Release at defect liability end",
 			ManagerID: mgr.ID,
 		}
@@ -409,6 +411,7 @@ func TestDeactivatedCategoryIsRejectedOnNewRequests(t *testing.T) {
 	_, err := s.CreateRequest(ctx, req, RequestInput{
 		Treatment: "recoverable", Type: "recoverable", ShortTitle: "PBG",
 		RecoverableCategory: "pbg", ProjectID: 1, Amount: 100000, Purpose: "Bank guarantee",
+		VendorPayee:        "Ridge Metro Rail Corporation",
 		ExpectedReturnDate: "2027-03-31", RepaymentNotes: "On completion", ManagerID: mgr.ID,
 	})
 	if !errors.Is(err, ErrValidation) {
@@ -1194,6 +1197,7 @@ func TestRecoverableCreateRecordsCounterpartyReturnDateAndNotes(t *testing.T) {
 		id, err := s.CreateRequest(ctx, req, RequestInput{
 			Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Ridge Metro",
 			RecoverableCategory: "icd", Amount: 50000000, Purpose: "Inter-corporate deposit",
+			VendorPayee:        "Ridge Metro Pvt Ltd",
 			Counterparty:       "Ridge Metro Pvt Ltd",
 			ExpectedReturnDate: "2027-03-31", RepaymentNotes: "Returned with 9% interest at maturity",
 			ManagerID: mgr.ID,

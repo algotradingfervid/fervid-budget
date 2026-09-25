@@ -1022,12 +1022,13 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     // calendar semantics would need a timezone this app does not have — under
     // them reminder_repeat_days degrades into nightly spam. calendarDaysBetween
     // was deleted rather than wired up, and the copy follows the code.
-    // Preserve the three toggles exactly as they stand — configurationSave
-    // treats an absent toggle key as "off" (internal/app/configuration.go:146-149),
-    // so posting without them would silently clobber unrelated settings.
+    // Preserve the toggles exactly as they stand — configurationSave treats an
+    // absent toggle key as "off" (internal/app/configuration.go), so posting
+    // without them would silently clobber unrelated settings. Two, not three:
+    // the dead "allow direct payments" toggle was removed (recoverables-10).
     await adminPage.goto('/configuration');
     const toggles: Record<string, string> = {};
-    for (const key of ['require_attachments', 'allow_approver_choice', 'allow_direct_payments']) {
+    for (const key of ['require_attachments', 'allow_approver_choice']) {
       const checked = await adminPage.locator(`input[name="${key}"]`).isChecked();
       if (checked) toggles[key] = 'on';
     }
