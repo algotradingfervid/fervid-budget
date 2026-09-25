@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -347,6 +348,18 @@ func TestNoForfeitureRoute(t *testing.T) { // X4
 		t.Fatalf("forfeiture POST status = %d, want 404/405 (no forfeiture/write-off path exists); body: %s", resp.StatusCode, body)
 	}
 	_ = responseBody(t, resp)
+	// And no store method either — the half the coverage matrix claimed and the
+	// test never checked (recoverables-9). Same shape as TestNoRefundRoute: s.st
+	// is *store.Store, so reflect enumerates every pointer-receiver method.
+	st := reflect.TypeOf(s.st)
+	for i := 0; i < st.NumMethod(); i++ {
+		name := strings.ToLower(st.Method(i).Name)
+		for _, banned := range []string{"forfeit", "writeoff", "write_off"} {
+			if strings.Contains(name, banned) {
+				t.Fatalf("unexpected store method %q (X4): forfeiture and write-off are out of scope", st.Method(i).Name)
+			}
+		}
+	}
 }
 
 // Phase 5, Task 6: the reminder thresholds are admin-set data on the

@@ -129,23 +129,17 @@ func NextRequestNumber(tx *sql.Tx, year string) (string, error) {
 }
 
 // requestTypes is what validateRequestInput accepts. There are five, and the
-// fifth is the divergence F-D-14 reports: the product's type chooser
-// (`requestTypeOptions`, internal/app/requests.go) offers four cards, and
-// `/requests/new?type=recoverable` therefore falls back to the chooser with no
-// form behind it.
+// product's type chooser (`requestTypeOptions`, internal/app/requests.go) offers
+// all five since the 2026-09-25 fix wave (form-1 / recoverables-1).
 //
-// The type is kept, and its validation branch with it, because it is NOT dead
-// code: `POST /requests` reaches the store with whatever type the body carried,
-// so a `recoverable`-typed request is creatable today by anything that is not
-// the chooser — and the branch below is what makes such a submission be refused
-// for its real reason (the category's project rule) rather than accepted
-// unvalidated or refused for a type the store had just accepted. That is the
-// behaviour F-E-08's fix depends on, and both `internal/app` and the audit
-// suites drive it directly.
-//
-// So the reconciliation F-D-14 asks for belongs on the other side of the line:
-// either the chooser grows a fifth card or the handler refuses the type before
-// the store sees it. Neither is this file's to make. Reported, not fixed here.
+// The fifth, `recoverable`, is the deposit or guarantee — EMD, PBG, ICD, a
+// security deposit — and it exists as a type of its own for one reason: its
+// payee. An employee advance always pays the person raising it
+// (forcesRequesterPayee), so while it was the only card that could carry the
+// recoverable treatment, a ₹10 lakh inter-corporate deposit was recorded as
+// "Paid to Rhea Requester" and Accounts were told to pay the employee. A deposit
+// is paid to the counterparty or the tender authority, so it is raised as its
+// own type with a payee the requester names (phase-2 spec §3, design Figure 2).
 var requestTypes = map[string]bool{
 	"vendor_invoice": true, "vendor_advance": true, "reimbursement": true,
 	"employee_advance": true, "recoverable": true,
@@ -346,18 +340,42 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 		if in.Treatment == "budget" {
 			return needsProjectHead()
 		}
+		// The category is the type's, not the requester's to choose: an employee
+		// advance pays the person raising it, so an EMD, PBG or ICD filed under
+		// this type would be a deposit recorded as owed to the employee (form-1).
+		// The seeded code is the stable identity — renaming the category keeps it.
+		if in.RecoverableCategory != employeeAdvanceCategory {
+			return fmt.Errorf("%w: an employee advance is always in the Employee advance category — a deposit, guarantee or loan is raised as its own request type", ErrValidation)
+		}
 		return needsRecoverable()
 	case "recoverable":
 		if in.Treatment != "recoverable" {
 			return fmt.Errorf("%w: recoverable type requires recoverable treatment", ErrValidation)
 		}
-		return needsRecoverable()
+		if in.RecoverableCategory == employeeAdvanceCategory {
+			return fmt.Errorf("%w: an advance to an employee is raised as an Employee advance, which pays the person raising it", ErrValidation)
+		}
+		if err := needsRecoverable(); err != nil {
+			return err
+		}
+		// Free, but not blank: this is who Accounts pays, and a request that
+		// names nobody cannot be paid.
+		if strings.TrimSpace(in.VendorPayee) == "" {
+			return fmt.Errorf("%w: say who receives the money — the counterparty company or the authority holding the deposit", ErrValidation)
+		}
 	}
 	return nil
 }
 
+// employeeAdvanceCategory is the code of the seeded Employee advance category.
+// Codes never change (see RecoverableCategory), so it survives a rename.
+const employeeAdvanceCategory = "employee_advance"
+
 // forcesRequesterPayee reports whether the payee must equal the requester.
 // These types never carry a vendor row — the payee snapshot is the only payee.
+//
+// `recoverable` is deliberately not here: a deposit or guarantee is paid to the
+// counterparty or the tender authority the requester names (form-1).
 func forcesRequesterPayee(t string) bool {
 	return t == "reimbursement" || t == "employee_advance"
 }
@@ -397,6 +415,12 @@ func scrubFieldsNotOwned(in RequestInput) RequestInput {
 	}
 	if in.Type != "reimbursement" {
 		in.ExpenseDate = ""
+	}
+	// A deposit or guarantee names its payee in text. The form offers no vendor
+	// control for it, so a vendor_id in the body is a forged link to the vendor
+	// master that would put that vendor's name over the payee the requester typed.
+	if in.Type == "recoverable" {
+		in.VendorID = 0
 	}
 	return in
 }
@@ -458,6 +482,21 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 		}
 		if headActive != 1 || projectActive != 1 {
 			return fmt.Errorf("%w: that budget head has been retired — choose a head that is still open", ErrValidation)
+		}
+	} else if in.ProjectID > 0 {
+		// A recoverable's project link carries no head (recoverables-7), so the
+		// head check above never sees it and the project is checked on its own:
+		// the register groups recoverables by this id.
+		var active int
+		err := s.db.QueryRowContext(ctx, `SELECT active FROM projects WHERE id=?`, in.ProjectID).Scan(&active)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: that project does not exist", ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if active != 1 {
+			return fmt.Errorf("%w: that project has been retired — choose a project that is still open", ErrValidation)
 		}
 	}
 	if in.VendorID > 0 {

@@ -1864,9 +1864,10 @@ const templates = `
   <span class="b-ico" aria-hidden="true">?</span>
   <div>
     <b>Not sure which one?</b>
-    <p>If the money leaves the company and never comes back, it is an expense. If it is a deposit, a
-      guarantee, or something you will repay, pick the type that fits and mark it recoverable on the
-      next screen.</p>
+    <p>If the money leaves the company and never comes back, it is an expense. A deposit or guarantee
+      paid to another company or authority is money the company expects back — raise it as a deposit
+      or guarantee, paid to them. Money advanced to you that you will account for is an employee
+      advance, paid to you.</p>
   </div>
 </div>
 {{template "bottom" .}}
@@ -1893,6 +1894,22 @@ const templates = `
   <legend>Recoverable details</legend>
   <div class="form-grid">
     <div class="field span-6 m-half">
+      {{if eq .Request2.Type "employee_advance"}}
+      {{/* The category is the type's, not a choice (form-1 / recoverables-1). An
+           employee advance pays the person raising it, so an EMD, PBG or ICD
+           filed under it was a deposit recorded as owed to the employee; those
+           are the "Deposit or guarantee" type now, and this form states its
+           category the way the vendor invoice states its treatment.
+           validateRequestInput refuses any other code for this type. */}}
+      <label for="rcategory-fixed">Category</label>
+      {{if .RecCategory.Code}}
+      <input id="rcategory-fixed" value="{{.RecCategory.Name}}" readonly>
+      <input type="hidden" name="recoverable_category" value="{{.RecCategory.Code}}">
+      <span class="hint">An employee advance is always in this category. A deposit, guarantee or loan is raised as its own request type.</span>
+      {{else}}
+      <p id="rcategory-fixed" class="fixed-treatment">The Employee advance category has been retired by your administrator, so an employee advance cannot be recorded as recoverable until it is reactivated.</p>
+      {{end}}
+      {{else}}
       <label for="rcategory">Category <span class="req" aria-hidden="true">*</span></label>
       {{/* The options are the active category rows, not six literals. V4's promise
            is that an admin can add a category and have its rules enforced without
@@ -1901,13 +1918,16 @@ const templates = `
            and only refused after the whole form had been filled in
            (F-E-02/F-B-17). The empty option exists for the same reason: an
            unrecognised code is no longer silently rewritten to "emd", so
-           "nothing chosen" is a state the control has to be able to show. */}}
+           "nothing chosen" is a state the control has to be able to show.
+           categoriesForType leaves the Employee advance category out: an advance
+           to an employee is the employee advance type, which pays them. */}}
       <select id="rcategory" name="recoverable_category" aria-required="true"
               hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
         {{if not .RecCategory.Code}}<option value="" selected>Choose a category</option>{{end}}
         {{range .Categories}}<option value="{{.Code}}" {{select $.Request2.RecoverableCategory .Code}}>{{.Name}}</option>{{end}}
       </select>
       <span class="hint">Categories are maintained by your administrator.</span>
+      {{end}}
     </div>
     <div class="field span-6 m-half">
       <label for="expected-return">Expected return date <span class="req" aria-hidden="true">*</span></label>
@@ -1918,14 +1938,20 @@ const templates = `
          code rather than a hardcoded pair: the field stays while the select still
          reads what the server rendered and disappears the instant it changes,
          until the htmx swap arrives with the right fieldset. */}}
-    {{if .RecCategory.RequiresProject}}
+    {{/* Every category may link a project (design §4: a recoverable "may still
+         link to a real project"); only EMD/PBG must. The field used to exist
+         solely inside the RequiresProject branch, so an ICD or a security deposit
+         could never be linked and read "Not project linked" in the register with
+         no way to say otherwise (recoverables-7). Required and its hint follow
+         the category's own flag. Absent a category there is nothing to say yet. */}}
+    {{if .RecCategory.Code}}
     <div class="field span-6 m-half" data-when="recoverable_category:{{.RecCategory.Code}}">
-      <label for="rproject">Related project <span class="req" aria-hidden="true">*</span></label>
-      <select id="rproject" name="project_id" aria-required="true">
-        <option value="">Choose a project</option>
-        {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+      <label for="rproject">Related project {{if .RecCategory.RequiresProject}}<span class="req" aria-hidden="true">*</span>{{else}}<span class="opt" aria-hidden="true">optional</span>{{end}}</label>
+      <select id="rproject" name="project_id" {{if .RecCategory.RequiresProject}}aria-required="true"{{end}}>
+        <option value="">{{if .RecCategory.RequiresProject}}Choose a project{{else}}Not linked to a project{{end}}</option>
+        {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}
       </select>
-      <span class="hint">{{.RecCategory.Name}} always belongs to a project.</span>
+      <span class="hint">{{if .RecCategory.RequiresProject}}{{.RecCategory.Name}} always belongs to a project.{{else}}Link it if the money belongs to a project. It stays out of that project's budget actuals either way.{{end}}</span>
     </div>
     {{end}}
     {{if .RecCategory.RequiresCounterparty}}
@@ -1958,7 +1984,11 @@ const templates = `
       <select id="project" name="project_id" aria-required="true"
               hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
         <option value="">Choose a project</option>
-        {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+        {{/* "(retired)" only ever appears on the edit form: offerRetiredRefs adds
+             the request's own project or head back when it was retired after the
+             request was raised, so the form shows what is charged today (T12,
+             form-3). The new-request lists are the active set and carry none. */}}
+        {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}
       </select>
       <span class="hint">Picking a project narrows the heads below to that project's own.</span>
     </div>
@@ -1966,7 +1996,7 @@ const templates = `
       <label for="head">Head <span class="req" aria-hidden="true">*</span></label>
       <select id="head" name="head_id" aria-required="true">
         <option value="">Choose a head</option>
-        {{range .Heads}}{{if or (not (deref $.Request2.ProjectID)) (eq .ProjectID (deref $.Request2.ProjectID))}}<option value="{{.ID}}" {{if eq (deref $.Request2.HeadID) .ID}}selected{{end}}>{{.Project}} / {{.Name}}</option>{{end}}{{end}}
+        {{range .Heads}}{{if or (not (deref $.Request2.ProjectID)) (eq .ProjectID (deref $.Request2.ProjectID))}}<option value="{{.ID}}" {{if eq (deref $.Request2.HeadID) .ID}}selected{{end}}>{{.Project}} / {{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}
       </select>
     </div>
   </div>
@@ -2029,17 +2059,29 @@ const templates = `
             <span><b>Refundable or recoverable</b><small>A deposit, guarantee, loan or advance you expect back. Kept out of budget actuals.</small></span>
           </label>
         </div>
+        {{else if eq .Request2.Type "recoverable"}}
+        {{/* A deposit or guarantee is recoverable by definition (form-1): the
+             store refuses any other treatment for the type, so the form states
+             it the way a vendor invoice states "budget expense". */}}
+        <span class="flabel">How this is treated</span>
+        <input type="hidden" name="treatment" value="recoverable">
+        <p class="fixed-treatment"><b>Refundable or recoverable.</b> A deposit, guarantee or loan the company expects back. Kept out of budget actuals.</p>
+        <span class="hint">A deposit or guarantee is always recoverable. Money that is spent and gone is a vendor payment, a reimbursement or a budget employee advance.</span>
         {{else}}
         <span class="flabel">How this is treated</span>
         <input type="hidden" name="treatment" value="budget">
         <p class="fixed-treatment"><b>Budget expense.</b> Money spent and gone. It counts against a project and head.</p>
-        <span class="hint">Only an employee advance can be marked refundable or recoverable.</span>
+        <span class="hint">Only an employee advance can be marked refundable or recoverable. A deposit or guarantee is its own request type.</span>
         {{end}}
       </div>
     </div>
   </fieldset>
 
   <div id="form-fields">{{template "request_form_fields" .}}</div>
+
+  {{if eq .FormType "recoverable"}}
+  {{template "request_payee_field" .}}
+  {{end}}
 
   <fieldset>
     <legend>Amount and timing</legend>
@@ -2231,6 +2273,26 @@ const templates = `
   </div>
 </form>
 {{template "bottom" .}}
+{{end}}
+
+{{/* Who a deposit or guarantee is paid to — the one type whose payee is free
+     and is not a vendor row (form-1 / recoverables-1). An EMD goes to the tender
+     authority, an ICD to the counterparty company; the requester names them
+     here and Accounts pay that name. It is rendered on the new and the edit form
+     alike, and validateRequestInput refuses the type without it: a request that
+     names nobody cannot be paid. */}}
+{{define "request_payee_field"}}
+<fieldset>
+  <legend>Who is paid</legend>
+  <div class="form-grid">
+    <div class="field span-6">
+      <label for="payee">Paid to <span class="req" aria-hidden="true">*</span></label>
+      <input id="payee" name="vendor_payee" value="{{.Request2.VendorPayee}}" required placeholder="Counterparty company or tender authority"
+             hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur">
+      <span class="hint">The company or authority that receives the deposit. Never you — money advanced to yourself is an employee advance. Bank details stay with Accounts, never on this form.</span>
+    </div>
+  </div>
+</fieldset>
 {{end}}
 
 {{/* One request as a card. Shared by the list, the approvals queue and the
@@ -2792,6 +2854,17 @@ const templates = `
   </div>
 </div>
 
+{{/* T12 (form-3): a project or head retired after the request was raised is
+     offered back in the selects below, marked, and this says why it has to be
+     chosen again — the store still refuses a retired head, and the refusal used
+     to be "project and head are required", about a request that had both. */}}
+{{if .Warning}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">!</span>
+  <div><b>This request charges something that has since been retired</b><p>{{.Warning}}</p></div>
+</div>
+{{end}}
+
 <form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="type" value="{{.FormType}}">
@@ -2808,6 +2881,10 @@ const templates = `
   </fieldset>
 
   <div id="form-fields">{{template "request_form_fields" .}}</div>
+
+  {{if eq .FormType "recoverable"}}
+  {{template "request_payee_field" .}}
+  {{end}}
 
   <fieldset>
     <legend>Amount and timing</legend>
@@ -2967,6 +3044,12 @@ const templates = `
   {{end}}
   {{if or (eq .FormType "vendor_invoice") (eq .FormType "vendor_advance")}}
   <input type="hidden" name="vendor_id" value="{{deref .Request2.VendorID}}">
+  {{end}}
+  {{/* A deposit's payee is a field the store reads as cleared when absent, and
+       refuses cleared; it travels with the rest of what this screen does not
+       show. "Edit every field" is where it is changed. */}}
+  {{if eq .FormType "recoverable"}}
+  <input type="hidden" name="vendor_payee" value="{{.Request2.VendorPayee}}">
   {{end}}
 
   <fieldset>
@@ -3385,23 +3468,34 @@ const templates = `
 
      "Requires" is one derived descriptive column, never the two raw flags: an
      admin should be told what a category asks for, not asked to reason about
-     two booleans. */}}
+     two booleans.
+
+     Each row is editable in place (recoverables-5). The name and the rule used
+     to travel as hidden inputs, so the only way to change an in-use category's
+     rule was delete-and-recreate — which the store refuses while any request
+     names it. The name input and the requires select sit in their own cells
+     and belong to the row's form through the form= attribute, the same shape
+     the heads screen uses; Save is the row's submit, and the Active checkbox
+     still saves on change, carrying the row's current name and rule with it.
+     The code is not editable: it is the stable identity every request stores. */}}
 <fieldset>
   <legend>Recoverable categories</legend>
   <div class="table-wrap" style="margin-bottom:10px"><table class="t-cards">
-    <thead><tr><th>Category</th><th>Requires</th><th class="c">Active</th><th class="c">In use</th>{{if .Perms.Can "recoverable_category" "delete"}}<th>Actions</th>{{end}}</tr></thead>
+    <thead><tr><th>Category</th><th>Requires</th><th class="c">Active</th><th class="c">In use</th>{{if or (.Perms.Can "recoverable_category" "edit") (.Perms.Can "recoverable_category" "delete")}}<th>Actions</th>{{end}}</tr></thead>
     <tbody>{{range .CategoryUsage}}<tr>
-      <td class="t-lead" data-label="Category">{{.Name}}</td>
-      <td data-label="Requires">{{.Requires}}</td>
+      <td class="t-lead" data-label="Category">{{if $.Perms.Can "recoverable_category" "edit"}}<input form="rc-{{.ID}}" name="name" aria-label="Name for {{.Name}}" value="{{.Name}}" required>{{else}}{{.Name}}{{end}}</td>
+      <td data-label="Requires">{{if $.Perms.Can "recoverable_category" "edit"}}{{$key := requiresKey .RecoverableCategory}}<select form="rc-{{.ID}}" name="requires" aria-label="Requires for {{.Name}}">
+        <option value="none" {{select $key "none"}}>Nothing extra</option>
+        <option value="project" {{select $key "project"}}>Related project</option>
+        <option value="counterparty" {{select $key "counterparty"}}>Counterparty company</option>
+        <option value="both" {{select $key "both"}}>Related project and counterparty company</option>
+      </select>{{else}}{{.Requires}}{{end}}</td>
       <td class="c" data-label="Active">{{if $.Perms.Can "recoverable_category" "edit"}}
         <form id="rc-{{.ID}}" method="post" action="/configuration/recoverable-categories">
           <input type="hidden" name="csrf" value="{{$.CSRF}}">
           <input type="hidden" name="id" value="{{.ID}}">
-          <input type="hidden" name="name" value="{{.Name}}">
-          <input type="hidden" name="requires" value="{{requiresKey .RecoverableCategory}}">
           <input type="hidden" name="sort_order" value="{{.SortOrder}}">
           <label class="checkline"><input type="checkbox" name="active" {{check .Active}} onchange="this.form.submit()"> <span class="sr-only">Active</span></label>
-          <noscript><button class="btn small outline" type="submit">Save</button></noscript>
         </form>
       {{else}}{{if .Active}}<span class="pill good no-dot">On</span>{{else}}<span class="pill neutral no-dot">Off</span>{{end}}{{end}}</td>
       <td class="c" data-label="In use">{{.InUse}}</td>
@@ -3417,15 +3511,18 @@ const templates = `
            category in use is told how many and that deactivating is the way to
            retire it, which is worth more than a control that quietly is not
            there. */}}
-      {{if $.Perms.Can "recoverable_category" "delete"}}
+      {{if or ($.Perms.Can "recoverable_category" "edit") ($.Perms.Can "recoverable_category" "delete")}}
       <td class="actions-cell" data-label="Actions">
+        {{if $.Perms.Can "recoverable_category" "edit"}}<button form="rc-{{.ID}}" class="btn small outline" type="submit">Save<span class="sr-only"> {{.Name}}</span></button>{{end}}
+        {{if $.Perms.Can "recoverable_category" "delete"}}
         <form method="post" action="/configuration/recoverable-categories/{{.ID}}/delete">
           <input type="hidden" name="csrf" value="{{$.CSRF}}">
           <button class="btn small danger" type="submit">Delete<span class="sr-only"> {{.Name}}</span></button>
         </form>
+        {{end}}
       </td>
       {{end}}
-    </tr>{{else}}<tr><td colspan="{{if .Perms.Can "recoverable_category" "delete"}}5{{else}}4{{end}}" class="empty" data-label="">No recoverable categories yet.</td></tr>{{end}}</tbody>
+    </tr>{{else}}<tr><td colspan="{{if or (.Perms.Can "recoverable_category" "edit") (.Perms.Can "recoverable_category" "delete")}}5{{else}}4{{end}}" class="empty" data-label="">No recoverable categories yet.</td></tr>{{end}}</tbody>
   </table></div>
   {{if .Perms.Can "recoverable_category" "edit"}}
   <form method="post" action="/configuration/recoverable-categories">

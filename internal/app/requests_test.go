@@ -328,15 +328,19 @@ func TestRequestNewTypeChooser(t *testing.T) {
 	if !strings.Contains(body, `class="type-grid"`) {
 		t.Fatal("the chooser does not use the .type-grid layout")
 	}
-	if n := strings.Count(body, `class="type-card"`); n != 4 {
-		t.Fatalf("the chooser renders %d type cards, want 4", n)
+	// Five, one per store type: the deposit or guarantee got its card in the
+	// 2026-09-25 fix wave (form-1), because the employee advance — the only card
+	// that could carry the recoverable treatment — pays the requester.
+	if n := strings.Count(body, `class="type-card"`); n != 5 {
+		t.Fatalf("the chooser renders %d type cards, want 5", n)
 	}
 	for _, want := range []string{
 		`href="/requests/new?type=vendor_invoice"`,
 		`href="/requests/new?type=vendor_advance"`,
 		`href="/requests/new?type=reimbursement"`,
 		`href="/requests/new?type=employee_advance"`,
-		"Vendor invoice payment", "Vendor advance", "Reimbursement", "Employee advance",
+		`href="/requests/new?type=recoverable"`,
+		"Vendor invoice payment", "Vendor advance", "Reimbursement", "Employee advance", "Deposit or guarantee",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("type card %q missing", want)
@@ -1361,12 +1365,18 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 		"<legend>Request numbering</legend>", "<legend>Attachments</legend>",
 		"<legend>Urgency</legend>", "<legend>Approvals</legend>", "<legend>Payments</legend>",
 		`name="number_prefix"`, `name="require_attachments"`, `name="urgency_mode"`,
-		`name="allow_approver_choice"`, `name="allow_direct_payments"`, `class="action-bar"`,
+		`name="allow_approver_choice"`, `class="action-bar"`,
 		"<h1>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("configuration screen is missing %q", want)
 		}
+	}
+	// No "allow direct payments" toggle (recoverables-10): nothing read the
+	// key, paymentCreate refuses a request-less payment regardless (X5), and its
+	// hint promised a reason and an audit flag that did not exist.
+	if strings.Contains(body, `name="allow_direct_payments"`) || strings.Contains(body, "Allow direct payments") {
+		t.Fatal("the configuration screen offers a direct-payments toggle that nothing reads")
 	}
 	// One form of fieldsets closed by one action bar: that is the shape later
 	// phases append to.
@@ -1388,7 +1398,7 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 	resp := s.postForm("/configuration", url.Values{
 		"number_prefix": {"REQ"}, "number_year_mode": {"financial"}, "number_width": {"5"},
 		"require_attachments": {"on"}, "attachment_max_mb": {"20"},
-		"urgency_mode": {"free"}, "allow_approver_choice": {""}, "allow_direct_payments": {""},
+		"urgency_mode": {"free"}, "allow_approver_choice": {""},
 		"payment_modes": {"NEFT, UPI"},
 	})
 	requireStatus(t, resp, http.StatusSeeOther)

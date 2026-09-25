@@ -52,6 +52,7 @@ type PageData struct {
 	CSRF     string
 	Error    string
 	Notice   string
+	Warning  string // a caution above a form: act before saving; rendered by the page, not the shell
 	Month    string
 	Status   string
 	Query    string
