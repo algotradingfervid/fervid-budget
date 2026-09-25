@@ -351,8 +351,11 @@ type PaymentListOptions struct {
 	// Scope + ViewerID enforce the `payment` data scope (F-A-04 / F-G-003),
 	// mirroring RequestListOptions: "own" (and "assigned", which has no
 	// routed-to meaning on the ledger and narrows the same way rather than
-	// silently widening) filter on entered_by = ViewerID; "", "all" and any
-	// other value leave the list unrestricted, exactly as requestWhere does.
+	// silently widening) filter on entered_by = ViewerID; only "all" leaves
+	// the list unrestricted. "" and any other value read no rows at all — the
+	// ledger fails closed, exactly as requestWhere does (fixwave rbac-2), so a
+	// role with payment:view and no scope sees an empty ledger, never every
+	// payment. Callers that mean "everything" say ScopeAll.
 	Scope    string
 	ViewerID int64
 	// ExcludeRecoverable leaves out payments that settle a recoverable request.
