@@ -389,12 +389,14 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 		` + recoverableAmount + ` AS amt,
 		COALESCE(py.paid_on,''), COALESCE(pr.expected_return_date,''), COALESCE(pr.repayment_notes,''),
 		pr.status, COALESCE(u.name,''), COALESCE(pr.on_hold,0),
+		pr.processing_by, COALESCE(pu.name,''), COALESCE(pr.concern_open,0),
 		CAST(julianday(COALESCE(NULLIF(pr.expected_return_date,''),?)) - julianday(?) AS INTEGER) AS days
 		FROM payment_requests pr
 		LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
 		LEFT JOIN recoverable_categories rc ON rc.id=pr.recoverable_category_id
 		LEFT JOIN projects p ON p.id=pr.project_id
 		LEFT JOIN users u ON u.id=pr.requester_id
+		LEFT JOIN users pu ON pu.id=pr.processing_by
 		WHERE ` + recoverableBaseWhere
 	args := []any{today, today}
 
@@ -468,12 +470,19 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 	var out []RecoverableRow
 	for rows.Next() {
 		var r RecoverableRow
-		var onHold int
+		var onHold, concernOpen int
+		var processingBy sql.NullInt64
 		if err := rows.Scan(&r.RequestID, &r.Number, &r.Category, &r.Counterparty, &r.Project, &r.Amount,
-			&r.PaidOn, &r.ExpectedReturnDate, &r.RepaymentNotes, &r.Status, &r.Requester, &onHold, &r.DaysToReturn); err != nil {
+			&r.PaidOn, &r.ExpectedReturnDate, &r.RepaymentNotes, &r.Status, &r.Requester, &onHold,
+			&processingBy, &r.ProcessingByName, &concernOpen, &r.DaysToReturn); err != nil {
 			return nil, err
 		}
 		r.OnHold = onHold == 1
+		r.ConcernOpen = concernOpen == 1
+		if processingBy.Valid {
+			v := processingBy.Int64
+			r.ProcessingBy = &v
+		}
 		r.HasReturnDate = r.ExpectedReturnDate != ""
 		if !r.HasReturnDate {
 			// The days expression substitutes today for an undated row so

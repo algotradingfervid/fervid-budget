@@ -1531,6 +1531,19 @@ func statusPill(req store.Request, viewerID int64) Pill {
 	}
 }
 
+// rowStatusPill is statusPill for a recoverables register row, which is not a
+// store.Request but carries the same three facts the pill turns on — status,
+// holder and open concern — so the register cannot describe a request that is
+// taken or under discussion differently from the detail page behind it.
+func rowStatusPill(row store.RecoverableRow, viewerID int64) Pill {
+	return statusPill(store.Request{
+		Status:           row.Status,
+		ProcessingBy:     row.ProcessingBy,
+		ProcessingByName: row.ProcessingByName,
+		ConcernOpen:      row.ConcernOpen,
+	}, viewerID)
+}
+
 func typeLabel(t string) string {
 	if label, ok := requestTypeLabels[t]; ok {
 		return label

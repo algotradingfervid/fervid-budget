@@ -352,6 +352,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"pillClass":    pillClass,
 		"reqStatus":    requestStatusText,
 		"statusPill":   statusPill,
+		"rowPill":      rowStatusPill,
 		"typeLabel":    typeLabel,
 		"recoverable":  recoverableLabel,
 		"inWords":      money.InWords,

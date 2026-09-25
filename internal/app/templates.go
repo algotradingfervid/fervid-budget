@@ -962,10 +962,13 @@ const templates = `
   <p class="rh-meta">{{if eq .Request2.Treatment "recoverable"}}Recoverable{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Request2.Project}} / {{.Request2.Head}}{{end}}{{if .Request2.ApprovedAt}} · approved {{datep .Request2.ApprovedAt}}{{end}}</p>
   <div class="rh-status">
     {{/* The pill tells the same truth the banner does. A .pill.processing naming a
-         holder is a lie on a request nobody holds. */}}
+         holder is a lie on a request nobody holds. The lost-race branch names
+         the holder from .Holder rather than statusPill because the row it has
+         may predate the winner's write; the words are statusPill's, so this
+         screen reads like every other (settlement-7 review). */}}
     {{if eq .ConflictCause "hold"}}<span class="pill hold">On hold</span>
-    {{else if or (eq .ConflictCause "not-approved") (eq .ConflictCause "unclaimed")}}<span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
-    {{else}}<span class="pill processing">Processing — {{.Holder}}</span>{{end}}
+    {{else if or (eq .ConflictCause "not-approved") (eq .ConflictCause "unclaimed")}}{{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
+    {{else}}<span class="pill processing">{{reqStatus "processing"}} — taken by {{.Holder}}</span>{{end}}
     {{if eq .ConflictCause "taken"}}<span class="waiting">Reserved {{datep .Request2.ProcessingAt}}</span>
     {{else}}{{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>{{end}}
   </div>
@@ -1320,7 +1323,7 @@ const templates = `
   <h1>{{.Request2.Vendor}}{{if .Request2.ShortTitle}} — {{.Request2.ShortTitle}}{{end}}</h1>
   <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Request2.Project}} · {{.Request2.Project}}{{if .Request2.Head}} / {{.Request2.Head}}{{end}}{{end}}{{if .Request2.NeededBy}} · needed by {{dateLong .Request2.NeededBy}}{{end}}</p>
   <div class="rh-status">
-    <span class="pill processing">Processing — {{.Request2.ProcessingByName}}</span>
+    {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
     <span class="waiting">Reserved by {{if .ReserveMine}}you{{else}}{{.Request2.ProcessingByName}}{{end}} since {{datep .Request2.ProcessingAt}}</span>
   </div>
 </div>
@@ -3355,7 +3358,7 @@ const templates = `
 <div class="req-head">
   <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money .Request2.Amount}}</span></div>
   <p class="rh-meta"><b>{{.Request2.ShortTitle}}</b> · approved by {{.Request2.ManagerName}}{{if .Request2.ApprovedAt}} on {{datep .Request2.ApprovedAt}}{{end}}</p>
-  <div class="rh-status"><span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span></div>
+  <div class="rh-status">{{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span></div>
 </div>
 
 <form method="post" action="/requests/{{.Request2.ID}}/cancel-request">
@@ -3547,7 +3550,7 @@ const templates = `
         <span class="rc-title">{{.ShortTitle}}</span>
         <span class="rc-meta">{{.Vendor}}{{if .InvoiceNo}} · invoice {{.InvoiceNo}}{{end}} · raised {{date .CreatedAt}}</span>
         <span class="rc-foot">
-          <span class="pill {{pillClass .Status}}">{{reqStatus .Status}}</span>
+          {{$p := statusPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
           <span class="waiting">{{if eq .Status "approved"}}Waiting on Accounts{{else}}Waiting on {{.ManagerName}}{{end}}</span>
         </span>
       </a>
@@ -3581,7 +3584,7 @@ const templates = `
   <h1>{{.Request2.ShortTitle}}</h1>
   <p class="rh-meta">{{typeLabel .Request2.Type}}{{if eq .Request2.Treatment "recoverable"}} · {{recoverable .Request2.RecoverableCategory}}{{end}}{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{if .Request2.Head}} · {{.Request2.Head}}{{end}}{{if .Request2.NeededBy}} · needed by {{dateLong .Request2.NeededBy}}{{end}}</p>
   <div class="rh-status">
-    <span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
     <span class="waiting">Waiting on {{.Request2.ManagerName}}</span>
   </div>
 </div>
@@ -4216,7 +4219,7 @@ const templates = `
     <td data-label="Paid on">{{if .PaidOn}}{{.PaidOn}}{{else}}Not yet paid{{end}}</td>
     <td data-label="Expected back">{{if .HasReturnDate}}{{.ExpectedReturnDate}}{{else}}No fixed date{{end}}</td>
     <td data-label="Ageing"><span class="pill {{.AgeingTone}}">{{.AgeingLabel}}</span></td>
-    <td data-label="Status"><span class="pill {{pillClass .Status}}">{{reqStatus .Status}}</span></td>
+    <td data-label="Status">{{$p := rowPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span></td>
     <td data-label="Requester">{{.Requester}}</td>
     <td data-label="Repayment notes">{{if .RepaymentNotes}}{{.RepaymentNotes}}{{else}}Not recorded{{end}}</td>
   </tr>{{else}}<tr><td colspan="11" class="empty" data-label="">No recoverable payments match these filters.</td></tr>{{end}}</tbody>
@@ -4246,7 +4249,7 @@ const templates = `
   <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money .Recoverable.Amount}}</span></div>
   <h1>{{.Request2.Purpose}}</h1>
   <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Recoverable.PaidOn}} · paid {{.Recoverable.PaidOn}}{{end}} · <span class="pill recoverable">Recoverable · {{.Recoverable.Category}}</span></p>
-  <div class="rh-status"><span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span><span class="pill {{.Recoverable.AgeingTone}}">{{.Recoverable.AgeingLabel}}</span></div>
+  <div class="rh-status">{{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span><span class="pill {{.Recoverable.AgeingTone}}">{{.Recoverable.AgeingLabel}}</span></div>
 </div>
 
 {{if .Recoverable.Overdue}}

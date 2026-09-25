@@ -89,6 +89,69 @@ func TestUnclaimedEntryScreenSaysNobodyHoldsItAndOffersToTake(t *testing.T) {
 	}
 	body = responseBody(t, s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, ""))
 	mustContain(t, "taken entry screen", body, "Deepak Menon took this request before you")
+	// …in the words every other screen uses for a held request, not a pill of
+	// its own (settlement-7 review: "Processing — {holder}").
+	mustContain(t, "taken entry screen", body, `class="pill processing">With Accounts — taken by Deepak Menon</span>`)
+	mustNotContain(t, "taken entry screen", body, "Processing —")
+}
+
+// settlement-7/-8 review: a few lesser screens built their pill from the
+// status alone, so they could neither name the holder nor show "Partial —
+// under discussion". They all go through statusPill now: the recoverables
+// register and detail, the requester's cancel screen, the similar-request card
+// on the new-request form, the holder's own payment entry screen, and the
+// just-submitted screen.
+func TestLesserScreensShareTheStatusPill(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Lesser")
+	deepak := s.seedRoleUser("deepak@example.test", "Deepak Menon", "DeepakPass1234", "Accounts")
+
+	// A recoverable Deepak holds: the register and the detail name him.
+	taken := s.seedRecoverableRequest(1, admin.ID, admin.ID, "icd", "Meridian Holdings", 250000)
+	if err := s.st.ReserveRequest(s.ctx, deepak, taken); err != nil {
+		t.Fatal(err)
+	}
+	// A recoverable in partial review with the manager's concern unanswered.
+	discussed := s.seedRecoverableRequest(2, admin.ID, admin.ID, "icd", "Ridge Metro", 300000)
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET status='partial_review', concern_open=1 WHERE id=?`, discussed); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	register := responseBody(t, s.request(http.MethodGet, "/recoverables/list", nil, ""))
+	mustContain(t, "recoverables register", register,
+		`class="pill processing">With Accounts — taken by Deepak Menon</span>`, `class="pill discussion">Partial — under discussion</span>`)
+	mustNotContain(t, "recoverables register", register, `class="pill processing">With Accounts</span>`, "Partial — manager review")
+	for id, want := range map[int64]string{
+		taken:     `class="pill processing">With Accounts — taken by Deepak Menon</span>`,
+		discussed: `class="pill discussion">Partial — under discussion</span>`,
+	} {
+		mustContain(t, "recoverable detail", responseBody(t, s.request(http.MethodGet, strconvPath("/recoverables/%d", id), nil, "")), want)
+	}
+
+	// The stale-reservation screen: "taken by you" to the holder, the holder's
+	// name to anybody else.
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET processing_at=datetime('now','-26 hours') WHERE id=?`, taken); err != nil {
+		t.Fatal(err)
+	}
+	stale := responseBody(t, s.request(http.MethodGet, strconvPath("/requests/%d/reservation/stale", taken), nil, ""))
+	mustContain(t, "bystander's stale screen", stale, `class="pill processing">With Accounts — taken by Deepak Menon</span>`)
+	s.login(deepak.Email, "DeepakPass1234")
+	stale = responseBody(t, s.request(http.MethodGet, strconvPath("/requests/%d/reservation/stale", taken), nil, ""))
+	mustContain(t, "holder's stale screen", stale, `class="pill processing">With Accounts — taken by you</span>`)
+	mustNotContain(t, "holder's stale screen", stale, "Processing —")
+
+	// The similar-request card on the new-request form names the holder too.
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	held := s.seedApprovedRequest(3, admin.ID, admin.ID, headID, 500000)
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET vendor_payee='Acme Landlord', vendor_id=NULL WHERE id=?`, held); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.ReserveRequest(s.ctx, deepak, held); err != nil {
+		t.Fatal(err)
+	}
+	card := responseBody(t, s.postForm("/requests/duplicate-check", url.Values{
+		"type": {"vendor_invoice"}, "vendor_payee": {"Acme Landlord"}, "amount": {"5,000.00"}}))
+	mustContain(t, "similar-request card", card, "PR-2026-000003", `class="pill processing">With Accounts — taken by Deepak Menon</span>`)
 }
 
 // settlement-3: a partial review waiting on the manager is listed where the

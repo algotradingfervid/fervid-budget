@@ -249,11 +249,19 @@ type RecoverableRow struct {
 	Status             string
 	Requester          string
 	OnHold             bool
-	HasReturnDate      bool
-	Overdue            bool
-	DaysToReturn       int    // whole calendar days from AsOf; negative when overdue
-	AgeingLabel        string // "25 days overdue", "174 days to go", "Awaiting payment", …
-	AgeingTone         string // pill modifier: "bad" | "neutral" | "approved" | "hold"
+	// ProcessingBy, ProcessingByName and ConcernOpen are what the status pill
+	// turns on beyond the status itself — who holds the reservation, and
+	// whether a partial review has an unanswered concern — so the register
+	// reads "With Accounts — taken by …" and "Partial — under discussion"
+	// exactly as the request behind it does (settlement-7/-8 review).
+	ProcessingBy     *int64
+	ProcessingByName string
+	ConcernOpen      bool
+	HasReturnDate    bool
+	Overdue          bool
+	DaysToReturn     int    // whole calendar days from AsOf; negative when overdue
+	AgeingLabel      string // "25 days overdue", "174 days to go", "Awaiting payment", …
+	AgeingTone       string // pill modifier: "bad" | "neutral" | "approved" | "hold"
 }
 
 type RecoverableReportOptions struct {
