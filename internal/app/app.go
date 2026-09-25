@@ -948,6 +948,15 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// An unlinked payment obeys the payment scope the ledger obeys, as its
+	// attachment routes already do through canReadPayment: a row the ledger
+	// hides is not reachable by id either (fixwave rbac-2).
+	u := auth.CurrentUser(r)
+	if !paymentScopeReaches(a.auth.Scope(u, "payment"), u.ID, p) {
+		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
+			fmt.Errorf("payment %d is outside the caller's payment scope", p.ID))
+		return
+	}
 	audit, err := a.st.Audit(r.Context(), "payment", id, 50)
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -1052,14 +1061,17 @@ func (a *App) canReadPayment(r *http.Request, p store.Payment) bool {
 
 // paymentScopeReaches mirrors ListPayments' scope filter exactly, so a caller
 // who cannot see a payment in the ledger cannot see it by id either: "own" and
-// "assigned" narrow to what the caller entered, and everything else — including
-// the empty scope — leaves the ledger unrestricted.
+// "assigned" narrow to what the caller entered, "all" reaches everything, and
+// anything else — including the empty scope, the role editor's "None" — reaches
+// nothing (fixwave rbac-2).
 func paymentScopeReaches(scope string, viewerID int64, p store.Payment) bool {
 	switch scope {
+	case store.ScopeAll:
+		return true
 	case "own", "assigned":
 		return p.EnteredBy == viewerID
 	default:
-		return true
+		return false
 	}
 }
 
@@ -1748,18 +1760,19 @@ func (a *App) rolesPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// rolesSave persists the matrix. Grants are the union of the cells that were
-// ticked — each expanding to every canonical action behind it — and the
-// individual Advanced checkboxes. The union is order-independent, and it is
-// what lets a cell be only partially granted. UpdateRolePermissions then
-// replaces the role's whole grant set, so anything absent here is revoked.
+// rolesSave persists the matrix. The Advanced checkboxes are the grant set:
+// what is ticked there is saved and what is unticked is revoked, even under a
+// cell that is still ticked. The save used to start from every ticked cell
+// expanded, so unticking one Advanced box under a ticked cell was silently
+// re-granted (fixwave rbac-1). A ticked cell counts only when none of the
+// boxes behind it is ticked — the JavaScript-less path, where ticking a cell
+// cannot tick its boxes — and then expands to every canonical action behind
+// it. UpdateRolePermissions then replaces the role's whole grant set, so
+// anything absent here is revoked.
 func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 	roleID := parseID(r.FormValue("role_id"))
-	grants := expandCells(r.Form["cell"])
+	var grants []store.Grant
 	seen := map[store.Grant]bool{}
-	for _, g := range grants {
-		seen[g] = true
-	}
 	for _, raw := range r.Form["perm"] {
 		parts := strings.SplitN(raw, ":", 2)
 		if len(parts) != 2 {
@@ -1771,6 +1784,23 @@ func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[g] = true
 		grants = append(grants, g)
+	}
+	for _, raw := range r.Form["cell"] {
+		behind := cellGrants(raw)
+		spoken := false
+		for _, g := range behind {
+			if seen[g] {
+				spoken = true
+				break
+			}
+		}
+		if spoken {
+			continue
+		}
+		for _, g := range behind {
+			seen[g] = true
+			grants = append(grants, g)
+		}
 	}
 	// The two matrices carry two scope radio groups. They must not share a name:
 	// same-name radios are one group across the whole form, so enabling the

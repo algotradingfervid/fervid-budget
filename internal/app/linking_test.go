@@ -750,9 +750,13 @@ func TestPickerOffersNoTakeControlWithoutTheReservationGrant(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("PickerGate")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.seedUserWithGrants("ledger@example.test", "LedgerPassword123", "Ledger only", []store.Grant{
+	// A request scope of All: the picker reads the caller's request scope, and
+	// since fixwave rbac-2 an empty scope (the editor's "None") lists nothing
+	// rather than everything. The case under test is the missing reservation
+	// grant, not the missing scope.
+	s.seedProbeUser("ledger@example.test", "Ledger", "LedgerPassword123", "Ledger only", []store.Grant{
 		{Resource: "payment", Action: "view"}, {Resource: "payment", Action: "create"},
-	})
+	}, []store.ScopeGrant{{Resource: "request", Scope: store.ScopeAll}})
 
 	s.login("ledger@example.test", "LedgerPassword123")
 	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
@@ -810,9 +814,12 @@ func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.seedUserWithGrants("auditor@example.test", "AuditorPassword123", "Ledger reader", []store.Grant{
+	// Payment scope All and no request scope: the ledger is fully theirs, the
+	// request behind a linked row is not. (Since fixwave rbac-2 an empty
+	// payment scope reads no ledger row at all, so the scope is explicit.)
+	s.seedProbeUser("auditor@example.test", "Auditor", "AuditorPassword123", "Ledger reader", []store.Grant{
 		{Resource: "payment", Action: "view"},
-	})
+	}, []store.ScopeGrant{{Resource: "payment", Scope: store.ScopeAll}})
 
 	s.login("auditor@example.test", "AuditorPassword123")
 	resp := s.request(http.MethodGet, fmt.Sprintf("/payments/%d", linkedID), nil, "")

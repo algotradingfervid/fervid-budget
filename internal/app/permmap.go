@@ -204,8 +204,8 @@ type permRow struct {
 	Label         string
 	Cells         []permCell
 	Advanced      []permAdvanced
-	Held          int    // fully granted cells — the mobile "N of 7" badge
-	Total         int    // len(permColumns)
+	Held          int    // canonical grants the role holds in this row — the mobile "N of M" badge
+	Total         int    // canonical grants the row maps
 	Scoped        bool   // the row owns a data-scoped resource
 	ScopeResource string // which one; the form field is "scope_" + this
 	Scope         string // "", "own", "assigned" or "all"
@@ -267,23 +267,29 @@ func scopedMatrixResources() []string {
 	return out
 }
 
-// expandCells turns submitted "<group>:<column>" cell values into the full set
-// of canonical grants behind them, deduplicated. Unknown rows, unknown columns
-// and cells with no canonical action expand to nothing, so a hand-crafted POST
-// can never invent a grant.
+// cellGrants is the set of canonical grants behind one submitted
+// "<group>:<column>" cell value. An unknown row, an unknown column and a cell
+// with no canonical action all answer nil, so a hand-crafted POST can never
+// invent a grant.
+func cellGrants(raw string) []store.Grant {
+	parts := strings.SplitN(raw, ":", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	group, ok := permGroup(parts[0])
+	if !ok {
+		return nil
+	}
+	return group.Cells[parts[1]]
+}
+
+// expandCells turns submitted cell values into the full set of canonical
+// grants behind them, deduplicated.
 func expandCells(cells []string) []store.Grant {
 	var out []store.Grant
 	seen := map[store.Grant]bool{}
 	for _, raw := range cells {
-		parts := strings.SplitN(raw, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		group, ok := permGroup(parts[0])
-		if !ok {
-			continue
-		}
-		for _, grant := range group.Cells[parts[1]] {
+		for _, grant := range cellGrants(raw) {
 			if seen[grant] {
 				continue
 			}
@@ -309,7 +315,7 @@ func buildPermMatrix(grants []store.Grant, scopes []store.ScopeGrant) []permRow 
 
 	rows := make([]permRow, 0, len(permGroups))
 	for _, group := range permGroups {
-		row := permRow{Key: group.Key, Label: group.Label, Total: len(permColumns)}
+		row := permRow{Key: group.Key, Label: group.Label}
 		columnOf := map[store.Grant]string{}
 		for _, column := range permColumns {
 			behind := group.Cells[column.Key]
@@ -328,9 +334,6 @@ func buildPermMatrix(grants []store.Grant, scopes []store.ScopeGrant) []permRow 
 			}
 			cell.Granted = cell.Available && got == len(behind)
 			cell.Partial = got > 0 && !cell.Granted
-			if cell.Granted {
-				row.Held++
-			}
 			row.Cells = append(row.Cells, cell)
 		}
 		for _, resource := range group.Resources {
@@ -347,6 +350,12 @@ func buildPermMatrix(grants []store.Grant, scopes []store.ScopeGrant) []permRow 
 					Cell:     cell,
 					Granted:  held[grant],
 				})
+				// The badge counts grants, not cells: a row whose cells are all
+				// partial holds real permissions and must not read "0 of 5".
+				row.Total++
+				if held[grant] {
+					row.Held++
+				}
 			}
 			if isScopedResource(resource) {
 				row.Scoped = true

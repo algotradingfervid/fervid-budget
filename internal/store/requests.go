@@ -1632,16 +1632,25 @@ var requestBuckets = map[string][]string{
 	"closed": {"rejected", "withdrawn", "cancelled"},
 }
 
+// requestWhere fails closed on the scope: only ScopeAll is unrestricted, and an
+// empty or unrecognised scope — the role editor's "None" is stored as no scope
+// row at all — reads no rows. It used to add no predicate for "", so a role
+// with request:view and no scope listed and exported every request while
+// canViewRequest 404ed each of them by id (fixwave rbac-2). recoverableScope
+// has always worked this way.
 func requestWhere(opts RequestListOptions) (string, []any) {
 	var where []string
 	var args []any
 	switch opts.Scope {
+	case ScopeAll:
 	case "own":
 		where = append(where, `r.requester_id=?`)
 		args = append(args, opts.ViewerID)
 	case "assigned":
 		where = append(where, `r.manager_id=?`)
 		args = append(args, opts.ViewerID)
+	default:
+		where = append(where, `0`)
 	}
 	placeholders := func(n int) string {
 		return strings.TrimSuffix(strings.Repeat("?,", n), ",")

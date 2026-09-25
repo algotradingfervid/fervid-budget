@@ -1480,12 +1480,17 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	staleCutoff := now.UTC().Add(-StaleReservation).Format("2006-01-02 15:04:05")
 	var out LinkableSet
 
+	// The same fail-closed rule as requestWhere: only "all" is unrestricted, and
+	// an empty or unrecognised scope reads nothing (fixwave rbac-2).
 	scopeSQL, scopeArgs := "", []any(nil)
 	switch opts.Scope {
+	case ScopeAll:
 	case "own":
 		scopeSQL, scopeArgs = ` AND r.requester_id=?`, []any{opts.ViewerID}
 	case "assigned":
 		scopeSQL, scopeArgs = ` AND r.manager_id=?`, []any{opts.ViewerID}
+	default:
+		scopeSQL = ` AND 0`
 	}
 
 	// Counts first: one aggregate pass over the scope, independent of the tab,
@@ -1668,13 +1673,16 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	// F-A-04 / F-G-003: the payment data scope. "own" narrows the ledger to
 	// rows the viewer entered; "assigned" has no routed-to meaning on payments
 	// and narrows the same way rather than silently widening to everything —
-	// an administrator who chose either narrowing gets a narrowing. "", "all"
-	// and anything else are unrestricted, exactly as requestWhere treats the
-	// request scope. The handler wires the caller's scope in a later wave.
+	// an administrator who chose either narrowing gets a narrowing. Only "all"
+	// is unrestricted: "" (the role editor's "None") and anything else read no
+	// rows, exactly as requestWhere treats the request scope (fixwave rbac-2).
 	switch opts.Scope {
+	case ScopeAll:
 	case "own", "assigned":
 		where = append(where, `py.entered_by=?`)
 		args = append(args, opts.ViewerID)
+	default:
+		where = append(where, `0`)
 	}
 	if validMonth(opts.Month) {
 		where = append(where, `substr(py.paid_on,1,7)=?`)

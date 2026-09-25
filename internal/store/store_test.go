@@ -207,7 +207,7 @@ func TestCreatePaymentWithAttachmentIsAtomic(t *testing.T) {
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("invalid attachment = %v, want %v", err, ErrValidation)
 	}
-	payments, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-04", Limit: 10})
+	payments, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-04", Limit: 10, Scope: ScopeAll})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -748,7 +748,7 @@ func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 	if _, err := s.PaymentForRequest(ctx, reqID); err != nil {
 		t.Fatalf("PaymentForRequest() must resolve a NULL-head row: %v", err)
 	}
-	list, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-07"})
+	list, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-07", Scope: ScopeAll})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,8 +876,9 @@ func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 
 // TestListPaymentsScopeNarrowsToEnteredBy is the F-A-04 / F-G-003 store half:
 // the `payment` data scope finally reads. "own" (and "assigned", which has no
-// routed-to meaning on the ledger) narrow to rows the viewer entered; "" and
-// "all" stay unrestricted like requestWhere.
+// routed-to meaning on the ledger) narrow to rows the viewer entered; "all" is
+// unrestricted and "" — the role editor's "None" — reads nothing, like
+// requestWhere (fixwave rbac-2; the empty scope used to be unrestricted here).
 func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -912,15 +913,19 @@ func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 			t.Fatalf("scope %q for actor = %+v, want only their own payment", scope, got)
 		}
 	}
-	for _, scope := range []string{"", "all"} {
-		rows, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-05", Scope: scope, ViewerID: actor.ID})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := ids(rows)
-		if !got[mine] || !got[theirs] {
-			t.Fatalf("scope %q = %+v, want both payments", scope, got)
-		}
+	rows, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-05", Scope: ScopeAll, ViewerID: actor.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(rows); !got[mine] || !got[theirs] {
+		t.Fatalf("scope all = %+v, want both payments", got)
+	}
+	rows, err = s.ListPayments(ctx, PaymentListOptions{Month: "2026-05", Scope: "", ViewerID: actor.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("empty scope = %+v, want no payments at all", ids(rows))
 	}
 }
 

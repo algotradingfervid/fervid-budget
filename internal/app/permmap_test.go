@@ -210,8 +210,10 @@ func TestBuildPermMatrixMarksGrantedPartialAndUnavailableCells(t *testing.T) {
 	if cells["create"].Granted || cells["create"].Partial {
 		t.Fatalf("create cell = %+v, want untouched", cells["create"])
 	}
-	if requests.Held != 1 || requests.Total != len(permColumns) {
-		t.Fatalf("row badge = %d of %d, want 1 of %d", requests.Held, requests.Total, len(permColumns))
+	// The badge counts grants, not fully granted cells: three of the row's
+	// fifteen canonical actions are held (rbac-5 — it used to read "1 of 7").
+	if requests.Held != 3 || requests.Total != 15 {
+		t.Fatalf("row badge = %d of %d, want 3 of 15", requests.Held, requests.Total)
 	}
 	if !requests.Scoped || requests.ScopeResource != "request" || requests.Scope != "all" {
 		t.Fatalf("row scope = %q on %q (scoped=%v), want all on request", requests.Scope, requests.ScopeResource, requests.Scoped)

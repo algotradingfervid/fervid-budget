@@ -1641,9 +1641,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'and every available cell comes back granted, derived from the same stored set'
     ).toHaveCount(cellCount);
 
-    // And the reverse. Clearing a cell is what revokes: the screen's own script
-    // unticks the Advanced boxes behind it (fervid-app.js:479-487), which is why
-    // unticking only the Advanced boxes would leave the cells to re-grant them.
+    // And the reverse. Clearing a cell revokes everything behind it: the
+    // screen's own script unticks the Advanced boxes it covers (fervid-app.js,
+    // initRoleMatrix). Since fixwave rbac-1 the Advanced boxes are the grant
+    // set the server saves, so unticking boxes alone revokes too; that path
+    // has its own case below.
     for (let i = 0; i < cellCount; i++) await cells.nth(i).uncheck();
     await expect(
       W.adminPage.locator('.perm-table input[name="perm"]:checked'),
@@ -2087,6 +2089,128 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       W.m2.page.locator(`a.req-card[href="/requests/${W.tPending}"]`),
       'the request is still in its own approver’s queue, undamaged by the attempt'
     ).toHaveCount(1);
+  });
+
+  // =========================================================================
+  // 9. Fixwave 2026-09-25, cluster A — the roles screen and the data scope.
+  // =========================================================================
+
+  test('rbac-1 — an Advanced box unticked under a ticked cell is revoked, and the cell shows the partial state', async () => {
+    const roleName = `partial-${W.runId}`;
+    const roleId = await createCustomRole(W.adminPage, roleName);
+    // The bare View cell, with no Advanced box behind it, expands to both.
+    await grantMatrix(W.adminPage, roleId, roleName, { cells: ['requests:view'] });
+
+    await W.adminPage.goto(`/roles?role=${roleId}`);
+    await openAdvanced(W.adminPage);
+    const cell = W.adminPage.locator('.perm-table input[name="cell"][value="requests:view"]');
+    const attachmentView = W.adminPage.locator('.perm-table input[name="perm"][value="attachment:view"]');
+    const requestView = W.adminPage.locator('.perm-table input[name="perm"][value="request:view"]');
+    await expect(cell, 'both boxes behind View are held, so the cell is fully ticked').toBeChecked();
+    await expect(attachmentView).toBeChecked();
+
+    await attachmentView.uncheck();
+    await expect(cell, 'the cell follows its boxes down: unchecked, so it is not submitted').not.toBeChecked();
+    expect(
+      await cell.evaluate(node => (node as HTMLInputElement).indeterminate),
+      'and indeterminate, so the reader can see the row is only partly held'
+    ).toBe(true);
+
+    await W.adminPage.getByRole('button', { name: 'Save role' }).click();
+    await expect(W.adminPage).toHaveURL(new RegExp(`/roles\\?role=${roleId}$`));
+    await openAdvanced(W.adminPage);
+    await expect(attachmentView, 'the untick was saved — the Advanced boxes are the grant set').not.toBeChecked();
+    await expect(requestView, 'and the box left ticked is still held').toBeChecked();
+    await expect(cell, 'on load the half-held cell is unchecked').not.toBeChecked();
+    expect(
+      await cell.evaluate(node => (node as HTMLInputElement).indeterminate),
+      'and drawn indeterminate from the server-rendered data-partial mark'
+    ).toBe(true);
+
+    // The other direction still works: ticking the cell ticks every box.
+    await cell.check();
+    await expect(attachmentView).toBeChecked();
+    expect(await cell.evaluate(node => (node as HTMLInputElement).indeterminate)).toBe(false);
+  });
+
+  test('rbac-2 — a request scope of None lists and exports nothing, as the detail page already 404s', async ({ browser }) => {
+    const roleName = `viewer-${W.runId}`;
+    const roleId = await createCustomRole(W.adminPage, roleName);
+    await grantMatrix(W.adminPage, roleId, roleName, { perms: ['request:view', 'grid:view'] });
+    const subject = await createUserWithExactRoles(W.adminPage, `viewer-${W.runId}`, W.runId, []);
+    await setRolesByLabel(W.adminPage, subject.email, [new RegExp(`^${roleName}`)]);
+    const viewer = await signIn(browser, subject, W.adminPage.viewportSize());
+    try {
+      await viewer.page.goto('/requests?bucket=all');
+      await expect(viewer.page.locator('.page-banner .sub'), 'the list is empty').toContainText('0 shown');
+      await expect(viewer.page.locator('a.req-card'), 'no request card at all').toHaveCount(0);
+      const csv = await probeGet(viewer.page, '/requests/export.csv?bucket=all');
+      expect(csv.status, 'the export still answers (request:view is held)').toBe(200);
+      expect(csv.body.includes('PR-2026-'), 'but carries no rows').toBe(false);
+      await expectStatus(probeGet(viewer.page, `/requests/${W.tPending}`), 404, 'the detail page, as before');
+    } finally {
+      await viewer.close();
+    }
+  });
+
+  test('rbac-4 — the scope pill highlight follows the selection', async () => {
+    await W.adminPage.goto(`/roles?role=${W.systemRoleIds.Requester}`);
+    const own = W.adminPage.locator('.perm-table label:has(input[name="scope_request"][value="own"])');
+    const all = W.adminPage.locator('.perm-table label:has(input[name="scope_request"][value="all"])');
+    await expect(own, 'Requester starts on Own, lit by the server').toHaveClass(/is-on/);
+    await all.click();
+    await expect(all.locator('input')).toBeChecked();
+    await expect(all, 'the pill just chosen lights up').toHaveClass(/is-on/);
+    await expect(own, 'and the old one goes out').not.toHaveClass(/is-on/);
+  });
+
+  test('rbac-5 — a row held only through Advanced shows partial cells and counts its grants', async () => {
+    const roleName = `advanced-${W.runId}`;
+    const roleId = await createCustomRole(W.adminPage, roleName);
+    await grantMatrix(W.adminPage, roleId, roleName, {
+      perms: ['request:view', 'request:create', 'approval:approve', 'attachment:create']
+    });
+    await W.adminPage.goto(`/roles?role=${roleId}`);
+    for (const value of ['requests:view', 'requests:create', 'requests:approve']) {
+      const cell = W.adminPage.locator(`.perm-table input[name="cell"][value="${value}"]`);
+      await expect(cell, `${value} is not fully held`).not.toBeChecked();
+      expect(await cell.evaluate(node => (node as HTMLInputElement).indeterminate), `${value} is drawn partial`).toBe(true);
+    }
+    // The accordion badge is the phone's only summary of the row.
+    const desktop = W.adminPage.viewportSize();
+    await W.adminPage.setViewportSize({ width: 390, height: 844 });
+    try {
+      const head = W.adminPage.locator('.perm-acc .pa-head', { hasText: 'Payment requests' });
+      await expect(head.locator('.n'), 'four of the row’s fifteen actions are held — not "0 of 7"').toHaveText('4 of 15');
+    } finally {
+      if (desktop) await W.adminPage.setViewportSize(desktop);
+    }
+  });
+
+  test('rbac-6 — the delete sheet for a held role explains itself instead of dead-ending on a 403', async () => {
+    const roleName = `held-${W.runId}`;
+    const roleId = await createCustomRole(W.adminPage, roleName);
+    const subject = await createUserWithExactRoles(W.adminPage, `holder-${W.runId}`, W.runId, []);
+    await setRolesByLabel(W.adminPage, subject.email, [new RegExp(`^${roleName}`)]);
+
+    await W.adminPage.goto(`/roles?role=${roleId}`);
+    await expect(W.adminPage.locator('.card-head .pill'), 'the count is a person, not "1 users"').toHaveText('1 user');
+    await W.adminPage.getByRole('button', { name: 'Delete role' }).click();
+    const sheet = W.adminPage.locator('#role-delete');
+    await expect(sheet).toBeVisible();
+    await expect(sheet, 'the sheet says why it cannot be deleted').toContainText('1 user holds this role, so it cannot be deleted yet');
+    await expect(sheet.locator('button[type="submit"]'), 'and offers no Delete button').toHaveCount(0);
+    await sheet.getByRole('link', { name: 'Open Users' }).click();
+    await expect(W.adminPage, 'it sends the reader where the fix is').toHaveURL(/\/users$/);
+
+    // Once nobody holds it, the deletion is offered and goes through.
+    await setExactRoles(W.adminPage, subject.email, ['Requester']);
+    await W.adminPage.goto(`/roles?role=${roleId}`);
+    await W.adminPage.getByRole('button', { name: 'Delete role' }).click();
+    await expect(sheet).toContainText('Nobody holds this role');
+    await sheet.getByRole('button', { name: 'Delete role' }).click();
+    await expect(W.adminPage).toHaveURL(/\/roles$/);
+    await expect(W.adminPage.locator('.segmented a', { hasText: roleName })).toHaveCount(0);
   });
 });
 

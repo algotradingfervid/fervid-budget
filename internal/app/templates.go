@@ -1725,7 +1725,7 @@ const templates = `
   <div class="card">
     <div class="card-head">
       <h2>{{.Role.Name}}</h2>
-      <span class="pill good">{{index .RoleUserCounts .Role.ID}} users</span>
+      <span class="pill good">{{$n := index .RoleUserCounts .Role.ID}}{{$n}} {{plural $n "user" "users"}}</span>
       {{if and (not .Role.IsSystem) (.Perms.Can "role" "delete")}}<button class="btn small outline" type="button" data-open="role-delete">Delete role</button>{{end}}
     </div>
     <div class="card-body">
@@ -1745,7 +1745,7 @@ const templates = `
         {{range .PermMatrix}}
         <tr>
           <td class="perm-row-head">{{.Label}}</td>
-          {{range .Cells}}<td class="c">{{if .Available}}<input type="checkbox" name="cell" value="{{.Value}}" data-cell="{{.Value}}" aria-label="{{.Label}}" {{if .Granted}}checked{{end}}>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
+          {{range .Cells}}<td class="c">{{if .Available}}<input type="checkbox" name="cell" value="{{.Value}}" data-cell="{{.Value}}" aria-label="{{.Label}}" {{if .Granted}}checked{{end}}{{if .Partial}} data-partial="1"{{end}}>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
           <td>{{if .Scoped}}{{template "permscope" .}}{{else}}<span class="perm-scope"><label class="is-on">None</label></span>{{end}}</td>
         </tr>
         <tr class="perm-advanced">
@@ -1766,7 +1766,7 @@ const templates = `
     <div class="pa-item">
       <button class="pa-head" type="button"><span class="chev">›</span><b>{{.Label}}</b><span class="n">{{.Held}} of {{.Total}}</span></button>
       <div class="pa-body">
-        {{range .Cells}}{{if .Available}}<label class="checkline"><input type="checkbox" name="cell" disabled value="{{.Value}}" data-cell="{{.Value}}" {{if .Granted}}checked{{end}}> {{.Label}}</label>{{end}}{{end}}
+        {{range .Cells}}{{if .Available}}<label class="checkline"><input type="checkbox" name="cell" disabled value="{{.Value}}" data-cell="{{.Value}}" {{if .Granted}}checked{{end}}{{if .Partial}} data-partial="1"{{end}}> {{.Label}}</label>{{end}}{{end}}
         <details>
           <summary>Advanced</summary>
           {{range .Advanced}}<label class="checkline"><input type="checkbox" name="perm" disabled value="{{.Resource}}:{{.Action}}" data-cell="{{.Cell}}" {{if .Granted}}checked{{end}}> {{.Label}}</label>{{end}}
@@ -1778,7 +1778,7 @@ const templates = `
   </div>
 
   <div class="action-bar">
-    <span class="ab-note d-only">Changes apply to all {{index .RoleUserCounts .Role.ID}} users holding this role.</span>
+    <span class="ab-note d-only">{{$n := index .RoleUserCounts .Role.ID}}{{if eq $n 1}}Changes apply to the 1 user holding this role.{{else}}Changes apply to all {{$n}} users holding this role.{{end}}</span>
     <span class="row-end"></span>
     <a class="btn outline" href="/roles?role={{.Role.ID}}">Discard</a>
     <button class="btn primary" type="submit">Save role</button>
@@ -1814,14 +1814,22 @@ const templates = `
   </div>
 </div>
 
-{{if not .Role.IsSystem}}
+{{/* The store refuses to delete a role anybody still holds (F-G-022), so the
+     sheet says so up front and sends the reader to the Users screen instead
+     of offering a Delete button that can only land on a 403 (rbac-6). */}}
+{{if not .Role.IsSystem}}{{$holders := index .RoleUserCounts .Role.ID}}
 <div class="overlay" id="role-delete" hidden>
   <div class="sheet">
+    {{if gt $holders 0}}
+    <div class="sh-head"><div><h2>Delete {{.Role.Name}}?</h2><p class="sh-sub">{{$holders}} {{plural $holders "user holds" "users hold"}} this role, so it cannot be deleted yet. Remove it from {{plural $holders "that user" "those users"}} on the Users screen first; they would otherwise lose everything it grants without warning.</p></div><button class="sh-close" type="button" data-close="role-delete">✕</button></div>
+    <div class="sh-foot"><button class="btn outline" type="button" data-close="role-delete">Cancel</button><span class="row-end"></span><a class="btn primary" href="/users">Open Users</a></div>
+    {{else}}
     <form method="post" action="/roles/{{.Role.ID}}/delete">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <div class="sh-head"><div><h2>Delete {{.Role.Name}}?</h2><p class="sh-sub">{{index .RoleUserCounts .Role.ID}} users hold this role and will lose everything it grants.</p></div><button class="sh-close" type="button" data-close="role-delete">✕</button></div>
+      <div class="sh-head"><div><h2>Delete {{.Role.Name}}?</h2><p class="sh-sub">Nobody holds this role. Deleting it cannot be undone.</p></div><button class="sh-close" type="button" data-close="role-delete">✕</button></div>
       <div class="sh-foot"><button class="btn outline" type="button" data-close="role-delete">Cancel</button><span class="row-end"></span><button class="btn danger" type="submit">Delete role</button></div>
     </form>
+    {{end}}
   </div>
 </div>
 {{end}}
