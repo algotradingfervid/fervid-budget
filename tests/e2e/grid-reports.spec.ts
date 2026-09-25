@@ -54,14 +54,20 @@ function assertNoDanglingSlash(text: string, where: string) {
 
 async function raiseAndApproveEmd(page: Page, browser: Browser, runId: string, amount: string, expectedReturn: string) {
   const approver = await createApproverUser(page, runId);
-  await page.goto('/requests/new?type=employee_advance');
+  // A deposit is its own request type since the C cluster's form-1 fix: the
+  // "Deposit or guarantee" card carries the category picker and asks who is
+  // paid, and the employee advance no longer offers the deposit categories.
+  await page.goto('/requests/new?type=recoverable');
   await page.getByLabel('Short title').fill(`EMD ${runId}`);
   await page.locator('#rcategory').selectOption('emd');
+  // The category change swaps #form-fields from the server; the swap is
+  // settled when the option comes back selected server-side.
+  await expect(page.locator('#rcategory option[value="emd"]')).toHaveAttribute('selected', '');
+  await page.locator('#payee').fill(`Tender authority ${runId}`);
   await page.locator('#rproject').waitFor();
   await page.locator('#rproject').selectOption({ label: 'Operations' });
   await page.getByLabel('Expected return date').fill(expectedReturn);
   await page.getByLabel('Repayment or refund terms').fill('Refunded when the tender is awarded');
-  await page.getByLabel('What the money is for').fill(`Tender deposit ${runId}`);
   await page.getByLabel('Amount').fill(amount);
   await page.getByLabel('Purpose').fill(`Tender deposit ${runId}`);
   await page.getByLabel('Approver').selectOption({ label: approver.name });
