@@ -644,6 +644,24 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		} else if err != sql.ErrNoRows {
 			return err
 		}
+		// The form carries every head, and an unbudgeted head is shown — and
+		// submitted — as ₹0.00. Writing and auditing each one filled the log
+		// with rows whose before and after were identical (audit-2), so a head
+		// whose amount is unchanged is left alone. The head lookup stays ahead
+		// of the skip so an unknown head still fails the whole batch.
+		var project, head string
+		if err := tx.QueryRowContext(ctx, `SELECT p.name,h.name FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, input.HeadID).Scan(&project, &head); err == sql.ErrNoRows {
+			return fmt.Errorf("%w: unknown budget head", ErrValidation)
+		} else if err != nil {
+			return err
+		}
+		var previous int64
+		if before != nil {
+			previous = before.Amount
+		}
+		if previous == input.Amount {
+			continue
+		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO budgets(head_id,month,amount) VALUES(?,?,?) ON CONFLICT(head_id,month) DO UPDATE SET amount=excluded.amount, updated_at=CURRENT_TIMESTAMP`, input.HeadID, month, input.Amount)
 		if err != nil {
 			return classify(err)
@@ -659,7 +677,8 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		}
 		beforeJSON, _ := json.Marshal(before)
 		afterJSON, _ := json.Marshal(after)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID, "Saved budget "+money.FormatPaise(input.Amount), nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID,
+			fmt.Sprintf("%s / %s %s: %s → %s", project, head, month, money.FormatPaise(previous), money.FormatPaise(input.Amount)), nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
 			return err
 		}
 	}
@@ -2103,6 +2122,96 @@ func (s *Store) Audit(ctx context.Context, entityType string, entityID int64, li
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// AuditQuery is every /audit filter, all applied in SQL over the whole log.
+// From is inclusive and To exclusive; the zero time leaves that side open.
+// Limit 0 returns every matching row.
+type AuditQuery struct {
+	EntityType string
+	EntityID   int64
+	Action     string
+	// Actor matches a case-insensitive substring of actor_name.
+	Actor  string
+	From   time.Time
+	To     time.Time
+	Limit  int
+	Offset int
+}
+
+// AuditPage is a window onto the matching audit rows with the total the same
+// filter matches, so the screen can say what it is not showing.
+type AuditPage struct {
+	Entries   []AuditEntry
+	Total     int
+	Offset    int
+	Limit     int
+	Truncated bool
+}
+
+// AuditPage replaces reading the newest N rows and filtering them in Go: that
+// window hid every older row from the action and actor filters (audit-1).
+func (s *Store) AuditPage(ctx context.Context, q AuditQuery) (AuditPage, error) {
+	where := []string{"1=1"}
+	var args []any
+	if q.EntityType != "" {
+		where = append(where, "entity_type=?")
+		args = append(args, q.EntityType)
+		if q.EntityID > 0 {
+			where = append(where, "entity_id=?")
+			args = append(args, q.EntityID)
+		}
+	}
+	if q.Action != "" {
+		where = append(where, "action=?")
+		args = append(args, q.Action)
+	}
+	if actor := strings.ToLower(strings.TrimSpace(q.Actor)); actor != "" {
+		where = append(where, "instr(lower(COALESCE(actor_name,'')),?)>0")
+		args = append(args, actor)
+	}
+	// created_at is CURRENT_TIMESTAMP, i.e. UTC text; datetime() normalises it
+	// so the comparison does not depend on how a row's timestamp was spelled.
+	if !q.From.IsZero() {
+		where = append(where, "datetime(created_at)>=datetime(?)")
+		args = append(args, q.From.UTC().Format("2006-01-02 15:04:05"))
+	}
+	if !q.To.IsZero() {
+		where = append(where, "datetime(created_at)<datetime(?)")
+		args = append(args, q.To.UTC().Format("2006-01-02 15:04:05"))
+	}
+	cond := strings.Join(where, " AND ")
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE `+cond, args...).Scan(&total); err != nil {
+		return AuditPage{}, err
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	query := `SELECT id,actor_id,COALESCE(actor_name,''),action,COALESCE(entity_type,''),entity_id,COALESCE(summary,''),COALESCE(before_json,''),COALESCE(after_json,''),COALESCE(ip,''),created_at FROM audit_log WHERE ` +
+		cond + ` ORDER BY created_at DESC, id DESC`
+	rowArgs := append([]any{}, args...)
+	if q.Limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		rowArgs = append(rowArgs, q.Limit, q.Offset)
+	} else {
+		q.Offset = 0
+	}
+	rows, err := s.db.QueryContext(ctx, query, rowArgs...)
+	if err != nil {
+		return AuditPage{}, err
+	}
+	defer rows.Close()
+	page := AuditPage{Total: total, Offset: q.Offset, Limit: q.Limit}
+	for rows.Next() {
+		var a AuditEntry
+		if err := rows.Scan(&a.ID, &a.ActorID, &a.ActorName, &a.Action, &a.EntityType, &a.EntityID, &a.Summary, &a.BeforeJSON, &a.AfterJSON, &a.IP, &a.CreatedAt); err != nil {
+			return AuditPage{}, err
+		}
+		page.Entries = append(page.Entries, a)
+	}
+	page.Truncated = page.Offset+len(page.Entries) < total
+	return page, rows.Err()
 }
 
 // validatePayment runs the check against the pool, for the callers that have not

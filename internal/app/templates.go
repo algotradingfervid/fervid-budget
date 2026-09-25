@@ -3556,8 +3556,18 @@ const templates = `
      at all, and the entire Phase-2/Phase-3 action vocabulary was missing, so the
      screen whose stated purpose is reviewing who changed financial records could
      not be pointed at the workflow (F-G-004/F-C-06). */}}
-<form class="toolbar" method="get"><label>Entity<select name="entity"><option value="">All</option>{{range auditEntities}}<option value="{{.Value}}" {{select $.AuditEntity .Value}}>{{.Label}}</option>{{end}}</select></label><label>Action<select name="action"><option value="">All</option>{{range auditActions}}<option value="{{.Value}}" {{select $.AuditAction .Value}}>{{.Label}}</option>{{end}}</select></label><label>Actor<input name="actor" value="{{.AuditActor}}" placeholder="Name"></label><button>Filter</button><a class="btn outline" href="/audit">Reset</a></form>
+<form class="toolbar" method="get"><label>Entity<select name="entity"><option value="">All</option>{{range auditEntities}}<option value="{{.Value}}" {{select $.AuditEntity .Value}}>{{.Label}}</option>{{end}}</select></label><label>Action<select name="action"><option value="">All</option>{{range auditActions}}<option value="{{.Value}}" {{select $.AuditAction .Value}}>{{.Label}}</option>{{end}}</select></label><label>Actor<input name="actor" value="{{.AuditActor}}" placeholder="Name"></label><label>From<input type="date" name="from" value="{{.AuditFrom}}"></label><label>To<input type="date" name="to" value="{{.AuditTo}}"></label><button>Filter</button><a class="btn outline" href="/audit">Reset</a></form>
 <div class="table-wrap"><table class="t-cards"><thead><tr><th>When</th><th>Actor</th><th>Entity</th><th>Action</th><th>Summary</th></tr></thead><tbody>{{range .Audit}}<tr><td class="t-lead" data-label="When">{{date .CreatedAt}}</td><td data-label="Actor">{{.ActorName}}</td><td data-label="Entity">{{entityText .EntityType}}</td><td data-label="Action"><span class="pill {{actionClass .Action}}">{{actionText .Action}}</span></td><td data-label="Summary"><span>{{.Summary}}{{if or (hasText .BeforeJSON) (hasText .AfterJSON)}}<details><summary>Before / after</summary>{{if hasText .BeforeJSON}}<pre>{{jsonPretty .BeforeJSON}}</pre>{{end}}{{if hasText .AfterJSON}}<pre>{{jsonPretty .AfterJSON}}</pre>{{end}}</details>{{end}}</span></td></tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No audit entries match these filters.</td></tr>{{end}}</tbody></table></div>
+{{/* The log is paged, never silently cut (audit-1). The links repeat every
+     filter, so a page boundary never widens the set. */}}
+{{if or .AuditPage.Truncated .AuditPage.Offset}}
+<div class="cluster" style="margin-top:14px">
+  <span class="muted small">Showing {{if .Audit}}{{add .AuditPage.Offset 1}}–{{add .AuditPage.Offset (len .Audit)}}{{else}}0{{end}} of {{.AuditPage.Total}}</span>
+  <span class="row-end"></span>
+  {{if .AuditPage.Offset}}<a class="btn outline" href="/audit?entity={{.AuditEntity}}&amp;id={{.AuditID}}&amp;action={{.AuditAction}}&amp;actor={{.AuditActor}}&amp;from={{.AuditFrom}}&amp;to={{.AuditTo}}&amp;offset={{sub0 .AuditPage.Offset .AuditPage.Limit}}">← Newer</a>{{end}}
+  {{if .AuditPage.Truncated}}<a class="btn outline" href="/audit?entity={{.AuditEntity}}&amp;id={{.AuditID}}&amp;action={{.AuditAction}}&amp;actor={{.AuditActor}}&amp;from={{.AuditFrom}}&amp;to={{.AuditTo}}&amp;offset={{add .AuditPage.Offset (len .Audit)}}">Older →</a>{{end}}
+</div>
+{{end}}
 {{template "bottom" .}}
 {{end}}
 
