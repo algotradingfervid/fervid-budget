@@ -1024,13 +1024,14 @@ it.describe('B · the required, forced and optional matrix', () => {
 
     const id = await raiseOk(world.requester.page, validBody(world, 'vendor_invoice', { head_id: headId }));
 
-    // Retire it, the way an administrator would.
-    await probePost(world.adminPage, '/heads', {
-      id: headId,
-      project_id: world.operationsId,
-      name,
-      sort_order: '92'
-    });
+    // Retire it, the way an administrator would. The request just raised is
+    // still open under this head, so the first save stops on a warning that
+    // names it (F-G-024, warn-and-confirm) and the confirmed re-post saves.
+    const retire = { id: headId, project_id: world.operationsId, name, sort_order: '92' };
+    const warned = await probePost(world.adminPage, '/heads', retire);
+    expect(warned.status, `retiring a head with an open request asks first — got ${warned.outcome}`).toBe(200);
+    const retired = await probePost(world.adminPage, '/heads', { ...retire, confirm: 'on' });
+    expect(retired.status, `the confirmed save retires the head — got ${retired.outcome}`).toBe(303);
 
     await world.requester.page.goto(`/requests/${id}`);
     await expect(
