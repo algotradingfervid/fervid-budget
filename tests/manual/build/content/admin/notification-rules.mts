@@ -147,6 +147,8 @@ export default page({
         ['`{{needed_by}}`', 'The required-by date.'],
         ['`{{submitted_on}}`', 'When it was submitted.'],
         ['`{{processing_on}}`', 'When it was taken for processing.'],
+        ['`{{paid_amount}}`', 'What actually left the bank — the linked payment’s amount, empty until one is recorded.'],
+        ['`{{paid_on}}`', 'The date of that payment.'],
         ['`{{link}}`', 'A link straight to the request, built from the Base URL above.'],
       ],
     ),

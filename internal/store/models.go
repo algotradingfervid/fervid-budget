@@ -398,10 +398,15 @@ type Request struct {
 	ProcessingBy              *int64
 	ProcessingAt              *time.Time
 	ProcessingByName          string // joined name of the reserver; "" when unreserved
-	ReminderLastSent          *time.Time
-	SubmittedAt               *time.Time
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	// ConcernOpen is set by RaiseConcern and cleared when the accountant who
+	// holds the request answers in the conversation. It is a flag, not a status
+	// (the request stays 'partial_review'), exactly as on_hold is a flag on
+	// 'approved': the display reads "Partial — under discussion" from it.
+	ConcernOpen      bool
+	ReminderLastSent *time.Time
+	SubmittedAt      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type RequestInput struct {

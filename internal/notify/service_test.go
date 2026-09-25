@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -497,5 +498,65 @@ func TestAuditEventsDoNotCopyManagementByThemselves(t *testing.T) { // F-F-06
 	}
 	if rows != 0 {
 		t.Fatalf("in-app rows for the management list = %d, want 0", rows)
+	}
+}
+
+// settlement-1: every settlement notification states the amount actually
+// paid, and the approved figure where it differs. The four seeded templates
+// used {{amount}} — the requested figure — so an approver was told "only
+// ₹12,345.67 was paid" about an ₹8,000 payment, and "paid in full: ₹50,000"
+// about ₹45,000.
+func TestSettlementNotificationsNameTheAmountActuallyPaid(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t)
+	requester := mustUser(t, st, "req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "mgr@test", "Manav", "admin")
+	accountant := mustUser(t, st, "acc@test", "Asha", "admin")
+	acc, err := st.UserByID(ctx, accountant)
+	must(t, err)
+	// Requested 12,345.67, approved 12,000, paid 8,000 — three different
+	// figures, so the wrong one cannot pass by coincidence. A recoverable
+	// request, because it is the one shape that needs no budget head.
+	reqID := insertRequest(t, st, "PR-2026-000002", "approved", requester, manager, time.Now().UTC(), nil)
+	_, err = st.DB().ExecContext(ctx, `UPDATE payment_requests SET amount=1234567, approved_amount=1200000, approved_by=?, approved_at=CURRENT_TIMESTAMP,
+		treatment='recoverable', type='employee_advance', recoverable_category='other' WHERE id=?`, manager, reqID)
+	must(t, err)
+	must(t, st.ReserveRequest(ctx, acc, reqID))
+	_, err = st.RecordPaymentForRequest(ctx, acc, reqID, store.PaymentInput{PaidOn: "2026-07-20", Amount: 800000, VendorPayee: "Acme", PaymentMode: "bank_transfer"}, "partial", "Retention held back", nil)
+	must(t, err)
+
+	svc := NewService(st, &fakeMailer{})
+	req, err := st.Request(ctx, reqID)
+	must(t, err)
+	for _, event := range []string{EventPaymentPartialReview, EventPaymentPartialConcern, EventPaymentPartialAccepted, EventPaymentSettled} {
+		must(t, svc.Notify(ctx, event, req))
+	}
+	for _, uid := range []int64{manager, requester, accountant} {
+		rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: uid})
+		must(t, err)
+		if len(rows) == 0 {
+			t.Fatalf("user %d received nothing", uid)
+		}
+		for _, row := range rows {
+			if strings.Contains(row.Body, "12,345.67") || strings.Contains(row.Title, "12,345.67") {
+				t.Fatalf("%s tells user %d the requested amount was paid: %q / %q", row.Event, uid, row.Title, row.Body)
+			}
+			if !strings.Contains(row.Body, "₹8,000.00") {
+				t.Fatalf("%s never names the ₹8,000.00 that was paid: %q", row.Event, row.Body)
+			}
+			if !strings.Contains(row.Body, "₹12,000.00") {
+				t.Fatalf("%s never names the ₹12,000.00 approved beside it: %q", row.Event, row.Body)
+			}
+		}
+	}
+	// The vocabulary itself: a template may ask for the paid figure by name,
+	// and it is listed for the administrator editing the rules.
+	out, err := renderTemplate("{{paid_amount}} on {{paid_on}}", RequestView{PaidAmount: 800000, PaidOn: "2026-07-20"})
+	must(t, err)
+	if out != "₹8,000.00 on 2026-07-20" {
+		t.Fatalf("render = %q", out)
+	}
+	if !slices.Contains(NotifyFieldNames(), "paid_amount") {
+		t.Fatalf("the admin sheet's hint does not list paid_amount: %v", NotifyFieldNames())
 	}
 }
