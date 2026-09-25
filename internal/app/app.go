@@ -249,6 +249,10 @@ type PageData struct {
 	// for every other request. The edit and returned screens use it to name what
 	// saving does on their buttons.
 	LegacyCategory string
+	// NotifDraft is a rule the rules screen refused, with what the admin typed;
+	// its sheet comes back open with NotifDraftError inside it (ux-2).
+	NotifDraft      *store.NotificationSetting
+	NotifDraftError string
 }
 
 type ReportSummary struct {
@@ -339,6 +343,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 			}
 		},
 		"notifGlyph":   notifGlyph,
+		"notifBody":    notifBody,
 		"pillClass":    pillClass,
 		"reqStatus":    requestStatusText,
 		"statusPill":   statusPill,

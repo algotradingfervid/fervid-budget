@@ -234,6 +234,44 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 	_ = open
 }
 
+// urgent-1: once approved, an urgent request is Accounts' to pay, and the design
+// says "Urgent requests surface here" — but the queue query never selected the
+// flag, so neither the queue nor the Accounts dashboard area could mark it, and
+// it sorted behind every older ordinary request.
+func TestAccountsQueueMarksAndSurfacesUrgentRequests(t *testing.T) { // N6
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("UrgentQueue")
+	// Raised by someone else, so the only place the accountant's dashboard can
+	// show these rows is its Accounts area.
+	requester := s.seedRequester("urq@example.test", "Urgent Requester", "UrgentPass1234")
+	s.seedColleague("uracct@example.test", "Urgent Accountant", "UrgentAcct1234")
+	normal := s.seedApprovedRequest(1, requester.ID, admin.ID, headID, 500000)
+	urgent := s.seedApprovedRequest(2, requester.ID, admin.ID, headID, 700000)
+	if _, err := s.st.DB().ExecContext(s.ctx, `UPDATE payment_requests SET approved_at=datetime('now','-2 days') WHERE id=?`, normal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.DB().ExecContext(s.ctx, `UPDATE payment_requests SET urgent=1 WHERE id=?`, urgent); err != nil {
+		t.Fatal(err)
+	}
+	s.login("uracct@example.test", "UrgentAcct1234")
+
+	// The queue, the Accounts area of the dashboard, and the payment form's
+	// request picker are the three places Accounts chooses what to pay next.
+	for _, path := range []string{"/accounts-queue", "/", "/payments/new"} {
+		body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+		u, n := strings.Index(body, "PR-2026-000002"), strings.Index(body, "PR-2026-000001")
+		if u < 0 || n < 0 {
+			t.Fatalf("%s is missing a request row", path)
+		}
+		if u > n {
+			t.Errorf("%s lists the urgent request after an older ordinary one", path)
+		}
+		if strings.Count(body, `<span class="pill urgent">Urgent</span>`) != 1 {
+			t.Errorf("%s does not mark exactly the one urgent request Urgent", path)
+		}
+	}
+}
+
 func TestAccountsQueueSearchNarrowsRows(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("QueueSearch")

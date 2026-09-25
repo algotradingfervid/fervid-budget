@@ -683,7 +683,7 @@ const templates = `
      stand in for it cannot describe the same request differently. Dot is one
      store.Request. */}}
 {{define "picker_row"}}<span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
-    <small>{{.RequesterName}} · {{.Project}} / {{.Head}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
+    <small>{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}{{.RequesterName}} · {{.Project}} / {{.Head}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
   <span class="co-amt">{{money (approvedOf .)}}</span>{{end}}
 
 {{define "payment_pick_request"}}
@@ -820,7 +820,7 @@ const templates = `
         <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
         <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
-        <td data-label="Status"><span class="pill approved">Approved</span></td>
+        <td data-label="Status">{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}<span class="pill approved">Approved</span></td>
         <td class="c" data-label="Action">{{if $.Perms.Can "reservation" "reserve"}}<form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn small primary" type="submit">Take for processing</button></form>{{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}</td>
       </tr>
       {{end}}
@@ -832,6 +832,7 @@ const templates = `
         <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
         <td data-label="Status">
+          {{if and .Urgent (ne .Status "completed") (ne .Status "completed_partial")}}<span class="pill urgent">Urgent</span> {{end}}
           {{if .OnHold}}<span class="pill hold">On hold</span>
           {{else if eq .Status "partial_review"}}{{$p := statusPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
           {{else if eq .Status "completed_partial"}}<span class="pill completed-partial">Completed — partial accepted</span>
@@ -3158,7 +3159,11 @@ const templates = `
     <span class="ab-note d-only">Every change is recorded in the history.</span>
     <span class="row-end"></span>
     <a class="btn outline" href="/requests/{{.Request2.ID}}">Discard changes</a>
-    <button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}">Save and notify {{.Request2.ManagerName}}</button>
+    {{/* On a returned request the promise is only true if this press also
+         resubmits: a save alone leaves it returned and tells nobody
+         (notifications-1). Saving without sending stays on the returned
+         screen's own "Save corrections". */}}
+    <button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}"{{if eq .Request2.Status "returned"}} name="submit_action" value="resubmit"{{end}}>Save and notify {{.Request2.ManagerName}}</button>
   </div>
 </form>
 {{template "bottom" .}}
@@ -3882,9 +3887,8 @@ const templates = `
   </div>
 </section>
 
-{{if .Error}}<div class="banner warn"><span class="b-ico" aria-hidden="true">⚠</span><div><b>That did not save</b><p>{{.Error}}</p></div></div>{{end}}
-{{if .Notice}}<div class="banner brand"><span class="b-ico" aria-hidden="true">✓</span><div><b>Done</b><p>{{.Notice}}</p></div></div>{{end}}
-
+{{/* No callout here: .Error and .Notice are the layout's one flash (ux-2). A
+     refused rule reports inside its own reopened sheet instead. */}}
 <fieldset>
   <legend>Email delivery</legend>
   <form method="post" action="/admin/notifications/smtp">
@@ -3936,7 +3940,11 @@ const templates = `
      attribute, so restoring it is the whole fix and needs no CSS. */}}
 {{if .Perms.Can "notification" "edit"}}
 {{range .NotifSettings}}
-<div class="overlay" id="ev-{{.Event}}" hidden>
+{{/* $d is what the sheet's fields show: the stored rule, or — for the one rule
+     just refused — what the admin typed, so a typo costs them nothing (ux-2).
+     data-reopen asks fervid-app.js to open that one sheet on load. */}}
+{{$d := .}}{{$refused := and $.NotifDraft (eq $.NotifDraft.Event .Event)}}{{if $refused}}{{$d = $.NotifDraft}}{{end}}
+<div class="overlay" id="ev-{{.Event}}" hidden{{if $refused}} data-reopen{{end}}>
   <form class="sheet" method="post" action="/admin/notifications/events/{{.Event}}">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <div class="sh-head">
@@ -3944,16 +3952,17 @@ const templates = `
       <button class="sh-close" type="button" data-close="ev-{{.Event}}" aria-label="Close">✕</button>
     </div>
     <div class="sh-body stack-12">
-      <label class="checkline"><input type="checkbox" name="email_enabled" {{check .EmailEnabled}}> Also send an email for this event</label>
+      {{if $refused}}<div class="banner warn" role="alert"><span class="b-ico" aria-hidden="true">⚠</span><div><b>That did not save</b><p>{{$.NotifDraftError}}</p></div></div>{{end}}
+      <label class="checkline"><input type="checkbox" name="email_enabled" {{check $d.EmailEnabled}}> Also send an email for this event</label>
       <div class="field"><span class="flabel">Who it goes to</span>
-        <label class="checkline"><input type="checkbox" name="include_requester" {{check .IncludeRequester}}> The requester</label>
-        <label class="checkline"><input type="checkbox" name="include_manager" {{check .IncludeManager}}> The approver</label>
-        <label class="checkline"><input type="checkbox" name="include_accounts" {{check .IncludeAccounts}}> The Accounts group</label>
+        <label class="checkline"><input type="checkbox" name="include_requester" {{check $d.IncludeRequester}}> The requester</label>
+        <label class="checkline"><input type="checkbox" name="include_manager" {{check $d.IncludeManager}}> The approver</label>
+        <label class="checkline"><input type="checkbox" name="include_accounts" {{check $d.IncludeAccounts}}> The Accounts group</label>
       </div>
-      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{.ToRecipients}}" placeholder="one@example.com, two@example.com"></div>
-      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{.CcRecipients}}"></div>
-      <div class="field"><label for="sub-{{.Event}}" class="flabel">Subject</label><input id="sub-{{.Event}}" name="subject_template" value="{{.SubjectTemplate}}"></div>
-      <div class="field"><label for="body-{{.Event}}" class="flabel">Message</label><textarea id="body-{{.Event}}" name="body_template" rows="6">{{.BodyTemplate}}</textarea></div>
+      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{$d.ToRecipients}}" placeholder="one@example.com, two@example.com"></div>
+      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{$d.CcRecipients}}"></div>
+      <div class="field"><label for="sub-{{.Event}}" class="flabel">Subject</label><input id="sub-{{.Event}}" name="subject_template" value="{{$d.SubjectTemplate}}"></div>
+      <div class="field"><label for="body-{{.Event}}" class="flabel">Message</label><textarea id="body-{{.Event}}" name="body_template" rows="6">{{$d.BodyTemplate}}</textarea></div>
       <p class="hint">Available fields: {{range $i, $f := $.NotifFields}}{{if $i}}, {{end}}&#123;&#123;{{$f}}&#125;&#125;{{end}}. Anything else is rejected when you save, so a typo cannot reach an inbox.</p>
     </div>
     <div class="sh-foot">
@@ -4001,7 +4010,7 @@ const templates = `
   {{range .Notifs}}
   <a class="notif{{if not .ReadAt}} unread{{end}}" href="/notifications/{{.ID}}/open">
     <span class="n-ico" aria-hidden="true">{{notifGlyph .Kind}}</span>
-    <span class="n-main"><b>{{.Title}}</b>{{if .Body}}<p>{{.Body}}</p>{{end}}</span>
+    <span class="n-main"><b>{{.Title}}</b>{{if .Body}}<p>{{notifBody .Body .Href}}</p>{{end}}</span>
     <time>{{date .CreatedAt}}</time>
   </a>
   {{else}}

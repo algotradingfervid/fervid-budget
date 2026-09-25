@@ -1537,7 +1537,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		COALESCE(NULLIF(v.name,''),r.vendor_payee,''),
 		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
 		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
-		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at, r.concern_open
+		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at, r.concern_open, r.urgent
 		FROM payment_requests r
 		LEFT JOIN projects p ON p.id=r.project_id
 		LEFT JOIN heads h ON h.id=r.head_id
@@ -1595,7 +1595,17 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	}
 	// CURRENT_TIMESTAMP is second-resolution, so a burst of approvals shares one
 	// timestamp; id breaks the tie and keeps the order stable.
-	q += ` ORDER BY r.approved_at, r.id`
+	//
+	// Urgent first, as every other request list sorts: the design's approved
+	// stage reads "In the Accounts queue. Urgent requests surface here", and
+	// the dashboard's Accounts area shows only the first few of these rows, so
+	// an urgent request behind older ordinary ones did not surface at all
+	// (urgent-1). The Paid tab is history, not work, and keeps approval order.
+	if opts.Status == "paid" {
+		q += ` ORDER BY r.approved_at, r.id`
+	} else {
+		q += ` ORDER BY r.urgent DESC, r.approved_at, r.id`
+	}
 	if opts.Limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, opts.Limit)
@@ -1609,11 +1619,11 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		var r Request
 		var approved, processingBy, headID sql.NullInt64
 		var processingAt, approvedAt sql.NullTime
-		var onHold, concernOpen int
+		var onHold, concernOpen, urgent int
 		if err := rows.Scan(&r.ID, &r.Number, &r.ShortTitle, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
 			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
 			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
-			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt, &concernOpen); err != nil {
+			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt, &concernOpen, &urgent); err != nil {
 			return out, err
 		}
 		r.ConcernOpen = concernOpen == 1
@@ -1638,6 +1648,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 			r.ApprovedAt = &v
 		}
 		r.OnHold = onHold == 1
+		r.Urgent = urgent == 1
 		// Availability is re-derived from the row, never from the tab, so no tab
 		// can ever hand the UI a "Take for processing" button it must not have.
 		if r.Status == "approved" && !processingBy.Valid && !r.OnHold {

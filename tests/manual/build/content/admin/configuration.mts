@@ -114,8 +114,8 @@ export default page({
       { name: 'Reservation goes stale after (days)', required: false, note: 'How long an accountant may hold a reservation with no payment recorded. Default 1.' },
     ]),
     note(
-      'The note under the block covers two things people get wrong: reminders are counted in calendar ' +
-      'days, not working hours, and a request put on hold is waiting on the requester by design and is ' +
+      'The note under the block covers two things people get wrong: reminders are counted in days, ' +
+      'not working hours, and a request put on hold is waiting on the requester by design and is ' +
       'never reminded about.',
       'How the counting works',
     ),

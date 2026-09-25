@@ -90,6 +90,16 @@ func TestRunRemindersNotifiesTheAssignedAccountant(t *testing.T) {
 	if len(rows) != 0 {
 		t.Fatalf("an unrelated accountant got %d rows", len(rows))
 	}
+	// The email goes to the same one person the in-app row does. It used to go
+	// to everyone holding payment:process, so the unrelated accountant was
+	// emailed about a reservation they had no in-app row for (notify-1).
+	msgs := mailer.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("stale-reservation emails = %d, want 1", len(msgs))
+	}
+	if got := strings.Join(msgs[0].To, ","); got != "sr-acct@test" || len(msgs[0].Cc) != 0 {
+		t.Fatalf("stale-reservation email To = %q Cc = %v, want only the holder sr-acct@test", got, msgs[0].Cc)
+	}
 }
 
 // A settled reservation is not stale, however long ago it was reserved.

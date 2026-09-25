@@ -89,7 +89,7 @@ var configSections = []ConfigSection{
 			Hint: "How often the reminder returns while nothing happens. Default 1."},
 		{Key: "reminder_stale_days", Label: "Reservation goes stale after (days)", Kind: "number", Span: 4,
 			Hint: "How long an accountant may hold a reservation with no payment recorded. Default 1."},
-	}, Note: "Reminders are counted in calendar days, not working hours. A request put on hold is waiting on the requester by design and is never reminded about."},
+	}, Note: "Reminders are counted in days, not working hours. A request put on hold is waiting on the requester by design and is never reminded about."},
 }
 
 func (a *App) configuration(w http.ResponseWriter, r *http.Request) {
