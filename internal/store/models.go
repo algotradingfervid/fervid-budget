@@ -125,6 +125,10 @@ type Payment struct {
 	RequestID     *int64
 	Settlement    string // "" (historical) | "settled" | "partial"
 	PartialReason string
+	// Treatment is the linked request's treatment ("" for a historical payment).
+	// A "recoverable" payment has no head (v8), so a screen reads this to name it
+	// rather than print an empty "Project / Head" (recoverables-2).
+	Treatment string
 }
 
 type Attachment struct {
@@ -351,6 +355,10 @@ type PaymentListOptions struct {
 	// other value leave the list unrestricted, exactly as requestWhere does.
 	Scope    string
 	ViewerID int64
+	// ExcludeRecoverable leaves out payments that settle a recoverable request.
+	// The variance grid sets it: a recoverable is a deposit, not budget spend,
+	// and its totals already leave them out (V2, recoverables-2).
+	ExcludeRecoverable bool
 }
 
 type Request struct {

@@ -670,6 +670,15 @@
   /* Boot, and re-boot after every htmx swap                           */
   /* ---------------------------------------------------------------- */
 
+  /* A sheet the server renders already open — a form it refused, sent back
+     with the reader's input and an inline error — joins the stack as if the
+     reader had opened it, so Escape, the focus trap and Cancel all work. */
+  function openServedDialogs(root) {
+    Array.prototype.forEach.call(root.querySelectorAll(".overlay[data-open-on-load]:not([hidden])"), function (el) {
+      openDialog(el, null);
+    });
+  }
+
   function init() {
     initAccordions(document);
     syncConditionals(document);
@@ -678,6 +687,7 @@
     initRoleMatrix(document);
     initFollowSelects(document);
     reopenRefusedSheets(document);
+    openServedDialogs(document);
   }
 
   /* A sheet whose form the server refused comes back with data-reopen and the
@@ -691,6 +701,30 @@
       openDialog(el, null);
     });
   }
+
+  /* A filter form that pushes its URL (the grid's) can fire the same filters
+     more than once for one gesture: Enter in the search box commits a change
+     and then submits, and the live search fires again when its pause runs out.
+     Each extra request only swaps in the same rows and pushes a duplicate
+     history entry, so a request whose filters were the last ones sent is
+     dropped, and so is a live one whose filters the page already shows. Back
+     and Forward forget the last one sent, since the page then shows whatever
+     the server rendered for that URL. */
+  var lastFilters = new WeakMap();
+  document.addEventListener("htmx:configRequest", function (event) {
+    var form = event.detail && event.detail.elt;
+    if (!form || !form.matches || !form.matches("form[data-skip-shown-filters]")) return;
+    var trigger = event.detail.triggeringEvent;
+    var wanted = new URLSearchParams(new FormData(form)).toString();
+    var shown = form.getAttribute("action") === window.location.pathname &&
+      new URLSearchParams(window.location.search).toString() === wanted;
+    if (lastFilters.get(form) === wanted || (shown && !(trigger && trigger.type === "submit"))) {
+      event.preventDefault();
+      return;
+    }
+    lastFilters.set(form, wanted);
+  });
+  document.addEventListener("htmx:historyRestore", function () { lastFilters = new WeakMap(); });
 
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:load", function () { init(); });

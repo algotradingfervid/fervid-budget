@@ -2291,6 +2291,13 @@ pre {
   min-width: 220px;
 }
 
+/* On a <td> the flex box took the cell out of table layout: it stopped
+   stretching to the row's height, so its bottom rule sat above the row's
+   (ui-1). The cell stays a cell and its single wrapper lays the buttons out.
+   The phone restack (table.t-cards tbody td) outranks this and keeps its flex. */
+td.actions-cell { display: table-cell; }
+td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
 .inline-danger {
   position: relative;
   border: 0;
@@ -2624,9 +2631,12 @@ pre {
 /* Variance-grid tones. The grid renders statusFor() straight into the class,
    so these five names are fixed by internal/app.statusForView, not chosen
    here. They carry the same values the .badge equivalents did, so retiring
-   .badge (decision D5) recolours nothing. */
+   .badge (decision D5) recolours nothing — except On track, whose copied
+   brand rust read as a cousin of Over while its legend swatch and bar are the
+   green --track. The pill is that green now, dot and rule included (BV22). */
 .pill.under      { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
-.pill.on-track   { color: var(--brand-2); background: var(--brand-tint); border-color: var(--brand-tint-2); }
+.pill.on-track   { color: #25603a;        background: #e9f5ed;           border-color: var(--track); }
+.pill.on-track::before { background: var(--track); }
 .pill.over       { color: var(--bad);     background: var(--bad-soft);   border-color: var(--bad-line); }
 .pill.unbudgeted { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
 .pill.not-paid   { color: var(--muted);   background: var(--surface-2);  border-color: var(--line-2); }
