@@ -135,12 +135,50 @@ var auditNotificationSettings = []NotificationSetting{
 // Same conventions as v9's nine: email off by default so delivery stays opt-in
 // per event, and the management recipient list untouched.
 var reassignmentNotificationSettings = []NotificationSetting{
+	// Not "needs your approval": a request can be handed on while it is
+	// returned, awaiting a cancellation decision or in partial review as well as
+	// while pending, and what the new approver is being asked for differs in
+	// each. The wording names what is true in all four — they are its approver
+	// now — and the body says what that can mean (deactivation-2 review). v13
+	// carries this onto databases v11 already seeded.
 	{Event: "approval_reassigned", Label: "Sent to a different approver", Audience: "The new approver", IncludeManager: true,
-		SubjectTemplate: "{{number}} needs your approval — it was reassigned to you",
-		BodyTemplate:    "{{number}} ({{amount}} to {{payee}}) was moved to you for approval.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"},
+		SubjectTemplate: "{{number}} was reassigned to you as its approver",
+		BodyTemplate:    "{{number}} ({{amount}} to {{payee}}) was reassigned to you. You are its approver now: whatever it is waiting on from its approver — the approval itself, a cancellation request or a partial-settlement review — is yours to decide, and if it was returned for correction it comes to you once it is resubmitted.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"},
 	{Event: "request_cancelled", Label: "Cancelled by the approver", Audience: "Requester", IncludeRequester: true,
 		SubjectTemplate: "{{number}} was cancelled by {{approver}}",
 		BodyTemplate:    "{{approver}} cancelled {{number}} ({{amount}} to {{payee}}). Nothing will be paid against it, and it needs nothing further from you.\n\nOpen it: {{link}}"},
+}
+
+// The approval_reassigned wording v11 seeded, kept so v13 can recognise a row
+// nobody has edited.
+const (
+	v11ReassignedSubject = "{{number}} needs your approval — it was reassigned to you"
+	v11ReassignedBody    = "{{number}} ({{amount}} to {{payee}}) was moved to you for approval.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"
+)
+
+// UpReassignedNotificationWording is migration v13: the approval_reassigned
+// notice stops saying "needs your approval".
+//
+// Fix wave B made a request reassignable while returned, awaiting a
+// cancellation decision or in partial review — every status the deactivation
+// warning promises can be handed on — and the notice v11 seeded was written
+// for the pending case alone: it told the new approver a returned request
+// needed their approval when it was waiting on the requester, and a frozen one
+// when it was waiting on a cancellation decision. The seed now carries wording
+// that is true in all four states; this migration brings an installed database
+// to the same text.
+//
+// Only where the row still reads exactly as v11 wrote it. The template columns
+// are an administrator's to edit, and seedNotificationSettings' whole contract
+// is that a migration never resets what they typed — so a row whose subject or
+// body differs from the v11 default is theirs and is left alone. Re-runnable
+// by construction: once rewritten, the WHERE matches nothing.
+func UpReassignedNotificationWording(tx *sql.Tx) error {
+	_, err := tx.Exec(`UPDATE notification_settings SET subject_template=?, body_template=?
+		WHERE event=? AND subject_template=? AND body_template=?`,
+		reassignmentNotificationSettings[0].SubjectTemplate, reassignmentNotificationSettings[0].BodyTemplate,
+		"approval_reassigned", v11ReassignedSubject, v11ReassignedBody)
+	return err
 }
 
 // UpReassignmentNotificationEvents is migration v11.

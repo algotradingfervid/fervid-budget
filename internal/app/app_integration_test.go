@@ -2276,16 +2276,19 @@ func TestApproverReassignmentRoute(t *testing.T) {
 	_ = responseBody(t, resp)
 
 	// And the real thing: the approver changes, and the trail records it as its
-	// own event rather than as an anonymous update.
+	// own event rather than as an anonymous update. The target is a third
+	// approver, not the administrator: nobody may hand a request to themselves
+	// (rbac-8), and this test used to do exactly that.
+	coverApprover := seedThirdApprover(t, s)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{
-		"manager_id": {strconvFormat(admin.ID)}, "reason": {"Kavita is on leave this week"},
+		"manager_id": {strconvFormat(coverApprover)}, "reason": {"Kavita is on leave this week"},
 	}), http.StatusSeeOther)
 	req, err := s.st.Request(s.ctx, reqID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.ManagerID != admin.ID {
-		t.Fatalf("manager after reassignment = %d, want %d", req.ManagerID, admin.ID)
+	if req.ManagerID != coverApprover {
+		t.Fatalf("manager after reassignment = %d, want %d", req.ManagerID, coverApprover)
 	}
 	trail, err := s.st.Audit(s.ctx, "payment_request", reqID, 20)
 	if err != nil {

@@ -37,8 +37,8 @@ export default page({
     shot('requester/detail-processing', 'A request an accountant has taken. The pill reads With Accounts, and the history records the reservation.'),
     prose(
       `When an accountant takes the request, the status becomes **With Accounts** and a line appears in
-       the history: *Reserved request for processing*. That claim is exclusive — it exists so two
-       people cannot pay the same request twice.`,
+       the history, naming the accountant: *Harsh Agarwal reserved the request for processing*. That
+       claim is exclusive — it exists so two people cannot pay the same request twice.`,
     ),
 
     subsection('Paid'),

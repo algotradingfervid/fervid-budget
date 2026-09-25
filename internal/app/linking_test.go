@@ -837,12 +837,15 @@ func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", histID), nil, ""), http.StatusOK)
 }
 
-// The trail's head already names the actor. Most request-side audit summaries
-// are written to start with the same name, so the body repeated it.
+// The trail's head already names the actor. Every payment_request audit summary
+// is written to start with the same name — the payment-side ones since the
+// detail thread started naming who held, reserved and settled (history-1) — so
+// the body would repeat it.
 func TestTrailBodyDropsTheActorNameTheHeadAlreadyCarries(t *testing.T) {
 	for _, tc := range []struct{ name, actor, summary, want string }{
 		{"request side", "Priya Nair", "Priya Nair approved request PR-2026-000001 for ₹1,00,000.00", "Approved request PR-2026-000001 for ₹1,00,000.00"},
-		{"payment side", "Priya Nair", "Reserved request for processing", "Reserved request for processing"},
+		{"payment side", "Priya Nair", "Priya Nair reserved the request for processing", "Reserved the request for processing"},
+		{"summary without the actor", "Priya Nair", "Reserved request for processing", "Reserved request for processing"},
 		{"no actor", "", "Recorded payment ₹98,000.00", "Recorded payment ₹98,000.00"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

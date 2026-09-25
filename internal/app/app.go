@@ -103,6 +103,10 @@ type PageData struct {
 	UserRoleIDs   map[int64]map[int64]bool
 	Approvers     []store.User
 	ApproverNames map[int64]string
+	// CanReassignApprover is whether the reader may hand this request's approval
+	// on: mayReassignApprover's answer, settled once so the button and the sheet
+	// cannot disagree with the route (rbac-8).
+	CanReassignApprover bool
 
 	// Vendor master. Vendor.Bank is nil for a caller without vendor_bank:view
 	// — the store leaves the columns out of the query rather than the template
@@ -569,6 +573,11 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /requests/{id}/edit", a.auth.RequirePermission("request", "edit", http.HandlerFunc(a.requestEditForm)))
 	mux.Handle("POST /requests/{id}/edit", a.auth.RequirePermission("request", "edit", http.HandlerFunc(a.withCSRF(a.requestEdit))))
 	mux.Handle("POST /requests/{id}/comment", a.auth.RequirePermission("request", "comment", http.HandlerFunc(a.withCSRF(a.requestComment))))
+	// Q6/L7: a held request still accepts the requester's documents without the
+	// edit path, which is closed once a request is approved. The Phase-2 route
+	// table planned this door (attachment:create) and it was never built, so the
+	// document Accounts asked for had no way in (hold-1).
+	mux.Handle("POST /requests/{id}/attachments", a.auth.RequirePermission("attachment", "create", http.HandlerFunc(a.withCSRF(a.requestAttachmentUpload))))
 	mux.Handle("POST /requests/{id}/withdraw", a.auth.RequirePermission("request", "withdraw", http.HandlerFunc(a.withCSRF(a.requestWithdraw))))
 	mux.Handle("POST /requests/{id}/reraise", a.auth.RequirePermission("request", "reraise", http.HandlerFunc(a.withCSRF(a.requestReraise))))
 	mux.Handle("POST /requests/{id}/approve", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.withCSRF(a.requestApprove))))
@@ -1671,11 +1680,13 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 // This is also the repair for a request routed to somebody who cannot approve
 // (F-A-08) and for a stranded approval (F-G-025).
 //
-// Who may do it: the route asks for `approval:reassign`, and the caller's request
-// data scope must reach the row. That admits the request's own approver handing
-// it on, and an administrator rescuing one whose approver cannot act — which is
-// the case that needs rescuing, so requiring `manager_id == actor` here would
-// close the only door out of it.
+// Who may do it: the route asks for `approval:reassign`, the caller's request
+// data scope must reach the row, and then mayReassignApprover decides — the
+// request's own approver handing it on, or a holder of user:edit rescuing one
+// whose approver cannot act. The gate used to stop at the scope, and the seeded
+// Manager role holds both approval:reassign and request scope `all`, so any
+// manager could take another manager's request for themselves and approve it
+// (rbac-8). The store refuses the self-assignment as well, whoever the actor is.
 func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	req, err := a.st.Request(r.Context(), pathID(r))
@@ -1689,6 +1700,11 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)
 		return
 	}
+	if !a.mayReassignApprover(u, req) {
+		a.respondError(w, r, http.StatusForbidden,
+			"Only the approver this request was sent to, or an administrator, can reassign it.", nil)
+		return
+	}
 	to := parseID(r.FormValue("manager_id"))
 	if to == 0 {
 		a.respondError(w, r, http.StatusBadRequest, "Choose the approver this request should go to.", nil)
@@ -1698,7 +1714,10 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusBadRequest, "Give a reason for the reassignment.", nil)
 		return
 	}
-	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason")); err != nil {
+	// The store re-checks "is this still the approver" on the row inside its
+	// write transaction, because req above was read before it; only the
+	// admin-level grant mayReassignApprover honours lets that check be skipped.
+	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason"), a.auth.Can(u, "user", "edit")); err != nil {
 		status := storeErrorStatus(err)
 		if status >= http.StatusInternalServerError {
 			a.respondStoreError(w, r, err)

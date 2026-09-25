@@ -40,7 +40,7 @@ export default page({
         {
           name: 'Send it to',
           required: true,
-          note: 'Every active person whose roles let them approve requests, in name order, minus the requester. The current approver appears in the list but cannot be chosen.',
+          note: 'Every active person whose roles let them approve requests, in name order, minus the requester. The current approver and your own name appear in the list but cannot be chosen — a request is never handed to the person moving it.',
         },
         {
           name: 'Why',
@@ -57,20 +57,23 @@ export default page({
 
     section('Who may reassign'),
     prose(
-      `This is the one approver action that is not restricted to the person named on the request.
-       Anybody holding the reassign permission and able to see the request can move it, including an
-       administrator. That is deliberate — the case that most needs rescuing is a request routed to
-       somebody who can no longer act, and if only that person could hand it on, there would be no way
-       out of it.
+      `Two people. The approver the request was sent to may hand it on — it is theirs to decide, so it
+       is theirs to give away. And an administrator may move any request, which is the way out when
+       the named approver is on leave, has left or has lost the approver role: the case that most
+       needs rescuing is a request routed to somebody who can no longer act, and if only that person
+       could hand it on there would be no way out of it. So if a colleague has left mid-decision, ask
+       an administrator; you do not need the colleague to do anything.
 
-       So if a colleague has left mid-decision, you do not need them to do anything. Open their
-       request and reassign it.`,
+       Nobody else. Another manager who can see the request cannot move it, and nobody — not even an
+       administrator — can reassign a request to themselves. Being able to see a request is not the
+       same as being able to decide it, and reassigning must not become a way of making it yours.`,
     ),
     note(
-      `The control appears only while the request is at \`pending\`, and only when there is somebody
-       else to send it to. If no other eligible approver exists in the organisation, the button is
-       not drawn at all — there is no message, because there is nothing to offer. Ask an
-       administrator to give somebody the approver role.`,
+      `The control appears while the request is waiting on its approver — \`pending\`, returned for
+       correction, awaiting a cancellation decision, or in partial review — and only to somebody who
+       may use it, when there is somebody else to send it to. If no other eligible approver exists
+       in the organisation, the button is not drawn at all — there is no message, because there is
+       nothing to offer. Ask an administrator to give somebody the approver role.`,
     ),
 
     section('What changes and what does not'),
@@ -78,7 +81,7 @@ export default page({
       ['', 'After a reassignment'],
       [
         ['The request number', 'Unchanged'],
-        ['The status', 'Still `pending` — reassigning is not a decision'],
+        ['The status', 'Unchanged — reassigning is not a decision. A request awaiting a cancellation decision or in partial review stays so; only the person deciding it changes'],
         ['The amount', 'Unchanged'],
         ['The **Approver** field', 'The person you chose'],
         ['The history', 'Kept in full, with a new line naming you, them and your reason'],
@@ -94,7 +97,9 @@ export default page({
       [
         ['*Choose the approver this request should go to.*', 'No name was picked from the list.'],
         ['*Give a reason for the reassignment.*', 'The **Why** box was empty.'],
-        ['A message saying only a pending request can be reassigned', 'It has already been approved, returned, rejected, withdrawn or cancelled.'],
+        ['*Only the approver this request was sent to, or an administrator, can reassign it.*', 'You are not the approver named on it. Ask them, or an administrator.'],
+        ['A message saying an approved (or completed, rejected, withdrawn or cancelled) request cannot be reassigned', 'Nothing is waiting on an approver: it is with Accounts, or it is closed.'],
+        ['A message saying you cannot reassign a request to yourself', 'You picked your own name. A request is never handed to the person moving it.'],
         ['A message saying that person cannot approve requests', 'The chosen account no longer carries the approver role. Pick another, or ask an administrator.'],
         ['A message saying a request cannot be reassigned to its own requester', 'You picked the person who raised it. Nobody may approve their own request.'],
       ],
@@ -108,8 +113,9 @@ export default page({
     faq([
       {
         q: 'Can I reassign a request to myself?',
-        a: `Yes, if you hold the reassign permission and are an eligible approver — that is how a
-            stranded request is picked up. You cannot reassign it to the person who raised it.`,
+        a: `No — nobody can, an administrator included. A stranded request is picked up by an
+            administrator moving it to you, and that move is recorded with their name and reason.
+            Nor can a request be reassigned to the person who raised it.`,
       },
       {
         q: 'The person I want is not in the list.',
@@ -119,8 +125,8 @@ export default page({
       },
       {
         q: 'I reassigned it by mistake.',
-        a: `Reassign it back. The new approver — or anybody with the permission — can move it again,
-            and both moves stay in the history.`,
+        a: `Ask the new approver to send it back, or an administrator to move it. It is no longer
+            yours to move, and both moves stay in the history.`,
       },
       {
         q: 'Does reassigning tell the requester?',

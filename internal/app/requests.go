@@ -694,8 +694,9 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 	// requester — which is the same list the request form offers and the same rule
 	// store.ReassignRequest enforces, so the select can never name a target the
 	// POST would refuse. It is loaded only for a caller who may actually use the
-	// control (F-A-06/F-C-02).
-	if a.auth.Can(auth.CurrentUser(r), "approval", "reassign") {
+	// control (F-A-06/F-C-02): the same answer the route gives, so nobody is
+	// offered a sheet whose submit answers 403 (rbac-8).
+	if data.CanReassignApprover = a.mayReassignApprover(auth.CurrentUser(r), req); data.CanReassignApprover {
 		approvers, aerr := a.st.ListApprovers(r.Context(), req.RequesterID)
 		if aerr != nil {
 			return PageData{}, aerr
@@ -713,6 +714,22 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 		return PageData{}, perr
 	}
 	return data, nil
+}
+
+// mayReassignApprover is the one answer to who may hand this request's approval
+// on, asked by the detail screen and by the route. The request's own approver
+// may, because it is theirs to decide (A5). So may a holder of user:edit — the
+// grant that deactivates a person is the grant that rescues what they leave
+// behind (F-G-025) — because an administrator is the only door out of a request
+// whose approver cannot act. Nobody else: the seeded Manager role holds
+// approval:reassign and sees every request, and with no more than that any
+// manager could make another manager's request theirs and approve it (rbac-8).
+// Only in a status the store will move, so the control is never a dead end.
+func (a *App) mayReassignApprover(u store.User, req store.Request) bool {
+	if !a.auth.Can(u, "approval", "reassign") || !store.Reassignable(req.Status) {
+		return false
+	}
+	return req.ManagerID == u.ID || a.auth.Can(u, "user", "edit")
 }
 
 // requestEditForm is the correction screen. Only the person who raised a
@@ -998,6 +1015,49 @@ func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
 		dest += "/partial-review"
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// requestAttachmentUpload adds one document to a request without touching a
+// field on it. It is the requester's answer to a hold — "Need GST receipt" —
+// which the design says they may give as a comment or an attachment (Q6/L7),
+// and which the edit path cannot carry once the request is approved. Only the
+// person who raised the request may add to it, and only while it is on hold:
+// that is the one moment the design grants, the only one the detail screen
+// offers, and the server allows no more than it shows (hold-1 review). The
+// checks here answer before a file is staged for nothing; the store makes them
+// again on the row inside its transaction, which is where they count.
+func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	u := auth.CurrentUser(r)
+	if req.RequesterID != u.ID {
+		a.respondError(w, r, http.StatusForbidden, "Only the person who raised a request may add documents to it.", nil)
+		return
+	}
+	if !req.OnHold {
+		how := "Add a comment if there is something to say about it."
+		if req.Status == "pending" || req.Status == "returned" {
+			how = "Edit the request to attach it instead."
+		}
+		a.respondError(w, r, http.StatusBadRequest, "This request is not on hold, so no document can be added to it. "+how, nil)
+		return
+	}
+	attachment, stagedPath, err := a.stageUploadedAttachment(r)
+	if err == nil && attachment == nil {
+		err = fmt.Errorf("%w: choose a file to attach", store.ErrValidation)
+	}
+	if err == nil {
+		_, err = a.st.AddHeldRequestAttachment(r.Context(), u, req.ID, *attachment)
+	}
+	if err != nil {
+		// Nothing was written, so nothing may be left on disk either.
+		removeStagedAttachment(a.log, r, stagedPath)
+		a.respondStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
 // The cancellation flow (G1, G2, G3). An approved request cannot be withdrawn
