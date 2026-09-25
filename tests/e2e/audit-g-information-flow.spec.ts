@@ -69,6 +69,29 @@ function csvCells(body: string): string[] {
   return body.split(/\r?\n/).flatMap(line => line.split(','));
 }
 
+/** The fields of one CSV line, honouring RFC 4180 quoting, so a column index is exact. */
+function csvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else cur += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      out.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
 /**
  * The CSV counterpart of `expectMoney`: a money column must be a NUMBER.
  *
@@ -333,8 +356,14 @@ async function setRolesByLabel(adminPage: Page, email: string, labels: Array<str
  */
 async function systemRoleId(adminPage: Page, name: RegExp): Promise<string> {
   await adminPage.goto('/users');
-  const value = await adminPage.locator('#user-new').getByRole('checkbox', { name }).getAttribute('value');
-  return value ?? '';
+  // The sheet is `hidden` until opened, and a hidden checkbox has no accessible
+  // role — open it the way an operator does, then read the box.
+  await adminPage.locator('.pb-actions').getByRole('button', { name: 'Add user' }).click();
+  const sheet = adminPage.locator('#user-new');
+  await expect(sheet).toBeVisible();
+  const value = await sheet.getByRole('checkbox', { name }).getAttribute('value');
+  if (!value) throw new Error(`system role ${name} is missing from the Add user sheet`);
+  return value;
 }
 
 /** Creates a user holding exactly one custom role, signed in in its own context. */
@@ -897,14 +926,24 @@ test.describe('G · the money trail', () => {
       '/reports/ytd.csv'
     );
 
-    // The requests CSV keeps the REQUESTED figure — documented, and worth
-    // pinning: an approved-down request exports the figure nobody approved.
+    // The requests CSV carries both figures, each in its own column: Amount is
+    // what was asked for, and "Approved amount" right after it is what was
+    // approved (F-G-011). Matched by column, so the two can't be confused.
     const reqCSV = await csv(adminPage, `/requests/export.csv?bucket=all&q=${encodeURIComponent(raised.number)}`);
     expectCSVAmount(reqCSV, REQUESTED_CSV, '/requests/export.csv Amount column');
-    expect(
-      reqCSV.includes(APPROVED_CSV),
-      'F-G-011: /requests/export.csv has no approved-amount column, so the adjusted figure is absent'
-    ).toBe(false);
+    expectCSVAmount(reqCSV, APPROVED_CSV, '/requests/export.csv Approved amount column');
+    const reqLines = reqCSV.split(/\r?\n/).filter(line => line.trim());
+    const reqHeader = csvLine(reqLines[0] ?? '');
+    const amountCol = reqHeader.indexOf('Amount');
+    const approvedCol = reqHeader.indexOf('Approved amount');
+    expect(amountCol, `the header names an Amount column: ${reqLines[0]}`).toBeGreaterThanOrEqual(0);
+    expect(approvedCol, 'F-G-011: the header names an Approved amount column, right after Amount').toBe(
+      amountCol + 1
+    );
+    const reqRow = csvLine(reqLines.find(line => line.startsWith(`${raised.number},`)) ?? '');
+    expect(reqRow[0], `the export holds a row for ${raised.number}`).toBe(raised.number);
+    expect(reqRow[amountCol], 'Amount keeps the REQUESTED figure').toBe(REQUESTED_CSV);
+    expect(reqRow[approvedCol], 'Approved amount carries the adjusted figure').toBe(APPROVED_CSV);
 
     // The ledger total for the month equals exactly the paid figure.
     await adminPage.goto('/payments?month=2024-11');
@@ -4144,7 +4183,12 @@ test.describe('G · referential integrity', () => {
    * A project or head may be deactivated with approved requests against it,
    * and the request then becomes permanently unpayable: `validatePayment`
    * refuses an inactive head (internal/store/store.go:1632-1639). The refusal
-   * is coherent — a 400 with a sentence, not a 500 — but nothing warned anyone.
+   * is coherent — a 400 with a sentence, not a 500.
+   *
+   * F-G-024, repaired as warn-and-confirm (the owner chose that over a hard
+   * block, internal/app/deactivation.go): the first save stops on a page that
+   * names the requests at stake and saves nothing; only the same form re-posted
+   * with confirm=on deactivates the head.
    */
   test('TC-G-081 — deactivating a head strands its approved requests, and the refusal is coherent', async ({
     adminPage,
@@ -4182,25 +4226,43 @@ test.describe('G · referential integrity', () => {
     });
     await approveFor(approver.page, raised.id, '6600.00');
 
-    // Deactivate the head. Nothing warns that an approved request points at it.
-    // The heads table renders each name inside an <input value="…">, so the row
-    // cannot be found by text — an input's value is not text content.
+    // Deactivate the head. The heads table renders each name inside an
+    // <input value="…">, so the row cannot be found by text — an input's value
+    // is not text content.
     await adminPage.goto('/heads');
     const row = adminPage.locator(`tbody tr:has(input[value="${headName}"])`);
     await expect(row, 'the new head has a row of its own').toHaveCount(1);
     const headID = await row.locator('input[name="id"]').first().inputValue();
-    const off = await probePost(adminPage, '/heads', {
+    const deactivate = {
       id: headID,
       project_id: projectOption!,
       name: headName,
       due_day: '15',
       sort_order: '99'
-    });
-    // F-G-024.
+    };
+    const warned = await probePost(adminPage, '/heads', deactivate);
+    // F-G-024: the first save stops and asks, and saves nothing.
     expect(
-      off.status,
-      'F-G-024: a head with an approved request against it is deactivated with no check and no warning'
-    ).toBe(303);
+      warned.status,
+      `F-G-024: a head with an approved request against it is not deactivated on the first save — got ${warned.outcome}`
+    ).toBe(200);
+    expect(warned.body, 'the warning names the request that would be stranded').toContain(raised.number);
+    expect(warned.body, 'and says that nothing has been saved yet').toContain('Nothing has been saved yet');
+    expect(warned.body, 'and cannot be confirmed without ticking the box').toMatch(
+      /<input type="checkbox" name="confirm" value="on" required>/
+    );
+    expect(warned.body, 'and offers the way through').toContain('Deactivate anyway');
+    await adminPage.goto('/heads');
+    await expect(
+      row.locator('input[name="active"]'),
+      'the head is still active: the warning page saved nothing'
+    ).toBeChecked();
+
+    // Confirming re-posts the same form plus confirm=on, and only that saves.
+    const off = await probePost(adminPage, '/heads', { ...deactivate, confirm: 'on' });
+    expect(off.status, `the confirmed save deactivates the head — got ${off.outcome}`).toBe(303);
+    await adminPage.goto('/heads');
+    await expect(row.locator('input[name="active"]'), 'and the head is now inactive').not.toBeChecked();
 
     // The request still reads — history is preserved, which is right.
     await adminPage.goto(`/requests/${raised.id}`);
@@ -4327,12 +4389,15 @@ test.describe('G · referential integrity', () => {
    * F-A-06/F-C-02 and F-A-08. The two names probed below were never the route and
    * the absence they proved was never the point, so the recovery is driven instead.
    *
-   * What has NOT changed, and is still asserted: the deactivation itself is
-   * allowed with nothing warning the administrator that approvals are waiting on
-   * that person, and every screen that touches the request keeps rendering rather
-   * than 500ing on the dangling manager.
+   * F-G-025's other half is repaired as warn-and-confirm (the owner chose that
+   * over a hard block, internal/app/deactivation.go): saving the approver as
+   * inactive first stops on a page listing the requests waiting on them and
+   * telling the administrator to reassign them, and saves nothing. A new
+   * password in that submit is never echoed back; it is asked for again. Only
+   * the confirmed re-post deactivates them. Every screen that touches the
+   * request still renders rather than 500ing on the dangling manager.
    */
-  test('TC-G-083 — deactivating an approver is unchecked, but their pending approvals can be handed on', async ({
+  test('TC-G-083 — deactivating an approver warns first, and their pending approvals can be handed on', async ({
     adminPage,
     browser,
     runId
@@ -4349,6 +4414,32 @@ test.describe('G · referential integrity', () => {
       approverName: approver.subject.name
     });
 
+    // The row carries a role pill as well as a status pill, so status
+    // assertions are scoped to the Status cell.
+    const statusPill = adminPage
+      .locator('tr', { hasText: approver.subject.email })
+      .locator('td[data-label="Status"] .pill');
+
+    // A raw save that also carries a new password: the warning asks for it
+    // again instead of writing it back into the page.
+    await adminPage.goto('/users');
+    const opener = await adminPage
+      .locator('tr', { hasText: approver.subject.email })
+      .getByRole('button', { name: 'Edit' })
+      .getAttribute('data-open');
+    const approverID = /^user-(\d+)$/.exec(opener ?? '')?.[1];
+    expect(approverID, `the approver's Edit control names their id — got ${opener}`).toBeTruthy();
+    const secret = `NeverEchoed-${runId}-9`;
+    const withPassword = await probePost(adminPage, '/users', {
+      id: approverID!,
+      email: approver.subject.email,
+      name: approver.subject.name,
+      password: secret
+    });
+    expect(withPassword.status, `F-G-025: the save stops on a warning — got ${withPassword.outcome}`).toBe(200);
+    expect(withPassword.body, 'the new password is never echoed into the page').not.toContain(secret);
+    expect(withPassword.body, 'it is asked for again instead').toContain('Type it again');
+
     // Deactivate the approver through their own edit sheet.
     await adminPage.goto('/users');
     await adminPage.locator('tr', { hasText: approver.subject.email }).getByRole('button', { name: 'Edit' }).click();
@@ -4356,15 +4447,37 @@ test.describe('G · referential integrity', () => {
     await expect(edit).toBeVisible();
     await edit.getByRole('checkbox', { name: 'Active' }).uncheck();
     await edit.getByRole('button', { name: 'Save user' }).click();
-    await expect(adminPage).toHaveURL(/\/users$/);
-    // F-G-025's open half. The row carries a role pill as well as a status pill,
-    // so the assertion is scoped to the Status cell.
+
+    // F-G-025: the first save stops on a warning that names the waiting request
+    // and says to reassign it, and has saved nothing.
     await expect(
-      adminPage
-        .locator('tr', { hasText: approver.subject.email })
-        .locator('td[data-label="Status"] .pill'),
-      'F-G-025: the approver is deactivated with no check for the approvals waiting on them'
-    ).toHaveText('Inactive');
+      adminPage.locator('h1'),
+      'F-G-025: deactivating an approver with approvals waiting on them asks first'
+    ).toHaveText(`Deactivate ${approver.subject.name}?`);
+    await expect(adminPage.locator('main')).toContainText('Nothing has been saved yet');
+    await expect(
+      adminPage.locator('main table a', { hasText: raised.number }),
+      'the warning lists the request waiting on them'
+    ).toHaveCount(1);
+    await expect(adminPage.locator('main'), 'and says what to do about it').toContainText(/reassign/i);
+    await expect(
+      adminPage.locator('main input[name="password"]'),
+      'no password was typed in the sheet, so none is asked for'
+    ).toHaveCount(0);
+    const confirmBox = adminPage.getByRole('checkbox', { name: /reassign these requests/ });
+    await expect(confirmBox, 'the confirmation must be ticked to go on').toHaveAttribute('required', '');
+    await adminPage.goto('/users');
+    await expect(statusPill, 'the approver is still active: the warning saved nothing').toHaveText('Active');
+
+    // Confirm it this time.
+    await adminPage.locator('tr', { hasText: approver.subject.email }).getByRole('button', { name: 'Edit' }).click();
+    await expect(edit).toBeVisible();
+    await edit.getByRole('checkbox', { name: 'Active' }).uncheck();
+    await edit.getByRole('button', { name: 'Save user' }).click();
+    await confirmBox.check();
+    await adminPage.getByRole('button', { name: 'Deactivate anyway' }).click();
+    await expect(adminPage).toHaveURL(/\/users$/);
+    await expect(statusPill, 'only the confirmed save deactivates them').toHaveText('Inactive');
 
     // The request still reads, and still names them.
     await adminPage.goto(`/requests/${raised.id}`);
@@ -4915,11 +5028,14 @@ test.describe('G · referential integrity', () => {
    *  accepted is the rule itself. */
   test('TC-G-091 — every password rule is refused as a 400, and one digit is the whole difference', async ({ adminPage, runId }) => {
     const email = `pw400-${runId}@example.test`.toLowerCase();
+    // A create must name a real role to be accepted at all, so every probe below
+    // names the same one — the password is then the only thing that varies.
+    const requesterRole = await systemRoleId(adminPage, /^Requester/);
     const probe = await probePost(adminPage, '/users', {
       id: '0',
       email,
       name: `Password rules ${runId}`,
-      role: 'data_entry',
+      role_ids: requesterRole,
       active: 'on',
       password: 'abcdefghijkl'
     });
@@ -4946,7 +5062,7 @@ test.describe('G · referential integrity', () => {
       id: '0',
       email,
       name: `Password rules ${runId}`,
-      role: 'data_entry',
+      role_ids: requesterRole,
       active: 'on',
       password: 'ab1'
     });
@@ -4954,13 +5070,12 @@ test.describe('G · referential integrity', () => {
     expect(short.body, 'naming the rule it broke').toContain('12 characters');
 
     // The same password with one digit is accepted, which pins the real rule.
-    // The role has to be named for the create to be accepted at all, so it is
-    // supplied here and held constant across all three probes above.
+    // Same role as the two refused probes above, so the digit is the only change.
     const ok = await probePost(adminPage, '/users', {
       id: '0',
       email,
       name: `Password rules ${runId}`,
-      role_ids: await systemRoleId(adminPage, /^Requester/),
+      role_ids: requesterRole,
       active: 'on',
       password: 'abcdefghijk1'
     });
