@@ -1230,7 +1230,7 @@ dialog::backdrop,
   }
 }
 
-/* v4 variance grid theme, adapted from v4-variance-grid.html */
+/* v4 variance grid theme, adapted from docs/superpowers/specs/2026-06-29-v4-variance-grid.html */
 html,
 body {
   background: var(--paper);
