@@ -250,7 +250,9 @@ func (a *App) pickerData(r *http.Request) (PageData, error) {
 // newest-first, keep the caller's own linked rows, and name each one from the
 // request it settled.
 func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]PaidRequestRow, error) {
-	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Status: "all", Limit: 200})
+	// Scope "own": the panel is the actor's own entries, which is exactly the
+	// narrowing ListPayments makes, and an unscoped read now returns nothing.
+	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Status: "all", Limit: 200, Scope: "own", ViewerID: actorID})
 	if err != nil {
 		return nil, err
 	}

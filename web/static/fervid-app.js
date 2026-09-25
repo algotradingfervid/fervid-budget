@@ -541,14 +541,60 @@
     handOver();
 
     /* A cell owns every canonical action behind it: toggling it toggles the
-       Advanced checkboxes it covers, so clearing a cell really does revoke. */
-    form.addEventListener("change", function (event) {
-      var cell = event.target;
-      if (!cell || !cell.matches || !cell.matches('input[name="cell"]')) return;
-      var selector = 'input[name="perm"][data-cell="' + window.CSS.escape(cell.value) + '"]';
-      Array.prototype.forEach.call(form.querySelectorAll(selector), function (box) {
-        box.checked = cell.checked;
+       Advanced checkboxes it covers, so clearing a cell really does revoke.
+       The sync runs both ways. An Advanced box unticked under a ticked cell
+       leaves the cell indeterminate and unchecked, so the cell is not
+       submitted and the boxes are what the server saves; the server draws
+       that partial state on load as data-partial. Both renderings are kept
+       equal so a resize mid-edit loses nothing. */
+    var all = function (selector) {
+      return Array.prototype.slice.call(form.querySelectorAll(selector));
+    };
+    var syncCell = function (value) {
+      var boxes = all('input[name="perm"][data-cell="' + window.CSS.escape(value) + '"]');
+      var ticked = boxes.filter(function (box) { return box.checked; }).length;
+      all('input[name="cell"][value="' + window.CSS.escape(value) + '"]').forEach(function (cell) {
+        cell.checked = boxes.length > 0 && ticked === boxes.length;
+        cell.indeterminate = ticked > 0 && !cell.checked;
       });
+    };
+    /* The accordion badge counts the row's held grants out of what it maps. */
+    var syncBadges = function () {
+      Array.prototype.forEach.call(mobile.querySelectorAll(".pa-item"), function (item) {
+        var badge = item.querySelector(".pa-head .n");
+        var boxes = item.querySelectorAll('input[name="perm"]');
+        var ticked = item.querySelectorAll('input[name="perm"]:checked').length;
+        if (badge) badge.textContent = ticked + " of " + boxes.length;
+      });
+    };
+    all('input[name="cell"][data-partial]').forEach(function (cell) {
+      cell.indeterminate = true;
+    });
+    form.addEventListener("change", function (event) {
+      var input = event.target;
+      if (!input || !input.matches) return;
+      if (input.matches('input[name="cell"]')) {
+        all('input[name="perm"][data-cell="' + window.CSS.escape(input.value) + '"]').forEach(function (box) {
+          box.checked = input.checked;
+        });
+        syncCell(input.value);
+        syncBadges();
+      } else if (input.matches('input[name="perm"]')) {
+        all('input[name="perm"][value="' + window.CSS.escape(input.value) + '"]').forEach(function (box) {
+          box.checked = input.checked;
+        });
+        if (input.getAttribute("data-cell")) syncCell(input.getAttribute("data-cell"));
+        syncBadges();
+      } else if (input.matches('.perm-scope input[type="radio"]')) {
+        /* The pills are lit by .is-on, which the server sets for the saved
+           scope; the highlight follows the selection from here on. */
+        var group = input.closest(".perm-scope");
+        if (!group) return;
+        Array.prototype.forEach.call(group.querySelectorAll("label"), function (label) {
+          var radio = label.querySelector("input");
+          label.classList.toggle("is-on", !!radio && radio.checked);
+        });
+      }
     });
   }
 
