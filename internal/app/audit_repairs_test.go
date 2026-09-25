@@ -207,6 +207,45 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	}
 }
 
+// A8 (coverage matrix) — editing a request that is still *pending* re-notifies
+// the approver: the request is already in their queue and the figures they are
+// about to decide on have changed. The approver here is a plain Manager, not
+// the bootstrap admin, so no other role's rule can satisfy the check, and the
+// edit goes through the real /edit route with no resubmit button pressed.
+func TestEditingAPendingRequestReNotifiesTheApprover(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Pending edit")
+	requester := s.seedRequester("pendingeditor@example.test", "Pending Editor", "PendingEdit12345")
+	approver := s.seedRequester("pendingapprover@example.test", "Pending Approver", "PendingAppr12345")
+	s.assignRole(approver.ID, "Manager")
+	id := s.seedPendingRequest(922, requester.ID, approver.ID, headID, 180000)
+
+	if hasEvent(notificationTitles(t, s, approver.ID), notify.EventRequestEdited) {
+		t.Fatal("precondition: the approver already has a request_edited row before any edit")
+	}
+
+	s.login("pendingeditor@example.test", "PendingEdit12345")
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"},
+		"short_title": {"Site visit"}, "project_id": {itoa64(projectOf(t, s, headID))},
+		"head_id": {itoa64(headID)}, "amount": {"2,400.00"},
+		"purpose":      {"flights, cabs and a second night's hotel"},
+		"expense_date": {"2026-07-01"}, "manager_id": {itoa64(approver.ID)},
+	}), http.StatusSeeOther)
+
+	var status string
+	var amount int64
+	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT status, amount FROM payment_requests WHERE id=?`, id).Scan(&status, &amount); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" || amount != 240000 {
+		t.Fatalf("the edit did not land as a pending edit: status=%q amount=%d", status, amount)
+	}
+	if !hasEvent(notificationTitles(t, s, approver.ID), notify.EventRequestEdited) {
+		t.Fatal("a pending request was edited and its approver was never re-notified")
+	}
+}
+
 // F-G-035 / F-C-04 — the edit and the resubmission are three transactions, so a
 // refused resubmit used to commit the correction and audit it as done while the
 // requester was shown a 400. Every precondition SubmitRequest checks is now

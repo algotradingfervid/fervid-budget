@@ -139,7 +139,7 @@ func (s *Store) SetAppSetting(ctx context.Context, actor User, key, value string
 
 ## 3. Treatment → type → required-field rules (overview §6, validated in `validateRequestInput`)
 
-Always captured (every type): `amount > 0`, `purpose` non-empty, `manager_id` chosen (A1), `treatment ∈ {budget, recoverable}`, `type ∈ {vendor_invoice, vendor_advance, reimbursement, employee_advance, recoverable}`, optional `urgent` flag (T5); `needed_by`/`expected_return_date` when present must be `YYYY-MM-DD`.
+Always captured (every type): `amount > 0`, `purpose` non-empty, `manager_id` chosen (A1), `treatment ∈ {budget, recoverable}`, `type ∈ {vendor_invoice, vendor_advance, reimbursement, employee_advance, recoverable}`, optional `urgent` flag (T5); `needed_by`/`expected_return_date` when present must be `YYYY-MM-DD`. **Past dates are allowed for both, deliberately** (F-B-14, decided 2026-09-25): a back-dated `needed_by` is how a requester says "this is already late", and a recoverable recorded after the fact may already be past its return date — it then ages straight into the recoverables register as overdue, which is the truth. Only the format is validated; no date is compared with today.
 
 | Type | Treatment | Required fields (P2 enforced) | Payee rule | Notes |
 |---|---|---|---|---|

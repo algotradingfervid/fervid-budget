@@ -301,7 +301,7 @@ func TestRequestExportIsScopedAndCarriesThePhase2Columns(t *testing.T) {
 		t.Fatalf("content type = %q, want text/csv", got)
 	}
 	body := responseBody(t, resp)
-	if !strings.HasPrefix(body, "Number,Status,Type,Title,Amount,Payee,Requester,Approver,Created") {
+	if !strings.HasPrefix(body, "Number,Status,Type,Title,Amount,Approved amount,Payee,Requester,Approver,Created") {
 		t.Fatalf("request export header unexpected: %s", body)
 	}
 	if !strings.Contains(body, "Lunch with the client") || !strings.Contains(body, "Kavita Rao") {

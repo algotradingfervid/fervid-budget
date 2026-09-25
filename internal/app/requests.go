@@ -1183,10 +1183,15 @@ func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 		EntityType: "payment_request", Summary: "Exported request list"})
 	var body bytes.Buffer
 	cw := csv.NewWriter(&body)
-	_ = cw.Write([]string{"Number", "Status", "Type", "Title", "Amount", "Payee", "Requester", "Approver", "Created"})
+	_ = cw.Write([]string{"Number", "Status", "Type", "Title", "Amount", "Approved amount", "Payee", "Requester", "Approver", "Created"})
 	for _, req := range list {
+		// F-G-011: the approved figure beside the requested one; empty until decided.
+		approved := ""
+		if req.ApprovedAmount != nil {
+			approved = csvAmount(*req.ApprovedAmount)
+		}
 		_ = cw.Write([]string{req.Number, requestStatusText(req.Status), typeLabel(req.Type), req.ShortTitle,
-			csvAmount(req.Amount), req.Vendor, req.RequesterName, req.ManagerName,
+			csvAmount(req.Amount), approved, req.Vendor, req.RequesterName, req.ManagerName,
 			req.CreatedAt.Format("2006-01-02")})
 	}
 	cw.Flush()

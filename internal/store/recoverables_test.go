@@ -1132,3 +1132,90 @@ func mustDeleteErr(t *testing.T, s *Store, ctx context.Context, actor User, id i
 	}
 	return err.Error()
 }
+
+// V6: a recoverable request records who owes the money (the employee, or the
+// counterparty company), when it is expected back, and the repayment notes —
+// and those are what the store gives back when the request is read. Two shapes
+// are created through CreateRequest and read back through Request:
+//
+//   - an employee advance raised as recoverable, where the employee is the
+//     requester and the payee snapshot is forced to them (forcesRequesterPayee);
+//   - an ICD, whose category requires a counterparty company.
+func TestRecoverableCreateRecordsCounterpartyReturnDateAndNotes(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	req, mgr, _ := seedRequestActors(t, s, ctx)
+
+	t.Run("employee advance", func(t *testing.T) {
+		id, err := s.CreateRequest(ctx, req, RequestInput{
+			Treatment: "recoverable", Type: "employee_advance", ShortTitle: "Site cash",
+			RecoverableCategory: "employee_advance", Amount: 1500000,
+			Purpose: "Cash float for the Hosur site", AdvanceReason: "Site petty cash",
+			Counterparty:       "Rhea Requester (EMP-0042)",
+			ExpectedReturnDate: "2026-12-01", RepaymentNotes: "Deduct from salary over three months",
+			ManagerID: mgr.ID,
+		})
+		if err != nil {
+			t.Fatalf("create recoverable employee advance: %v", err)
+		}
+		got, err := s.Request(ctx, id)
+		if err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		if got.Treatment != "recoverable" || got.Type != "employee_advance" || got.RecoverableCategory != "employee_advance" {
+			t.Fatalf("classification = %s/%s/%s, want recoverable/employee_advance/employee_advance",
+				got.Treatment, got.Type, got.RecoverableCategory)
+		}
+		if got.RecoverableCategoryID == nil {
+			t.Error("recoverable_category_id was not linked")
+		}
+		// The employee who owes the advance back.
+		if got.RequesterID != req.ID || got.RequesterName != "Rhea Requester" {
+			t.Errorf("employee = %d %q, want %d %q", got.RequesterID, got.RequesterName, req.ID, "Rhea Requester")
+		}
+		if got.VendorPayee != "Rhea Requester" {
+			t.Errorf("payee snapshot = %q, want the employee %q", got.VendorPayee, "Rhea Requester")
+		}
+		if got.Counterparty != "Rhea Requester (EMP-0042)" {
+			t.Errorf("counterparty = %q", got.Counterparty)
+		}
+		if got.ExpectedReturnDate != "2026-12-01" {
+			t.Errorf("expected return date = %q, want 2026-12-01", got.ExpectedReturnDate)
+		}
+		if got.RepaymentNotes != "Deduct from salary over three months" {
+			t.Errorf("repayment notes = %q", got.RepaymentNotes)
+		}
+		if got.AdvanceReason != "Site petty cash" {
+			t.Errorf("advance reason = %q", got.AdvanceReason)
+		}
+	})
+
+	t.Run("counterparty recoverable", func(t *testing.T) {
+		id, err := s.CreateRequest(ctx, req, RequestInput{
+			Treatment: "recoverable", Type: "recoverable", ShortTitle: "ICD to Ridge Metro",
+			RecoverableCategory: "icd", Amount: 50000000, Purpose: "Inter-corporate deposit",
+			Counterparty:       "Ridge Metro Pvt Ltd",
+			ExpectedReturnDate: "2027-03-31", RepaymentNotes: "Returned with 9% interest at maturity",
+			ManagerID: mgr.ID,
+		})
+		if err != nil {
+			t.Fatalf("create ICD: %v", err)
+		}
+		got, err := s.Request(ctx, id)
+		if err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		if got.RecoverableCategory != "icd" {
+			t.Errorf("category = %q, want icd", got.RecoverableCategory)
+		}
+		if got.Counterparty != "Ridge Metro Pvt Ltd" {
+			t.Errorf("counterparty = %q, want Ridge Metro Pvt Ltd", got.Counterparty)
+		}
+		if got.ExpectedReturnDate != "2027-03-31" {
+			t.Errorf("expected return date = %q, want 2027-03-31", got.ExpectedReturnDate)
+		}
+		if got.RepaymentNotes != "Returned with 9% interest at maturity" {
+			t.Errorf("repayment notes = %q", got.RepaymentNotes)
+		}
+	})
+}

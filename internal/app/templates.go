@@ -1292,6 +1292,28 @@ const templates = `
      validates it and RequireAnotherActiveAdmin still guards it. The approver
      <select> omits the user themselves and SetUserDefaultApprover rejects them
      again server-side — a hidden option is not validation. */}}
+{{define "confirm_deactivate"}}
+{{template "top" .}}
+{{with .Deactivation}}
+<section class="page-banner"><div><div class="eyebrow">Confirm</div><h1>{{.Heading}}</h1><p class="sub muted">Nothing has been saved yet.</p></div></section>
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">!</span>
+  <div><b>{{.Lead}}</b><p>{{.Consequence}}</p></div>
+</div>
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>Request</th><th>Title</th><th>Status</th><th class="r">Amount</th></tr></thead><tbody>
+{{range .Requests}}<tr><td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a></td><td data-label="Title">{{.Title}}</td><td data-label="Status">{{reqStatus .Status}}</td><td class="r" data-label="Amount">{{money .Amount}}</td></tr>{{end}}
+</tbody></table></div>
+<form method="post" action="{{.Action}}" class="stack-12">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  {{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+  {{if .AskPassword}}<div class="field"><label for="confirm-pw">New password</label><input id="confirm-pw" name="password" type="password" minlength="12" required><span class="hint">You set a new password. Type it again, because it is never sent back to the page.</span></div>{{end}}
+  <label class="checkline"><input type="checkbox" name="confirm" value="on" required> {{.ConfirmText}}</label>
+  <div class="row"><a class="btn outline" href="{{.Back}}">Cancel</a><button class="btn primary" type="submit">Deactivate anyway</button></div>
+</form>
+{{end}}
+{{template "bottom" .}}
+{{end}}
+
 {{define "users"}}
 {{template "top" .}}
 <section class="page-banner">
