@@ -554,8 +554,27 @@ func waitingOn(req store.Request, viewerID int64) Waiting {
 		if req.ProcessingBy != nil && *req.ProcessingBy == viewerID {
 			return you
 		}
+		// The assigned accountant by name (uiux design §4, "Waiting on Priya
+		// Nair (Accounts)"), not the department: the reader wants to know who to
+		// ask. The generic line stays for a row read without the join.
+		if req.ProcessingByName != "" {
+			return Waiting{Text: "Waiting on " + req.ProcessingByName + " (Accounts)"}
+		}
 		return Waiting{Text: "Waiting on Accounts"}
 	case "partial_review":
+		// An open concern is a question the manager put to Accounts, so both
+		// owe something: Accounts an answer, the manager the decision that
+		// follows it (owner decision, settlement-8). The holder is who answers.
+		if req.ConcernOpen {
+			switch {
+			case req.ProcessingBy != nil && *req.ProcessingBy == viewerID:
+				return you
+			case req.ManagerID == viewerID:
+				return Waiting{Text: "Waiting on you and Accounts", Class: "you"}
+			default:
+				return Waiting{Text: "Waiting on " + req.ManagerName + " and Accounts"}
+			}
+		}
 		if req.ManagerID == viewerID {
 			return you
 		}
@@ -1105,6 +1124,11 @@ type approvalTab struct {
 var approvalTabs = []approvalTab{
 	{"to-approve", "To approve", []string{"pending"}},
 	{"cancellations", "Cancellations", []string{"cancellation_requested"}},
+	// S11: a shortfall waits on the same manager, so it is listed in the same
+	// queue (phase-2 spec §N1, mockups/screens/approvals-list.html). Without
+	// this tab a partial review was reachable only through a notification link
+	// while the request itself read "Waiting on you" (settlement-3).
+	{"partial-review", "Partial review", []string{"partial_review"}},
 	{"decided", "Decided", []string{"approved", "rejected", "cancelled"}},
 }
 
@@ -1262,6 +1286,32 @@ func requestStatusText(status string) string {
 		return "Completed — partial accepted"
 	default:
 		return status
+	}
+}
+
+// Pill is the status pill as a reader sees it: the `.pill` modifier and the
+// sentence inside it.
+type Pill struct{ Class, Text string }
+
+// statusPill reads the row, not only the status, because two of the design's
+// states are not statuses (uiux design §4): "Processing — taken by *name*"
+// names the holder, and "Partial — under discussion" is a partial review with
+// an open concern. Every screen that shows a request's pill uses this, so the
+// detail head, the cards, the queue and the dashboard cannot disagree about
+// who has it. pillClass/requestStatusText stay for the places that only have
+// a status string.
+func statusPill(req store.Request, viewerID int64) Pill {
+	switch {
+	case req.Status == "processing" && req.ProcessingByName != "":
+		holder := req.ProcessingByName
+		if req.ProcessingBy != nil && *req.ProcessingBy == viewerID {
+			holder = "you"
+		}
+		return Pill{Class: "processing", Text: requestStatusText(req.Status) + " — taken by " + holder}
+	case req.Status == "partial_review" && req.ConcernOpen:
+		return Pill{Class: "discussion", Text: "Partial — under discussion"}
+	default:
+		return Pill{Class: pillClass(req.Status), Text: requestStatusText(req.Status)}
 	}
 }
 

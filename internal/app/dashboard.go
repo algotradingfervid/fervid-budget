@@ -96,6 +96,28 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// S11: a shortfall waits on the same manager, and the queue tab, the
+	// "Needs me" bucket and this area all read the same predicate — before this
+	// the request said "Waiting on you" while Home said nothing was
+	// (settlement-3). Gated on the verb the decision routes are.
+	if a.auth.Can(u, "approval", "accept_partial") {
+		if err := area("partials", "₹", "Partial payments to review", "Open the partial reviews →", "/approvals?bucket=partial-review",
+			store.RequestListOptions{Scope: "assigned", Statuses: []string{"partial_review"}}); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+	}
+	// The other side of the same review: a concern the manager raised is a
+	// question to the accountant who recorded the shortfall, so it is listed
+	// for that accountant (settlement-8). Their own reservations, the one
+	// status, the flag.
+	if a.auth.Can(u, "payment", "process") {
+		if err := area("concerns", "?", "Concerns to answer", "Open the partial review tab →", "/accounts-queue?tab=partial_review",
+			store.RequestListOptions{Scope: "held", Statuses: []string{"partial_review"}, ConcernOpen: true}); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+	}
 	if a.auth.Can(u, "payment", "process") {
 		// The queue's own query, not a second one over the same data.
 		//

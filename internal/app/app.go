@@ -169,8 +169,16 @@ type PageData struct {
 	ReserveMine bool
 	Holder      string
 	// ConflictCause is which of ReserveRequest's three refusals the conflict
-	// screen is reporting: "taken", "hold" or "not-approved" (F-D-02).
+	// screen is reporting: "taken", "hold" or "not-approved" (F-D-02) — or
+	// "unclaimed", when nothing refused anything and the reader simply does
+	// not hold a request that is free to take (settlement-2).
 	ConflictCause string
+	// Outcome is what the payment screen was reached by: "saved" straight after
+	// the confirming POST, "duplicate" after a repeat confirm the store refused,
+	// "immutable" after a blocked edit, "" on any later visit. It arrives as a
+	// query token the redirect chose and paymentDetail whitelists; the "Payment
+	// saved … have been notified" banner is tied to it (settlement-5).
+	Outcome string
 	// Trail is the one screen whose history spans two entities. Thread is the
 	// request's merged stream and cannot carry the payment's audit rows, so the
 	// partial review merges the two-entity trail with the conversation itself
@@ -311,6 +319,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"notifGlyph":   notifGlyph,
 		"pillClass":    pillClass,
 		"reqStatus":    requestStatusText,
+		"statusPill":   statusPill,
 		"typeLabel":    typeLabel,
 		"recoverable":  recoverableLabel,
 		"inWords":      money.InWords,
@@ -868,9 +877,11 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		removeStagedAttachment(a.log, r, attachmentPath)
 		// A double-confirm (back button, double tap) must not look like a
-		// failure: the payment this request needed already exists, so go to it.
+		// failure: the payment this request needed already exists, so go to it —
+		// saying that nothing new was written, because a repeat carrying a
+		// different figure otherwise landed under "Payment saved" (settlement-5).
 		if pay, perr := a.st.PaymentForRequest(r.Context(), linkedID); perr == nil {
-			http.Redirect(w, r, fmt.Sprintf("/payments/%d", pay.ID), http.StatusSeeOther)
+			http.Redirect(w, r, fmt.Sprintf("/payments/%d?outcome=duplicate", pay.ID), http.StatusSeeOther)
 			return
 		}
 		a.settlementError(w, r, linkedID, in, r.FormValue("amount"), settlement, partialReason, err)
@@ -884,8 +895,12 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.fire(r, notify.EventPaymentPartialReview, linkedID)
 	}
-	http.Redirect(w, r, fmt.Sprintf("/payments/%d", payID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/payments/%d?outcome=saved", payID), http.StatusSeeOther)
 }
+
+// paymentOutcomes are the tokens paymentCreate and paymentEditForm redirect
+// with. Anything else in ?outcome= is ignored, never echoed.
+var paymentOutcomes = map[string]bool{"saved": true, "duplicate": true, "immutable": true}
 
 // paymentDetail is one screen with two readings. A payment linked to a request
 // is the end of that request's story, so it shows what was approved beside what
@@ -942,9 +957,13 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, aerr)
 			return
 		}
+		outcome := r.URL.Query().Get("outcome")
+		if !paymentOutcomes[outcome] {
+			outcome = ""
+		}
 		a.render(w, r, "payment_detail", PageData{
 			Title: "Payment · " + req.Number, Payment: p, Request2: req,
-			Attachments: atts, RequestAtts: reqAtts, Audit: trail,
+			Attachments: atts, RequestAtts: reqAtts, Audit: trail, Outcome: outcome,
 		})
 		return
 	}
@@ -967,7 +986,7 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 	// screen whose Save can only ever fail, so the URL goes where the payment
 	// actually lives.
 	if p.RequestID != nil {
-		http.Redirect(w, r, fmt.Sprintf("/payments/%d", p.ID), http.StatusSeeOther)
+		http.Redirect(w, r, fmt.Sprintf("/payments/%d?outcome=immutable", p.ID), http.StatusSeeOther)
 		return
 	}
 	heads, err := a.st.ListHeads(r.Context(), true)

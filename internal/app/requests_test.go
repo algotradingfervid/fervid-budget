@@ -737,6 +737,14 @@ func TestWaitingOnNamesWhoeverOwesTheNextAction(t *testing.T) {
 		return store.Request{Status: status, RequesterID: requester, ManagerID: manager,
 			RequesterName: "Rhea", ManagerName: "Kavita"}
 	}
+	// held is a request reserved by holder, as the store joins it: the id and
+	// the name together. The manager is always somebody else.
+	held := func(status string, holder int64, concernOpen bool) store.Request {
+		r := req(status, them, them)
+		r.ProcessingBy, r.ProcessingByName, r.ConcernOpen = &holder, "Deepak", concernOpen
+		return r
+	}
+	concern := func(r store.Request) store.Request { r.ConcernOpen = true; return r }
 	for _, tc := range []struct {
 		name      string
 		req       store.Request
@@ -752,6 +760,17 @@ func TestWaitingOnNamesWhoeverOwesTheNextAction(t *testing.T) {
 		{"rejected", req("rejected", me, them), "Closed. Raise a new request if needed", "closed"},
 		{"withdrawn", req("withdrawn", me, them), "Withdrawn by the requester", "closed"},
 		{"cancelled", req("cancelled", me, them), "Cancelled. Nothing can be paid against it", "closed"},
+		// settlement-7: the assigned accountant by name (uiux design §4), "you"
+		// for the holder, and the department only when the name is not joined.
+		{"processing held by someone else", held("processing", them, false), "Waiting on Deepak (Accounts)", ""},
+		{"processing held by me", held("processing", me, false), "Waiting on you", "you"},
+		{"processing without the join", req("processing", me, them), "Waiting on Accounts", ""},
+		// settlement-8: an open concern waits on the manager and Accounts.
+		{"partial review on me", req("partial_review", them, me), "Waiting on you", "you"},
+		{"partial review on someone else", req("partial_review", me, them), "Waiting on Kavita", ""},
+		{"concern open, I hold it", held("partial_review", me, true), "Waiting on you", "you"},
+		{"concern open, I am the manager", concern(req("partial_review", them, me)), "Waiting on you and Accounts", "you"},
+		{"concern open, third party", concern(req("partial_review", me, them)), "Waiting on Kavita and Accounts", ""},
 	} {
 		got := waitingOn(tc.req, me)
 		if got.Text != tc.wantText || got.Class != tc.wantClass {

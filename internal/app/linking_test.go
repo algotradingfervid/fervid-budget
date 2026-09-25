@@ -605,9 +605,11 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 		t.Fatalf("linked payment void accepted: %d", resp.StatusCode)
 	}
 
-	// Q4: the request page shows the outcome and links to the payment.
+	// Q4: the request page shows the outcome and links to the payment — the
+	// payment itself, not the "?outcome=saved" landing the confirming POST
+	// redirected to (settlement-5).
 	reqBody := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
-	if !strings.Contains(reqBody, `class="compare"`) || !strings.Contains(reqBody, "98,000.00") || !strings.Contains(reqBody, loc) {
+	if !strings.Contains(reqBody, `class="compare"`) || !strings.Contains(reqBody, "98,000.00") || !strings.Contains(reqBody, strings.TrimSuffix(loc, "?outcome=saved")+`"`) {
 		t.Fatalf("request outcome missing the comparison or the payment link:\n%s", reqBody)
 	}
 }
@@ -622,11 +624,14 @@ func TestDoubleConfirmLandsOnTheExistingPayment(t *testing.T) {
 	first := s.postForm("/payments", form)
 	requireStatus(t, first, http.StatusSeeOther)
 	_ = responseBody(t, first)
-	// The accountant taps Confirm twice. The second must not look like a failure.
+	// The accountant taps Confirm twice. The second must not look like a
+	// failure: it lands on the same payment — under a banner saying nothing new
+	// was saved rather than "Payment saved" (settlement-5), which is why the
+	// two locations differ only in their outcome token.
 	second := s.postForm("/payments", form)
 	requireStatus(t, second, http.StatusSeeOther)
-	if second.Header.Get("Location") != first.Header.Get("Location") {
-		t.Fatalf("double confirm went to %q, want the existing payment %q", second.Header.Get("Location"), first.Header.Get("Location"))
+	if got, want := second.Header.Get("Location"), strings.TrimSuffix(first.Header.Get("Location"), "?outcome=saved")+"?outcome=duplicate"; got != want {
+		t.Fatalf("double confirm went to %q, want the existing payment %q", got, want)
 	}
 	_ = responseBody(t, second)
 	var n int
@@ -711,9 +716,11 @@ func TestLinkedPaymentIsImmutableInTheLedgerAndOnItsEditRoute(t *testing.T) {
 		t.Fatalf("the ledger stopped offering Edit on a historical payment:\n%s", ledger)
 	}
 
+	// The redirect carries why: the payment page says the edit was refused
+	// rather than greeting the reader with "Payment saved" (settlement-5).
 	resp := s.request(http.MethodGet, fmt.Sprintf("/payments/%d/edit", linkedID), nil, "")
 	requireStatus(t, resp, http.StatusSeeOther)
-	if got, want := resp.Header.Get("Location"), fmt.Sprintf("/payments/%d", linkedID); got != want {
+	if got, want := resp.Header.Get("Location"), fmt.Sprintf("/payments/%d?outcome=immutable", linkedID); got != want {
 		t.Fatalf("edit form for a linked payment redirected to %q, want %q", got, want)
 	}
 	_ = responseBody(t, resp)
@@ -917,7 +924,9 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, ""))
 	for _, want := range []string{
 		`class="req-head"`, `class="pill partial"`, `class="waiting you"`,
-		`class="compare"`, "Still owed to the vendor", "35,000.00",
+		// "payee", as every other screen says: the request may be a
+		// reimbursement owed to an employee (partial-1).
+		`class="compare"`, "Still owed to the payee", "35,000.00",
 		`class="banner warn"`, "Vendor delivered 700 of the 1,000 copies.",
 		`class="pill neutral no-dot"`, "Cannot be edited",
 		`<ol class="thread">`, `class="comment-box"`,

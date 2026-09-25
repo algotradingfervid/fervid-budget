@@ -1654,6 +1654,12 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 	case "assigned":
 		where = append(where, `r.manager_id=?`)
 		args = append(args, opts.ViewerID)
+	case "held":
+		where = append(where, `r.processing_by=?`)
+		args = append(args, opts.ViewerID)
+	}
+	if opts.ConcernOpen {
+		where = append(where, `r.concern_open=1`)
 	}
 	placeholders := func(n int) string {
 		return strings.TrimSuffix(strings.Repeat("?,", n), ",")

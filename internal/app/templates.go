@@ -247,6 +247,11 @@ const templates = `
 {{define "payment_detail"}}
 {{template "top" .}}
 {{if .Request2.ID}}
+{{/* The banner reports how the reader got here, not that a payment exists:
+     "Payment saved" is true once, on the redirect from the confirming POST,
+     and was being shown on every visit for the life of the record — including
+     after a repeat confirm the store had refused (settlement-5). */}}
+{{if eq .Outcome "saved"}}
 <div class="banner good">
   <span class="b-ico" aria-hidden="true">✓</span>
   <div>
@@ -254,6 +259,23 @@ const templates = `
     <p>{{.Request2.RequesterName}} and {{.Request2.ManagerName}} have been notified. This payment can no longer be edited or cancelled.</p>
   </div>
 </div>
+{{else if eq .Outcome "duplicate"}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>This request already has its payment</b>
+    <p>{{.Request2.Number}} was settled by PAY-{{.Payment.ID}} for {{money .Payment.Amount}}, so nothing new was saved. A request accepts exactly one payment; any balance needs a fresh request.</p>
+  </div>
+</div>
+{{else if eq .Outcome "immutable"}}
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>This payment cannot be edited</b>
+    <p>It settled {{.Request2.Number}}, and a payment linked to a request is never amended or cancelled. Nothing was changed.</p>
+  </div>
+</div>
+{{end}}
 
 <div class="req-head">
   <div class="rh-top"><span class="rh-no">PAY-{{.Payment.ID}} · from {{.Request2.Number}}</span><span class="rh-amt">{{money .Payment.Amount}}</span></div>
@@ -264,7 +286,7 @@ const templates = `
        a hand-written line here was already a fourth: it read a manager their
        own name where every other screen says "you". */}}
   <div class="rh-status">
-    <span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
     {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
   </div>
 </div>
@@ -272,7 +294,13 @@ const templates = `
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
   <div class="cmp-row"><span class="l">Paid</span><span class="v">{{money .Payment.Amount}}</span></div>
-  {{if eq .Payment.Settlement "partial"}}
+  {{/* The balance row reads the request's status, not only the payment's
+       settlement: an accepted shortfall keeps settlement="partial" for ever,
+       and "still owed" over "Completed — partial accepted" was a contradiction
+       (partial-1). */}}
+  {{if eq .Request2.Status "completed_partial"}}
+  <div class="cmp-row"><span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  {{else if eq .Payment.Settlement "partial"}}
   <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
   {{else}}
   <div class="cmp-row match"><span class="l">Difference · confirmed settled by Accounts</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
@@ -469,15 +497,28 @@ const templates = `
 
   <div id="settle-mount"></div>
 
+  {{/* The preview and the write are both gated on payment:settle, so the
+       button is too. A role built with payment:create and reservation:reserve
+       but no settle could take a request and then press a button whose POST
+       answered 403 with nothing on screen (queue-2). */}}
+  {{if not (.Perms.Can "payment" "settle")}}
+  <div class="banner warn">
+    <span class="b-ico" aria-hidden="true">i</span>
+    <div>
+      <b>You can take a request but cannot settle a payment</b>
+      <p>Recording the settlement needs the payment:settle permission, which your role does not hold. Release the reservation so a colleague can record it, or ask an administrator for the permission.</p>
+    </div>
+  </div>
+  {{end}}
   <div class="action-bar">
     <span class="ab-note d-only">Nothing is saved until you confirm on the next step.</span>
     <span class="row-end"></span>
     {{if .Perms.Can "reservation" "release"}}<a class="btn outline" href="/requests/{{.Request2.ID}}/reservation">Cancel and release</a>{{end}}
-    <button class="btn primary" type="submit"
+    {{if .Perms.Can "payment" "settle"}}<button class="btn primary" type="submit"
             formaction="/requests/{{.Request2.ID}}/settlement-preview" formmethod="post" formenctype="application/x-www-form-urlencoded"
             hx-post="/requests/{{.Request2.ID}}/settlement-preview"
             hx-include="#amount, #paid_on, #payment_mode, #reference_no, #remarks, [name=csrf], [name=head_id], [name=vendor_payee], [name=invoice_no]"
-            hx-target="#settle-mount" hx-swap="innerHTML">Payment settled →</button>
+            hx-target="#settle-mount" hx-swap="innerHTML">Payment settled →</button>{{end}}
   </div>
 </form>
 {{template "bottom" .}}
@@ -498,7 +539,11 @@ const templates = `
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settle-title">
     <div class="sh-head">
       <div><h2 id="settle-title">Confirm the payment</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.Vendor}}</p></div>
-      <a class="sh-close" href="/payments/new?request={{.Request2.ID}}" aria-label="Close">✕</a>
+      {{/* On the htmx path the sheet is inside the live form, so the closers
+           dismiss it in place and the typed amount, mode and reference survive
+           (settlement-6). Anchors, not buttons: a button here would submit the
+           form it sits in, and without JavaScript the href is the way back. */}}
+      <a class="sh-close" href="/payments/new?request={{.Request2.ID}}"{{if .Settlement.Fragment}} data-close="settle-sheet"{{end}} aria-label="Close">✕</a>
     </div>
     <div class="sh-body stack-12">
       {{if .Error}}<div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">✕</span><div><b>{{.Error}}</b><p>Nothing has been saved. Correct it and confirm again.</p></div></div>{{end}}
@@ -544,7 +589,7 @@ const templates = `
       </div>
     </div>
     <div class="sh-foot">
-      <a class="btn outline" href="/payments/new?request={{.Request2.ID}}">Go back</a>
+      <a class="btn outline" href="/payments/new?request={{.Request2.ID}}"{{if .Settlement.Fragment}} data-close="settle-sheet"{{end}}>Go back</a>
       <span class="row-end"></span>
       <button class="btn primary" type="submit" formaction="/payments" formmethod="post">Confirm and save payment</button>
     </div>
@@ -784,7 +829,7 @@ const templates = `
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
         <td data-label="Status">
           {{if .OnHold}}<span class="pill hold">On hold</span>
-          {{else if eq .Status "partial_review"}}<span class="pill partial">Partial — manager review</span>
+          {{else if eq .Status "partial_review"}}{{$p := statusPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
           {{else if eq .Status "completed_partial"}}<span class="pill completed-partial">Completed — partial accepted</span>
           {{else if eq .Status "completed"}}<span class="pill completed">Completed</span>
           {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID)}}<span class="pill processing">Reserved by you · {{reservedLabel .ProcessingAt}}</span>
@@ -853,6 +898,18 @@ const templates = `
     <p>Only an approved request can be taken for processing, and this one is {{reqStatus .Request2.Status}}. Nobody holds a reservation on it. Nothing you typed has been saved, and no payment was created.</p>
   </div>
 </div>
+{{else if eq .ConflictCause "unclaimed"}}
+{{/* Nothing was refused: the reader opened the entry screen for a request
+     nobody holds — after releasing it, or by URL. It used to be reported as a
+     lost race to "Someone else" (settlement-2). The form needs a reservation
+     first, and taking one is offered right here. */}}
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>Nobody holds {{.Request2.Number}} — it is approved and unclaimed</b>
+    <p>The payment form opens only for the person who has taken the request for processing, and right now that is nobody. Take it below and the form opens; nothing has been saved and no payment was created.</p>
+  </div>
+</div>
 {{else}}
 <div class="banner bad">
   <span class="b-ico" aria-hidden="true">✕</span>
@@ -871,7 +928,7 @@ const templates = `
     {{/* The pill tells the same truth the banner does. A .pill.processing naming a
          holder is a lie on a request nobody holds. */}}
     {{if eq .ConflictCause "hold"}}<span class="pill hold">On hold</span>
-    {{else if eq .ConflictCause "not-approved"}}<span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    {{else if or (eq .ConflictCause "not-approved") (eq .ConflictCause "unclaimed")}}<span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
     {{else}}<span class="pill processing">Processing — {{.Holder}}</span>{{end}}
     {{if eq .ConflictCause "taken"}}<span class="waiting">Reserved {{datep .Request2.ProcessingAt}}</span>
     {{else}}{{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>{{end}}
@@ -891,7 +948,14 @@ const templates = `
 <div class="action-bar">
   <span class="row-end"></span>
   <a class="btn outline" href="/payments/new">Pick another request</a>
+  {{/* A POST, exactly as the queue's button is: reserving is a mutation. The
+       same route, so the concurrency guarantee is the same one (S1/S2). */}}
+  {{if and (eq .ConflictCause "unclaimed") (.Perms.Can "reservation" "reserve")}}
+  <a class="btn outline" href="/accounts-queue">Back to queue</a>
+  <form method="post" action="/requests/{{.Request2.ID}}/record-payment"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Take it for processing</button></form>
+  {{else}}
   <a class="btn primary" href="/accounts-queue">Back to queue</a>
+  {{end}}
 </div>
 {{template "bottom" .}}
 {{end}}
@@ -922,7 +986,7 @@ const templates = `
        queue, the request and this page cannot give three answers to "whose
        move is it". */}}
   <div class="rh-status">
-    <span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>
+    {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
     {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
   </div>
 </div>
@@ -930,7 +994,9 @@ const templates = `
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
   <div class="cmp-row"><span class="l">Paid on {{dateLong .Payment.PaidOn}}</span><span class="v">{{money .Payment.Amount}}</span></div>
-  <div class="cmp-row diff"><span class="l">Still owed to the vendor</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  {{/* "payee", as the request and the payment screens say: a reimbursement
+       is owed to the employee, not to a vendor (partial-1). */}}
+  <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
 </div>
 
 <div class="banner warn">
@@ -940,6 +1006,19 @@ const templates = `
     <p>“{{.Payment.PartialReason}}”</p>
   </div>
 </div>
+
+{{/* An open concern is displayed as "Partial — under discussion" and the
+     accountant who recorded the shortfall owes the answer (settlement-8). The
+     status is untouched; this banner and the pill are what change. */}}
+{{if .Request2.ConcernOpen}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">?</span>
+  <div>
+    <b>{{.Request2.ManagerName}} raised a concern about this shortfall</b>
+    <p>{{if and .Request2.ProcessingBy (eq (deref .Request2.ProcessingBy) .User.ID)}}Answer it in the conversation below; the review returns to {{.Request2.ManagerName}} once you do.{{else}}{{.Payment.EnteredByName}} is expected to answer it in the conversation; {{.Request2.ManagerName}} then decides.{{end}} The recorded payment cannot be changed either way.</p>
+  </div>
+</div>
+{{end}}
 
 <div class="card">
   <div class="card-head"><h2>The payment that was recorded</h2><span class="pill neutral no-dot">Cannot be edited</span></div>
@@ -980,8 +1059,20 @@ const templates = `
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   {{/* A reply asked mid-decision comes back to the decision. */}}
   <input type="hidden" name="return_to" value="partial-review">
+  {{/* The prompt follows the seat, not the permission: "before you decide" is
+       the manager's sentence, and the requester holding request:comment was
+       being read it too (partial-1). The holder is asked to answer the open
+       concern; everybody else simply comments. */}}
+  {{if eq .User.ID .Request2.ManagerID}}
   <label for="cmt" class="flabel">Reply to Accounts</label>
   <textarea id="cmt" name="body" placeholder="Ask {{.Payment.EnteredByName}} something before you decide." required></textarea>
+  {{else if and .Request2.ConcernOpen .Request2.ProcessingBy (eq (deref .Request2.ProcessingBy) .User.ID)}}
+  <label for="cmt" class="flabel">Answer {{.Request2.ManagerName}}’s concern</label>
+  <textarea id="cmt" name="body" placeholder="Your reply is recorded on the thread and the review returns to {{.Request2.ManagerName}}." required></textarea>
+  {{else}}
+  <label for="cmt" class="flabel">Add a comment</label>
+  <textarea id="cmt" name="body" placeholder="Recorded on the thread. {{.Request2.ManagerName}} decides this one." required></textarea>
+  {{end}}
   <div class="cb-actions"><span class="row-end"></span><button class="btn primary small" type="submit">Post comment</button></div>
 </form>
 {{end}}
@@ -1020,7 +1111,7 @@ const templates = `
 <div class="overlay" id="concern-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/raise-concern">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <div class="sh-head"><div><h2>Raise a concern</h2><p class="sh-sub">The request stays where it is; your objection is recorded on the thread</p></div><button class="sh-close" type="button" data-close="concern-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-head"><div><h2>Raise a concern</h2><p class="sh-sub">The request stays open as Partial — under discussion until {{.Payment.EnteredByName}} answers; your objection is recorded on the thread</p></div><button class="sh-close" type="button" data-close="concern-sheet" aria-label="Close">✕</button></div>
     <div class="sh-body stack-12">
       <div class="field"><label for="cn-reason">What is wrong <span class="req" aria-hidden="true">*</span></label><textarea id="cn-reason" name="comment" required placeholder="Accounts can reply in the conversation, but the recorded payment cannot be changed."></textarea></div>
       <div class="banner warn" style="margin:0"><span class="b-ico" aria-hidden="true">i</span><div><b>This does not reverse anything</b><p>The {{money .Payment.Amount}} has left the bank. Raising a concern keeps the request open so the two of you can agree what happens next.</p></div></div>
@@ -1184,7 +1275,7 @@ const templates = `
          admin-configurable and an admin who sets it to 3 made this sentence
          false (F-F-03). Elapsed days, not calendar days, for the reason above. */}}
     <p>A reminder goes out once a reservation has been open {{.Reminders.StaleAfterDays}} {{plural .Reminders.StaleAfterDays "day" "days"}}. Nothing is released automatically — a transfer may
-      already be under way, so only you or an authorised colleague can act.</p>
+      already be under way, so only {{if .ReserveMine}}you{{else}}{{.Request2.ProcessingByName}}{{end}} or an authorised colleague can act.</p>
   </div>
 </div>
 
@@ -1198,6 +1289,18 @@ const templates = `
   </div>
 </div>
 
+{{/* Every entry below is gated on holding the reservation or on
+     reservation:reassign, so a reader with neither was shown "Pick one" over
+     an empty list (queue-1). They are told instead who can act. */}}
+{{if not (or .ReserveMine (.Perms.Can "reservation" "reassign"))}}
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>You cannot act on this reservation</b>
+    <p>{{.Request2.ProcessingByName}} can carry on and record the payment, release it back to the queue, or put it on hold. An administrator with the reassign permission can hand it to somebody else. Nothing here is yours to change.</p>
+  </div>
+</div>
+{{else}}
 <div class="card">
   <div class="card-head"><h2>Pick one</h2></div>
   <div class="a-list">
@@ -1222,6 +1325,7 @@ const templates = `
     {{if and (.Perms.Can "payment" "hold") (or .ReserveMine (.Perms.Can "reservation" "reassign"))}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Put it on hold</b><small>If you are waiting on the requester for something — release the reservation first</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
   </div>
 </div>
+{{end}}
 
 <div class="section-head"><h2>Who has been told</h2></div>
 <ol class="thread">
@@ -2250,7 +2354,7 @@ const templates = `
     {{typeLabel $r.Type}}{{if $r.Project}} · {{$r.Project}}{{if $r.Head}} / {{$r.Head}}{{end}}{{end}}{{if $r.InvoiceNo}} · invoice {{$r.InvoiceNo}}{{end}}
   </span>
   <span class="rc-foot">
-    <span class="pill {{pillClass $r.Status}}">{{reqStatus $r.Status}}</span>
+    {{$p := statusPill $r .ViewerID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
     <span class="waiting {{$w.Class}}">{{$w.Text}}</span>
   </span>
 </a>
@@ -2471,7 +2575,7 @@ const templates = `
          The pill has to say what is true anyway — a screen reading "Approved —
          awaiting payment" over a banner saying payment is blocked is a lie
          either the reader or the accountant acts on. */}}
-    {{if activeHold .Request2}}<span class="pill hold">On hold</span>{{else}}<span class="pill {{pillClass .Request2.Status}}">{{reqStatus .Request2.Status}}</span>{{end}}
+    {{if activeHold .Request2}}<span class="pill hold">On hold</span>{{else}}{{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>{{end}}
     {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
   </div>
 </div>
@@ -2514,6 +2618,17 @@ const templates = `
     <b>This request is on hold</b>
     <p>“{{.Request2.HoldReason}}”</p>
     <p>Payment is blocked until Accounts lifts the hold.</p>
+  </div>
+</div>
+{{end}}
+{{/* settlement-8: the concern is shown where Accounts reads the request, and
+     the holder is told in as many words that the answer is theirs to give. */}}
+{{if .Request2.ConcernOpen}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">?</span>
+  <div>
+    <b>{{.Request2.ManagerName}} raised a concern about the partial payment</b>
+    <p>{{if and .Request2.ProcessingBy (eq (deref .Request2.ProcessingBy) .User.ID)}}Answer it in the conversation below; the review returns to {{.Request2.ManagerName}} once you do.{{else}}Accounts is expected to answer it in the conversation; {{.Request2.ManagerName}} then decides.{{end}}</p>
   </div>
 </div>
 {{end}}
@@ -2578,7 +2693,13 @@ const templates = `
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
   <div class="cmp-row"><span class="l">Paid on {{dateLong .Payment.PaidOn}}</span><span class="v">{{money .Payment.Amount}}</span></div>
-  {{if eq .Payment.Settlement "partial"}}
+  {{/* The status decides the row, not the settlement alone: an accepted
+       shortfall keeps settlement="partial", and "still owed" under
+       "Completed — partial accepted · Nothing pending" contradicted the
+       manual's own meaning of the row (partial-1). */}}
+  {{if eq .Request2.Status "completed_partial"}}
+  <div class="cmp-row"><span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  {{else if eq .Payment.Settlement "partial"}}
   <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
   {{else}}
   <div class="cmp-row match"><span class="l">Difference · confirmed settled by Accounts</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
@@ -2659,6 +2780,13 @@ const templates = `
   {{end}}
   {{if and (not $held) (eq .Request2.Status "approved") $mayHold}}
     <button class="btn outline" type="button" data-open="hold-sheet">Put on hold</button>
+  {{end}}
+  {{/* Phase-3 spec §6: "Record payment" on the request itself, when it is
+       approved · unclaimed · not on hold, posting to the one reservation route
+       the queue and the picker already use (S1/S2). The third entry point the
+       spec asked for, never built (settlement-4). */}}
+  {{if and (not $held) (eq .Request2.Status "approved") (not .Request2.ProcessingBy) (.Perms.Can "reservation" "reserve")}}
+    <form method="post" action="/requests/{{.Request2.ID}}/record-payment"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Record payment</button></form>
   {{end}}
   {{/* A7 — hand the approval to a different approver, with a reason and a history
        entry. store.ReassignRequest carried every rule and had no door until Wave 3
@@ -3187,7 +3315,7 @@ const templates = `
   <div>
     <div class="eyebrow">Manager queue</div>
     <h1>Waiting on you</h1>
-    <p class="sub">{{index .Counts "to-approve"}} to approve · {{index .Counts "cancellations"}} {{plural (index .Counts "cancellations") "cancellation" "cancellations"}} to decide</p>
+    <p class="sub">{{index .Counts "to-approve"}} to approve · {{index .Counts "cancellations"}} {{plural (index .Counts "cancellations") "cancellation" "cancellations"}} to decide · {{index .Counts "partial-review"}} {{plural (index .Counts "partial-review") "partial payment" "partial payments"}} to review</p>
   </div>
   <div class="pb-actions">
     <a class="btn outline" href="/requests/export.csv?scope=assigned&amp;q={{.Query}}">⤓ Export CSV</a>
@@ -3497,6 +3625,12 @@ const templates = `
     <span class="metric-value">{{index .Counts "decisions"}}</span>
   </a>
   {{end}}
+  {{if .Perms.Can "approval" "accept_partial"}}
+  <a class="metric{{if index .Counts "partials"}} warn{{end}}" href="/approvals?bucket=partial-review">
+    <span class="metric-label">Partial payments to review</span>
+    <span class="metric-value">{{index .Counts "partials"}}</span>
+  </a>
+  {{end}}
   {{/* The queue, which is the screen carrying the identical label and the
        identical number. It used to link to /requests?bucket=open, which is a
        different set entirely (F-G-007). */}}
@@ -3524,7 +3658,7 @@ const templates = `
         <span class="al-main"><b>{{.Number}} · {{.ShortTitle}}</b>
           <small>
             {{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}
-            <span class="pill {{pillClass .Status}}">{{reqStatus .Status}}</span>
+            {{$p := statusPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
             {{$w := waitingOn . $.User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
           </small></span>
         <span class="al-amt">{{money .Amount}}</span>
