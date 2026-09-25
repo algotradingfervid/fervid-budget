@@ -412,10 +412,8 @@ test.describe('documented issue regression guards', () => {
     const janPath = await settlePayment(adminPage, january.id, { amount: '11.11', paidOn: '2024-01-15' });
     const febPath = await settlePayment(adminPage, february.id, { amount: '22.22', paidOn: '2024-02-15' });
     await adminPage.goto('/grid?month=2024-01');
-    // Keyed on each payment's own link rather than its payee: a request raised
-    // through the real form leaves payments.vendor_payee empty (payment_form
-    // posts .Request2.VendorPayee, which only reimbursements fill), so the
-    // Payee column is blank for every payment this journey produces.
+    // Keyed on each payment's own link: both payments share this run's payee,
+    // so the link is the one handle that tells the two months apart.
     await expect(adminPage.locator(`a[href="${janPath}"]`)).toBeVisible();
     await expect(adminPage.locator(`a[href="${febPath}"]`)).toHaveCount(0);
   });

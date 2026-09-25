@@ -93,11 +93,10 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
   test('admin can record, filter, view and export a payment — and cannot edit or void it', async ({ adminPage, runId }) => {
     const errors = capturePageErrors(adminPage);
     const request = await createApprovedRequest(adminPage, runId, { amount: '4200.00' });
-    // The processing note is the search term. The payee column is fed from the
-    // request's vendor_payee snapshot, which a vendor request leaves empty (see
-    // the KNOWN GAP on createApprovedRequest), and the ledger's search covers
-    // project, head, payee, invoice, reference and remarks — so the remarks are
-    // the one run-unique value this row is guaranteed to carry.
+    // The processing note is the search term: the ledger's search covers
+    // project, head, payee, invoice, reference and remarks, and the remarks are
+    // unique to this run. The payee is asserted on the detail screen below
+    // (F-D-09: it reaches every hop, whatever the old KNOWN GAP comment said).
     const payment = await settlePayment(adminPage, request.id, {
       amount: '4200.00',
       paidOn: '2026-06-15',
@@ -126,8 +125,9 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
 
     await row.getByRole('link', { name: 'View' }).click();
     await expect(adminPage).toHaveURL(new RegExp(`${payment}$`));
-    // The linked detail's h1 is the payee, which is blank today, so the number
-    // line is what identifies the row: "PAY-{id} · from PR-YYYY-NNNNNN".
+    // The linked detail's h1 is the payee — the vendor named on the request —
+    // and the number line ties it back: "PAY-{id} · from PR-YYYY-NNNNNN".
+    await expect(adminPage.locator('h1')).toContainText(`Payee ${runId}`);
     await expect(adminPage.locator('.rh-no')).toContainText(request.number);
     await expect(adminPage.locator('.rh-amt')).toContainText('4,200.00');
     await expect(adminPage.locator('.compare .cmp-row.match')).toBeVisible();
