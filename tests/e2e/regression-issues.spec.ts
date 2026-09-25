@@ -223,6 +223,56 @@ test.describe('documented issue regression guards', () => {
     await expect(adminPage).not.toHaveURL(/\/payments\/\d+$/);
   });
 
+  // F-G-020's remaining edge. The entry screen warned about the month it opened
+  // on and no other, so a locked month picked in "Paid on" afterwards was only
+  // met at the confirmation above. The date field now re-asks the server on
+  // change and the banner follows it, both ways, without a reload.
+  test('F-G-020 warns about a locked month as soon as Paid on names it', async ({ adminPage, runId }) => {
+    // Months no other spec writes into: locking one that another test records a
+    // payment in (ISS-023 uses 2024-03) would break that test, not this one.
+    const locked = '2023-02';
+    const open = '2023-05';
+    const request = await createApprovedRequest(adminPage, runId, { amount: '45.00' });
+
+    // Same leftover-database caution as ISS-004: lock the one month, and make
+    // sure the other is not still locked from an earlier run. The grid already
+    // sits on ?month=, so the URL cannot tell that the POST has landed; the
+    // button the reloaded grid offers instead can.
+    for (const month of [locked, open]) {
+      await adminPage.goto(`/grid?month=${month}`);
+      const lock = adminPage.getByRole('button', { name: 'Lock Month', exact: true });
+      const unlock = adminPage.getByRole('button', { name: 'Unlock Month' });
+      if (month === open && (await unlock.count()) > 0) {
+        await adminPage.getByLabel('Unlock reason').fill('Regression reopen');
+        adminPage.once('dialog', dialog => dialog.accept());
+        await unlock.click();
+        await expect(lock).toBeVisible();
+      }
+      if (month === locked && (await unlock.count()) === 0) {
+        await adminPage.getByLabel('Lock reason').fill('Regression close');
+        adminPage.once('dialog', dialog => dialog.accept());
+        await lock.click();
+        await expect(unlock).toBeVisible();
+      }
+    }
+
+    await openPaymentEntry(adminPage, request.id);
+    const banner = adminPage.locator('#lock-banner');
+    await expect(banner).toHaveCount(1);
+    const url = adminPage.url();
+
+    await adminPage.getByLabel('Paid on').fill(`${locked}-12`);
+    await expect(banner.locator('.locked')).toContainText(`${locked} is locked`);
+    await expect(banner.locator('.locked')).toBeInViewport();
+
+    await adminPage.getByLabel('Paid on').fill(`${open}-12`);
+    await expect(banner.locator('.locked')).toHaveCount(0);
+    await expect(banner).toHaveCount(1);
+    // Nothing navigated: the fields the accountant owns are still as typed.
+    expect(adminPage.url()).toBe(url);
+    await expect(adminPage.getByLabel('Paid on')).toHaveValue(`${open}-12`);
+  });
+
   // The original attached the file on /payments/{id}/edit. A linked payment has
   // no edit screen — the store refuses the write (S12) and the route redirects
   // — so the one moment a payment can be given its proof is while it is being

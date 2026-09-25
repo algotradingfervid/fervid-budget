@@ -160,10 +160,15 @@ Nothing rated critical or high. What remains, each verified against source rathe
 | Finding | Why it is still open |
 |---|---|
 | F-G-011 | `/requests/export.csv` has no approved-amount column. |
-| F-G-020, remaining edge | The payment form cannot warn about a locked month the accountant types in *after* it renders. Closing it needs the client to re-ask on date change. |
 | F-G-024 | A head with an approved request against it can be deactivated with no check and no warning. The resulting refusal is coherent — a 400 with a sentence, never a 5xx. |
 | F-G-025, open half | Deactivating a user is not pre-checked against the approvals waiting on them. The *recovery* is now possible (A7's route exists); the *warning* is not. |
 | Coverage matrix **V6**, **A8** re-notify half | Marked `UNVERIFIED` rather than ticked: the tests they cited no longer exist and no replacement was found. |
+
+### Closed since this table was written
+
+| Finding | How it was closed |
+|---|---|
+| F-G-020, remaining edge | **Fixed.** The payment form warned only about the month it *opens* on; a locked month picked in "Paid on" afterwards was met at the confirmation. `#paid_on` now re-asks `GET /payments/lock-status?paid_on=` on `change` (gated `payment:create`, like `/payments/new`) and swaps `#lock-banner` for the fragment `payment_lock_banner`, which the form also renders on load — one template, one sentence. The handler reads `store.MonthIsLocked`, so a failed read is a store error rather than a silent "open"; an empty or malformed date answers the empty wrapper. The banner moved into the Payment fieldset, directly above "Paid on", so it is on screen beside the field at phone width too. Proved by `TestPaymentLockStatusFollowsTheDateField` (red first: 404, no route) and the e2e case *"F-G-020 warns about a locked month as soon as Paid on names it"* in `tests/e2e/regression-issues.spec.ts`. |
 
 ### Found during the Wave 5 documentation pass, not by the audit
 

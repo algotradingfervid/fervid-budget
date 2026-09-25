@@ -449,6 +449,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /months", a.auth.RequirePermission("month", "create", http.HandlerFunc(a.withCSRF(a.monthCreate))))
 	mux.Handle("GET /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentForm)))
 	mux.Handle("GET /payments/new/options", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentPickerOptions)))
+	mux.Handle("GET /payments/lock-status", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentLockStatus)))
 	mux.Handle("GET /payments", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.payments)))
 	// The write that records a payment and closes a request is gated at least as
 	// tightly as its own read-only preview (F-D-10): the preview asks for
