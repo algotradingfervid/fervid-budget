@@ -634,7 +634,7 @@ const templates = `
      stand in for it cannot describe the same request differently. Dot is one
      store.Request. */}}
 {{define "picker_row"}}<span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
-    <small>{{.RequesterName}} · {{.Project}} / {{.Head}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
+    <small>{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}{{.RequesterName}} · {{.Project}} / {{.Head}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
   <span class="co-amt">{{money (approvedOf .)}}</span>{{end}}
 
 {{define "payment_pick_request"}}
@@ -771,7 +771,7 @@ const templates = `
         <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
         <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
-        <td data-label="Status"><span class="pill approved">Approved</span></td>
+        <td data-label="Status">{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}<span class="pill approved">Approved</span></td>
         <td class="c" data-label="Action">{{if $.Perms.Can "reservation" "reserve"}}<form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn small primary" type="submit">Take for processing</button></form>{{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}</td>
       </tr>
       {{end}}
@@ -783,6 +783,7 @@ const templates = `
         <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
         <td data-label="Status">
+          {{if and .Urgent (ne .Status "completed") (ne .Status "completed_partial")}}<span class="pill urgent">Urgent</span> {{end}}
           {{if .OnHold}}<span class="pill hold">On hold</span>
           {{else if eq .Status "partial_review"}}<span class="pill partial">Partial — manager review</span>
           {{else if eq .Status "completed_partial"}}<span class="pill completed-partial">Completed — partial accepted</span>
