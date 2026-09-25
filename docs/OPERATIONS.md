@@ -7,6 +7,8 @@ The app stores business data in SQLite and payment files on disk.
 - Database: `FERVID_DB`, default `data/fervid.db`
 - Attachments: `FERVID_ATTACHMENT_DIR`, default `data/attachments`
 - Backups: `FERVID_BACKUP_DIR`, default `data/backups`
+- Daily backup hour: `FERVID_BACKUP_HOUR`, local hour 0-23, default `2`
+- Retention: `FERVID_BACKUP_KEEP_DAYS`, default `30`; `FERVID_BACKUP_KEEP_MONTHS`, default `12`
 
 ## Seeding
 
@@ -27,9 +29,11 @@ data/backups/backup-YYYYMMDD-HHMMSS/
 
 The database copy is created with SQLite `VACUUM INTO`, which gives a consistent copy while the app is running. Attachments are copied into the same backup folder so the database rows and uploaded files travel together.
 
+The running server takes one backup a day by itself (`store.DailyBackup`, started in serve mode beside the reminder scheduler). It checks every ten minutes and, once the local clock has passed `FERVID_BACKUP_HOUR`, makes the day's backup unless one stamped after that hour already exists, so restarts and manual backups never cause a second one. Each run is logged (`daily backup created` / `daily backup failed`) and prunes with the rules below. `--backup` still makes a one-off backup and exits.
+
 ## Restore
 
-Stop the app before restoring. Then call `store.RestoreBackup` or `store.Restore` with the selected backup folder and configured live paths. The helper stages the database and attachment directory first, then swaps them into place.
+Stop the app before restoring. Then call `store.RestoreBackup` or `store.Restore` with the selected backup folder and configured live paths. The helper stages the database and attachment directory first, then swaps them into place. Any `-wal` and `-shm` files beside the live database belong to the database being replaced and are moved aside with it; otherwise SQLite would replay the old WAL — after an unclean stop, most of the live data — over the restored file.
 
 After restore:
 
@@ -39,4 +43,4 @@ After restore:
 
 ## Retention
 
-`store.PruneBackups` removes timestamped backup folders older than the configured day count. Keep at least 30 daily backups unless local policy says otherwise, and periodically test restore into a temporary directory.
+`store.PruneBackups` keeps every backup younger than `FERVID_BACKUP_KEEP_DAYS` plus the newest backup of each of the previous `FERVID_BACKUP_KEEP_MONTHS` calendar months, and removes the other `backup-*` folders. A backup's age is the timestamp in its folder name (a folder without one falls back to its modification time). It runs after every manual and daily backup. Periodically test restore into a temporary directory.
