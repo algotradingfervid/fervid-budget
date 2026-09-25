@@ -20,6 +20,27 @@ the screenshots named are in the session scratchpad under `fixwave-a/shots/`.
 - rbac-5: the Viewer role (request:view, request:create, approval:approve, attachment:create, grid:view via Advanced) shows dashes on View, Create and Approve at 1440px; at 390px the accordion header reads "Payment requests 4 of 15" and its View cell is a dash.
 - rbac-6: with carl holding Viewer the card reads "1 user"; Delete role opens a sheet explaining that the role cannot be deleted yet, with Cancel and Open Users only; Open Users lands on /users.
 
+## Verification runs (all green)
+
+| command | result |
+|---------|--------|
+| `gofmt -l ./internal ./cmd` | no output |
+| `go vet ./...` | clean |
+| `go test ./...` | all packages ok (app, auth, config, money, notify, store) |
+| `npm run typecheck` | clean |
+| `FERVID_E2E_PORT=4802 npx playwright test` (default suite, chromium + mobile-chrome) | 164 passed, 49 skipped |
+| audit-a (4801) | 99 passed (includes the five new rbac-* cases) |
+| audit-b (4803) | 130 passed |
+| audit-c (4806) | 94 passed |
+| audit-d (4804) | 77 passed |
+| audit-e (4807) | 52 passed |
+| audit-f (4808) | 58 passed |
+| audit-g (4805) | 56 passed |
+| audit-h (4809) | 3 passed |
+| audit-smoke (4810) | 4 passed |
+
+Each audit area ran as `FERVID_E2E_PORT=<port> npx playwright test -c playwright.audit.config.ts tests/e2e/audit-<x>.spec.ts --project=chromium --reporter=line`, one server and database per area.
+
 ## Design notes
 
 - rbac-1 server rule, stated precisely: grants = ticked Advanced boxes ∪ (every grant behind each ticked cell that has *no* ticked box behind it). With the script running a ticked cell always has all its boxes ticked, so the two are the same set; without it, ticking a bare cell still grants the whole cell, and unticking a box under a ticked cell revokes it.
