@@ -333,8 +333,14 @@ async function setRolesByLabel(adminPage: Page, email: string, labels: Array<str
  */
 async function systemRoleId(adminPage: Page, name: RegExp): Promise<string> {
   await adminPage.goto('/users');
-  const value = await adminPage.locator('#user-new').getByRole('checkbox', { name }).getAttribute('value');
-  return value ?? '';
+  // The sheet is `hidden` until opened, and a hidden checkbox has no accessible
+  // role — open it the way an operator does, then read the box.
+  await adminPage.locator('.pb-actions').getByRole('button', { name: 'Add user' }).click();
+  const sheet = adminPage.locator('#user-new');
+  await expect(sheet).toBeVisible();
+  const value = await sheet.getByRole('checkbox', { name }).getAttribute('value');
+  if (!value) throw new Error(`system role ${name} is missing from the Add user sheet`);
+  return value;
 }
 
 /** Creates a user holding exactly one custom role, signed in in its own context. */
@@ -4915,11 +4921,14 @@ test.describe('G · referential integrity', () => {
    *  accepted is the rule itself. */
   test('TC-G-091 — every password rule is refused as a 400, and one digit is the whole difference', async ({ adminPage, runId }) => {
     const email = `pw400-${runId}@example.test`.toLowerCase();
+    // A create must name a real role to be accepted at all, so every probe below
+    // names the same one — the password is then the only thing that varies.
+    const requesterRole = await systemRoleId(adminPage, /^Requester/);
     const probe = await probePost(adminPage, '/users', {
       id: '0',
       email,
       name: `Password rules ${runId}`,
-      role: 'data_entry',
+      role_ids: requesterRole,
       active: 'on',
       password: 'abcdefghijkl'
     });
@@ -4946,7 +4955,7 @@ test.describe('G · referential integrity', () => {
       id: '0',
       email,
       name: `Password rules ${runId}`,
-      role: 'data_entry',
+      role_ids: requesterRole,
       active: 'on',
       password: 'ab1'
     });
@@ -4954,13 +4963,12 @@ test.describe('G · referential integrity', () => {
     expect(short.body, 'naming the rule it broke').toContain('12 characters');
 
     // The same password with one digit is accepted, which pins the real rule.
-    // The role has to be named for the create to be accepted at all, so it is
-    // supplied here and held constant across all three probes above.
+    // Same role as the two refused probes above, so the digit is the only change.
     const ok = await probePost(adminPage, '/users', {
       id: '0',
       email,
       name: `Password rules ${runId}`,
-      role_ids: await systemRoleId(adminPage, /^Requester/),
+      role_ids: requesterRole,
       active: 'on',
       password: 'abcdefghijk1'
     });

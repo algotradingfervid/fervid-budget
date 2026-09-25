@@ -568,9 +568,17 @@ it.describe('A · every type and treatment, through the real form', () => {
       // An employee advance, because it is the one type the store accepts a
       // recoverable treatment for and therefore the one type the form offers the
       // choice on. A vendor invoice states its treatment instead of offering a
-      // radio it would reject — see TC-B-001.
+      // radio it would reject — see TC-B-001. An employee advance opens on the
+      // recoverable treatment, so the round trip here is recoverable → budget →
+      // recoverable, and each leg is checked for exactly one fieldset.
       await page.goto('/requests/new?type=employee_advance');
+      await expect(page.getByRole('radio', { name: /Refundable or recoverable/ })).toBeChecked();
+      await expect(page.locator('#form-fields textarea[name="repayment_notes"]')).toBeVisible();
+      await expect(page.locator('#form-fields select[name="head_id"]')).toHaveCount(0);
+
+      await page.getByRole('radio', { name: /Budget expense/ }).check();
       await expect(page.locator('#form-fields select[name="head_id"]')).toBeVisible();
+      await expect(page.locator('#form-fields textarea[name="repayment_notes"]')).toHaveCount(0);
 
       await page.getByRole('radio', { name: /Refundable or recoverable/ }).check();
       await expect(page.locator('#form-fields textarea[name="repayment_notes"]')).toBeVisible();
@@ -579,12 +587,10 @@ it.describe('A · every type and treatment, through the real form', () => {
         'a hidden head would post a stale head_id — the fieldsets must be alternatives'
       ).toHaveCount(0);
 
-      await page.getByRole('radio', { name: /Budget expense/ }).check();
-      await expect(page.locator('#form-fields select[name="head_id"]')).toBeVisible();
-      await expect(page.locator('#form-fields textarea[name="repayment_notes"]')).toHaveCount(0);
-
       expect(swaps.length, 'each treatment change asks the server for the fieldset').toBeGreaterThanOrEqual(2);
-      expect(swaps[0], 'the swap carries the type and the treatment').toContain('treatment=recoverable');
+      expect(swaps[0], 'the swap carries the type').toContain('type=employee_advance');
+      expect(swaps[0], 'and the treatment chosen').toContain('treatment=budget');
+      expect(swaps[1], 'the swap back carries the treatment chosen').toContain('treatment=recoverable');
       expect(failures, failures.join('\n')).toEqual([]);
     } finally {
       await page.close();
