@@ -1946,7 +1946,7 @@ func (a *App) backupCreate(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusInternalServerError, "The backup could not be created.", err)
 		return
 	}
-	if err := store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, time.Now()); err != nil {
+	if err := store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, a.cfg.BackupKeepMonths, time.Now()); err != nil {
 		a.log.WarnContext(r.Context(), "backup pruning failed", "request_id", requestID(r), "error", err)
 	}
 	u := auth.CurrentUser(r)

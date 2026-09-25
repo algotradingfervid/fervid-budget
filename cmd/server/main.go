@@ -73,7 +73,7 @@ func main() {
 			logger.Error("backup failed", "error", err)
 			os.Exit(1)
 		}
-		if err := store.PruneBackups(cfg.BackupDir, cfg.BackupKeepDays, time.Now()); err != nil {
+		if err := store.PruneBackups(cfg.BackupDir, cfg.BackupKeepDays, cfg.BackupKeepMonths, time.Now()); err != nil {
 			logger.Warn("backup created but pruning failed", "backup_path", info.Path, "error", err)
 		}
 		fmt.Printf("Backup created at %s\n", info.Path)
@@ -99,6 +99,20 @@ func main() {
 	go func() {
 		defer close(schedulerDone)
 		notifier.Scheduler(ctx, time.Hour, func() time.Time { return time.Now().UTC() })
+	}()
+
+	// The automated daily backup (§10) shares the same shutdown context. It
+	// checks every ten minutes and makes one backup a day once the local clock
+	// passes FERVID_BACKUP_HOUR; RunIfDue is idempotent per day, so a restart or
+	// an extra tick never makes a second one.
+	dailyBackup := store.DailyBackup{
+		DBPath: cfg.DBPath, AttachmentDir: cfg.AttachmentDir, BackupDir: cfg.BackupDir,
+		Hour: cfg.BackupHour, KeepDays: cfg.BackupKeepDays, KeepMonths: cfg.BackupKeepMonths, Log: logger,
+	}
+	backupDone := make(chan struct{})
+	go func() {
+		defer close(backupDone)
+		dailyBackup.Scheduler(ctx, 10*time.Minute, time.Now)
 	}()
 
 	serverErr := make(chan error, 1)
@@ -135,6 +149,11 @@ func main() {
 		case <-schedulerDone:
 		case <-time.After(15 * time.Second):
 			logger.Warn("reminder scheduler did not stop in time")
+		}
+		select {
+		case <-backupDone:
+		case <-time.After(15 * time.Second):
+			logger.Warn("daily backup scheduler did not stop in time")
 		}
 		logger.Info("server stopped")
 	}
