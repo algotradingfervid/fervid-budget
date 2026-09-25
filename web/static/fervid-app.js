@@ -613,6 +613,30 @@
     openServedDialogs(document);
   }
 
+  /* A filter form that pushes its URL (the grid's) can fire the same filters
+     more than once for one gesture: Enter in the search box commits a change
+     and then submits, and the live search fires again when its pause runs out.
+     Each extra request only swaps in the same rows and pushes a duplicate
+     history entry, so a request whose filters were the last ones sent is
+     dropped, and so is a live one whose filters the page already shows. Back
+     and Forward forget the last one sent, since the page then shows whatever
+     the server rendered for that URL. */
+  var lastFilters = new WeakMap();
+  document.addEventListener("htmx:configRequest", function (event) {
+    var form = event.detail && event.detail.elt;
+    if (!form || !form.matches || !form.matches("form[data-skip-shown-filters]")) return;
+    var trigger = event.detail.triggeringEvent;
+    var wanted = new URLSearchParams(new FormData(form)).toString();
+    var shown = form.getAttribute("action") === window.location.pathname &&
+      new URLSearchParams(window.location.search).toString() === wanted;
+    if (lastFilters.get(form) === wanted || (shown && !(trigger && trigger.type === "submit"))) {
+      event.preventDefault();
+      return;
+    }
+    lastFilters.set(form, wanted);
+  });
+  document.addEventListener("htmx:historyRestore", function () { lastFilters = new WeakMap(); });
+
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:load", function () { init(); });
 

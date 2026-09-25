@@ -199,11 +199,16 @@ test('grid-pill-1 + audit-2 — On track is green like its legend, and budget sa
     await adminPage.goto('/audit?entity=budget');
     return (await adminPage.locator('body').innerText()).match(/2026-08:/g)?.length ?? 0;
   };
+  const beforeFirst = await auditRows();
   await adminPage.goto('/budgets?month=2026-08');
   await adminPage.getByLabel('Budget for Operations / Office Rent').fill('2,50,000.00');
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
   await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
   const afterFirst = await auditRows();
+  // Every other head on the form went in at ₹0 with no budget behind it, which
+  // is no change at all: the first save records the one head that was set.
+  expect(afterFirst - beforeFirst, 'the first save audits only the head that was set').toBe(1);
+  await expect(adminPage.getByText('Operations / Office Rent 2026-08: set to ₹2,50,000.00').first()).toBeVisible();
 
   await adminPage.goto('/budgets?month=2026-08');
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
@@ -218,7 +223,13 @@ test('grid-pill-1 + audit-2 — On track is green like its legend, and budget sa
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
   await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
   expect(await auditRows(), 'one head changed, one audit row').toBe(afterFirst + 1);
-  await expect(adminPage.getByText(new RegExp(`Operations / Utilities 2026-08: ₹[\\d,.]+ → ₹${next.replace(/[.]/g, '\\.')}`)).first()).toBeVisible();
+  // Utilities had no 2026-08 budget until now (an untouched head is not
+  // written), so its first figure is a "set to"; a later one names both sides.
+  const nextRe = next.replace(/[.]/g, '\\.');
+  const summary = paise(before) === 0
+    ? new RegExp(`Operations / Utilities 2026-08: set to ₹${nextRe}`)
+    : new RegExp(`Operations / Utilities 2026-08: ₹[\\d,.]+ → ₹${nextRe}`);
+  await expect(adminPage.getByText(summary).first()).toBeVisible();
   await shoot(adminPage, 'audit2-1440', false);
 
   // grid-pill-1: pay Office Rent exactly its 2026-08 budget.
@@ -316,6 +327,72 @@ test('grid-htmx-1 — filters swap the grid in over htmx, push the URL, and stil
   } finally {
     await context.close();
   }
+});
+
+/*
+ * grid-htmx-1, review. Typing a search and pressing Enter (or Apply) before the
+ * live-search pause runs out used to fire two requests, the second cancelling
+ * the first, and htmx logged the cancellation as console errors. Back and
+ * Forward restored the grid rows from htmx's snapshot but not what was typed or
+ * picked in the controls, so the next change silently dropped the filter.
+ */
+test('grid-htmx-1 — search then Enter logs no errors, and Back/Forward keep the controls in step with the grid', async ({
+  adminPage
+}) => {
+  const errors: string[] = [];
+  adminPage.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  adminPage.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
+  const gridRequests: string[] = [];
+  adminPage.on('request', r => { if (r.headers()['hx-request'] && r.url().includes('/grid?')) gridRequests.push(r.url()); });
+
+  for (const [vp, tag] of [[DESKTOP, '1440'], [PHONE, '390']] as const) {
+    await adminPage.setViewportSize(vp);
+    await adminPage.goto('/grid?month=2026-06');
+    const toolbar = adminPage.locator('form.toolbar[aria-label="Grid filters"]');
+    const q = toolbar.locator('input[name="q"]');
+    const status = toolbar.locator('select[name="status"]');
+    const rows = vp === DESKTOP ? adminPage.locator('tr.head .hname') : adminPage.locator('.acc .hr-name');
+    const all = await rows.count();
+
+    // 1 — type and press Enter at once: one filtered grid, no cancelled request.
+    gridRequests.length = 0;
+    await q.fill('Office');
+    await q.press('Enter');
+    await expect(adminPage).toHaveURL(/q=Office/);
+    await expect(rows.first()).toContainText('Office');
+    await adminPage.waitForTimeout(800); // past the 350ms live-search pause
+    expect(errors, 'no console error from a search submitted mid-pause').toEqual([]);
+    expect(gridRequests, 'the pause does not fire the same search a second time').toHaveLength(1);
+    await shoot(adminPage, `htmx-enter-${tag}`);
+
+    // 2 — search Payroll, then narrow by status, then go Back and Forward.
+    await q.fill('Payroll');
+    await expect(adminPage).toHaveURL(/q=Payroll/);
+    await expect(rows).toHaveCount(1);
+    await status.selectOption('under');
+    await expect(adminPage).toHaveURL(/status=under&q=Payroll/);
+
+    await adminPage.goBack();
+    await expect(adminPage).toHaveURL(/\/grid\?month=2026-06&status=all&q=Payroll$/);
+    await expect(rows).toHaveCount(1);
+    await expect(q, 'Back: the search box says what the grid is filtered by').toHaveValue('Payroll');
+    await expect(status, 'Back: and so does the status').toHaveValue('all');
+    await shoot(adminPage, `htmx-back-${tag}`);
+
+    await adminPage.goForward();
+    await expect(adminPage).toHaveURL(/status=under&q=Payroll$/);
+    await expect(q, 'Forward: the search box is restored').toHaveValue('Payroll');
+    await expect(status, 'Forward: the status is restored').toHaveValue('under');
+
+    // 3 — the next change carries the filter the page shows, not an empty one.
+    await adminPage.goBack();
+    await expect(q).toHaveValue('Payroll');
+    await status.selectOption('not-paid');
+    await expect(adminPage).toHaveURL(/status=not-paid&q=Payroll$/);
+    expect(await rows.count()).toBeLessThan(all);
+    await shoot(adminPage, `htmx-after-back-${tag}`);
+  }
+  expect(errors, 'no console or page error anywhere in the run').toEqual([]);
 });
 
 test('recoverables-6 + ui-1 — compact total cards on a phone, rows that line up, and an Add user refusal that keeps the drawer', async ({

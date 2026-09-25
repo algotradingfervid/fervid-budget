@@ -148,12 +148,22 @@ const templates = `
        htmx request is answered without the shell (renderStatus), #grid-body is
        taken from it, and the other month- and filter-dependent pieces around
        this form ride along by id — the form itself is never swapped, so the
-       search box keeps its focus and caret while typing (grid-htmx-1). */}}
+       search box keeps its focus and caret while typing (grid-htmx-1).
+
+       hx-sync queues rather than replaces: replacing aborted the request in
+       flight, and htmx logs every abort as a console error — typing a search
+       and pressing Enter inside the live-search pause did exactly that.
+       data-skip-shown-filters lets fervid-app.js drop the late live-search
+       request when the grid already shows those filters. hx-history="false"
+       keeps htmx from snapshotting this page: a snapshot holds the rows but not
+       what was typed or picked in the controls, so Back showed a filtered grid
+       under an empty search box. Back and Forward now ask the server for the
+       URL, which renders the rows and the controls together. */}}
   <form class="toolbar" method="get" action="/grid" aria-label="Grid filters"
         hx-get="/grid" hx-trigger="change, input changed delay:350ms from:find input[name='q'], submit"
         hx-target="#grid-body" hx-select="#grid-body" hx-swap="outerHTML"
         hx-select-oob="#grid-summary,#grid-metrics,#grid-legend,#grid-export,#grid-add"
-        hx-push-url="true" hx-sync="this:replace">
+        hx-push-url="true" hx-sync="this:queue last" hx-history="false" data-skip-shown-filters>
     <label>Month<input class="input" type="month" name="month" value="{{.Month}}"></label>
     <label>Status<select class="select" name="status"><option value="all">All</option><option value="unbudgeted" {{select .Status "unbudgeted"}}>Unbudgeted spend</option><option value="over" {{select .Status "over"}}>Over budget</option><option value="under" {{select .Status "under"}}>Under budget</option><option value="on-track" {{select .Status "on-track"}}>On track</option><option value="not-paid" {{select .Status "not-paid"}}>Not paid</option></select></label>
     <label class="search-label">Search<input class="input" name="q" value="{{.Query}}" placeholder="Search head or project..."></label>

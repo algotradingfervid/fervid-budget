@@ -154,8 +154,15 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	if err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 4500000}, {HeadID: power, Amount: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := count(); got != 2 {
-		t.Fatalf("the first save wrote %d budget audit rows, want 2 (both budgets are new)", got)
+	// Power was submitted at ₹0 with no budget behind it. A head with no budget
+	// already reads as ₹0 everywhere, so nothing changed: no row is written and
+	// nothing is audited. Only Rent, which the user set, is recorded (audit-2,
+	// review: the first save of a month used to log every head on the form).
+	if got := count(); got != 1 {
+		t.Fatalf("the first save wrote %d budget audit rows, want 1 (only Rent was set)", got)
+	}
+	if _, err := s.Budget(ctx, power, "2026-07"); err == nil {
+		t.Fatal("a head submitted at ₹0 with no budget got a budget row it never had")
 	}
 	var summary string
 	if err := s.DB().QueryRowContext(ctx, `SELECT summary FROM audit_log WHERE entity_type='budget' AND action='create' ORDER BY id LIMIT 1`).Scan(&summary); err != nil {
@@ -169,25 +176,45 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	if err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 4500000}, {HeadID: power, Amount: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := count(); got != 2 {
-		t.Fatalf("an unchanged save wrote %d new budget audit rows, want 0", got-2)
+	if got := count(); got != 1 {
+		t.Fatalf("an unchanged save wrote %d new budget audit rows, want 0", got-1)
 	}
 
 	// One head changed: exactly one row, naming the head, the month and both amounts.
 	if err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 4500000}, {HeadID: power, Amount: 120000}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := count(); got != 3 {
-		t.Fatalf("a one-head change wrote %d budget audit rows, want 1", got-2)
+	if got := count(); got != 2 {
+		t.Fatalf("a one-head change wrote %d budget audit rows, want 1", got-1)
 	}
 	if err := s.DB().QueryRowContext(ctx, `SELECT summary FROM audit_log WHERE entity_type='budget' ORDER BY id DESC LIMIT 1`).Scan(&summary); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Operations / Power 2026-07: ₹0.00 → ₹1,200.00"; summary != want {
+	if want := "Operations / Power 2026-07: set to ₹1,200.00"; summary != want {
+		t.Fatalf("create summary = %q, want %q", summary, want)
+	}
+
+	// Rent changed: an update naming both amounts.
+	if err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 5000000}, {HeadID: power, Amount: 120000}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT summary FROM audit_log WHERE entity_type='budget' ORDER BY id DESC LIMIT 1`).Scan(&summary); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Operations / Rent 2026-07: ₹45,000.00 → ₹50,000.00"; summary != want {
 		t.Fatalf("update summary = %q, want %q", summary, want)
 	}
+
 	b, err := s.Budget(ctx, power, "2026-07")
 	if err != nil || b.Amount != 120000 {
 		t.Fatalf("the changed budget reads %d (%v), want 120000", b.Amount, err)
+	}
+
+	// Clearing a budget that exists is a change, and is audited.
+	if err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 5000000}, {HeadID: power, Amount: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(); got != 4 {
+		t.Fatalf("clearing Power wrote %d budget audit rows, want 1", got-3)
 	}
 }

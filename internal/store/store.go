@@ -648,7 +648,11 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		// not move is not a mutation: writing it anyway put an "update" row in
 		// the audit log for every head on every save, which buried the real
 		// changes and pushed history out of the audit view (audit-2).
-		if before != nil && before.Amount == input.Amount {
+		// The same holds for a head with no budget submitted at ₹0: an absent
+		// budget already reads as ₹0 on every screen (the grid COALESCEs it), so
+		// the first save of a month used to log "set to ₹0.00" for every head the
+		// user never touched.
+		if (before != nil && before.Amount == input.Amount) || (before == nil && input.Amount == 0) {
 			continue
 		}
 		var label string
