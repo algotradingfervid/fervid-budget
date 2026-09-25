@@ -123,11 +123,11 @@ const templates = `
 {{define "grid"}}
 {{template "top" .}}
 <div class="gridhead">
-  <div class="between">
-    <div><div class="eyebrow">Budget vs actuals</div><h1>Variance grid</h1><p class="sub muted">{{.Month}} · {{len .Grid.Rows}} heads · remaining = budget - actual</p></div>
-    <div class="head-actions"><span class="countpill">{{len .Grid.Projects}} projects</span>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</div>
+  <div class="between" id="grid-summary">
+    <div><div class="eyebrow">Budget vs actuals</div><h1>Variance grid</h1><p class="sub muted">{{.Month}} · {{len .Grid.Rows}} {{plural (len .Grid.Rows) "head" "heads"}} · remaining = budget - actual</p></div>
+    <div class="head-actions"><span class="countpill">{{len .Grid.Projects}} {{plural (len .Grid.Projects) "project" "projects"}}</span>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</div>
   </div>
-  <div class="metric-strip compact">
+  <div class="metric-strip compact" id="grid-metrics">
     <div class="metric"><span class="metric-label">Budget</span><span class="metric-value">{{short .Grid.Total.Budget}}</span></div>
     <div class="metric"><span class="metric-label">Actual</span><span class="metric-value">{{short .Grid.Total.Actual}}</span></div>
     <div class="metric"><span class="metric-label">Remaining</span><span class="metric-value {{varClass .Grid.Total.Variance}}">{{short .Grid.Total.Variance}}</span></div>
@@ -139,18 +139,32 @@ const templates = `
        could not be filtered at all (F-G-029). The two buttons beside them are
        gated on the verbs their own routes are gated on: /export.csv is
        grid:export and /payments/new is payment:create, and a grid:view-only role
-       was offered both. */}}
-  <form class="toolbar" method="get" action="/grid" aria-label="Grid filters">
+       was offered both.
+
+       The form is a plain GET, so it filters with no JavaScript at all (Apply).
+       With htmx it swaps the grid in on change instead of reloading the page
+       (BV20, §6: "HTMX swap on month/filter/search"), and pushes the filtered
+       URL so the address bar, Back and a shared link all say what is shown. An
+       htmx request is answered without the shell (renderStatus), #grid-body is
+       taken from it, and the other month- and filter-dependent pieces around
+       this form ride along by id — the form itself is never swapped, so the
+       search box keeps its focus and caret while typing (grid-htmx-1). */}}
+  <form class="toolbar" method="get" action="/grid" aria-label="Grid filters"
+        hx-get="/grid" hx-trigger="change, input changed delay:350ms from:find input[name='q'], submit"
+        hx-target="#grid-body" hx-select="#grid-body" hx-swap="outerHTML"
+        hx-select-oob="#grid-summary,#grid-metrics,#grid-legend,#grid-export,#grid-add"
+        hx-push-url="true" hx-sync="this:replace">
     <label>Month<input class="input" type="month" name="month" value="{{.Month}}"></label>
     <label>Status<select class="select" name="status"><option value="all">All</option><option value="unbudgeted" {{select .Status "unbudgeted"}}>Unbudgeted spend</option><option value="over" {{select .Status "over"}}>Over budget</option><option value="under" {{select .Status "under"}}>Under budget</option><option value="on-track" {{select .Status "on-track"}}>On track</option><option value="not-paid" {{select .Status "not-paid"}}>Not paid</option></select></label>
     <label class="search-label">Search<input class="input" name="q" value="{{.Query}}" placeholder="Search head or project..."></label>
     <div class="spacer"></div>
-    <button>Apply</button>{{if .Perms.Can "grid" "export"}}<a class="btn outline" href="/export.csv?month={{.Month}}&status={{.Status}}&q={{.Query}}">⤓ Export</a>{{end}}{{if .Perms.Can "payment" "create"}}<a class="btn primary" href="/payments/new?month={{.Month}}">+ Add payment</a>{{end}}
+    <button>Apply</button>{{if .Perms.Can "grid" "export"}}<a class="btn outline" id="grid-export" href="/export.csv?month={{.Month}}&status={{.Status}}&q={{.Query}}">⤓ Export</a>{{end}}{{if .Perms.Can "payment" "create"}}<a class="btn primary" id="grid-add" href="/payments/new?month={{.Month}}">+ Add payment</a>{{end}}
   </form>
-  <div class="legend"><span class="lk"><span class="sw none"></span>Not paid {{.Grid.NotPaid}}</span><span class="lk"><span class="sw warn"></span>Unbudgeted {{.Grid.Unbudgeted}}</span><span class="lk"><span class="sw ok"></span>Under {{.Grid.Under}}</span><span class="lk"><span class="sw track"></span>On track {{.Grid.OnTrack}}</span><span class="lk"><span class="sw bad"></span>Over {{.Grid.Over}}</span></div>
+  <div class="legend" id="grid-legend"><span class="lk"><span class="sw none"></span>Not paid {{.Grid.NotPaid}}</span><span class="lk"><span class="sw warn"></span>Unbudgeted {{.Grid.Unbudgeted}}</span><span class="lk"><span class="sw ok"></span>Under {{.Grid.Under}}</span><span class="lk"><span class="sw track"></span>On track {{.Grid.OnTrack}}</span><span class="lk"><span class="sw bad"></span>Over {{.Grid.Over}}</span></div>
 </div>
+<div id="grid-body">
 {{if .Grid.Locked}}<div class="locked">Month {{.Month}} is locked by {{.Grid.Lock.ActorName}}. Reason: {{.Grid.Lock.Reason}}</div>{{end}}
-<div class="gridwrap d-only"><div class="card scroll"><table class="matrix grid"><caption class="sr-only">Budget versus actuals by project and head</caption><thead><tr><th class="sticky project-col">Project</th><th class="sticky head-col">Head</th><th class="c">Due</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining ₹</th><th class="num">Remaining %</th><th class="c">Used</th><th class="c">Status</th><th class="c">Action</th></tr></thead><tbody>{{range .Grid.Groups}}<tr class="project-row" data-project-id="{{.ProjectID}}"><td class="sticky project-col" colspan="2"><button class="project-toggle" type="button" data-project-toggle="{{.ProjectID}}" aria-expanded="true"><span class="chev" aria-hidden="true">▾</span><span class="project-title">{{.Project}}</span><span class="project-count">{{len .Rows}} heads</span></button></td><td></td><td class="num">{{money .Total.Budget}}</td><td class="num">{{money .Total.Actual}}</td><td class="num {{varClass .Total.Variance}}">{{money .Total.Variance}}</td><td class="num">{{remainingText .Total.Budget .Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Total.Budget .Total.Actual)}}"><i style="--pct:{{usedPct .Total.Budget .Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Total.Budget .Total.Actual}}</span></div></td><td></td><td></td></tr>{{range .Rows}}<tr class="head {{if eq .Status "not-paid"}}unpaid{{end}}" data-project-row="{{.ProjectID}}"><td class="sticky project-col project-spacer" aria-hidden="true"></td><td class="sticky head-col"><span class="hname">{{.Head}}</span></td><td class="c due"><span class="duepill {{dueClass .DueDay $.Month .Status}}">{{dueText .DueDay $.Month .Status}}</span><small>{{.DueDay}}</small></td><td class="num">{{money .Budget}}</td><td class="num">{{money .Actual}}</td><td class="num {{varClass .Variance}}">{{money .Variance}}</td><td class="num">{{remainingText .Budget .Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Budget .Actual}}</span></div></td><td class="c"><span class="pill {{.Status}}">{{statusText .Status}}</span></td><td class="c">{{if and .Active (not $.Grid.Locked) ($.Perms.Can "payment" "create")}}<a class="btn small" href="/payments/new?month={{$.Month}}&head_id={{.HeadID}}">Add</a>{{else if $.Grid.Locked}}<small class="muted">Locked</small>{{else if not .Active}}<small class="muted">Retired</small>{{end}}</td></tr>{{end}}{{else}}<tr><td colspan="10" class="empty">No heads found. Add projects and heads to begin.</td></tr>{{end}}</tbody><tfoot><tr class="total"><td colspan="2"><span class="tlabel">Company total</span></td><td class="c">—</td><td class="num">{{money .Grid.Total.Budget}}</td><td class="num">{{money .Grid.Total.Actual}}</td><td class="num {{varClass .Grid.Total.Variance}}">{{money .Grid.Total.Variance}}</td><td class="num">{{remainingText .Grid.Total.Budget .Grid.Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Grid.Total.Budget .Grid.Total.Actual)}}"><i style="--pct:{{usedPct .Grid.Total.Budget .Grid.Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Grid.Total.Budget .Grid.Total.Actual}}</span></div></td><td></td><td></td></tr></tfoot></table></div></div>
+<div class="gridwrap d-only"><div class="card scroll"><table class="matrix grid"><caption class="sr-only">Budget versus actuals by project and head</caption><thead><tr><th class="sticky project-col">Project</th><th class="sticky head-col">Head</th><th class="c">Due</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining ₹</th><th class="num">Remaining %</th><th class="c">Used</th><th class="c">Status</th><th class="c">Action</th></tr></thead><tbody>{{range .Grid.Groups}}<tr class="project-row" data-project-id="{{.ProjectID}}"><td class="sticky project-col" colspan="2"><button class="project-toggle" type="button" data-project-toggle="{{.ProjectID}}" aria-expanded="true"><span class="chev" aria-hidden="true">▾</span><span class="project-title">{{.Project}}</span><span class="project-count">{{len .Rows}} {{plural (len .Rows) "head" "heads"}}</span></button></td><td></td><td class="num">{{money .Total.Budget}}</td><td class="num">{{money .Total.Actual}}</td><td class="num {{varClass .Total.Variance}}">{{money .Total.Variance}}</td><td class="num">{{remainingText .Total.Budget .Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Total.Budget .Total.Actual)}}"><i style="--pct:{{usedPct .Total.Budget .Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Total.Budget .Total.Actual}}</span></div></td><td></td><td></td></tr>{{range .Rows}}<tr class="head {{if eq .Status "not-paid"}}unpaid{{end}}" data-project-row="{{.ProjectID}}"><td class="sticky project-col project-spacer" aria-hidden="true"></td><td class="sticky head-col"><span class="hname">{{.Head}}</span></td><td class="c due"><span class="duepill {{dueClass .DueDay $.Month .Status}}">{{dueText .DueDay $.Month .Status}}</span><small>{{.DueDay}}</small></td><td class="num">{{money .Budget}}</td><td class="num">{{money .Actual}}</td><td class="num {{varClass .Variance}}">{{money .Variance}}</td><td class="num">{{remainingText .Budget .Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Budget .Actual}}</span></div></td><td class="c"><span class="pill {{.Status}}">{{statusText .Status}}</span></td><td class="c">{{if and .Active (not $.Grid.Locked) ($.Perms.Can "payment" "create")}}<a class="btn small" href="/payments/new?month={{$.Month}}&head_id={{.HeadID}}">Add</a>{{else if $.Grid.Locked}}<small class="muted">Locked</small>{{else if not .Active}}<small class="muted">Retired</small>{{end}}</td></tr>{{end}}{{else}}<tr><td colspan="10" class="empty">No heads found. Add projects and heads to begin.</td></tr>{{end}}</tbody><tfoot><tr class="total"><td colspan="2"><span class="tlabel">Company total</span></td><td class="c">—</td><td class="num">{{money .Grid.Total.Budget}}</td><td class="num">{{money .Grid.Total.Actual}}</td><td class="num {{varClass .Grid.Total.Variance}}">{{money .Grid.Total.Variance}}</td><td class="num">{{remainingText .Grid.Total.Budget .Grid.Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Grid.Total.Budget .Grid.Total.Actual)}}"><i style="--pct:{{usedPct .Grid.Total.Budget .Grid.Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Grid.Total.Budget .Grid.Total.Actual}}</span></div></td><td></td><td></td></tr></tfoot></table></div></div>
 
 {{/* The variance grid is the widest screen in the app and is the one table that
      cannot restack into cards — a head means nothing without its project, its
@@ -186,7 +200,12 @@ const templates = `
   {{end}}
 </div>
 
-<section class="split"><div><h2>Recent Payments for {{.Month}}</h2><div class="table-wrap"><table class="t-cards"><thead><tr><th>Date</th><th>Project / Head</th><th>Amount</th><th>Payee</th></tr></thead><tbody>{{range .Payments}}<tr><td class="t-lead" data-label="Date">{{.PaidOn}}</td><td data-label="Project / Head"><a href="/payments/{{.ID}}">{{.Project}} / {{.Head}}</a></td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Payee">{{.VendorPayee}}</td></tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No payments in this month.</td></tr>{{end}}</tbody></table></div></div>{{if .Perms.Can "month" "lock"}}<div><h2>Month Close</h2>{{if .Grid.Locked}}<p class="muted">Unlocking reopens this month for budget and payment changes.</p><form method="post" action="/months/{{.Month}}/unlock" onsubmit="return confirm('Unlock {{.Month}} and allow changes again?')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Unlock reason<input name="reason" required></label><button>Unlock Month</button></form>{{else}}<p class="muted">{{.CloseGrid.NotPaid}} heads are unpaid, {{.CloseGrid.Unbudgeted}} have unbudgeted spend, and {{.CloseGrid.Over}} are over budget. Review before closing.</p><form method="post" action="/months/{{.Month}}/lock" onsubmit="return confirm('Lock {{.Month}}? Budgets and payments will become read-only.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Lock reason<input name="reason" required></label><button>Lock Month</button></form>{{end}}</div>{{end}}</section>
+{{/* Recent Payments is payment:view's, not grid:view's (F-A-02/F-G-032). The
+     handler hands a caller without that verb no rows, and the panel is not
+     rendered for them either: an empty panel told them "No payments in this
+     month." beside actuals the same page showed as paid (grid-1). */}}
+{{if or (.Perms.Can "payment" "view") (.Perms.Can "month" "lock")}}<section class="split">{{if .Perms.Can "payment" "view"}}<div><h2>Recent Payments for {{.Month}}</h2><div class="table-wrap"><table class="t-cards"><thead><tr><th>Date</th><th>Project / Head</th><th>Amount</th><th>Payee</th></tr></thead><tbody>{{range .Payments}}<tr><td class="t-lead" data-label="Date">{{.PaidOn}}</td><td data-label="Project / Head"><a href="/payments/{{.ID}}">{{.Project}} / {{.Head}}</a></td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Payee">{{.VendorPayee}}</td></tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No payments in this month.</td></tr>{{end}}</tbody></table></div></div>{{end}}{{if .Perms.Can "month" "lock"}}<div><h2>Month Close</h2>{{if .Grid.Locked}}<p class="muted">Unlocking reopens this month for budget and payment changes.</p><form method="post" action="/months/{{.Month}}/unlock" onsubmit="return confirm('Unlock {{.Month}} and allow changes again?')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Unlock reason<input name="reason" required></label><button>Unlock Month</button></form>{{else}}<p class="muted">{{.CloseGrid.NotPaid}} {{plural .CloseGrid.NotPaid "head is" "heads are"}} unpaid, {{.CloseGrid.Unbudgeted}} {{plural .CloseGrid.Unbudgeted "has" "have"}} unbudgeted spend, and {{.CloseGrid.Over}} {{plural .CloseGrid.Over "is" "are"}} over budget. Review before closing.</p><form method="post" action="/months/{{.Month}}/lock" onsubmit="return confirm('Lock {{.Month}}? Budgets and payments will become read-only.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Lock reason<input name="reason" required></label><button>Lock Month</button></form>{{end}}</div>{{end}}</section>{{end}}
+</div>
 {{template "bottom" .}}
 {{end}}
 
@@ -229,7 +248,7 @@ const templates = `
   <label class="search-label">Search<input name="q" value="{{.Query}}" placeholder="Project, head, payee, invoice..."></label>
   <button>Filter</button><a class="btn outline" href="/payments">Reset</a>
 </form>
-<div class="table-wrap payments-table" tabindex="0" role="region" aria-label="Payments table, scrollable"><table class="t-cards"><thead><tr><th>Date</th><th>Project / Head</th><th class="num">Amount</th><th>Payee</th><th>Mode</th><th>Reference</th><th>Entered by</th><th>Status</th><th>Actions</th></tr></thead><tbody>{{range .Payments}}<tr class="{{if voided .}}is-voided{{end}}"><td class="t-lead" data-label="Date">{{.PaidOn}}</td><td data-label="Project / Head"><a href="/payments/{{.ID}}">{{.Project}} / {{.Head}}</a></td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Payee">{{.VendorPayee}}</td><td data-label="Mode">{{paymentMode .PaymentMode}}</td><td data-label="Reference"><span><span class="nowrap">{{.InvoiceNo}}</span>{{if .ReferenceNo}}<br><small>{{.ReferenceNo}}</small>{{end}}</span></td><td data-label="Entered by">{{.EnteredByName}}</td><td data-label="Status">{{if voided .}}<span class="pill bad">Removed</span>{{else}}<span class="pill good">Active</span>{{end}}</td><td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/payments/{{.ID}}">View</a>{{if and ($.Perms.Can "payment" "edit") (not .RequestID) (not $.Locked) (not (voided .))}}<a class="btn small outline" href="/payments/{{.ID}}/edit">Edit</a>{{if $.Perms.Can "payment" "void"}}<details class="inline-danger"><summary>Remove</summary><form method="post" action="/payments/{{.ID}}/void" onsubmit="return confirm('Remove payment #{{.ID}} from actual totals?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="next" value="/payments?month={{$.Month}}&status={{$.Status}}&q={{urlquery $.Query}}"><label>Reason<input name="reason" required></label><button class="danger">Remove</button></form></details>{{end}}{{else if voided .}}<small class="muted">{{.VoidReason}}</small>{{else if $.Locked}}<small class="muted">Locked</small>{{end}}</span></td></tr>{{else}}<tr><td colspan="9" class="empty" data-label="">No payments match these filters. <a href="/payments/new">Record a payment</a></td></tr>{{end}}</tbody></table></div>
+<div class="table-wrap payments-table" tabindex="0" role="region" aria-label="Payments table, scrollable"><table class="t-cards"><thead><tr><th>Date</th><th>Project / Head</th><th class="num">Amount</th><th>Payee</th><th>Mode</th><th>Reference</th><th>Entered by</th><th>Status</th><th>Actions</th></tr></thead><tbody>{{range .Payments}}<tr class="{{if voided .}}is-voided{{end}}"><td class="t-lead" data-label="Date">{{.PaidOn}}</td><td data-label="Project / Head"><a href="/payments/{{.ID}}">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</a></td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Payee">{{.VendorPayee}}</td><td data-label="Mode">{{paymentMode .PaymentMode}}</td><td data-label="Reference"><span><span class="nowrap">{{.InvoiceNo}}</span>{{if .ReferenceNo}}<br><small>{{.ReferenceNo}}</small>{{end}}</span></td><td data-label="Entered by">{{.EnteredByName}}</td><td data-label="Status">{{if voided .}}<span class="pill bad">Removed</span>{{else}}<span class="pill good">Active</span>{{end}}</td><td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/payments/{{.ID}}">View</a>{{if and ($.Perms.Can "payment" "edit") (not .RequestID) (not $.Locked) (not (voided .))}}<a class="btn small outline" href="/payments/{{.ID}}/edit">Edit</a>{{if $.Perms.Can "payment" "void"}}<details class="inline-danger"><summary>Remove</summary><form method="post" action="/payments/{{.ID}}/void" onsubmit="return confirm('Remove payment #{{.ID}} from actual totals?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="next" value="/payments?month={{$.Month}}&status={{$.Status}}&q={{urlquery $.Query}}"><label>Reason<input name="reason" required></label><button class="danger">Remove</button></form></details>{{end}}{{else if voided .}}<small class="muted">{{.VoidReason}}</small>{{else if $.Locked}}<small class="muted">Locked</small>{{end}}</span></td></tr>{{else}}<tr><td colspan="9" class="empty" data-label="">No payments match these filters. <a href="/payments/new">Record a payment</a></td></tr>{{end}}</tbody></table></div>
 {{template "bottom" .}}
 {{end}}
 
@@ -258,7 +277,9 @@ const templates = `
 <div class="req-head">
   <div class="rh-top"><span class="rh-no">PAY-{{.Payment.ID}} · from {{.Request2.Number}}</span><span class="rh-amt">{{money .Payment.Amount}}</span></div>
   <h1>{{.Payment.VendorPayee}}</h1>
-  <p class="rh-meta">{{.Payment.Project}} / {{.Payment.Head}} · paid {{dateLong .Payment.PaidOn}}</p>
+  {{/* A recoverable settles no head (v8), so it is named, not printed as an
+       empty "Project / Head" (recoverables-2). */}}
+  <p class="rh-meta">{{if eq .Payment.Treatment "recoverable"}}Recoverable{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Payment.Project}} / {{.Payment.Head}}{{end}} · paid {{dateLong .Payment.PaidOn}}</p>
   {{/* The same three helpers every other head uses. Waiting exists so the
        list, the queue and the detail head cannot drift into three answers, and
        a hand-written line here was already a fourth: it read a manager their
@@ -397,7 +418,7 @@ const templates = `
     <div><dt>Approved amount</dt><dd class="big">{{money (approvedOf .Request2)}}</dd></div>
     <div><dt>Approved by</dt><dd>{{.Request2.ApprovedByName}}{{if .Request2.ApprovedAt}} · {{datep .Request2.ApprovedAt}}{{end}}</dd></div>
     <div><dt>Payee</dt><dd>{{.Request2.Vendor}}</dd></div>
-    <div><dt>Charge to</dt><dd>{{.Request2.Project}} / {{.Request2.Head}}</dd></div>
+    <div><dt>Charge to</dt><dd>{{if eq .Request2.Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span> Not charged to a budget{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Request2.Project}} / {{.Request2.Head}}{{end}}</dd></div>
     <div style="grid-column:1/-1"><dt>Purpose</dt><dd>{{.Request2.Purpose}}</dd></div>
   </dl>
 </div>
@@ -634,7 +655,7 @@ const templates = `
      stand in for it cannot describe the same request differently. Dot is one
      store.Request. */}}
 {{define "picker_row"}}<span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
-    <small>{{.RequesterName}} · {{.Project}} / {{.Head}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
+    <small>{{.RequesterName}} · {{if eq .Treatment "recoverable"}}Recoverable{{if .Project}} · {{.Project}}{{end}}{{else}}{{.Project}} / {{.Head}}{{end}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
   <span class="co-amt">{{money (approvedOf .)}}</span>{{end}}
 
 {{define "payment_pick_request"}}
@@ -866,7 +887,7 @@ const templates = `
 <div class="req-head">
   <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money (approvedOf .Request2)}}</span></div>
   <h1>{{.Request2.Vendor}}{{if .Request2.ShortTitle}} — {{.Request2.ShortTitle}}{{end}}</h1>
-  <p class="rh-meta">{{.Request2.Project}} / {{.Request2.Head}}{{if .Request2.ApprovedAt}} · approved {{datep .Request2.ApprovedAt}}{{end}}</p>
+  <p class="rh-meta">{{if eq .Request2.Treatment "recoverable"}}Recoverable{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Request2.Project}} / {{.Request2.Head}}{{end}}{{if .Request2.ApprovedAt}} · approved {{datep .Request2.ApprovedAt}}{{end}}</p>
   <div class="rh-status">
     {{/* The pill tells the same truth the banner does. A .pill.processing naming a
          holder is a lie on a request nobody holds. */}}
@@ -1250,7 +1271,7 @@ const templates = `
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Month control</div><h1>Monthly Plans</h1><p class="sub muted">Create each month, review prior months, and open locked history whenever needed.</p></div><a class="btn outline" href="/reports/monthly">Reports</a></section>
 <form class="toolbar setup-form" method="post" action="/months"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>New month<input type="month" name="target_month" value="{{.TargetMonth}}" required></label><label>Plan type<select name="source_mode"><option value="copy">Copy from month</option><option value="blank">Start blank</option></select></label><label>Source month<input type="month" name="source_month" value="{{.SourceMonth}}"></label><button class="primary">Create Month</button></form>
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Month</th><th>Status</th><th>Source</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th><th>Created</th><th>Actions</th></tr></thead><tbody>{{range .MonthPlans}}<tr><td class="t-lead" data-label="Month"><strong>{{.Month}}</strong><br><small>{{.HeadCount}} heads</small></td><td data-label="Status"><span><span class="pill {{.Status}}">{{planStatusText .Status}}</span>{{if .LockedAt}}<br><small>{{datep .LockedAt}}</small>{{end}}</span></td><td data-label="Source">{{if .SourceMonth}}{{.SourceMonth}}{{else}}<span class="muted">Manual</span>{{end}}</td><td class="num" data-label="Budget">{{money .Budget}}</td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td><td class="num" data-label="Used">{{.UsedPercent}}</td><td data-label="Created">{{if .CreatedAt}}{{datep .CreatedAt}}{{else}}<span class="muted">Imported history</span>{{end}}</td><td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/grid?month={{.Month}}">Grid</a><a class="btn small outline" href="/budgets?month={{.Month}}">Budget</a><a class="btn small outline" href="/payments?month={{.Month}}">Payments</a><a class="btn small outline" href="/reports/heads?from={{.Month}}&to={{.Month}}">Report</a></span></td></tr>{{else}}<tr><td colspan="9" class="empty" data-label="">No monthly plans yet. <a href="/months">Open a month</a> to start one.</td></tr>{{end}}</tbody></table></div>
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>Month</th><th>Status</th><th>Source</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th><th>Created</th><th>Actions</th></tr></thead><tbody>{{range .MonthPlans}}<tr><td class="t-lead" data-label="Month"><strong>{{.Month}}</strong><br><small>{{.HeadCount}} {{plural .HeadCount "head" "heads"}}</small></td><td data-label="Status"><span><span class="pill {{.Status}}">{{planStatusText .Status}}</span>{{if .LockedAt}}<br><small>{{datep .LockedAt}}</small>{{end}}</span></td><td data-label="Source">{{if .SourceMonth}}{{.SourceMonth}}{{else}}<span class="muted">Manual</span>{{end}}</td><td class="num" data-label="Budget">{{money .Budget}}</td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td><td class="num" data-label="Used">{{.UsedPercent}}</td><td data-label="Created">{{if .CreatedAt}}{{datep .CreatedAt}}{{else}}<span class="muted">Imported history</span>{{end}}</td><td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/grid?month={{.Month}}">Grid</a><a class="btn small outline" href="/budgets?month={{.Month}}">Budget</a><a class="btn small outline" href="/payments?month={{.Month}}">Payments</a><a class="btn small outline" href="/reports/heads?from={{.Month}}&to={{.Month}}">Report</a></span></td></tr>{{else}}<tr><td colspan="9" class="empty" data-label="">No monthly plans yet. <a href="/months">Open a month</a> to start one.</td></tr>{{end}}</tbody></table></div>
 {{template "bottom" .}}
 {{end}}
 
@@ -1398,25 +1419,30 @@ const templates = `
   {{range .Approvers}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
 </template>
 
-<div class="overlay" id="user-new" hidden>
+{{/* A refused create comes back with this drawer open (data-open-on-load),
+     the reason inline and what was typed still in place, rather than a
+     full-page error whose Back button closed it (ui-1). The password is the
+     one field never echoed back into the page. */}}
+<div class="overlay" id="user-new" {{if .NewUser.Open}}data-open-on-load{{else}}hidden{{end}}>
   <div class="sheet">
     <form class="setup-form" method="post" action="/users">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <div class="sh-head"><div><h2>Add user</h2><p class="sh-sub">They can be given more roles once they exist.</p></div><button class="sh-close" type="button" data-close="user-new">✕</button></div>
       <div class="sh-body stack-12">
-        <div class="field"><label for="nu-email">Email</label><input id="nu-email" name="email" type="email" required></div>
-        <div class="field"><label for="nu-name">Name</label><input id="nu-name" name="name" required></div>
+        {{if .NewUser.Error}}<div class="alert error" role="alert">{{.NewUser.Error}} The password is never kept, so enter it again.</div>{{end}}
+        <div class="field"><label for="nu-email">Email</label><input id="nu-email" name="email" type="email" value="{{.NewUser.Email}}" required></div>
+        <div class="field"><label for="nu-name">Name</label><input id="nu-name" name="name" value="{{.NewUser.Name}}" required></div>
         {{/* The real roles, the same ones the edit panel offers. This used to be
              a two-value "Data entry / Admin" select taken from the superseded
              users.role column: it could not create a requester or an approver,
              and "Data entry" was mapped to the Accounts role, which can settle
              and void payments. */}}
         <div class="field"><span class="flabel">Roles <span class="req" aria-hidden="true">*</span></span>
-          <div class="stack-8">{{range .AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}"> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}</div>
+          <div class="stack-8">{{range .AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}"{{if index $.NewUser.RoleIDs .ID}} checked{{end}}> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}</div>
           <span class="hint">A person can hold several roles at once. Their permissions are everything their roles allow.</span>
         </div>
         <div class="field"><label for="nu-pw">Password</label><input id="nu-pw" name="password" type="password" minlength="12" required></div>
-        <label class="checkline"><input type="checkbox" name="active" checked> Active</label>
+        <label class="checkline"><input type="checkbox" name="active" {{if or (not .NewUser.Open) .NewUser.Active}}checked{{end}}> Active</label>
       </div>
       <div class="sh-foot"><button class="btn outline" type="button" data-close="user-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Add User</button></div>
     </form>
@@ -1506,10 +1532,10 @@ const templates = `
     <tfoot>
       <tr>
         <td data-label="">{{len .Vendors}} shown of {{.VendorStats.Total}}</td>
-        <td data-label=""></td><td data-label=""></td><td data-label=""></td>
+        <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
         <td class="num" data-label="Paid this year">{{money .VendorPaidTotal}}</td>
         <td class="c" data-label="Open">{{.VendorOpenTotal}}</td>
-        <td data-label=""></td>
+        <td class="d-only" data-label=""></td>
       </tr>
     </tfoot>
   </table>
@@ -3881,11 +3907,14 @@ const templates = `
     <td data-label="Repayment notes">{{if .RepaymentNotes}}{{.RepaymentNotes}}{{else}}Not recorded{{end}}</td>
   </tr>{{else}}<tr><td colspan="11" class="empty" data-label="">No recoverable payments match these filters.</td></tr>{{end}}</tbody>
   <tfoot><tr>
+    {{/* The spacers only hold the Amount under its column on a desktop. Below
+         860px the tfoot restacks into a card and each empty cell became a
+         blank stripe, so they are .d-only (recoverables-6). */}}
     <td data-label="">{{len .Recoverables}} shown</td>
-    <td data-label=""></td><td data-label=""></td><td data-label=""></td>
+    <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
     <td class="num" data-label="Amount">{{money .RecoverableTotal}}</td>
-    <td data-label=""></td><td data-label=""></td><td data-label=""></td>
-    <td data-label=""></td><td data-label=""></td><td data-label=""></td>
+    <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
+    <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
   </tr></tfoot>
 </table></div>
 {{template "bottom" .}}

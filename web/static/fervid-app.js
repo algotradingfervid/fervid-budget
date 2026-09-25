@@ -595,12 +595,22 @@
   /* Boot, and re-boot after every htmx swap                           */
   /* ---------------------------------------------------------------- */
 
+  /* A sheet the server renders already open — a form it refused, sent back
+     with the reader's input and an inline error — joins the stack as if the
+     reader had opened it, so Escape, the focus trap and Cancel all work. */
+  function openServedDialogs(root) {
+    Array.prototype.forEach.call(root.querySelectorAll(".overlay[data-open-on-load]:not([hidden])"), function (el) {
+      openDialog(el, null);
+    });
+  }
+
   function init() {
     initAccordions(document);
     syncConditionals(document);
     initMoneyFields(document);
     initDifferenceBanner(document);
     initRoleMatrix(document);
+    openServedDialogs(document);
   }
 
   document.addEventListener("htmx:afterSwap", function () { init(); });

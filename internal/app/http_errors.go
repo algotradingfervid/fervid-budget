@@ -161,7 +161,10 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 // isFragmentRequest reports whether htmx is swapping part of a page rather
 // than loading a whole one. htmx sets HX-Request on every request it makes.
 func isFragmentRequest(r *http.Request) bool {
-	return r.Header.Get("HX-Request") != ""
+	// htmx 2 marks a history restore (Back to a pushed URL whose snapshot is
+	// no longer cached) as an HX-Request too, but it replaces the whole body
+	// with the answer, so it needs the full page, shell and all.
+	return r.Header.Get("HX-Request") != "" && r.Header.Get("HX-History-Restore-Request") == ""
 }
 
 // notFound answers every URL the app does not serve. It exists because the
