@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from './fixtures';
+import { createApprovedRequest, expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 
 /**
@@ -22,6 +22,40 @@ async function navRoutes(page: Page): Promise<string[]> {
   const hrefs = await page.locator(selector).evaluateAll(nodes =>
     nodes.map(n => (n as HTMLAnchorElement).getAttribute('href') || '').filter(Boolean));
   return [...new Set(hrefs)];
+}
+
+const GUTTER_PX = 16; // the narrowest side gutter the content column may have, at any width
+
+/**
+ * Blocks of the content column that sit against an edge of the screen, or
+ * against its top. Every direct child of .page-inner must be inset from both
+ * sides of main.page by at least GUTTER_PX, and the first one must not start at
+ * the top of main.page. The page banner and grid header are the exception: they
+ * are bands drawn edge to edge on purpose, and carry the gutter as padding.
+ */
+async function flushBlocks(page: Page, min: number): Promise<string[]> {
+  return page.evaluate((min: number) => {
+    const main = document.querySelector('main.page');
+    const inner = main?.querySelector(':scope > .page-inner');
+    if (!main || !inner) return ['no main.page > .page-inner'];
+    const m = main.getBoundingClientRect();
+    const bad: string[] = [];
+    let first = true;
+    for (const el of Array.from(inner.children)) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      const band = el.matches('.page-banner, .gridhead');
+      const label = `${el.tagName.toLowerCase()}.${Array.from(el.classList).join('.')}`;
+      if (first && !band && r.top - m.top < min - 0.5) bad.push(`${label} starts ${Math.round(r.top - m.top)}px from the top`);
+      if (first && band && Math.abs(r.top - m.top) > 0.5) bad.push(`${label} band starts ${Math.round(r.top - m.top)}px below the top`);
+      first = false;
+      if (band) continue;
+      const left = r.left - m.left;
+      const right = m.right - r.right;
+      if (left < min - 0.5 || right < min - 0.5) bad.push(`${label} inset ${Math.round(left)}px/${Math.round(right)}px`);
+    }
+    return bad;
+  }, min);
 }
 
 test.describe('UI/UX quality', () => {
@@ -63,6 +97,7 @@ test.describe('UI/UX quality', () => {
       if (mobile && state.sidebar) problems.push(`${route}: sidebar visible on a phone`);
       if (mobile && !state.tabbar) problems.push(`${route}: tab bar missing on a phone`);
       if (!mobile && !state.sidebar) problems.push(`${route}: sidebar missing on desktop`);
+      for (const flush of await flushBlocks(adminPage, GUTTER_PX)) problems.push(`${route}: ${flush}`);
 
       // Nothing may be trapped under the fixed tab bar. Mid-scroll the bar
       // covers content by design -- that is what scrolling is for -- so the
@@ -116,6 +151,50 @@ test.describe('UI/UX quality', () => {
     }
 
     expect(problems, `checked ${routes.length} screens:\n${problems.join('\n')}`).toEqual([]);
+  });
+
+  // The nav walk above never reaches a request's own page or a confirmation
+  // step, and those are the two screens that open without a page banner and
+  // carry the longest lines. Both are checked at the phone and desktop widths
+  // the product is designed for.
+  test('request detail and the deactivation warning keep the gutter at 390 and 1440', async ({ adminPage, runId }) => {
+    const raised = await createApprovedRequest(adminPage, runId, { amount: '1200.00' });
+    const problems: string[] = [];
+
+    for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+      await adminPage.setViewportSize(viewport);
+      const at = `${viewport.width}px`;
+
+      await adminPage.goto(`/requests/${raised.id}`);
+      for (const flush of await flushBlocks(adminPage, GUTTER_PX)) problems.push(`${at} /requests/${raised.id}: ${flush}`);
+
+      // Switching off the head the request is filed under stops on a warning
+      // page. Nothing is saved until it is confirmed, and it is not confirmed.
+      await adminPage.goto('/heads');
+      const row = adminPage.locator('tbody tr:has(input[value="Office Rent"])').filter({
+        has: adminPage.locator('select[name="project_id"] option:checked', { hasText: /^Operations$/ })
+      });
+      await row.locator('input[name="active"]').uncheck();
+      await row.getByRole('button', { name: 'Save' }).click();
+      await expect(adminPage.locator('h1')).toHaveText('Deactivate Office Rent?');
+
+      const fit = await adminPage.evaluate(() => {
+        const label = document.querySelector('main label.checkline')!.getBoundingClientRect();
+        return {
+          overflow: document.documentElement.scrollWidth - window.innerWidth,
+          labelRight: label.right,
+          width: window.innerWidth
+        };
+      });
+      if (fit.overflow > 0) problems.push(`${at} deactivation warning: scrolls sideways by ${fit.overflow}px`);
+      if (fit.labelRight > fit.width) problems.push(`${at} deactivation warning: confirm label runs ${Math.round(fit.labelRight - fit.width)}px off screen`);
+      for (const flush of await flushBlocks(adminPage, GUTTER_PX)) problems.push(`${at} deactivation warning: ${flush}`);
+
+      await adminPage.getByRole('link', { name: 'Cancel' }).click();
+      await expect(adminPage).toHaveURL(/\/heads$/);
+    }
+
+    expect(problems, problems.join('\n')).toEqual([]);
   });
 
   test('keyboard focus is always visible', async ({ adminPage }) => {
