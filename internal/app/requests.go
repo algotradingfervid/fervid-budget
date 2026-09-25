@@ -792,16 +792,7 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 	data.FormType = req.Type
 	data.Categories = categoriesForType(req.Type, data.Categories)
 	data.RecCategory = resolveRecoverableCategory(req.RecoverableCategory, data.Categories)
-	// A row from before deposits were their own type: an employee advance filed
-	// under EMD, ICD or another deposit category. It still reads as it was, but
-	// this form fixes the category, so it is offered back as an Employee advance
-	// and the banner says what saving will do (form-1, kept readable).
-	if req.Type == "employee_advance" && req.Treatment == "recoverable" && req.RecoverableCategory != "" && data.RecCategory.Code == "" {
-		data.Request2.RecoverableCategory = normalizeRecoverableCategory("", req.Type, data.Categories)
-		data.RecCategory = resolveRecoverableCategory(data.Request2.RecoverableCategory, data.Categories)
-		data.Warning = "This employee advance was recorded under the " + recoverableLabel(req.RecoverableCategory) +
-			" category before deposits and guarantees became their own request type. Saving files it as an Employee advance, which pays the person raising it — if the money goes to a counterparty, withdraw it and raise a deposit or guarantee instead."
-	}
+	noteLegacyDeposit(&data, req)
 	if err := a.offerRetiredRefs(r, &data, req); err != nil {
 		return PageData{}, err
 	}
@@ -815,6 +806,57 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 		return PageData{}, err
 	}
 	return data, nil
+}
+
+// legacyDepositCategory is the deposit category an employee advance was
+// recorded under before deposits and guarantees were their own request type
+// (form-1), or "" for any other row. The test is the stored code itself, not
+// whether it resolves in the active list: retiring the Employee advance
+// category does not turn every employee advance into a legacy deposit.
+func legacyDepositCategory(req store.Request) string {
+	if req.Type == "employee_advance" && req.Treatment == "recoverable" &&
+		req.RecoverableCategory != "" && req.RecoverableCategory != "employee_advance" {
+		return req.RecoverableCategory
+	}
+	return ""
+}
+
+// noteLegacyDeposit is the edit and returned screens' handling of a row from
+// before deposits were their own type: an employee advance filed under EMD, ICD
+// or another deposit category. It still reads as it was recorded, but both
+// screens fix the category, so it is offered back as an Employee advance, and
+// the banner says what saving will do *before* the press (form-1, kept
+// readable). The returned screen's one-press resubmit used to do this without
+// a word, because the banner was rendered on the full edit form only.
+//
+// The way out for money that goes to a counterparty depends on the status: a
+// pending request can be withdrawn now, while a returned one can only be
+// resubmitted first (returned → pending is its one legal transition), so the
+// sentence says so rather than pointing at a control the screen does not have.
+func noteLegacyDeposit(data *PageData, req store.Request) {
+	code := legacyDepositCategory(req)
+	if code == "" || data.LegacyCategory != "" {
+		return
+	}
+	data.LegacyCategory = code
+	data.Request2.RecoverableCategory = normalizeRecoverableCategory("", req.Type, data.Categories)
+	data.RecCategory = resolveRecoverableCategory(data.Request2.RecoverableCategory, data.Categories)
+	body := "This employee advance was recorded under the " + recoverableLabel(code) +
+		" category before deposits and guarantees became their own request type. Saving files it as an Employee advance, which pays the person raising it — " + req.RequesterName + ", not "
+	if strings.TrimSpace(req.Counterparty) != "" {
+		body += req.Counterparty + ". "
+	} else {
+		body += "a counterparty. "
+	}
+	if req.Status == "returned" {
+		body += "If the money goes to a counterparty, resubmit it, withdraw it, and raise a deposit or guarantee instead."
+	} else {
+		body += "If the money goes to a counterparty, withdraw it and raise a deposit or guarantee instead."
+	}
+	data.Warnings = append(data.Warnings, Warning{
+		Title: "Recorded before deposits and guarantees were their own request type",
+		Body:  body,
+	})
 }
 
 // offerRetiredRefs puts a project or head that was retired after the request was
@@ -868,7 +910,10 @@ func (a *App) offerRetiredRefs(r *http.Request, data *PageData, req store.Reques
 		warning = "The " + strings.Join(retired, " and ") + " this request charges were retired after it was raised. Choose a project and head that are still open before saving."
 	}
 	if warning != "" {
-		data.Warning = strings.TrimSpace(data.Warning + " " + warning)
+		data.Warnings = append(data.Warnings, Warning{
+			Title: "This request charges something that has since been retired",
+			Body:  warning,
+		})
 	}
 	return nil
 }
@@ -960,6 +1005,10 @@ func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored 
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The posted values already say Employee advance, so the edited row is not
+	// legacy — but the stored one still is, and the notice about what saving
+	// does must not vanish because one field was refused.
+	noteLegacyDeposit(&data, stored)
 	data.Error = message
 	name := "request_edit"
 	if stored.Status == "returned" {

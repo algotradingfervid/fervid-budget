@@ -2835,6 +2835,22 @@ const templates = `
 
      The type is not editable. It is what the request *is*, and it travels as
      the same hidden input the new-request form carries (A16). */}}
+{{/* form_warnings renders every caution a form carries, one banner each with
+     its own heading, so a legacy-category notice is never titled with a
+     retirement it does not have. The legacy notice links to the deposit form it
+     points the reader at. */}}
+{{define "form_warnings"}}
+{{range .Warnings}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">!</span>
+  <div><b>{{.Title}}</b><p>{{.Body}}</p></div>
+</div>
+{{end}}
+{{if .LegacyCategory}}
+<p class="hint">Raise a deposit or guarantee at <a href="/requests/new?type=recoverable">New request → Deposit or guarantee</a>; it is paid to the counterparty you name.</p>
+{{end}}
+{{end}}
+
 {{define "request_edit"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -2854,16 +2870,13 @@ const templates = `
   </div>
 </div>
 
-{{/* T12 (form-3): a project or head retired after the request was raised is
-     offered back in the selects below, marked, and this says why it has to be
-     chosen again — the store still refuses a retired head, and the refusal used
-     to be "project and head are required", about a request that had both. */}}
-{{if .Warning}}
-<div class="banner warn">
-  <span class="b-ico" aria-hidden="true">!</span>
-  <div><b>This request charges something that has since been retired</b><p>{{.Warning}}</p></div>
-</div>
-{{end}}
+{{/* Each warning carries its own heading. T12 (form-3): a project or head
+     retired after the request was raised is offered back in the selects below,
+     marked, and its warning says why it has to be chosen again — the store still
+     refuses a retired head, and the refusal used to be "project and head are
+     required", about a request that had both. form-1: a legacy deposit filed as
+     an employee advance says what saving does before the press. */}}
+{{template "form_warnings" .}}
 
 <form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -3025,6 +3038,12 @@ const templates = `
 <p class="hint">Returned is not rejected. This request keeps its number and its history — correct it
   and send it again.</p>
 
+{{/* The same cautions the full edit form shows. A legacy deposit filed as an
+     employee advance is reclassified by the one-press resubmit below exactly as
+     it is by "Edit every field", so the reader is told here, before the press,
+     and not only on the screen they might never open (form-1, review). */}}
+{{template "form_warnings" .}}
+
 <form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="type" value="{{.FormType}}">
@@ -3095,8 +3114,15 @@ const templates = `
          its address, even though the route permits it. The inline fields above
          cover the common correction; this is the way to the rest of them. */}}
     {{if .Perms.Can "request" "edit"}}<a class="btn outline" href="/requests/{{.Request2.ID}}/edit">Edit every field</a>{{end}}
+    {{/* On a legacy row both presses file it as an Employee advance (the store
+         accepts nothing else for this type), so the buttons say so. */}}
+    {{if .LegacyCategory}}
+    <button class="btn outline" type="submit" name="submit_action" value="save">Save as an Employee advance</button>
+    <button class="btn primary" type="submit" name="submit_action" value="resubmit">Resubmit as an Employee advance</button>
+    {{else}}
     <button class="btn outline" type="submit" name="submit_action" value="save">Save corrections</button>
     <button class="btn primary" type="submit" name="submit_action" value="resubmit">Resubmit for approval</button>
+    {{end}}
   </div>
 </form>
 

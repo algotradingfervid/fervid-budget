@@ -489,3 +489,183 @@ func mustUser(t *testing.T, s *appTestServer, id int64) store.User {
 	}
 	return u
 }
+
+// seedLegacyDepositAsEmployeeAdvance writes the row the review found: an
+// employee advance recorded under a deposit category before deposits were their
+// own request type. Only raw SQL can write it now, which is the point.
+func seedLegacyDepositAsEmployeeAdvance(t *testing.T, s *appTestServer, requester store.User, approver int64) int64 {
+	t.Helper()
+	var catID int64
+	if err := s.st.DB().QueryRow(`SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&catID); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,amount,purpose,short_title,advance_reason,counterparty,expected_return_date,repayment_notes,vendor_payee,requester_id,manager_id,submitted_at)
+		VALUES('PR-2026-000901','pending','recoverable','employee_advance','icd',?,100000000,'deposit','ICD to Meridian','deposit','Meridian Holdings Pvt Ltd','2027-03-31','at maturity',?,?,?,CURRENT_TIMESTAMP)`,
+		catID, requester.Name, requester.ID, approver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+// form-1 / recoverables-1, review round 2 — the returned screen's one-press
+// "Resubmit for approval" used to file a legacy deposit-as-employee-advance
+// under the Employee advance category without a word: the banner explaining
+// the reclassification was rendered on the full edit form only. The returned
+// screen now carries the same notice, the buttons name what they do, and the
+// notice survives a refused attempt.
+func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
+	s := newAppTestServer(t)
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	id := seedLegacyDepositAsEmployeeAdvance(t, s, requester, approver)
+	if err := s.st.ReturnRequest(s.ctx, mustUser(t, s, approver), id, "please fix"); err != nil {
+		t.Fatal(err)
+	}
+	s.login("rhea@example.test", "RheaPass12345")
+
+	returned := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	for _, want := range []string{
+		"Recorded before deposits and guarantees were their own request type",
+		"ICD — inter-corporate deposit",
+		"Meridian Holdings Pvt Ltd",
+		`href="/requests/new?type=recoverable"`,
+		">Resubmit as an Employee advance<",
+		">Save as an Employee advance<",
+	} {
+		if !strings.Contains(returned, want) {
+			t.Fatalf("the returned screen is missing %q: %s", want, firstLines(returned))
+		}
+	}
+	if strings.Contains(returned, "since been retired") {
+		t.Fatal("the returned screen titles the legacy notice with a retirement it does not have")
+	}
+
+	// A refused attempt keeps the notice: the re-rendered screen is built from
+	// the posted values, which already say Employee advance.
+	base := url.Values{
+		"type": {"employee_advance"}, "treatment": {"recoverable"}, "recoverable_category": {"employee_advance"},
+		"short_title": {"ICD to Meridian"}, "purpose": {"deposit"}, "advance_reason": {"deposit"},
+		"counterparty": {"Meridian Holdings Pvt Ltd"}, "expected_return_date": {"2027-03-31"},
+		"repayment_notes": {"at maturity"}, "manager_id": {itoa64(approver)}, "submit_action": {"resubmit"},
+	}
+	refused := url.Values{}
+	for k, v := range base {
+		refused[k] = v
+	}
+	refused.Set("amount", "0")
+	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), refused)
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "Recorded before deposits and guarantees were their own request type") || !strings.Contains(body, ">Resubmit as an Employee advance<") {
+		t.Fatalf("the refused returned screen lost the legacy notice: %s", firstLines(body))
+	}
+	after, err := s.st.Request(s.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.RecoverableCategory != "icd" || after.Status != "returned" {
+		t.Fatalf("a refused resubmit changed the row: %+v", after)
+	}
+
+	// The stated consequence, when the requester takes it.
+	base.Set("amount", "10,00,000")
+	resp = s.postForm(fmt.Sprintf("/requests/%d/edit", id), base)
+	requireStatus(t, resp, http.StatusSeeOther)
+	_ = responseBody(t, resp)
+	after, err = s.st.Request(s.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.RecoverableCategory != "employee_advance" || after.Status != "pending" {
+		t.Fatalf("after the stated resubmit = %+v", after)
+	}
+}
+
+// form-1 / form-3, review round 2 — the edit form's warn banner had one
+// hard-coded heading, "This request charges something that has since been
+// retired", whatever the warning was about. Each warning now carries its own
+// heading, and a request that is both legacy and on a retired project shows
+// both, separately.
+func TestEditFormWarningsCarryTheirOwnHeadings(t *testing.T) {
+	s := newAppTestServer(t)
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	id := seedLegacyDepositAsEmployeeAdvance(t, s, requester, approver)
+	s.login("rhea@example.test", "RheaPass12345")
+
+	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	if !strings.Contains(edit, "<b>Recorded before deposits and guarantees were their own request type</b>") {
+		t.Fatalf("the legacy warning has no heading of its own: %s", firstLines(edit))
+	}
+	if strings.Contains(edit, "since been retired") {
+		t.Fatal("the legacy warning is titled with a retirement the request does not have")
+	}
+
+	// Now retire the project the legacy row is linked to: two warnings, two headings.
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := s.st.UpsertProject(s.ctx, 0, "Legacy Plant", true, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET project_id=? WHERE id=?`, projectID, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.UpsertProject(s.ctx, projectID, "Legacy Plant", false, 5); err != nil {
+		t.Fatal(err)
+	}
+	_ = admin
+	both := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	if !strings.Contains(both, "<b>Recorded before deposits and guarantees were their own request type</b>") ||
+		!strings.Contains(both, "<b>This request charges something that has since been retired</b>") {
+		t.Fatalf("the two warnings do not each carry their heading: %s", firstLines(both))
+	}
+	if n := strings.Count(both, `class="banner warn"`); n != 2 {
+		t.Fatalf("%d warn banners, want one per warning", n)
+	}
+}
+
+// form-1, review round 2 — retiring the Employee advance category made
+// requestEditData mistake every ordinary employee advance for a legacy deposit,
+// and tell its requester it "was recorded under the Employee advance category
+// before deposits and guarantees became their own request type".
+func TestRetiringTheEmployeeAdvanceCategoryIsNotMistakenForALegacyRow(t *testing.T) {
+	s := newAppTestServer(t)
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{
+		Treatment: "recoverable", Type: "employee_advance", RecoverableCategory: "employee_advance",
+		ShortTitle: "Site cash", Amount: 500000, Purpose: "site mobilisation", AdvanceReason: "site cash",
+		ExpectedReturnDate: "2026-12-31", RepaymentNotes: "settled against bills", ManagerID: approver,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cats, err := s.st.ListRecoverableCategories(s.ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cats {
+		if c.Code == "employee_advance" {
+			if _, err := s.st.UpsertRecoverableCategory(s.ctx, admin, c.ID, c.Name, false, false, false, c.SortOrder); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	s.login("rhea@example.test", "RheaPass12345")
+	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	if strings.Contains(edit, "before deposits and guarantees") {
+		t.Fatalf("an ordinary employee advance is called a legacy deposit because its category was retired: %s", firstLines(edit))
+	}
+	if !strings.Contains(edit, "The Employee advance category has been retired by your administrator") {
+		t.Fatalf("the retired category is not named as the reason: %s", firstLines(edit))
+	}
+}
