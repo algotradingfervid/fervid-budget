@@ -367,6 +367,13 @@ const templates = `
 
      The ₹ lives in the .money-field's .cur prefix, so the input carries
      amountValue and never money — money.FormatPaise already has one. */}}
+{{/* One element with id lock-banner, always rendered so htmx has a target:
+     payment_form draws it inline, and GET /payments/lock-status returns it on
+     its own when "Paid on" changes (F-G-020). It sits inside the Payment
+     fieldset's .form-grid, so the wrapper is display:contents — empty, it is no
+     grid item and leaves no gap — and the banner itself spans the row. */}}
+{{define "payment_lock_banner"}}<div id="lock-banner" style="display:contents">{{if .Locked}}<div class="locked" role="status" style="grid-column:1/-1;margin:0">{{.Month}} is locked, so a payment dated in it will be refused. Pick a date in an open month, or ask for {{.Month}} to be unlocked.</div>{{end}}</div>{{end}}
+
 {{define "payment_form"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -383,14 +390,6 @@ const templates = `
   <span class="rb-meta">since {{hhmm .Request2.ProcessingAt}} · nobody else can process this request</span>
   {{if .Perms.Can "reservation" "release"}}<span class="rb-actions"><a class="btn small outline" href="/requests/{{.Request2.ID}}/reservation">Release</a></span>{{end}}
 </div>
-
-{{/* The lock, before the form rather than after it. The grid renders "Locked" in
-     place of its Add buttons and /budgets carries a banner; this screen carried
-     nothing, so an accountant filled in the amount, the date, the mode, the
-     reference and the note and only learned the period was closed on the
-     confirmation (F-G-020). The reservation survives the refusal, so nothing is
-     lost — but nothing warned them either. */}}
-{{if .Locked}}<div class="locked" role="status">{{.Month}} is locked, so a payment dated in it will be refused. Pick a date in an open month, or ask for {{.Month}} to be unlocked.</div>{{end}}
 
 <div class="card" style="margin-bottom:14px">
   <div class="card-head"><h2>What was approved</h2><a class="small" href="/requests/{{.Request2.ID}}">Open the request →</a></div>
@@ -430,7 +429,19 @@ const templates = `
             <p>You will be asked whether this settles the obligation in full or leaves a balance due.</p></div>
         </div>
       </div>
-      <div class="field span-4 m-half"><label for="paid_on">Paid on <span class="req" aria-hidden="true">*</span></label><input id="paid_on" name="paid_on" type="date" value="{{.Payment.PaidOn}}" required></div>
+      {{/* The lock, before the date rather than after the submit. The grid
+           renders "Locked" in place of its Add buttons and /budgets carries a
+           banner; this screen carried nothing, so an accountant filled in the
+           amount, the date, the mode, the reference and the note and only
+           learned the period was closed on the confirmation (F-G-020). The
+           reservation survives the refusal, so nothing is lost — but nothing
+           warned them either. It sits directly above "Paid on" so it is on
+           screen beside the field that decides it, at every width: the field
+           re-asks GET /payments/lock-status on change and this banner is
+           swapped for the one the new date's month calls for. */}}
+      {{template "payment_lock_banner" .}}
+      <div class="field span-4 m-half"><label for="paid_on">Paid on <span class="req" aria-hidden="true">*</span></label><input id="paid_on" name="paid_on" type="date" value="{{.Payment.PaidOn}}" required
+               hx-get="/payments/lock-status" hx-trigger="change" hx-target="#lock-banner" hx-swap="outerHTML"></div>
       <div class="field span-4 m-half"><label for="payment_mode">Payment mode <span class="req" aria-hidden="true">*</span></label>
         <select id="payment_mode" name="payment_mode" required>
           <option value="">Choose…</option>

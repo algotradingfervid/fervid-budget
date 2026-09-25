@@ -668,6 +668,53 @@ func TestTheLockedMonthFamilyConfirmsItselfAndWarnsInAdvance(t *testing.T) {
 	}
 }
 
+// F-G-020, remaining edge — the entry screen warned about the month it opened
+// on and nothing else, so a locked month typed into "Paid on" afterwards was
+// only met at submit. The date field re-asks GET /payments/lock-status on
+// change, and that fragment is the banner for the month the date names.
+func TestPaymentLockStatusFollowsTheDateField(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, _ := s.seedHead("Lock status")
+	requester := s.seedRequester("lockstatus@example.test", "Lock Status Requester", "LockStatusPass1234")
+	if err := s.st.LockMonth(s.ctx, admin, "2027-11", "Year end"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	fragment := func(query string) string {
+		t.Helper()
+		resp := s.request(http.MethodGet, "/payments/lock-status"+query, nil, "")
+		requireStatus(t, resp, http.StatusOK)
+		body := responseBody(t, resp)
+		if !strings.Contains(body, `id="lock-banner"`) {
+			t.Fatalf("lock-status %s did not return the swap target: %s", query, firstLines(body))
+		}
+		if strings.Contains(body, "<html") || strings.Contains(body, "side-nav") {
+			t.Fatalf("lock-status %s rendered the whole page shell: %s", query, firstLines(body))
+		}
+		return body
+	}
+
+	locked := fragment("?paid_on=2027-11-20")
+	for _, want := range []string{`class="locked"`, "2027-11 is locked"} {
+		if !strings.Contains(locked, want) {
+			t.Fatalf("a date in a locked month carries no %q: %s", want, firstLines(locked))
+		}
+	}
+	for _, query := range []string{"?paid_on=2027-12-01", "?paid_on=not-a-date", "?paid_on=", ""} {
+		if body := fragment(query); strings.Contains(body, `class="locked"`) || strings.Contains(body, "is locked") {
+			t.Fatalf("lock-status %s shows a banner it should not: %s", query, firstLines(body))
+		}
+	}
+
+	// Gated exactly like the form it serves: payment:create.
+	outsider := newAppTestClient(t, s)
+	outsider.login(requester.Email, "LockStatusPass1234")
+	denied := outsider.request(http.MethodGet, "/payments/lock-status?paid_on=2027-11-20", nil, "")
+	requireStatus(t, denied, http.StatusForbidden)
+	_ = responseBody(t, denied)
+}
+
 // F-D-02 — ReserveRequest refuses for three reasons and the conflict screen
 // reported all three as "Someone else took this request before you", about a
 // request nobody held.

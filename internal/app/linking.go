@@ -332,6 +332,27 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 	})
 }
 
+// paymentLockStatus is the banner fragment the "Paid on" field re-asks for on
+// change (F-G-020, remaining edge). The entry screen opens on today's month;
+// an accountant who picked a date in a different, locked month was otherwise
+// met with the refusal only at submit. An empty or malformed date names no
+// month, so it answers the empty wrapper — the field's own validation, and the
+// store's, deal with the date itself. MonthIsLocked rather than IsLocked: a
+// failed read must not be reported as an open month.
+func (a *App) paymentLockStatus(w http.ResponseWriter, r *http.Request) {
+	paidOn := r.URL.Query().Get("paid_on")
+	data := PageData{}
+	if validDateInput(paidOn) {
+		locked, err := a.st.MonthIsLocked(r.Context(), paidOn[:7])
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		data.Month, data.Locked = paidOn[:7], locked
+	}
+	a.renderPartial(w, r, "payment_lock_banner", data)
+}
+
 func (a *App) paymentPickerOptions(w http.ResponseWriter, r *http.Request) {
 	data, err := a.pickerData(r)
 	if err != nil {
