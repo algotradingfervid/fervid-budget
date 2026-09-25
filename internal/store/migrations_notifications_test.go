@@ -52,7 +52,7 @@ var notifyTokenVocabulary = map[string]bool{
 	"number": true, "amount": true, "approved_amount": true, "payee": true,
 	"requester": true, "approver": true, "project": true, "head": true,
 	"purpose": true, "status": true, "needed_by": true, "submitted_on": true,
-	"processing_on": true, "link": true,
+	"processing_on": true, "link": true, "paid_amount": true, "paid_on": true,
 }
 
 var seededTokenPattern = regexp.MustCompile(`\{\{([^{}]*)\}\}`)

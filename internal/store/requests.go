@@ -547,7 +547,7 @@ const requestSelect = `SELECT r.id,r.number,r.status,r.treatment,r.type,r.recove
  r.urgent,r.urgency_reason,r.attachment_exception_reason,
  r.requester_id,COALESCE(ru.name,''),r.manager_id,COALESCE(mu.name,''),
  r.approved_amount,r.approved_by,COALESCE(au.name,''),r.approved_at,
- r.decision_reason,r.cancel_reason,r.on_hold,r.hold_reason,r.processing_by,r.processing_at,
+ r.decision_reason,r.cancel_reason,r.on_hold,r.hold_reason,r.processing_by,COALESCE(pu.name,''),r.processing_at,r.concern_open,
  r.reminder_last_sent,r.submitted_at,r.created_at,r.updated_at
 FROM payment_requests r
 LEFT JOIN projects p ON p.id=r.project_id
@@ -555,13 +555,14 @@ LEFT JOIN heads h ON h.id=r.head_id
 LEFT JOIN vendors v ON v.id=r.vendor_id
 JOIN users ru ON ru.id=r.requester_id
 JOIN users mu ON mu.id=r.manager_id
-LEFT JOIN users au ON au.id=r.approved_by`
+LEFT JOIN users au ON au.id=r.approved_by
+LEFT JOIN users pu ON pu.id=r.processing_by`
 
 func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 	var r Request
 	var catID, projID, headID, vendorID, approvedAmt, approvedBy, processingBy sql.NullInt64
 	var approvedAt, reminder, submitted, processingAt sql.NullTime
-	var urgent, onHold int
+	var urgent, onHold, concernOpen int
 	err := sc.Scan(&r.ID, &r.Number, &r.Status, &r.Treatment, &r.Type, &r.RecoverableCategory, &catID,
 		&projID, &r.Project, &headID, &r.Head,
 		&vendorID, &r.Vendor, &r.VendorGSTIN, &r.VendorPayee, &r.ShortTitle,
@@ -571,7 +572,7 @@ func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 		&urgent, &r.UrgencyReason, &r.AttachmentExceptionReason,
 		&r.RequesterID, &r.RequesterName, &r.ManagerID, &r.ManagerName,
 		&approvedAmt, &approvedBy, &r.ApprovedByName, &approvedAt,
-		&r.DecisionReason, &r.CancelReason, &onHold, &r.HoldReason, &processingBy, &processingAt,
+		&r.DecisionReason, &r.CancelReason, &onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt, &concernOpen,
 		&reminder, &submitted, &r.CreatedAt, &r.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return r, ErrNotFound
@@ -581,6 +582,7 @@ func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 	}
 	r.Urgent = urgent == 1
 	r.OnHold = onHold == 1
+	r.ConcernOpen = concernOpen == 1
 	for _, p := range []struct {
 		src sql.NullInt64
 		dst **int64
@@ -1530,7 +1532,8 @@ func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int
 		return 0, err
 	}
 	defer tx.Rollback()
-	if _, err := requestInTx(ctx, tx, requestID); err != nil {
+	before, err := requestInTx(ctx, tx, requestID)
+	if err != nil {
 		return 0, err
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO request_comments(request_id,author_id,body) VALUES(?,?,?)`, requestID, actor.ID, body)
@@ -1540,6 +1543,15 @@ func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int
 	id, err := res.LastInsertId()
 	if err != nil {
 		return 0, err
+	}
+	// A concern is a question put to the accountant who recorded the shortfall,
+	// so their reply is what answers it — not the manager's follow-up and not the
+	// requester's. Nothing but the display changes: the request stays in
+	// partial_review and the manager still owes the decision.
+	if before.Status == "partial_review" && before.ConcernOpen && before.ProcessingBy != nil && *before.ProcessingBy == actor.ID {
+		if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET concern_open=0, updated_at=CURRENT_TIMESTAMP WHERE id=?`, requestID); err != nil {
+			return 0, err
+		}
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "comment", EntityType: "payment_request", EntityID: &requestID,
@@ -1825,8 +1837,14 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 	case "assigned":
 		where = append(where, `r.manager_id=?`)
 		args = append(args, opts.ViewerID)
+	case "held":
+		where = append(where, `r.processing_by=?`)
+		args = append(args, opts.ViewerID)
 	default:
 		where = append(where, `0`)
+	}
+	if opts.ConcernOpen {
+		where = append(where, `r.concern_open=1`)
 	}
 	placeholders := func(n int) string {
 		return strings.TrimSuffix(strings.Repeat("?,", n), ",")
@@ -1839,9 +1857,14 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 		}
 	case opts.Bucket == "needs-me":
 		// The one line the whole design turns on: who owes the next action.
+		//
+		// A partial review is the manager's decision, and an open concern on one is
+		// the holder's answer to give — both were missing, so a manager's "Needs me"
+		// said 0 while the request itself said "Waiting on you" (settlement-3/-8).
 		where = append(where, `((r.requester_id=? AND r.status='returned')
- OR (r.manager_id=? AND r.status IN ('pending','cancellation_requested')))`)
-		args = append(args, opts.ViewerID, opts.ViewerID)
+ OR (r.manager_id=? AND r.status IN ('pending','cancellation_requested','partial_review'))
+ OR (r.processing_by=? AND r.status='partial_review' AND r.concern_open=1))`)
+		args = append(args, opts.ViewerID, opts.ViewerID, opts.ViewerID)
 	case opts.Bucket != "" && opts.Bucket != "all":
 		statuses := requestBuckets[opts.Bucket]
 		if len(statuses) == 0 {

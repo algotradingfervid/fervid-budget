@@ -398,10 +398,15 @@ type Request struct {
 	ProcessingBy              *int64
 	ProcessingAt              *time.Time
 	ProcessingByName          string // joined name of the reserver; "" when unreserved
-	ReminderLastSent          *time.Time
-	SubmittedAt               *time.Time
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	// ConcernOpen is set by RaiseConcern and cleared when the accountant who
+	// holds the request answers in the conversation. It is a flag, not a status
+	// (the request stays 'partial_review'), exactly as on_hold is a flag on
+	// 'approved': the display reads "Partial — under discussion" from it.
+	ConcernOpen      bool
+	ReminderLastSent *time.Time
+	SubmittedAt      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type RequestInput struct {
@@ -437,16 +442,19 @@ type RequestInput struct {
 }
 
 type RequestListOptions struct {
-	Scope     string // "own" | "assigned" | "all"
-	ViewerID  int64
-	Status    string   // "" or "all" = any status; otherwise exact status
-	Statuses  []string // optional explicit set; wins over Status when non-empty
-	Bucket    string   // "" | "open" | "closed" | "needs-me" | "all"
-	Type      string
-	Treatment string
-	ProjectID int64
-	Query     string
-	Limit     int
+	Scope    string // "own" | "assigned" | "held" | "all" — "held" is the viewer's own reservations
+	ViewerID int64
+	Status   string   // "" or "all" = any status; otherwise exact status
+	Statuses []string // optional explicit set; wins over Status when non-empty
+	Bucket   string   // "" | "open" | "closed" | "needs-me" | "all"
+	// ConcernOpen narrows to partial reviews whose concern Accounts has not
+	// yet answered — the accountant's "concerns to answer" list.
+	ConcernOpen bool
+	Type        string
+	Treatment   string
+	ProjectID   int64
+	Query       string
+	Limit       int
 }
 
 // StaleReservation is how long a reservation may sit before the queue nudges.

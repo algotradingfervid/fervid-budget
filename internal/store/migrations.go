@@ -376,6 +376,36 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "notification_reassigned_wording",
 		Up:      UpReassignedNotificationWording,
 	},
+	// 2026-09-25 fix wave, settlement-1: the four settlement templates filled
+	// the amount paid from {{amount}}, the requested figure. The seeded defaults
+	// now say {{paid_amount}}; this carries the correction onto an installed
+	// database, and only onto rows still on the old default. (Written as v13 on
+	// the settlement branch; renumbered at integration because the approver
+	// branch's v13 merged first.)
+	{
+		Version: 14,
+		Name:    "notification_paid_amount",
+		Up:      UpPaidAmountTemplates,
+	},
+	// settlement-8: a concern the manager raised, not yet answered by Accounts,
+	// is displayed as "Partial — under discussion". It is a flag on the row,
+	// never a status — the state machine is unchanged.
+	{
+		Version: 15,
+		Name:    "request_concern_open",
+		Up:      upRequestConcernOpen,
+	},
+}
+
+// upRequestConcernOpen adds payment_requests.concern_open, guarded by
+// columnExists exactly as every other additive column migration is.
+func upRequestConcernOpen(tx *sql.Tx) error {
+	has, err := columnExists(tx, "payment_requests", "concern_open")
+	if err != nil || has {
+		return err
+	}
+	_, err = tx.Exec(`ALTER TABLE payment_requests ADD COLUMN concern_open INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // upApproverAttachmentView lets the Manager role read the documents attached to

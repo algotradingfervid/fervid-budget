@@ -30,7 +30,13 @@ type RequestView struct {
 	RequesterName, RequesterEmail                                  string
 	ManagerName, ManagerEmail                                      string
 	SubmittedOn, ProcessingOn                                      string
-	Link                                                           string
+	// PaidAmount and PaidOn describe the payment linked to the request, and
+	// are zero until one exists. They are what the settlement events mean by
+	// "paid": Amount is what was asked for, ApprovedAmount what was signed
+	// off, and neither is what left the bank (settlement-1).
+	PaidAmount int64
+	PaidOn     string
+	Link       string
 }
 
 // Notify writes the in-app rows first — they always fire (G19) — and then, only
@@ -250,6 +256,15 @@ func (s *Service) newRequestView(ctx context.Context, req store.Request, app sto
 	if req.ProcessingAt != nil {
 		v.ProcessingOn = req.ProcessingAt.UTC().Format("2006-01-02")
 	}
+	// No payment yet is the ordinary case for most events, so ErrNotFound is
+	// an answer here, not a failure: the two paid fields simply stay empty.
+	pay, err := s.st.PaymentForRequest(ctx, req.ID)
+	switch {
+	case err == nil:
+		v.PaidAmount, v.PaidOn = pay.Amount, pay.PaidOn
+	case !errors.Is(err, store.ErrNotFound):
+		return RequestView{}, err
+	}
 	return v, nil
 }
 
@@ -295,6 +310,8 @@ func notifyFields(v RequestView) map[string]string {
 		"needed_by":       v.NeededBy,
 		"submitted_on":    v.SubmittedOn,
 		"processing_on":   v.ProcessingOn,
+		"paid_amount":     money.FormatPaise(v.PaidAmount),
+		"paid_on":         v.PaidOn,
 		"link":            v.Link,
 	}
 }
@@ -302,7 +319,7 @@ func notifyFields(v RequestView) map[string]string {
 // NotifyFieldNames is the vocabulary the admin sheet renders in its .hint.
 func NotifyFieldNames() []string {
 	return []string{"number", "amount", "approved_amount", "payee", "requester", "approver",
-		"project", "head", "purpose", "status", "needed_by", "submitted_on", "processing_on", "link"}
+		"project", "head", "purpose", "status", "needed_by", "submitted_on", "processing_on", "paid_amount", "paid_on", "link"}
 }
 
 // renderTemplate substitutes {{token}} placeholders. It deliberately does NOT

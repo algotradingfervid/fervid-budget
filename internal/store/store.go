@@ -1365,7 +1365,8 @@ func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note st
 	if before.ManagerID != actor.ID {
 		return ErrForbidden
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='completed_partial', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='partial_review'`, id)
+	// concern_open goes with it: the discussion ends with the decision.
+	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='completed_partial', concern_open=0, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='partial_review'`, id)
 	if err != nil {
 		return err
 	}
@@ -1412,6 +1413,12 @@ func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment 
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO request_comments(request_id,author_id,body) VALUES(?,?,?)`, id, actor.ID, comment); err != nil {
 		return classify(err)
+	}
+	// The concern is now open until the holder answers (AddRequestComment
+	// clears it). The status is untouched: "under discussion" is how the
+	// request is displayed, not a state it moves to.
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET concern_open=1, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+		return err
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "concern", EntityType: "payment_request", EntityID: &id, Summary: "Raised concern: " + comment}); err != nil {
 		return err
@@ -1530,7 +1537,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		COALESCE(NULLIF(v.name,''),r.vendor_payee,''),
 		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
 		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
-		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at
+		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at, r.concern_open
 		FROM payment_requests r
 		LEFT JOIN projects p ON p.id=r.project_id
 		LEFT JOIN heads h ON h.id=r.head_id
@@ -1602,13 +1609,14 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		var r Request
 		var approved, processingBy, headID sql.NullInt64
 		var processingAt, approvedAt sql.NullTime
-		var onHold int
+		var onHold, concernOpen int
 		if err := rows.Scan(&r.ID, &r.Number, &r.ShortTitle, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
 			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
 			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
-			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt); err != nil {
+			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt, &concernOpen); err != nil {
 			return out, err
 		}
+		r.ConcernOpen = concernOpen == 1
 		if approved.Valid {
 			v := approved.Int64
 			r.ApprovedAmount = &v

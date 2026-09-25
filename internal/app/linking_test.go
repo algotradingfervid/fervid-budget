@@ -927,7 +927,9 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, ""))
 	for _, want := range []string{
 		`class="req-head"`, `class="pill partial"`, `class="waiting you"`,
-		`class="compare"`, "Still owed to the vendor", "35,000.00",
+		// "payee", as every other screen says: the request may be a
+		// reimbursement owed to an employee (partial-1).
+		`class="compare"`, "Still owed to the payee", "35,000.00",
 		`class="banner warn"`, "Vendor delivered 700 of the 1,000 copies.",
 		`class="pill neutral no-dot"`, "Cannot be edited",
 		`<ol class="thread">`, `class="comment-box"`,

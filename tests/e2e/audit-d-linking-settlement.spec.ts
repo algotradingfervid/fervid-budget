@@ -1683,6 +1683,16 @@ test.describe('D · the settlement preview writes nothing', () => {
     await expect(adminPage.locator('.reserve-bar'), 'and the reservation survives the retreat').toContainText(
       'Reserved by you'
     );
+    // settlement-6: dismissing the sheet is not a reload. The amount, mode
+    // and reference just typed are still in the form, so one field can be
+    // corrected without retyping the rest — which is what the manual promises
+    // ("Go back returns to the form with everything you typed still there").
+    await expect(adminPage.locator('#settle-mount .overlay'), 'the sheet is dismissed in place').toBeHidden();
+    await expect(adminPage.getByLabel('Amount actually paid'), 'the amount survives').toHaveValue('5,000.00');
+    await expect(adminPage.getByLabel('Payment mode'), 'the mode survives').toHaveValue('bank_transfer');
+    await expect(adminPage.getByLabel('Transaction / UTR reference'), 'the reference survives').toHaveValue(
+      `UTR-SHEET-${runId}`
+    );
   });
 
   test('TC-D-063 — the preview is gated on payment:settle and refuses a non-holder', async ({ browser }) => {
@@ -2190,7 +2200,10 @@ test.describe('D · what deliberately does not exist', () => {
     await expect(c.admin.locator('.action-bar')).toContainText('Refunds and reversals are outside this version.');
     await expect(c.admin.getByRole('button', { name: /Refund|Reverse/ })).toHaveCount(0);
     await expect(c.admin.getByRole('link', { name: /Refund|Reverse/ })).toHaveCount(0);
-    await expect(c.admin.locator('.banner.good')).toContainText('can no longer be edited or cancelled');
+    // On the read-only card, not the "Payment saved" banner: since
+    // settlement-5 that banner appears once, on the redirect from the
+    // confirming POST, and this is a plain visit months later.
+    await expect(c.admin.locator('.card .hint')).toContainText('can no longer be edited or cancelled');
   });
 });
 
