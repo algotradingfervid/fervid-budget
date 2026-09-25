@@ -517,6 +517,60 @@ func (s *Store) UpsertHead(ctx context.Context, id, projectID int64, name, dueDa
 	return id, classify(err)
 }
 
+// OpenRequest is one unfinished request, named on a deactivation warning.
+type OpenRequest struct {
+	ID     int64
+	Number string
+	Title  string
+	Status string
+	Amount int64
+}
+
+// headOpenStatuses are the states in which a request still needs its head to be
+// active: every state that can still end in a payment (F-G-024).
+const headOpenStatuses = `'pending','returned','approved','cancellation_requested','processing','partial_review'`
+
+// approverOpenStatuses are the states in which a request waits on its approver,
+// or will again once its requester resubmits it (F-G-025).
+const approverOpenStatuses = `'pending','returned','cancellation_requested','partial_review'`
+
+// HeadIsActive reports whether a head is currently active.
+func (s *Store) HeadIsActive(ctx context.Context, id int64) (bool, error) {
+	var active int
+	err := s.db.QueryRowContext(ctx, `SELECT active FROM heads WHERE id=?`, id).Scan(&active)
+	return active == 1, classify(err)
+}
+
+// OpenRequestsForHead lists the requests that deactivating the head would leave
+// unpayable, because a payment requires an active head.
+func (s *Store) OpenRequestsForHead(ctx context.Context, headID int64) ([]OpenRequest, error) {
+	return s.openRequests(ctx, `head_id=? AND status IN (`+headOpenStatuses+`)`, headID)
+}
+
+// RequestsAwaitingApprover lists the requests that deactivating the user would
+// leave with nobody able to decide them.
+func (s *Store) RequestsAwaitingApprover(ctx context.Context, userID int64) ([]OpenRequest, error) {
+	return s.openRequests(ctx, `manager_id=? AND status IN (`+approverOpenStatuses+`)`, userID)
+}
+
+func (s *Store) openRequests(ctx context.Context, where string, arg int64) ([]OpenRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, number, COALESCE(NULLIF(short_title,''), purpose), status, COALESCE(approved_amount, amount)
+		FROM payment_requests WHERE `+where+` ORDER BY id`, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OpenRequest
+	for rows.Next() {
+		var o OpenRequest
+		if err := rows.Scan(&o.ID, &o.Number, &o.Title, &o.Status, &o.Amount); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListHeads(ctx context.Context, activeOnly bool) ([]Head, error) {
 	q := `SELECT h.id,h.project_id,p.name,h.name,COALESCE(h.due_day,''),h.active,h.sort_order,h.created_at
 	      FROM heads h JOIN projects p ON p.id=h.project_id`

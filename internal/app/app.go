@@ -121,6 +121,10 @@ type PageData struct {
 	// ways. It is derived from the same permission set .Perms is.
 	VendorEditable bool
 
+	// Deactivation is the warning shown before retiring a head or a person that
+	// unfinished requests still depend on (F-G-024, F-G-025).
+	Deactivation *DeactivationConfirm
+
 	// Payment requests (Phase 2). Request2 is the request a screen is about;
 	// the name keeps it clear of the *http.Request every handler already holds.
 	Requests   []store.Request
@@ -1485,6 +1489,12 @@ func (a *App) headSave(w http.ResponseWriter, r *http.Request) {
 	id := parseID(r.FormValue("id"))
 	projectID := parseID(r.FormValue("project_id"))
 	sortOrder, _ := strconv.Atoi(r.FormValue("sort_order"))
+	if asked, err := a.headDeactivationNeedsConfirm(w, r, id); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	} else if asked {
+		return
+	}
 	hid, err := a.st.UpsertHead(r.Context(), id, projectID, r.FormValue("name"), r.FormValue("due_day"), r.FormValue("active") == "on", sortOrder)
 	if err == nil {
 		u := auth.CurrentUser(r)
@@ -1600,6 +1610,12 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 		current := auth.CurrentUser(r)
 		if id == current.ID && (!active || r.FormValue("role") != "admin") {
 			a.respondError(w, r, http.StatusBadRequest, "You cannot deactivate or demote your own administrator account.", nil)
+			return
+		}
+		if asked, err := a.userDeactivationNeedsConfirm(w, r, id); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		} else if asked {
 			return
 		}
 		// One form, one submit, one transaction. The profile, the role assignment
