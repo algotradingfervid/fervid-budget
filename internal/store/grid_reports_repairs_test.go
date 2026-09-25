@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -216,5 +217,29 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	}
 	if got := count(); got != 4 {
 		t.Fatalf("clearing Power wrote %d budget audit rows, want 1", got-3)
+	}
+}
+
+// An unknown head submitted at ₹0 with no budget behind it looks exactly like
+// the untouched heads SetBudgets now skips — but the head lookup runs before
+// the skip (the G branch's ordering, kept at integration), so a forged or stale
+// head id still fails the whole batch instead of vanishing quietly.
+func TestSetBudgetsRefusesAnUnknownHeadEvenAtZero(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, rent := seedActorAndHead(t, s, ctx)
+	err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 4500000}, {HeadID: 999999, Amount: 0}})
+	if err == nil || !errors.Is(err, ErrValidation) {
+		t.Fatalf("SetBudgets with an unknown head at ₹0 = %v, want a validation error", err)
+	}
+	if _, err := s.Budget(ctx, rent, "2026-07"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Rent was written despite the failed batch: %v", err)
+	}
+	var n int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='budget'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("a failed batch wrote %d budget audit rows", n)
 	}
 }

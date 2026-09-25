@@ -224,6 +224,10 @@ Exports remain available for locked months.
 
 Transitive: `gorilla/sessions` v1.4.0, `gorilla/securecookie` v1.1.2 (pulled by authboss-clientstate).
 
+> **As built (see §14):** Authboss, authboss-clientstate and Casbin were never adopted — `go.mod`
+> requires only `modernc.org/sqlite` and `golang.org/x/crypto`. Login, lockout, sessions and
+> CSRF are hand-written in `internal/auth`, and authorization is the DB-driven permission engine.
+
 **Minimal JS:** all interactivity is HTMX (`hx-get`/`hx-post` → server renders an HTML partial →
 swapped in). At most ~30 lines of vanilla JS for the add-payment modal open/close and collapsing
 project groups in the grid (or done with `<details>`/`<dialog>` and CSS where possible).
@@ -307,12 +311,19 @@ data/backups/                   -- timestamped database + attachment backups
 - **Audit** is application-level (`audit.Record`) for rich, human-readable summaries, optionally
   hardened with SQLite triggers for tamper-evidence.
 
+> **As built (see §14):** there is no Authboss and no Casbin. `internal/auth` does bcrypt login,
+> the five-failure / fifteen-minute lockout (`Store.RecordFailedLogin`), an HMAC-signed session
+> cookie and a CSRF token; permissions come from roles stored in the database.
+
 ## 9. Seeding from the Excel
 
 A one-time importer (`cmd/seed` or a `--seed` flag) loads the **11 projects, 83 heads, due days,
 and June 2026 budgets** from `Forcast reports.xlsx` (we already have this parsed in
 `mockups/data/budget-data.json`) so the team does not re-key the setup. It also creates an initial
 admin user from config. Idempotent: safe to skip if data already exists.
+
+> **As built (see §14):** the Excel importer was not built. `--seed` creates the admin and a
+> small hard-coded sample (3 projects, 9 heads, June 2026 budgets) from `internal/store/seed.go`.
 
 ## 10. Deployment
 
@@ -370,21 +381,37 @@ together.
 
 ## 14. As-built notes (post-implementation)
 
-Built on branch `feature/budget-variance` (40 commits). Implemented and verified end-to-end:
-- Login/logout (Authboss, audited), session auth gate, Casbin RBAC (admin vs data_entry,
-  with `/audit` admin-only), full audit trail on every mutation + login/logout + export.
-- Variance grid (month switch + **status filter + search**), inline add-payment, budget editor
-  (copy-last-month), projects/heads admin, user management, CSV export, audit log view.
-- `seed.FromJSON` imports the 11 projects / 83 heads / **budgets** from the Excel-derived JSON
-  (`--seed`). It does **not** seed payments — actuals start empty and are entered by the team
-  (so on first run every head reads "not paid" until payments are recorded).
+Corrected 2026-09-25 against the code (docs-1). The first version of these notes described the
+`feature/budget-variance` build, and parts of it had never been true or have since changed.
 
-Config (env): `FERVID_ADDR`, `FERVID_DB`, `FERVID_SESSION_KEY`, `FERVID_COOKIE_KEY`,
-`FERVID_ADMIN_EMAIL/PASSWORD`, and **`FERVID_SECURE_COOKIES`** (default `true`; set `false` for
-plain-HTTP LAN, since browsers reject `Secure` cookies over HTTP). Session cookies are
-HMAC-authenticated (tamper-proof) but not encrypted — run behind HTTPS in production.
+**Auth and authorization.** Neither Authboss nor Casbin is used: `go.mod` requires only
+`modernc.org/sqlite` and `golang.org/x/crypto`. Authboss never entered `go.mod`, and Casbin was
+replaced by a DB-driven permission engine in commit `a73e92a`. What ships:
+- `internal/auth`: bcrypt passwords, login/logout (audited), an HMAC-signed session cookie
+  (`fervid_session`), and a CSRF token checked on every state-changing POST.
+- Lockout after five consecutive failures for fifteen minutes (`Store.RecordFailedLogin`);
+  failed logins are audited.
+- Roles and their `resource:action` permissions (with row scopes such as `all`) live
+  in the database (`internal/store/permissions.go`) and are edited on `/roles`; `/audit` needs
+  `audit:view`, an Admin grant in the seed.
 
-**Deferred (not built in current implementation):** full payment detail/edit/void UI, payment
-attachments, expanded reports, month close/lock, backup/restore automation, and CSRF tokens. The
-store layer has delete support, but the final app should use soft-void semantics and show a
-per-payment audit trail before production rollout.
+**Seed.** There is no `seed.FromJSON` and no `mockups/data/budget-data.json`. `--seed`
+(`Store.Seed`, `internal/store/seed.go`) creates the admin from `FERVID_ADMIN_*` and, only on an
+empty database, 3 sample projects (Operations, People, Growth) with 3 heads each and a June 2026
+budget per head — 3 projects / 9 heads / 9 budgets. It does not seed payments or requests.
+`TestSeedCreatesTheAdminAndThreeSampleProjects` pins this.
+
+**Built since the first notes** (previously listed as deferred): payment detail, edit and
+soft-void with a per-payment audit trail; payment attachments; month lock/unlock with a reason;
+CSRF tokens; backups (`/backups`, `--backup`, `--restore`) with an automated daily backup in the
+server (`FERVID_BACKUP_HOUR`, default 02:00 local) and retention of every backup for
+`FERVID_BACKUP_KEEP_DAYS` (30) plus the newest of each of the previous
+`FERVID_BACKUP_KEEP_MONTHS` (12) months. The payment-request workflow, recoverables and
+notifications are specified in `docs/superpowers/specs/`.
+
+Config (env): `FERVID_ADDR`, `FERVID_DB`, `FERVID_ATTACHMENT_DIR`, `FERVID_BACKUP_DIR`,
+`FERVID_BACKUP_KEEP_DAYS`, `FERVID_BACKUP_KEEP_MONTHS`, `FERVID_BACKUP_HOUR`,
+`FERVID_SESSION_KEY`, `FERVID_ADMIN_EMAIL/PASSWORD/NAME`, `FERVID_SMTP_PASSWORD`, and
+`FERVID_SECURE_COOKIES` (default `false`; set `true` behind HTTPS). There is no
+`FERVID_COOKIE_KEY`. Session cookies are HMAC-authenticated (tamper-proof) but not encrypted —
+run behind HTTPS in production (`internal/config/config.go`).

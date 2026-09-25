@@ -81,9 +81,11 @@ export default page({
 
     section('Housekeeping'),
     prose(
-      'Old backups are pruned automatically each time a new one is taken. Anything older than the ' +
-      'retention window is removed from the folder. The window is set on the server rather than on ' +
-      'this screen, and it defaults to 30 days.',
+      'The server also takes a backup by itself once a day, shortly after 02:00 server time unless ' +
+      'whoever runs it has chosen another hour; it appears in this list like any other. ' +
+      'Old backups are pruned automatically each time a new one is taken. Every backup from the last ' +
+      '30 days is kept, and so is the newest backup of each of the twelve months before this one; ' +
+      'everything else is removed from the folder. Both windows are set on the server rather than on this screen.',
     ),
     note(
       'Pruning never stops a backup being taken. If the tidy-up fails for any reason, the new backup ' +
@@ -113,7 +115,7 @@ export default page({
     faq([
       {
         q: 'How often should I take one?',
-        a: 'That depends on how much work you are willing to redo, which is your organisation’s call. What the product gives you is a backup on demand; a schedule is something the server can be set up to run.',
+        a: 'That depends on how much work you are willing to redo, which is your organisation’s call. The product already takes one every day on its own; take an extra one on demand before any risky change.',
       },
       {
         q: 'Can I download a backup from this screen?',
@@ -121,7 +123,7 @@ export default page({
       },
       {
         q: 'A backup I took last month has gone.',
-        a: 'It will have been pruned. Backups older than the retention window are removed when a new one is taken, and the default window is 30 days.',
+        a: 'It will have been pruned. After 30 days only the newest backup of each month is kept, for twelve months; the others are removed when a new one is taken.',
       },
       {
         q: 'Does taking a backup interrupt anybody?',

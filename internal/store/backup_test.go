@@ -190,3 +190,88 @@ func TestRestoreBackupFailureLeavesLivePathsUntouched(t *testing.T) {
 		t.Fatalf("live attachment changed on failed restore: %q, %v", gotAttachment, err)
 	}
 }
+
+// backup-1: an unclean stop leaves most committed pages in <db>-wal. Restoring
+// over that database used to swap only the main file, so SQLite replayed the
+// stale WAL on the next open and the "restored" database still held the live
+// data the backup never had.
+func TestRestoreBackupOverDatabaseWithLiveWALServesTheBackup(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	sourceDB := filepath.Join(root, "source.db")
+	source, err := Open(sourceDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.DB().Exec(`CREATE TABLE wal_check (value TEXT); INSERT INTO wal_check(value) VALUES ('from backup');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := CreateBackup(ctx, BackupOptions{DBPath: sourceDB, BackupDir: filepath.Join(root, "backups")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a live database whose recent commits sit only in the WAL, then copy
+	// the three files while it is still open: that is what kill -9 leaves.
+	runningDB := filepath.Join(root, "running", "fervid.db")
+	running, err := Open(runningDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := running.DB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `PRAGMA wal_autocheckpoint=0; CREATE TABLE wal_check (value TEXT); INSERT INTO wal_check(value) VALUES ('live only in wal');`); err != nil {
+		t.Fatal(err)
+	}
+	crashedDB := filepath.Join(root, "crashed", "fervid.db")
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := copyFile(ctx, runningDB+suffix, crashedDB+suffix); err != nil {
+			t.Fatalf("copy %q: %v", suffix, err)
+		}
+	}
+	walInfo, err := os.Stat(crashedDB + "-wal")
+	if err != nil || walInfo.Size() == 0 {
+		t.Fatalf("test setup needs a non-empty WAL beside the target: %v", err)
+	}
+	_ = conn.Close()
+	_ = running.Close()
+
+	if err := RestoreBackup(ctx, RestoreOptions{BackupPath: info.Path, DBPath: crashedDB, AttachmentDir: filepath.Join(root, "crashed", "attachments")}); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(crashedDB + suffix); !os.IsNotExist(err) {
+			t.Fatalf("stale %s left beside the restored database (err=%v)", suffix, err)
+		}
+	}
+	restored, err := Open(crashedDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	rows, err := restored.DB().Query(`SELECT value FROM wal_check ORDER BY value`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var values []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		values = append(values, v)
+	}
+	if strings.Join(values, ",") != "from backup" {
+		t.Fatalf("restored database rows = %v, want only the backup's row", values)
+	}
+	leftovers, err := filepath.Glob(crashedDB + ".restore-*")
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("restore left staging files behind: %v, %v", leftovers, err)
+	}
+}

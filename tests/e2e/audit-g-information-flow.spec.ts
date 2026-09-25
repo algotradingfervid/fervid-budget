@@ -395,13 +395,11 @@ async function asCustomRole(adminPage: Page, browser: Browser, runId: string, pr
 /**
  * The audit rows an actor wrote against payment requests.
  *
- * `/audit` reads the newest 1000 rows of the entity, filters actor and action in
- * Go, then caps at 200 (internal/app/app.go:1364-1389). Actor names carry the
- * runId, so this is a per-test view — but the 1000-row pre-filter is applied
- * BEFORE the actor filter, so a long run can push a subject's rows out of the
- * window entirely. Passing `entityID` narrows the SQL itself
- * (`Store.Audit`, internal/store/store.go:1594-1600) and makes the read exact
- * regardless of how much history the database has accumulated.
+ * `/audit` applies entity, id, action, actor and date in SQL over the whole log
+ * and pages the result (`Store.AuditPage`, audit-1). Actor names carry the
+ * runId, so this is a per-test view; it reads the first page only, which is
+ * enough for the handful of rows one subject writes. Passing `entityID` narrows
+ * it further.
  */
 async function auditRows(page: Page, actorName: string, entity = 'payment_request', entityID?: number) {
   const id = entityID ? `&id=${entityID}` : '';

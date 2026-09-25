@@ -11,12 +11,16 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 		"FERVID_ADDR", "FERVID_DB", "FERVID_ATTACHMENT_DIR", "FERVID_BACKUP_DIR",
 		"FERVID_SESSION_KEY", "FERVID_SECURE_COOKIES", "FERVID_ADMIN_EMAIL",
 		"FERVID_ADMIN_PASSWORD", "FERVID_ADMIN_NAME", "FERVID_BACKUP_KEEP_DAYS",
+		"FERVID_BACKUP_KEEP_MONTHS", "FERVID_BACKUP_HOUR",
 	} {
 		t.Setenv(key, "")
 	}
 	defaults := Load()
 	if defaults.Addr != ":8080" || defaults.AdminEmail != "admin@fervid.local" || defaults.BackupKeepDays != 30 {
 		t.Fatalf("unexpected defaults: %#v", defaults)
+	}
+	if defaults.BackupKeepMonths != 12 || defaults.BackupHour != 2 {
+		t.Fatalf("backup retention/schedule defaults = %d months, hour %d; want 12, 2", defaults.BackupKeepMonths, defaults.BackupHour)
 	}
 	if len(defaults.SessionKey) != 64 {
 		t.Fatalf("generated session key length = %d, want 64", len(defaults.SessionKey))
@@ -26,7 +30,12 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("FERVID_SESSION_KEY", "fixed-session-key")
 	t.Setenv("FERVID_SECURE_COOKIES", "true")
 	t.Setenv("FERVID_BACKUP_KEEP_DAYS", "14")
+	t.Setenv("FERVID_BACKUP_KEEP_MONTHS", "6")
+	t.Setenv("FERVID_BACKUP_HOUR", "23")
 	overrides := Load()
+	if overrides.BackupKeepMonths != 6 || overrides.BackupHour != 23 {
+		t.Fatalf("backup overrides were not loaded: %#v", overrides)
+	}
 	if overrides.Addr != "127.0.0.1:9999" || overrides.SessionKey != "fixed-session-key" ||
 		!overrides.SecureCookies || overrides.BackupKeepDays != 14 {
 		t.Fatalf("environment overrides were not loaded: %#v", overrides)
@@ -34,7 +43,11 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 
 	t.Setenv("FERVID_SECURE_COOKIES", "not-a-bool")
 	t.Setenv("FERVID_BACKUP_KEEP_DAYS", "not-a-number")
+	t.Setenv("FERVID_BACKUP_HOUR", "24")
 	invalid := Load()
+	if invalid.BackupHour != 2 {
+		t.Fatalf("out-of-range backup hour did not fall back: %d", invalid.BackupHour)
+	}
 	if invalid.SecureCookies || invalid.BackupKeepDays != 30 {
 		t.Fatalf("invalid environment values did not fall back: %#v", invalid)
 	}

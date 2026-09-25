@@ -91,6 +91,10 @@ type PageData struct {
 	AuditEntity    string
 	AuditAction    string
 	AuditActor     string
+	AuditFrom      string
+	AuditTo        string
+	AuditID        string
+	AuditPage      store.AuditPage
 	CloseGrid      store.GridData
 	Locked         bool
 	BudgetInputs   map[int64]string
@@ -2007,32 +2011,82 @@ func (a *App) roleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
-	entity := strings.TrimSpace(r.URL.Query().Get("entity"))
-	action := strings.TrimSpace(r.URL.Query().Get("action"))
-	actor := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("actor")))
-	audit, err := a.st.Audit(r.Context(), entity, parseID(r.URL.Query().Get("id")), 1000)
+	// Every filter, the dates included, runs in SQL over the whole log and the
+	// result is paged (audit-1). It used to read the newest 1000 rows, filter
+	// action and actor in Go, and cut the list at 200 without a word, so older
+	// rows could not be reached at all. from/to are local days, inclusive, as
+	// the When column shows local time.
+	qs := r.URL.Query()
+	q := store.AuditQuery{
+		EntityType: strings.TrimSpace(qs.Get("entity")),
+		EntityID:   parseID(qs.Get("id")),
+		Action:     strings.TrimSpace(qs.Get("action")),
+		Actor:      qs.Get("actor"),
+		Offset:     int(parseID(qs.Get("offset"))),
+	}
+	from, to := auditDay(qs.Get("from")), auditDay(qs.Get("to"))
+	if !from.IsZero() {
+		q.From = from
+	}
+	if !to.IsZero() {
+		q.To = to.AddDate(0, 0, 1)
+	}
+	var page store.AuditPage
+	var err error
+	if a.auth.Scope(auth.CurrentUser(r), "request") == store.ScopeAll {
+		q.Limit = auditPageSize
+		page, err = a.st.AuditPage(r.Context(), q)
+	} else {
+		// A scoped reader's request rows are withheld in Go (below), so the
+		// page is cut after that, over every matching row, to keep the count
+		// and the pages honest. No seeded holder of audit:view takes this path.
+		page, err = a.st.AuditPage(r.Context(), store.AuditQuery{EntityType: q.EntityType, EntityID: q.EntityID,
+			Action: q.Action, Actor: q.Actor, From: q.From, To: q.To})
+		if err == nil {
+			page = pageAuditEntries(a.auditWithinRequestScope(r, page.Entries), q.Offset)
+		}
+	}
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	if action != "" || actor != "" {
-		filtered := audit[:0]
-		for _, entry := range audit {
-			if action != "" && entry.Action != action {
-				continue
-			}
-			if actor != "" && !strings.Contains(strings.ToLower(entry.ActorName), actor) {
-				continue
-			}
-			filtered = append(filtered, entry)
-		}
-		audit = filtered
+	data := PageData{Title: "Audit Log", Audit: page.Entries, AuditEntity: q.EntityType, AuditAction: q.Action, AuditActor: qs.Get("actor")}
+	data.AuditPage, data.AuditID = page, qs.Get("id")
+	if !from.IsZero() {
+		data.AuditFrom = from.Format("2006-01-02")
 	}
-	audit = a.auditWithinRequestScope(r, audit)
-	if len(audit) > 200 {
-		audit = audit[:200]
+	if !to.IsZero() {
+		data.AuditTo = to.Format("2006-01-02")
 	}
-	a.render(w, r, "audit", PageData{Title: "Audit Log", Audit: audit, AuditEntity: entity, AuditAction: action, AuditActor: r.URL.Query().Get("actor")})
+	a.render(w, r, "audit", data)
+}
+
+// auditPageSize is how many audit rows one /audit page shows.
+const auditPageSize = 100
+
+// auditDay reads a from/to date as the start of that local day; anything else
+// leaves that side of the range open.
+func auditDay(v string) time.Time {
+	d, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(v), time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	return d
+}
+
+// pageAuditEntries cuts one /audit page out of an already-filtered list.
+func pageAuditEntries(entries []store.AuditEntry, offset int) store.AuditPage {
+	page := store.AuditPage{Total: len(entries), Limit: auditPageSize}
+	if offset < 0 || offset > len(entries) {
+		offset = 0
+	}
+	end := offset + auditPageSize
+	if end > len(entries) {
+		end = len(entries)
+	}
+	page.Offset, page.Entries = offset, entries[offset:end]
+	page.Truncated = end < len(entries)
+	return page
 }
 
 // auditWithinRequestScope applies the request row scope to the audit log.
@@ -2108,7 +2162,7 @@ func (a *App) backupCreate(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusInternalServerError, "The backup could not be created.", err)
 		return
 	}
-	if err := store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, time.Now()); err != nil {
+	if err := store.PruneBackups(a.cfg.BackupDir, a.cfg.BackupKeepDays, a.cfg.BackupKeepMonths, time.Now()); err != nil {
 		a.log.WarnContext(r.Context(), "backup pruning failed", "request_id", requestID(r), "error", err)
 	}
 	u := auth.CurrentUser(r)
