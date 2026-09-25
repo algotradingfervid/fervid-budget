@@ -247,6 +247,46 @@ func TestNotifyResolvesAccountsGroup(t *testing.T) {
 	}
 }
 
+// N3: the approval email goes To the requester and Accounts and is copied (Cc)
+// to the management list. The list is set only in MailSettings — not in the
+// event's own To or Cc — so the Cc below can only have come from the N3 rule
+// (test-1: no earlier test pinned it).
+func TestNotifyCopiesManagementOnTheApprovalEmail(t *testing.T) { // N3
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	must(t, st.SetMailSettings(ctx, actor, store.MailSettings{
+		SMTPHost: "smtp.test", SMTPFromAddr: "no@reply.test",
+		ManagementRecipients: "Boss@T.test; cfo@t.test",
+	}))
+	requester := mustUser(t, st, "mc-req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "mc-mgr@test", "Manav", "admin")
+	reqID := insertRequest(t, st, "PR-2026-000970", "approved", requester, manager, time.Now().UTC(), nil)
+	enableEvent(t, st, actor, store.NotificationSetting{
+		Event: EventRequestApproved, EmailEnabled: true, IncludeRequester: true, IncludeAccounts: true,
+		SubjectTemplate: "{{number}} approved", BodyTemplate: "b",
+	})
+	mailer := &fakeMailer{}
+	svc := NewService(st, mailer)
+	req, err := st.Request(ctx, reqID)
+	must(t, err)
+	must(t, svc.Notify(ctx, EventRequestApproved, req))
+
+	msgs := mailer.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("emails = %d, want 1", len(msgs))
+	}
+	if got := strings.Join(msgs[0].Cc, ","); got != "boss@t.test,cfo@t.test" {
+		t.Fatalf("approval Cc = %q, want the management list boss@t.test,cfo@t.test", got)
+	}
+	contains(t, strings.Join(msgs[0].To, ","), "mc-req@test")
+	for _, e := range msgs[0].To {
+		if e == "boss@t.test" || e == "cfo@t.test" {
+			t.Fatalf("management is in To %v, want it only in Cc", msgs[0].To)
+		}
+	}
+}
+
 // An unknown event is a no-op, not an error: nothing is configured for it.
 func TestNotifyUnknownEventIsANoOp(t *testing.T) {
 	ctx := context.Background()
@@ -279,6 +319,8 @@ func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
 	holder := mustUser(t, st, "ae-holder@test", "Anil Holder", "data_entry")
 	otherAcct := mustUser(t, st, "ae-other@test", "Other Accountant", "data_entry")
 	grantAccounts(t, st, holder, otherAcct)
+	emailOf := map[int64]string{requester: "ae-req@test", manager: "ae-mgr@test",
+		holder: "ae-holder@test", otherAcct: "ae-other@test"}
 
 	cases := []struct {
 		event    string
@@ -363,12 +405,35 @@ func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
 			cfg.Event = tc.event
 			cfg.SubjectTemplate = "{{number}} — " + tc.event
 			cfg.BodyTemplate = "{{amount}} to {{payee}}. Open it: {{link}}"
+			// Email on, so the email audience is checked against the in-app one:
+			// the two must reach the same people (notify-1).
+			cfg.EmailEnabled = true
 			enableEvent(t, st, actor, cfg)
 
-			svc := NewService(st, &fakeMailer{})
+			mailer := &fakeMailer{}
+			svc := NewService(st, mailer)
 			req, err := st.Request(ctx, reqID)
 			must(t, err)
 			must(t, svc.Notify(ctx, tc.event, req))
+
+			msgs := mailer.messages()
+			if len(msgs) != 1 {
+				t.Fatalf("%s: emails = %d, want 1", tc.event, len(msgs))
+			}
+			to := map[string]bool{}
+			for _, e := range append(append([]string{}, msgs[0].To...), msgs[0].Cc...) {
+				to[e] = true
+			}
+			for _, uid := range tc.want {
+				if !to[emailOf[uid]] {
+					t.Fatalf("%s: email To %v is missing %s", tc.event, msgs[0].To, emailOf[uid])
+				}
+			}
+			for _, uid := range tc.notWant {
+				if to[emailOf[uid]] {
+					t.Fatalf("%s: email To %v includes %s, who has no in-app row for it", tc.event, msgs[0].To, emailOf[uid])
+				}
+			}
 
 			for _, uid := range tc.want {
 				rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: uid, Limit: 200})

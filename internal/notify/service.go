@@ -31,6 +31,11 @@ type RequestView struct {
 	ManagerName, ManagerEmail                                      string
 	SubmittedOn, ProcessingOn                                      string
 	Link                                                           string
+	// HolderEmail is the accountant holding the reservation (processing_by),
+	// empty when nobody holds it. It is routing data, not a template token: the
+	// events routesToHolder names are emailed to this one address, the same
+	// person resolveInAppUsers writes the in-app row for (notify-1).
+	HolderEmail string
 }
 
 // Notify writes the in-app rows first — they always fire (G19) — and then, only
@@ -179,29 +184,9 @@ func resolveInAppUsers(event string, cfg store.NotificationSetting, req store.Re
 		ids = append(ids, req.ManagerID)
 	}
 	if cfg.IncludeAccounts && !(event == EventRequestUrgent && req.Status == "pending") {
-		switch event {
-		// Events about one specific reservation. Addressing the whole Accounts
-		// group would chase four people about work that belongs to one, and for
-		// reservation_reassigned the single right recipient is the *new* holder —
-		// ReassignReservation moves processing_by, so by the time this fires the
-		// column already names them.
-		//
-		// A partial review and a cancellation both keep processing_by set (the
-		// request never left 'processing' before it got there), so the accountant
-		// who recorded the shortfall or froze the payment is the one told. The
-		// fallback to the whole group is what covers a request whose holder let
-		// it go — reservation_released nulls processing_by, and a request that
-		// reached partial_review or cancellation_requested some other way has
-		// nobody personally on the hook.
-		case EventCancellationRequested, EventReminderStaleReservation,
-			EventReservationReassigned, EventPaymentPartialAccepted, EventPaymentPartialConcern,
-			EventCancellationAccepted, EventCancellationDeclined:
-			if req.ProcessingBy != nil && *req.ProcessingBy != 0 {
-				ids = append(ids, *req.ProcessingBy) // the person who reserved it
-			} else {
-				ids = append(ids, accountIDs...)
-			}
-		default:
+		if routesToHolder(event) && req.ProcessingBy != nil && *req.ProcessingBy != 0 {
+			ids = append(ids, *req.ProcessingBy) // the person who reserved it
+		} else {
 			ids = append(ids, accountIDs...)
 		}
 	}
@@ -215,6 +200,33 @@ func resolveInAppUsers(event string, cfg store.NotificationSetting, req store.Re
 		out = append(out, id)
 	}
 	return out
+}
+
+// routesToHolder reports whether the Accounts half of an event's audience is
+// the accountant holding the reservation rather than the whole group. The
+// in-app and the email resolvers both ask it, so the two channels cannot
+// disagree about who "the assigned accountant" is (notify-1).
+func routesToHolder(event string) bool {
+	switch event {
+	// Events about one specific reservation. Addressing the whole Accounts
+	// group would chase four people about work that belongs to one, and for
+	// reservation_reassigned the single right recipient is the *new* holder —
+	// ReassignReservation moves processing_by, so by the time this fires the
+	// column already names them.
+	//
+	// A partial review and a cancellation both keep processing_by set (the
+	// request never left 'processing' before it got there), so the accountant
+	// who recorded the shortfall or froze the payment is the one told. The
+	// fallback to the whole group is what covers a request whose holder let
+	// it go — reservation_released nulls processing_by, and a request that
+	// reached partial_review or cancellation_requested some other way has
+	// nobody personally on the hook.
+	case EventCancellationRequested, EventReminderStaleReservation,
+		EventReservationReassigned, EventPaymentPartialAccepted, EventPaymentPartialConcern,
+		EventCancellationAccepted, EventCancellationDeclined:
+		return true
+	}
+	return false
 }
 
 func requestHref(req store.Request) string {
@@ -244,6 +256,13 @@ func (s *Service) newRequestView(ctx context.Context, req store.Request, app sto
 	if req.ApprovedAmount != nil {
 		v.ApprovedAmount = *req.ApprovedAmount
 	}
+	if req.ProcessingBy != nil && *req.ProcessingBy != 0 {
+		holder, err := s.st.UserByID(ctx, *req.ProcessingBy)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return RequestView{}, err
+		}
+		v.HolderEmail = holder.Email
+	}
 	if req.SubmittedAt != nil {
 		v.SubmittedOn = req.SubmittedAt.UTC().Format("2006-01-02")
 	}
@@ -265,7 +284,14 @@ func resolveRecipients(event string, cfg store.NotificationSetting, app store.Ma
 		toList = append(toList, v.ManagerEmail)
 	}
 	if cfg.IncludeAccounts && !urgentPreApproval {
-		toList = append(toList, accounts...)
+		// The same switch resolveInAppUsers applies: an event about one
+		// reservation is mailed to its holder, and to the group only when
+		// nobody holds it (notify-1).
+		if routesToHolder(event) && v.HolderEmail != "" {
+			toList = append(toList, v.HolderEmail)
+		} else {
+			toList = append(toList, accounts...)
+		}
 	}
 	ccList := splitList(cfg.CcRecipients)
 	if event == EventRequestApproved || (event == EventRequestUrgent && !urgentPreApproval) {

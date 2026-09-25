@@ -2,6 +2,8 @@ package notify
 
 import (
 	"context"
+	"mime"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"testing"
@@ -97,5 +99,49 @@ func TestSMTPMailerSkipsEmptyRecipients(t *testing.T) {
 	must(t, m.Send(ctx, Message{From: "f@x.test", Subject: "x", Body: "y"}))
 	if called {
 		t.Fatal("sent a message with no recipients")
+	}
+}
+
+// Header text must be ASCII unless the server negotiated SMTPUTF8, and
+// net/smtp only does that when the server offers it. Every default subject
+// carries a ₹ or an em dash, so the Subject and a non-ASCII From display name
+// go out as RFC 2047 encoded-words any MTA can carry (notify-3).
+func TestBuildRFC822EncodesNonASCIIHeaders(t *testing.T) {
+	subject := "PR-2026-000002 needs your approval — ₹2,250.50 to Rhea Requester"
+	raw := buildRFC822(Message{From: "Fervid Bügets <noreply@x.test>", To: []string{"a@x.test"},
+		Subject: subject, Body: "Body ₹1.00"})
+	head, body, ok := strings.Cut(raw, "\r\n\r\n")
+	if !ok {
+		t.Fatalf("no header/body separator:\n%s", raw)
+	}
+	for i := 0; i < len(head); i++ {
+		if head[i] > 0x7e {
+			t.Fatalf("header carries a raw 8-bit byte at %d:\n%s", i, head)
+		}
+	}
+	var gotSubject, gotFrom string
+	for _, line := range strings.Split(head, "\r\n") {
+		if v, ok := strings.CutPrefix(line, "Subject: "); ok {
+			gotSubject = v
+		}
+		if v, ok := strings.CutPrefix(line, "From: "); ok {
+			gotFrom = v
+		}
+	}
+	if s, err := new(mime.WordDecoder).DecodeHeader(gotSubject); err != nil || s != subject {
+		t.Fatalf("decoded Subject = %q (%v), want %q", s, err, subject)
+	}
+	if a, err := mail.ParseAddress(gotFrom); err != nil || a.Name != "Fervid Bügets" || a.Address != "noreply@x.test" {
+		t.Fatalf("From %q parses to %+v (%v)", gotFrom, a, err)
+	}
+	if body != "Body ₹1.00" {
+		t.Fatalf("body = %q, want it untouched", body)
+	}
+	// ASCII headers stay exactly as they were.
+	plain := buildRFC822(Message{From: "Fervid <noreply@x.test>", To: []string{"a@x.test"}, Subject: "Hi"})
+	for _, want := range []string{"From: Fervid <noreply@x.test>\r\n", "Subject: Hi\r\n"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("ASCII header changed; missing %q in:\n%s", want, plain)
+		}
 	}
 }
