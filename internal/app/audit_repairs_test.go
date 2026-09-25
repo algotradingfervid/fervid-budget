@@ -578,6 +578,15 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	if strings.Contains(stale, "one-day mark") || strings.Contains(stale, "calendar day") {
 		t.Error("the stale banner still asserts a hardcoded, calendar-day threshold")
 	}
+	// copy-1: the Configuration note under these same three fields still said
+	// "calendar days" after decision 2 made the thresholds elapsed days.
+	config := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	if strings.Contains(config, "calendar day") {
+		t.Error("the Configuration reminders note still says calendar days")
+	}
+	if !strings.Contains(config, "Reminders are counted in days") {
+		t.Errorf("the Configuration reminders note is missing: %s", firstLines(config))
+	}
 
 	s.login("copy@example.test", "CopyPass12345")
 	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))

@@ -327,7 +327,7 @@ export default page({
         ],
         [
           'Reminder',
-          'The nudge sent when a request has been waiting too long. How long, and how often it repeats, are configuration settings counted in calendar days. A request on hold is waiting on its requester by design and is never reminded about.',
+          'The nudge sent when a request has been waiting too long. How long, and how often it repeats, are configuration settings counted in days. A request on hold is waiting on its requester by design and is never reminded about.',
         ],
       ],
       'Words that appear on nearly every screen.',
