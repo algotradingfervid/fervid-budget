@@ -344,7 +344,8 @@ it.describe('A · every type and treatment, through the real form', () => {
     const failures = capturePageErrors(page);
     try {
       await page.goto('/requests/new');
-      await expect(page.locator('.type-grid .type-card')).toHaveCount(4);
+      // Five since form-1: the deposit or guarantee has a card of its own.
+      await expect(page.locator('.type-grid .type-card')).toHaveCount(5);
       await page.getByRole('link', { name: /Vendor invoice payment/ }).click();
       await expect(page).toHaveURL(/\/requests\/new\?type=vendor_invoice$/);
 
@@ -457,7 +458,11 @@ it.describe('A · every type and treatment, through the real form', () => {
     try {
       await page.goto('/requests/new?type=employee_advance');
       await expect(page.getByRole('radio', { name: /Refundable or recoverable/ })).toBeChecked();
-      await expect(page.locator('#rcategory')).toHaveValue('employee_advance');
+      // The category is the type's, stated rather than chosen (form-1): the
+      // picker lives on the deposit-or-guarantee form.
+      await expect(page.locator('#rcategory-fixed')).toHaveValue('Employee advance');
+      await expect(page.locator('input[name="recoverable_category"]')).toHaveValue('employee_advance');
+      await expect(page.locator('#rcategory')).toHaveCount(0);
       // The recoverable fieldset replaces the budget one — it does not hide it.
       await expect(page.locator('#form-fields select[name="head_id"]')).toHaveCount(0);
 
@@ -674,9 +679,10 @@ it.describe('A · every type and treatment, through the real form', () => {
   it('TC-B-010 — GET /requests/new/fields answers a bare fragment and needs request:create', async ({
     world
   }) => {
+    // The deposit type: an ICD is never an employee advance (form-1).
     const fragment = await probeGet(
       world.requester.page,
-      `/requests/new/fields?type=employee_advance&treatment=recoverable&recoverable_category=icd`
+      `/requests/new/fields?type=recoverable&treatment=recoverable&recoverable_category=icd`
     );
     expect(fragment.status, 'the fragment is a read').toBe(200);
     expect(fragment.body, 'a partial carries no shell').not.toContain('<!doctype html>');
@@ -1080,11 +1086,7 @@ it.describe('B · the required, forced and optional matrix', () => {
       'repayment or refund terms are required'
     );
     expect(probe.body, 'and the deposit form comes back with the typing still in it').toContain('name="vendor_payee" value="Ridge Metro Rail Corporation"');
-    expect(
-      message(probe),
-      'and where to go, since this type has no form of its own to be returned to'
-    ).toContain('start again from a request type');
-    expect(probe.body, 'which is the chooser').toContain('What are you asking to be paid?');
+    expect(probe.body, 'on its own form, not the chooser').toContain('<h1>Deposit or guarantee</h1>');
     expect(
       probe.body,
       'never the vocabulary sentence: the store raises this type, so saying it does not is the defect'
@@ -1173,7 +1175,9 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
         head_id: world.officeRentId
       })
     );
-    expectRefused(probe, 'choose a recoverable category', 'budget fieldset on a recoverable advance');
+    // The category is the type's since form-1, so an advance with no category is
+    // told which category it is always in.
+    expectRefused(probe, 'always in the Employee advance category', 'budget fieldset on a recoverable advance');
   });
 
   it('TC-B-053 — a budget employee advance carrying only the recoverable fieldset is refused', async ({
@@ -1311,7 +1315,8 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     // cells in the one row. The lead cell is the listing; the second is the
     // accessible name of a button, and counting it as a second listing would be
     // reading the fix as a duplicate.
-    await expect(world.adminPage.locator('td.t-lead', { hasText: name })).toHaveCount(1);
+    // The name is an editable input in the row since recoverables-5.
+    await expect(world.adminPage.locator(`td.t-lead input[name="name"][value="${name}"]`)).toHaveCount(1);
 
     const refused = await raise(
       world.requester.page,
@@ -1361,8 +1366,10 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     });
     expect(added.status, `the category must be created; got ${added.outcome}`).toBeLessThan(400);
 
+    // The picker lives on the deposit-or-guarantee form (form-1); an admin-added
+    // category is a deposit, never an employee advance.
     const page = world.requester.page;
-    await page.goto('/requests/new?type=employee_advance');
+    await page.goto('/requests/new?type=recoverable');
     await expect(
       page.locator(`#rcategory option[value="${code}"]`),
       'the form must offer every active category'
@@ -1370,7 +1377,7 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
 
     const fragment = await probeGet(
       page,
-      `/requests/new/fields?type=employee_advance&treatment=recoverable&recoverable_category=${code}`
+      `/requests/new/fields?type=recoverable&treatment=recoverable&recoverable_category=${code}`
     );
     expect(fragment.body, 'and the swap must keep the category it was given').toContain(
       `value="${code}" selected`

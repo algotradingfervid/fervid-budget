@@ -167,6 +167,39 @@ func TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen(t *testing.T) {
 	}
 }
 
+// form-1, kept readable — an employee advance recorded under a deposit category
+// before deposits were their own type still opens on the edit form: its
+// category is offered back as Employee advance and the banner says so.
+func TestLegacyEmployeeAdvanceUnderADepositCategoryStaysEditable(t *testing.T) {
+	s := newAppTestServer(t)
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	var catID int64
+	if err := s.st.DB().QueryRow(`SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&catID); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,amount,purpose,short_title,advance_reason,counterparty,expected_return_date,repayment_notes,vendor_payee,requester_id,manager_id,submitted_at)
+		VALUES('PR-2026-000900','pending','recoverable','employee_advance','icd',?,100000000,'deposit','ICD to Meridian','deposit','Meridian Holdings Pvt Ltd','2027-03-31','at maturity',?,?,?,CURRENT_TIMESTAMP)`,
+		catID, requester.Name, requester.ID, approver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	s.login("rhea@example.test", "RheaPass12345")
+	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	if !strings.Contains(edit, `<input type="hidden" name="recoverable_category" value="employee_advance">`) {
+		t.Fatalf("the legacy row is not offered back as an Employee advance: %s", firstLines(edit))
+	}
+	if !strings.Contains(edit, "before deposits and guarantees became their own request type") || !strings.Contains(edit, "ICD — inter-corporate deposit") {
+		t.Fatalf("the edit form does not explain the reclassification: %s", firstLines(edit))
+	}
+	// And the row itself still reads as it was recorded.
+	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	if !strings.Contains(detail, "ICD — inter-corporate deposit") || !strings.Contains(detail, "Meridian Holdings Pvt Ltd") {
+		t.Fatalf("the legacy row no longer reads as recorded: %s", firstLines(detail))
+	}
+}
+
 // form-3 (T12) — a project or head retired after a request was raised is shown
 // on the edit form, marked, with the retirement explained; the historical
 // values are not silently blanked into "Choose a project" and a save is refused

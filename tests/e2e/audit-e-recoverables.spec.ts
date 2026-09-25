@@ -287,9 +287,19 @@ async function csvActual(
   return parseRupees(match[actualCol]);
 }
 
+/** The Configuration row for a category. Its name is an editable input (recoverables-5), so the row is found by that input's value. */
+function categoryRow(page: Page, name: string) {
+  return page.locator('tr').filter({ has: page.locator(`td.t-lead input[name="name"][value="${name}"]`) });
+}
+
+/** Every category name on the Configuration screen, in the order the table lists them. */
+async function categoryNames(page: Page): Promise<string[]> {
+  return page.locator('td.t-lead[data-label="Category"] input[name="name"]').evaluateAll(els => els.map(e => (e as HTMLInputElement).value));
+}
+
 async function categoryRowFields(page: Page, name: string): Promise<{ id: string; requires: string; sortOrder: string; active: boolean }> {
   await page.goto('/configuration');
-  const row = page.locator('tr').filter({ has: page.locator('td.t-lead', { hasText: name }) });
+  const row = categoryRow(page, name);
   await expect(row, `expected exactly one Configuration row for category "${name}"`).toHaveCount(1);
   const form = row.locator('form');
   const id = (await form.locator('input[name="id"]').getAttribute('value')) ?? '';
@@ -316,9 +326,9 @@ test.describe('TC-E — Recoverables', () => {
   test('TC-E-001 — Admin creates a recoverable category through the real screen', async ({ adminPage, runId }) => {
     const name = `Retention money ${runId}`;
     await createCategoryThroughScreen(adminPage, name, 'project');
-    const row = adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: name }) });
+    const row = categoryRow(adminPage, name);
     await expect(row, 'the new category must appear in the Configuration table').toHaveCount(1);
-    await expect(row.locator('td', { hasText: 'Related project' }), 'Requires must render the derived phrase').toHaveCount(1);
+    await expect(row.locator('select[name="requires"]'), 'Requires must show the rule chosen, editable in place').toHaveValue('project');
     await expect(row.locator('td[data-label="In use"]'), 'a brand-new category starts with zero usage').toHaveText('0');
   });
 
@@ -359,7 +369,7 @@ test.describe('TC-E — Recoverables', () => {
       // Rename through the row's own name input and Save button (recoverables-5):
       // the name used to travel as a hidden input with no control behind it.
       await adminPage.goto('/configuration');
-      const row = adminPage.locator('tr').filter({ has: adminPage.locator(`input[name="name"][value="${oldName}"]`) });
+      const row = categoryRow(adminPage, oldName);
       await expect(row, 'the category row carries a visible name input').toHaveCount(1);
       await row.getByLabel(`Name for ${oldName}`).fill(newName);
       await row.getByRole('button', { name: `Save ${oldName}` }).click();
@@ -385,7 +395,7 @@ test.describe('TC-E — Recoverables', () => {
     await probePost(adminPage, '/configuration/recoverable-categories', { name: nameB, requires: 'none', active: 'on', sort_order: '98' });
 
     await adminPage.goto('/configuration');
-    let names = await adminPage.locator('td.t-lead[data-label="Category"]').allInnerTexts();
+    let names = await categoryNames(adminPage);
     expect(names.indexOf(nameA), 'A (sort_order 97) must precede B (sort_order 98)').toBeLessThan(names.indexOf(nameB));
 
     await adminPage.goto('/recoverables/list');
@@ -398,7 +408,7 @@ test.describe('TC-E — Recoverables', () => {
     await probePost(adminPage, '/configuration/recoverable-categories', { id: b.id, name: nameB, requires: 'none', active: 'on', sort_order: '97' });
 
     await adminPage.goto('/configuration');
-    names = await adminPage.locator('td.t-lead[data-label="Category"]').allInnerTexts();
+    names = await categoryNames(adminPage);
     expect(names.indexOf(nameB), 'after swapping sort_order, B must now precede A').toBeLessThan(names.indexOf(nameA));
   });
 
@@ -482,7 +492,7 @@ test.describe('TC-E — Recoverables', () => {
     expect(dup.status, 'a case-insensitive duplicate name must be refused').toBe(400);
 
     await adminPage.goto('/configuration');
-    const count = await adminPage.locator('td.t-lead', { hasText: new RegExp(`^${name.toUpperCase()}$`, 'i') }).count();
+    const count = (await categoryNames(adminPage)).filter(n => n.toLowerCase() === name.toLowerCase()).length;
     expect(count, 'the duplicate must not have been created a second time').toBeLessThanOrEqual(1);
   });
 
@@ -500,6 +510,7 @@ test.describe('TC-E — Recoverables', () => {
         const resp = await probePost(requester.page, '/requests', {
           treatment: 'recoverable',
           type: 'recoverable',
+          vendor_payee: `Usage payee ${runId}`,
           recoverable_category: code,
           short_title: `Usage ${i} ${runId}`,
           purpose: 'usage test',
@@ -511,9 +522,9 @@ test.describe('TC-E — Recoverables', () => {
         expect(resp.status, `request ${i} against the new category must be accepted`).toBe(303);
       }
       void categoryId;
-      const row = (await categoryRowFields(adminPage, name), adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: name }) }));
+      const row = (await categoryRowFields(adminPage, name), categoryRow(adminPage, name));
       await adminPage.goto('/configuration');
-      const usageRow = adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: name }) });
+      const usageRow = categoryRow(adminPage, name);
       await expect(usageRow.locator('td[data-label="In use"]'), 'two requests were filed against this category').toHaveText('2');
       void row;
     } finally {
@@ -595,7 +606,7 @@ test.describe('TC-E — Recoverables', () => {
       ).not.toContain('You do not have permission to perform this action.');
 
       await adminPage.goto('/configuration');
-      const stillThere = adminPage.locator('tr').filter({ has: adminPage.locator('td.t-lead', { hasText: inUseName }) });
+      const stillThere = categoryRow(adminPage, inUseName);
       await expect(stillThere, 'and the refused row is still there').toHaveCount(1);
       await expect(stillThere.locator('td[data-label="In use"]'), 'with the count the refusal quoted').toHaveText('1');
     } finally {
@@ -610,10 +621,7 @@ test.describe('TC-E — Recoverables', () => {
     const deleted = await probePost(adminPage, `/configuration/recoverable-categories/${fresh.id}/delete`, {});
     expect(deleted.status, 'a category nothing names is a mistake to undo, and delete is what undoes it').toBe(303);
     await adminPage.goto('/configuration');
-    await expect(
-      adminPage.locator('td.t-lead', { hasText: new RegExp(`^${freshName}$`) }),
-      'the row is gone from Configuration'
-    ).toHaveCount(0);
+    await expect(categoryRow(adminPage, freshName), 'the row is gone from Configuration').toHaveCount(0);
 
     // An in-use seeded category can always be re-saved; usage blocks the delete,
     // never the save.

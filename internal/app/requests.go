@@ -792,6 +792,16 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 	data.FormType = req.Type
 	data.Categories = categoriesForType(req.Type, data.Categories)
 	data.RecCategory = resolveRecoverableCategory(req.RecoverableCategory, data.Categories)
+	// A row from before deposits were their own type: an employee advance filed
+	// under EMD, ICD or another deposit category. It still reads as it was, but
+	// this form fixes the category, so it is offered back as an Employee advance
+	// and the banner says what saving will do (form-1, kept readable).
+	if req.Type == "employee_advance" && req.Treatment == "recoverable" && req.RecoverableCategory != "" && data.RecCategory.Code == "" {
+		data.Request2.RecoverableCategory = normalizeRecoverableCategory("", req.Type, data.Categories)
+		data.RecCategory = resolveRecoverableCategory(data.Request2.RecoverableCategory, data.Categories)
+		data.Warning = "This employee advance was recorded under the " + recoverableLabel(req.RecoverableCategory) +
+			" category before deposits and guarantees became their own request type. Saving files it as an Employee advance, which pays the person raising it — if the money goes to a counterparty, withdraw it and raise a deposit or guarantee instead."
+	}
 	if err := a.offerRetiredRefs(r, &data, req); err != nil {
 		return PageData{}, err
 	}
@@ -849,12 +859,16 @@ func (a *App) offerRetiredRefs(r *http.Request, data *PageData, req store.Reques
 			}
 		}
 	}
+	var warning string
 	switch len(retired) {
 	case 0:
 	case 1:
-		data.Warning = "The " + retired[0] + " this request charges was retired after it was raised. Choose a project and head that are still open before saving."
+		warning = "The " + retired[0] + " this request charges was retired after it was raised. Choose a project and head that are still open before saving."
 	default:
-		data.Warning = "The " + strings.Join(retired, " and ") + " this request charges were retired after it was raised. Choose a project and head that are still open before saving."
+		warning = "The " + strings.Join(retired, " and ") + " this request charges were retired after it was raised. Choose a project and head that are still open before saving."
+	}
+	if warning != "" {
+		data.Warning = strings.TrimSpace(data.Warning + " " + warning)
 	}
 	return nil
 }
