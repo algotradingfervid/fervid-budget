@@ -161,15 +161,16 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 		"amount": {"5500.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"UTR-1"}, "payment_mode": {"bank_transfer"}}
 	resp := s.postForm("/payments", form)
 	requireStatus(t, resp, http.StatusSeeOther)
+	// The landing URL is the payment's own — the outcome rides on a one-shot
+	// cookie, so a bookmark or a refresh can never replay the confirmation.
 	loc := resp.Header.Get("Location")
-	if !strings.HasSuffix(loc, "?outcome=saved") {
-		t.Fatalf("the confirming POST must land on the saved outcome, got %q", loc)
+	if !strings.HasPrefix(loc, "/payments/") || strings.Contains(loc, "?") {
+		t.Fatalf("the confirming POST must land on the payment itself, got %q", loc)
 	}
 	saved := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
 	mustContain(t, "just-saved screen", saved, "Payment saved", "have been notified")
 
-	plain := strings.TrimSuffix(loc, "?outcome=saved")
-	later := responseBody(t, s.request(http.MethodGet, plain, nil, ""))
+	later := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
 	mustNotContain(t, "a later visit", later, "Payment saved", "have been notified")
 	mustContain(t, "a later visit", later, "PAY-", "5,500.00")
 
@@ -177,25 +178,24 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 	form.Set("amount", "5000.00")
 	resp = s.postForm("/payments", form)
 	requireStatus(t, resp, http.StatusSeeOther)
-	if got := resp.Header.Get("Location"); got != plain+"?outcome=duplicate" {
-		t.Fatalf("refused repeat landed on %q", got)
+	if got := resp.Header.Get("Location"); got != loc {
+		t.Fatalf("refused repeat landed on %q, want the existing payment %q", got, loc)
 	}
-	dup := responseBody(t, s.request(http.MethodGet, plain+"?outcome=duplicate", nil, ""))
+	dup := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
 	mustContain(t, "refused repeat", dup, "already", "nothing new was saved", "5,500.00")
 	mustNotContain(t, "refused repeat", dup, "Payment saved", "5,000.00")
+	mustNotContain(t, "the visit after the refused repeat", responseBody(t, s.request(http.MethodGet, loc, nil, "")), "nothing new was saved")
 
-	// A blocked edit lands on the payment with the reason.
-	resp = s.request(http.MethodGet, plain+"/edit", nil, "")
+	// A blocked edit lands on the payment with the reason, once.
+	resp = s.request(http.MethodGet, loc+"/edit", nil, "")
 	requireStatus(t, resp, http.StatusSeeOther)
-	if got := resp.Header.Get("Location"); got != plain+"?outcome=immutable" {
+	if got := resp.Header.Get("Location"); got != loc {
 		t.Fatalf("blocked edit landed on %q", got)
 	}
-	imm := responseBody(t, s.request(http.MethodGet, plain+"?outcome=immutable", nil, ""))
+	imm := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
 	mustContain(t, "blocked edit", imm, "cannot be edited")
 	mustNotContain(t, "blocked edit", imm, "Payment saved")
-	// An outcome the code never issues is ignored, not echoed.
-	odd := responseBody(t, s.request(http.MethodGet, plain+"?outcome=%3Cscript%3E", nil, ""))
-	mustNotContain(t, "unknown outcome", odd, "<script>", "Payment saved")
+	mustNotContain(t, "the visit after the blocked edit", responseBody(t, s.request(http.MethodGet, loc, nil, "")), "cannot be edited")
 }
 
 // settlement-6: on the htmx path the sheet sits inside the live entry form, so

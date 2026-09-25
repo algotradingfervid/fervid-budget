@@ -176,8 +176,8 @@ type PageData struct {
 	// Outcome is what the payment screen was reached by: "saved" straight after
 	// the confirming POST, "duplicate" after a repeat confirm the store refused,
 	// "immutable" after a blocked edit, "" on any later visit. It arrives as a
-	// query token the redirect chose and paymentDetail whitelists; the "Payment
-	// saved … have been notified" banner is tied to it (settlement-5).
+	// one-shot cookie the redirect set and paymentDetail reads once; the
+	// "Payment saved … have been notified" banner is tied to it (settlement-5).
 	Outcome string
 	// Trail is the one screen whose history spans two entities. Thread is the
 	// request's merged stream and cannot carry the payment's audit rows, so the
@@ -881,7 +881,7 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		// saying that nothing new was written, because a repeat carrying a
 		// different figure otherwise landed under "Payment saved" (settlement-5).
 		if pay, perr := a.st.PaymentForRequest(r.Context(), linkedID); perr == nil {
-			http.Redirect(w, r, fmt.Sprintf("/payments/%d?outcome=duplicate", pay.ID), http.StatusSeeOther)
+			a.redirectToPayment(w, r, pay.ID, "duplicate")
 			return
 		}
 		a.settlementError(w, r, linkedID, in, r.FormValue("amount"), settlement, partialReason, err)
@@ -895,12 +895,39 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.fire(r, notify.EventPaymentPartialReview, linkedID)
 	}
-	http.Redirect(w, r, fmt.Sprintf("/payments/%d?outcome=saved", payID), http.StatusSeeOther)
+	a.redirectToPayment(w, r, payID, "saved")
 }
 
-// paymentOutcomes are the tokens paymentCreate and paymentEditForm redirect
-// with. Anything else in ?outcome= is ignored, never echoed.
+// paymentOutcomeCookie carries how the payment screen was reached across the
+// redirect from the write — "saved", "duplicate" or "immutable", bound to one
+// payment id. A cookie rather than a query token, so the landing URL stays
+// /payments/{id} and a refresh, a bookmark or a shared link never replays
+// "Payment saved" (settlement-5). It is read once and cleared.
+const paymentOutcomeCookie = "fervid_payment_outcome"
+
 var paymentOutcomes = map[string]bool{"saved": true, "duplicate": true, "immutable": true}
+
+func (a *App) redirectToPayment(w http.ResponseWriter, r *http.Request, payID int64, outcome string) {
+	http.SetCookie(w, &http.Cookie{Name: paymentOutcomeCookie, Value: fmt.Sprintf("%s:%d", outcome, payID),
+		Path: "/payments", MaxAge: 300, HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
+	http.Redirect(w, r, fmt.Sprintf("/payments/%d", payID), http.StatusSeeOther)
+}
+
+// takePaymentOutcome reads and clears the one-shot outcome. Anything not
+// issued by redirectToPayment for this very payment is ignored, never echoed.
+func (a *App) takePaymentOutcome(w http.ResponseWriter, r *http.Request, payID int64) string {
+	c, err := r.Cookie(paymentOutcomeCookie)
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: paymentOutcomeCookie, Value: "", Path: "/payments", MaxAge: -1,
+		HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
+	outcome, id, ok := strings.Cut(c.Value, ":")
+	if !ok || id != strconv.FormatInt(payID, 10) || !paymentOutcomes[outcome] {
+		return ""
+	}
+	return outcome
+}
 
 // paymentDetail is one screen with two readings. A payment linked to a request
 // is the end of that request's story, so it shows what was approved beside what
@@ -957,13 +984,9 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, aerr)
 			return
 		}
-		outcome := r.URL.Query().Get("outcome")
-		if !paymentOutcomes[outcome] {
-			outcome = ""
-		}
 		a.render(w, r, "payment_detail", PageData{
 			Title: "Payment · " + req.Number, Payment: p, Request2: req,
-			Attachments: atts, RequestAtts: reqAtts, Audit: trail, Outcome: outcome,
+			Attachments: atts, RequestAtts: reqAtts, Audit: trail, Outcome: a.takePaymentOutcome(w, r, p.ID),
 		})
 		return
 	}
@@ -986,7 +1009,7 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 	// screen whose Save can only ever fail, so the URL goes where the payment
 	// actually lives.
 	if p.RequestID != nil {
-		http.Redirect(w, r, fmt.Sprintf("/payments/%d?outcome=immutable", p.ID), http.StatusSeeOther)
+		a.redirectToPayment(w, r, p.ID, "immutable")
 		return
 	}
 	heads, err := a.st.ListHeads(r.Context(), true)

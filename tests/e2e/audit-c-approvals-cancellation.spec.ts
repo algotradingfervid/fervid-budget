@@ -557,7 +557,8 @@ test.describe('approving', () => {
       'is more than the approved'
     );
     expect(over.body, 'naming the ceiling itself').toContain('₹12,000.00');
-    expect(await statusPill(mgrA, req.id), 'nothing was paid: the request is still reserved, not completed').toBe(
+    // toContain: since settlement-7 the pill names the holder — "With Accounts — taken by …".
+    expect(await statusPill(mgrA, req.id), 'nothing was paid: the request is still reserved, not completed').toContain(
       'With Accounts'
     );
 
@@ -1406,7 +1407,8 @@ test.describe('the cancellation flow', () => {
       await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}),
       'now it reserves'
     );
-    expect(await statusPill(mgrA, req.id), 'and it is with Accounts, ready to pay').toBe('With Accounts');
+    // toContain: since settlement-7 the pill names the holder — "With Accounts — taken by …".
+    expect(await statusPill(mgrA, req.id), 'and it is with Accounts, ready to pay').toContain('With Accounts');
   });
 
   /**
@@ -1649,12 +1651,13 @@ test.describe('legal transitions', () => {
     const req = await approvedRequest();
     // One POST reserves it: requestRecordPayment → ReserveRequest → 'processing'.
     succeeded(await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}), 'reserving the fixture');
-    expect(await statusPill(mgrA, req.id), 'a reserved request is with Accounts').toBe('With Accounts');
+    // toContain: since settlement-7 the pill names the holder — "With Accounts — taken by …".
+    expect(await statusPill(mgrA, req.id), 'a reserved request is with Accounts').toContain('With Accounts');
 
     for (const action of transitionActions) {
       refused(await action.run(req.id, req.title), `${action.key} against a processing request`);
     }
-    expect(await statusPill(mgrA, req.id), 'and it is still with Accounts').toBe('With Accounts');
+    expect(await statusPill(mgrA, req.id), 'and it is still with Accounts').toContain('With Accounts');
   });
 
   test('TC-C-119B — every action in the grid is refused against a partial_review request', async () => {

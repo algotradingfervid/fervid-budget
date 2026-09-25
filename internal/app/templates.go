@@ -320,6 +320,10 @@ const templates = `
     {{if .Payment.PartialReason}}<div style="grid-column:1/-1"><dt>Partial reason</dt><dd>{{.Payment.PartialReason}}</dd></div>{{end}}
     {{if .Payment.Remarks}}<div style="grid-column:1/-1"><dt>Processing note</dt><dd>{{.Payment.Remarks}}</dd></div>{{end}}
   </dl>
+  {{/* Said here, on every visit, now that the confirmation banner is shown
+       once: the reader who arrives from the ledger months later still needs
+       to know why there is no Edit (S12). */}}
+  <p class="hint">This payment settled {{.Request2.Number}} and can no longer be edited or cancelled.</p>
 </div>
 
 {{if or .Attachments .RequestAtts}}
