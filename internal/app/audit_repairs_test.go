@@ -207,6 +207,57 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	}
 }
 
+// notifications-1 — "Edit every field" on a returned request opens the full
+// edit form, whose banner says editing notifies the approver and whose button
+// reads "Save and notify <approver>". That button sent no submit_action, so it
+// saved without resubmitting: the request stayed returned and nobody was told.
+// It now resubmits, as its label promises, and the approver is told.
+func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Full edit returned")
+	requester := s.seedRequester("fulledit@example.test", "Full Editor", "FullEdit12345")
+	approver := s.seedRequester("fullapprover@example.test", "Apra Approver", "FullAppr12345")
+	s.assignRole(approver.ID, "Manager")
+	id := s.seedPendingRequest(923, requester.ID, approver.ID, headID, 180000)
+
+	s.login("fullapprover@example.test", "FullAppr12345")
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", id),
+		url.Values{"comment": {"Add GST split"}}), http.StatusSeeOther)
+
+	s.login("fulledit@example.test", "FullEdit12345")
+	page := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	button := `<button class="btn primary" type="submit" name="submit_action" value="resubmit">Save and notify Apra Approver</button>`
+	if !strings.Contains(page, button) {
+		t.Fatalf("the full edit form's button does not resubmit; want %s", button)
+	}
+	// Post exactly what that form sends: its fields plus the button's value.
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"},
+		"short_title": {"Site visit"}, "project_id": {itoa64(projectOf(t, s, headID))},
+		"head_id": {itoa64(headID)}, "amount": {"1,800.00"},
+		"purpose":      {"flights and cabs, with the GST split out"},
+		"expense_date": {"2026-07-01"}, "manager_id": {itoa64(approver.ID)},
+		"submit_action": {"resubmit"},
+	}), http.StatusSeeOther)
+	var status string
+	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		t.Fatalf("status after Save and notify = %q, want pending (back with the approver)", status)
+	}
+	if !hasEvent(notificationTitles(t, s, approver.ID), notify.EventRequestEdited) {
+		t.Fatal("Save and notify did not notify the approver")
+	}
+
+	// Editing a pending request still saves in place: no submit_action there,
+	// and it notifies as TestEditingAPendingRequestReNotifiesTheApprover pins.
+	page = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	if !strings.Contains(page, `<button class="btn primary" type="submit">Save and notify Apra Approver</button>`) {
+		t.Fatal("the pending edit form's button changed")
+	}
+}
+
 // A8 (coverage matrix) — editing a request that is still *pending* re-notifies
 // the approver: the request is already in their queue and the figures they are
 // about to decide on have changed. The approver here is a plain Manager, not

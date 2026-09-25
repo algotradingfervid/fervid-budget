@@ -2913,7 +2913,11 @@ const templates = `
     <span class="ab-note d-only">Every change is recorded in the history.</span>
     <span class="row-end"></span>
     <a class="btn outline" href="/requests/{{.Request2.ID}}">Discard changes</a>
-    <button class="btn primary" type="submit">Save and notify {{.Request2.ManagerName}}</button>
+    {{/* On a returned request the promise is only true if this press also
+         resubmits: a save alone leaves it returned and tells nobody
+         (notifications-1). Saving without sending stays on the returned
+         screen's own "Save corrections". */}}
+    <button class="btn primary" type="submit"{{if eq .Request2.Status "returned"}} name="submit_action" value="resubmit"{{end}}>Save and notify {{.Request2.ManagerName}}</button>
   </div>
 </form>
 {{template "bottom" .}}
