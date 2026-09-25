@@ -287,6 +287,67 @@ func TestNotifyCopiesManagementOnTheApprovalEmail(t *testing.T) { // N3
 	}
 }
 
+// notify-2: the in-app body is the email body minus what only makes sense on
+// paper. Its line breaks are kept (the centre renders them), and a line whose
+// template field came out empty is dropped rather than shown as a bare label —
+// a request raised with no Needed-by date used to read "Needed by:" with
+// nothing after it.
+func TestNotifyInAppBodyDropsEmptyFieldLinesAndKeepsLineBreaks(t *testing.T) { // N1
+	ctx := context.Background()
+	st := openTestStore(t)
+	actor := testActor(t, st)
+	requester := mustUser(t, st, "ib-req@test", "Rhea", "data_entry")
+	manager := mustUser(t, st, "ib-mgr@test", "Manav", "admin")
+	reqID := insertRequest(t, st, "PR-2026-000980", "pending", requester, manager, time.Now().UTC(), nil)
+	enableEvent(t, st, actor, store.NotificationSetting{
+		Event: EventRequestSubmitted, IncludeManager: true,
+		SubjectTemplate: "{{number}} needs your approval",
+		// The seeded default body (migrations_notifications.go).
+		BodyTemplate: "{{requester}} raised {{number}} for {{amount}} to {{payee}}.\n\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}",
+	})
+	mailer := &fakeMailer{}
+	svc := NewService(st, mailer)
+	req, err := st.Request(ctx, reqID)
+	must(t, err)
+	req.Project, req.Head = "Operations", "Office Rent"
+	must(t, svc.Notify(ctx, EventRequestSubmitted, req))
+
+	rows, err := st.ListNotifications(ctx, store.NotificationFilter{UserID: manager})
+	must(t, err)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	want := "Rhea raised PR-2026-000980 for ₹5,000.00 to Acme.\n\nProject: Operations / Office Rent\n\nOpen it: /requests/" + itoa(reqID)
+	if rows[0].Body != want {
+		t.Fatalf("in-app body =\n%q\nwant\n%q", rows[0].Body, want)
+	}
+}
+
+func TestRenderInAppBody(t *testing.T) {
+	v := RequestView{Number: "PR-1", Payee: "Acme", Link: "/requests/1"}
+	cases := []struct{ tmpl, want string }{
+		// A field on its own line that is empty takes the line with it, and
+		// the blank lines around it collapse to one paragraph break.
+		{"{{number}} to {{payee}}.\n\n{{purpose}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}", "PR-1 to Acme.\n\nOpen it: /requests/1"},
+		// Admin text with no tokens is kept as written.
+		{"Hello\nthere", "Hello\nthere"},
+		// Every line empty leaves no body at all, not whitespace.
+		{"Needed by: {{needed_by}}", ""},
+	}
+	for _, tc := range cases {
+		got, err := renderInAppBody(tc.tmpl, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("renderInAppBody(%q) = %q, want %q", tc.tmpl, got, tc.want)
+		}
+	}
+	if _, err := renderInAppBody("{{nope}}", v); err == nil {
+		t.Fatal("unknown token accepted")
+	}
+}
+
 // An unknown event is a no-op, not an error: nothing is configured for it.
 func TestNotifyUnknownEventIsANoOp(t *testing.T) {
 	ctx := context.Background()

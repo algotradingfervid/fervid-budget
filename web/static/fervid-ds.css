@@ -3583,6 +3583,16 @@ legend {
   font-size: 12.5px;
 }
 
+/* The request link inside a row's body. The row is itself the <a> to that
+   request, so this is link text rather than a nested anchor; underline and
+   the link colour say it is clickable, and a long URL may break anywhere so it
+   never widens the row at 390px. */
+.notif .n-link {
+  color: var(--fb-accent-strong);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
 .notif time {
   flex: none;
   margin-left: auto;

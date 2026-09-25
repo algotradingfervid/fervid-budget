@@ -2,7 +2,9 @@ package app
 
 import (
 	"errors"
+	"html/template"
 	"net/http"
+	"strings"
 	"time"
 
 	"fervidbudget/internal/auth"
@@ -28,6 +30,31 @@ func notifGlyph(kind string) string {
 	default:
 		return "✓"
 	}
+}
+
+// notifBody renders a row's stored plain-text body for the centre (notify-2).
+// The text is escaped first; then its line breaks become <br>, and a URL that
+// points where the row itself goes — the rendered {{link}}, absolute or
+// relative — is marked as link text. It cannot be its own <a>: the whole row
+// is already the <a> that opens it, and anchors do not nest. A URL pointing
+// anywhere else is left as text, because a click on it would follow the row.
+func notifBody(body, href string) template.HTML {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		words := strings.Split(line, " ")
+		for j, w := range words {
+			core := strings.TrimRight(w, ".,;:)!?")
+			if href != "" && (core == href || (strings.HasSuffix(core, href) &&
+				(strings.HasPrefix(core, "https://") || strings.HasPrefix(core, "http://")))) {
+				words[j] = `<span class="n-link">` + template.HTMLEscapeString(core) + `</span>` +
+					template.HTMLEscapeString(w[len(core):])
+				continue
+			}
+			words[j] = template.HTMLEscapeString(w)
+		}
+		lines[i] = strings.Join(words, " ")
+	}
+	return template.HTML(strings.Join(lines, "<br>"))
 }
 
 // notificationPageSize is how many rows the centre draws at once. It is the

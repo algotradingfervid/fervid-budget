@@ -3716,7 +3716,7 @@ const templates = `
   {{range .Notifs}}
   <a class="notif{{if not .ReadAt}} unread{{end}}" href="/notifications/{{.ID}}/open">
     <span class="n-ico" aria-hidden="true">{{notifGlyph .Kind}}</span>
-    <span class="n-main"><b>{{.Title}}</b>{{if .Body}}<p>{{.Body}}</p>{{end}}</span>
+    <span class="n-main"><b>{{.Title}}</b>{{if .Body}}<p>{{notifBody .Body .Href}}</p>{{end}}</span>
     <time>{{date .CreatedAt}}</time>
   </a>
   {{else}}

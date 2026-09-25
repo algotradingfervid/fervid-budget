@@ -133,7 +133,7 @@ func (s *Service) writeInApp(ctx context.Context, event string, cfg store.Notifi
 		}
 		title += " · " + v.Number
 	}
-	body, err := renderTemplate(cfg.BodyTemplate, v)
+	body, err := renderInAppBody(cfg.BodyTemplate, v)
 	if err != nil {
 		body = ""
 	}
@@ -352,6 +352,40 @@ func renderTemplate(tmpl string, v RequestView) (string, error) {
 		return "", fmt.Errorf("unknown template field(s): %s", strings.Join(bad, ", "))
 	}
 	return out, nil
+}
+
+// renderInAppBody renders the body template for the in-app centre, which is
+// not paper: a line whose field came out empty is dropped instead of leaving a
+// bare label ("Needed by:"), and the blank lines that leaves behind collapse
+// to one paragraph break. Line breaks are kept; the centre renders them
+// (notify-2). A line of admin text with no token is always kept.
+func renderInAppBody(tmpl string, v RequestView) (string, error) {
+	fields := notifyFields(v)
+	var lines []string
+	for _, line := range strings.Split(tmpl, "\n") {
+		empty := false
+		for _, m := range tokenPattern.FindAllStringSubmatch(line, -1) {
+			if val, ok := fields[strings.TrimSpace(m[1])]; ok && strings.TrimSpace(val) == "" {
+				empty = true
+			}
+		}
+		if empty {
+			continue
+		}
+		out, err := renderTemplate(line, v)
+		if err != nil {
+			return "", err
+		}
+		out = strings.TrimRight(out, " \t\r")
+		if out == "" && (len(lines) == 0 || lines[len(lines)-1] == "") {
+			continue // no leading or doubled blank lines
+		}
+		lines = append(lines, out)
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // ValidateTemplate reports whether admin-entered text uses only known tokens.

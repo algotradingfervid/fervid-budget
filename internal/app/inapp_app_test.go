@@ -23,6 +23,46 @@ func seedNotification(t *testing.T, s *appTestServer, userID int64, event, kind,
 	return id
 }
 
+// notify-2: the body keeps its line breaks and shows the request link as a
+// link, not as flattened text. The row itself is the <a> that opens the
+// request, so the link is drawn as link text inside it (a nested <a> is not
+// valid HTML), and everything else in the body stays escaped.
+func TestNotificationCentreRendersBodyLinesAndLink(t *testing.T) { // N1
+	s := newAppTestServer(t)
+	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO notifications(user_id,event,kind,title,body,href) VALUES(?,?,?,?,?,?)`,
+		admin.ID, "request_submitted", "activity", "PR-2026-000005 needs your approval",
+		"Rhea raised PR-2026-000005 <b>now</b>.\n\nProject: Ops / Rent\n\nOpen it: https://budget.test/requests/5.", "/requests/5"); err != nil {
+		t.Fatal(err)
+	}
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+	body := responseBody(t, s.request(http.MethodGet, "/notifications", nil, ""))
+	want := `<p>Rhea raised PR-2026-000005 &lt;b&gt;now&lt;/b&gt;.<br><br>Project: Ops / Rent<br><br>Open it: <span class="n-link">https://budget.test/requests/5</span>.</p>`
+	if !strings.Contains(body, want) {
+		t.Fatalf("notification body not rendered with its lines and link; want %s", want)
+	}
+}
+
+func TestNotifBodyOnlyLinksTheRowsOwnTarget(t *testing.T) { // N1
+	cases := []struct{ body, href, want string }{
+		{"Open it: /requests/1", "/requests/1", `Open it: <span class="n-link">/requests/1</span>`},
+		// /requests/10 is a different request: no partial match.
+		{"See /requests/10", "/requests/1", `See /requests/10`},
+		// A URL that is not where the row goes stays text, because the row's
+		// own <a> would take a click on it somewhere else.
+		{"Policy: https://intranet.test/p", "/requests/1", `Policy: https://intranet.test/p`},
+		{"a\r\nb", "/requests/1", `a<br>b`},
+	}
+	for _, tc := range cases {
+		if got := string(notifBody(tc.body, tc.href)); got != tc.want {
+			t.Fatalf("notifBody(%q) = %q, want %q", tc.body, got, tc.want)
+		}
+	}
+}
+
 func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
 	s := newAppTestServer(t)
 	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)

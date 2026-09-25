@@ -309,6 +309,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 			}
 		},
 		"notifGlyph":   notifGlyph,
+		"notifBody":    notifBody,
 		"pillClass":    pillClass,
 		"reqStatus":    requestStatusText,
 		"typeLabel":    typeLabel,
