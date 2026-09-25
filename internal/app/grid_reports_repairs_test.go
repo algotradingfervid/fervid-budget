@@ -141,7 +141,10 @@ func TestGridHidesThePaymentsPanelRatherThanClaimingItIsEmpty(t *testing.T) {
 // carries the grid and not a second sidebar.
 func TestGridFiltersSwapOverHTMXAndStillWorkWithoutIt(t *testing.T) {
 	s := newAppTestServer(t)
-	s.seedHead("Swap")
+	actor, swapHead := s.seedHead("Swap")
+	if err := s.st.SetBudget(s.ctx, actor, swapHead, currentMonthForTest(), 10000); err != nil {
+		t.Fatal(err)
+	}
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 
 	page := responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
@@ -191,7 +194,10 @@ func TestGridFiltersSwapOverHTMXAndStillWorkWithoutIt(t *testing.T) {
 // "1 head" and a one-head month close reads "1 head is unpaid".
 func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 	s := newAppTestServer(t)
-	s.seedHead("Solo")
+	actor, soloHead := s.seedHead("Solo")
+	if err := s.st.SetBudget(s.ctx, actor, soloHead, currentMonthForTest(), 10000); err != nil {
+		t.Fatal(err)
+	}
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	month := currentMonthForTest()
 	grid := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
@@ -201,7 +207,7 @@ func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 	if !strings.Contains(grid, `<span class="countpill">1 project</span>`) || !strings.Contains(grid, " · 1 head · remaining") {
 		t.Fatalf("the grid header does not pluralise its counts: %s", cut(grid, `<div class="between"`, "</div></div>"))
 	}
-	if !strings.Contains(grid, "1 head is unpaid, 0 have unbudgeted spend, and 0 are over budget.") {
+	if !strings.Contains(grid, "1 budgeted head is unpaid, 0 have unbudgeted spend, and 0 are over budget.") {
 		t.Fatalf("the month close sentence is not pluralised: %s", cut(grid, "<h2>Month Close</h2>", "</p>"))
 	}
 	requireStatus(t, s.postForm("/months", url.Values{"target_month": {month}}), http.StatusSeeOther)

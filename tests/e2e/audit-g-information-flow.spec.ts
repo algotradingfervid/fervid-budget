@@ -633,7 +633,7 @@ test.describe('G · the money trail', () => {
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const settle = adminPage.locator('.overlay .sheet');
     await expect(settle).toBeVisible();
-    await expectMoney(adminPage, '.compare .cmp-row:has(.l:text-is("Approved")) .v', MONEY, 'hop 10a — sheet Approved');
+    await expectMoney(adminPage, '.compare .cmp-row:has(.l:text-is("Remaining before this payment")) .v', MONEY, 'hop 10a — sheet remaining approval');
     await expectMoney(
       adminPage,
       '.compare .cmp-row:has(.l:text-is("Actually paid")) .v',
@@ -871,7 +871,8 @@ test.describe('G · the money trail', () => {
       mode: 'cheque',
       reference: `UTR-T3-${runId}`,
       remarks: `Trail adjusted ${runId}`,
-      settlement: 'settled'
+      settlement: 'settled',
+      partialReason: 'Agreed deduction recorded for this short settlement.'
     });
 
     // The payment carries only the paid figure, and shows what was approved
@@ -886,7 +887,7 @@ test.describe('G · the money trail', () => {
     );
 
     // The request's outcome block names all three, and the arithmetic is right.
-    // Its Paid row is labelled "Paid on <date>", unlike the payment detail's.
+    // Its paid row shows the cumulative amount, unlike the individual payment detail.
     await adminPage.goto(`/requests/${raised.id}`);
     await expectMoney(
       adminPage,
@@ -894,7 +895,7 @@ test.describe('G · the money trail', () => {
       APPROVED,
       'outcome Approved'
     );
-    await expectMoney(adminPage, '.compare .cmp-row:has(.l:has-text("Paid on")) .v', PAID, 'outcome Paid');
+    await expectMoney(adminPage, '.compare .cmp-row:has(.l:text-is("Total paid to date")) .v', PAID, 'outcome Paid');
     await expectMoney(
       adminPage,
       '.compare .cmp-row.match .v',
@@ -975,6 +976,7 @@ test.describe('G · the money trail', () => {
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const sheet = adminPage.locator('.overlay .sheet');
     await expect(sheet).toBeVisible();
+    await sheet.locator('input[name="settlement"][value="settled"]').check();
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
 
     await expect(adminPage, 'a refused settlement creates no payment, so no /payments/{id}').toHaveURL(/\/payments$/);
@@ -2186,6 +2188,7 @@ test.describe('G · the same fact in several places', () => {
       approverName: approver.subject.name
     });
     await approveFor(approver.page, id, '60000.00');
+    await settlePayment(adminPage, id, { amount: '60000.00', paidOn: '2023-09-15', reference: `REC-PAID-${runId}` });
 
     // Dashboard total, list total and CSV must be the same money.
     await adminPage.goto('/recoverables');
@@ -2194,14 +2197,14 @@ test.describe('G · the same fact in several places', () => {
     );
     const dashboardTotal = paise(await adminPage.locator('tfoot td[data-label="Outstanding"]').innerText());
 
-    await adminPage.goto('/recoverables/list');
+    await adminPage.goto('/recoverables/list?ageing=outstanding');
     const listRows = await dataRows(adminPage);
-    const listTotal = paise(await adminPage.locator('tfoot td[data-label="Amount"]').innerText());
+    const listTotal = paise(await adminPage.locator('tfoot td[data-label="Outstanding"]').innerText());
     expect(listRows, 'the dashboard count is the number of list rows').toBe(outstandingCount);
     expect(listTotal, 'the dashboard total is the list total').toBe(dashboardTotal);
     await expect(adminPage.locator('tbody tr', { hasText: number }), 'and this recoverable is in it').toHaveCount(1);
 
-    const recCSV = await csv(adminPage, '/recoverables/list.csv');
+    const recCSV = await csv(adminPage, '/recoverables/list.csv?ageing=outstanding');
     const csvRows = recCSV.split('\n').filter(l => l.trim()).length - 1;
     expect(csvRows, 'the CSV is the same rows as the list').toBe(listRows);
     expect(recCSV, 'and carries this recoverable').toContain(number);
@@ -2218,7 +2221,7 @@ test.describe('G · the same fact in several places', () => {
     await expect(
       adminPage,
       'the link sets the control the list honours, not a free-text search for a label'
-    ).toHaveURL(/\/recoverables\/list\?category=\d+$/);
+    ).toHaveURL(/\/recoverables\/list\?category=\d+&ageing=outstanding$/);
     const drilled = await dataRows(adminPage);
     expect(
       drilled,
@@ -3240,7 +3243,7 @@ test.describe('G · confinement', () => {
     // built once in recoverableListOptions, is enough for both.
     await accounts.page.goto('/recoverables/list');
     const headers = (await accounts.page.locator('thead th').allInnerTexts()).map(h => h.trim().toLowerCase());
-    for (const column of ['category', 'counterparty', 'project', 'amount', 'paid on', 'expected back', 'ageing', 'status', 'requester', 'repayment notes']) {
+    for (const column of ['category', 'counterparty', 'project', 'outstanding', 'paid out', 'returned / reconciled', 'paid on', 'expected back', 'ageing', 'status', 'requester', 'repayment notes']) {
       expect(headers, `the register renders the CSV's "${column}" column too`).toContain(column);
     }
 
@@ -3647,12 +3650,11 @@ test.describe('G · confinement', () => {
 
 test.describe('G · idempotence', () => {
   /**
-   * G6 is explicit that legitimate repeats exist and the duplicate check is
-   * advisory. So two identical submissions creating two requests is correct —
-   * but it must be *visibly* two, each with its own number, and neither may be
-   * silently merged.
+   * Legitimate repeated invoices need an explicit override explanation. An
+   * accidental replay is refused; the explained duplicate remains separately
+   * numbered and neither obligation is silently merged.
    */
-  test('TC-G-060 — a replayed request POST creates a second, separately numbered request (G6, by design)', async ({
+  test('TC-G-060 — a repeated invoice requires a deliberate override before a separately numbered request', async ({
     adminPage,
     browser,
     runId
@@ -3693,14 +3695,17 @@ test.describe('G · idempotence', () => {
     const first = await probePost(adminPage, '/requests', form);
     const second = await probePost(adminPage, '/requests', form);
     expect(first.status, 'the first POST creates a request').toBe(303);
-    expect(second.status, 'the second POST is accepted too — G6 permits repeats').toBe(303);
-    expect(second.location, 'and it is a different request').not.toBe(first.location);
+    expect(second.status, 'an unexplained repeated invoice is refused').toBe(400);
+    expect(second.body, 'the refusal names the duplicate').toContain(form.invoice_no);
+    const explained = await probePost(adminPage, '/requests', { ...form, duplicate_reason: 'Intentional separate obligation verified for this repeated invoice.' });
+    expect(explained.status, 'an explicitly explained duplicate remains possible').toBe(303);
+    expect(explained.location, 'and it is a different request').not.toBe(first.location);
 
-    // Both exist, both numbered, and the duplicate check is advisory only.
+    // Both deliberately created records remain separately numbered.
     await adminPage.goto(`/requests?bucket=all&q=${encodeURIComponent(`Replay ${runId}`)}`);
     await expect(
       adminPage.locator('.req-card'),
-      'two identical submissions produce two separately numbered requests'
+      'the original and explicitly explained duplicate have separate request numbers'
     ).toHaveCount(2);
     const numbers = await adminPage.locator('.rc-no').allInnerTexts();
     expect(new Set(numbers.map(n => n.trim())).size, 'and the numbers are distinct — C4').toBe(2);
@@ -3754,9 +3759,9 @@ test.describe('G · idempotence', () => {
   });
 
   /**
-   * S9 — one request, one payment. A replayed confirm must land on the payment
-   * that already exists rather than create a second, and the redirect at
-   * internal/app/app.go:713-716 is what makes a double tap harmless.
+   * One confirmation creates one immutable payment. Replaying the issued
+   * confirmation token must land on that payment without another debit, even
+   * though a request can now have multiple separately confirmed installments.
    */
   test('TC-G-062 — a replayed settlement confirm lands on the existing payment and creates no second one', async ({
     adminPage,
@@ -3772,7 +3777,11 @@ test.describe('G · idempotence', () => {
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     const headID = await adminPage.locator('input[name="head_id"]').inputValue();
 
+    const submissionKey = await adminPage.locator('input[name="submission_key"]').inputValue();
+    const expectedPaid = await adminPage.locator('input[name="expected_paid"]').inputValue();
     const form = {
+      submission_key: submissionKey,
+      expected_paid: expectedPaid,
       request_id: String(request.id),
       head_id: headID,
       amount: '3800.00',

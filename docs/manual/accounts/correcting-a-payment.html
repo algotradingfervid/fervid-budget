@@ -111,15 +111,9 @@
 <header class="page-head"><h1>Correcting or voiding a payment</h1><p class="lede">What can still be changed after a payment is recorded, and what is sealed.</p></header>
 <p>Almost nothing. A payment that settled a request is the outcome of that request, and the requester and the approver were both told what it said. Editing it afterwards would rewrite what they were told, so the product does not allow it — not by you, not by an administrator, not at all.</p>
 <p>The confirmation step says this before you save: confirming saves the payment, and it cannot be edited or cancelled afterwards. The saved payment repeats it, and its detail card carries a <strong>Read-only</strong> badge.</p>
-<aside class="callout callout-warning"><p class="callout-title">A settled payment is final</p><p>There is no undo. If the figure is wrong, the way through is words, not edits: explain it in the conversation on the request, and let the requester raise a fresh request for whatever is genuinely still owed. Refunds and reversals are outside this version.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">A settled payment is final</p><p>Saved payments cannot be rewritten. Explain mistakes in the request conversation and follow your accounting correction process. A live installment balance can be paid against the same request; an accepted full settlement or shortfall remains closed. Recoverable returns and referenced reconciliations have a separate <a href="../accounts/the-recoverables-register.html">recovery recording workflow</a>, which does not edit the original payout.</p></aside>
 <h2 id="what-can-still-be-changed">What can still be changed</h2>
 <p>One kind of payment is still editable: a payment with no request behind it. These are the historical rows recorded before every payment had to belong to an approved request. They are still ledger entries, so they are still corrected the old way.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payments-ledger.png" aria-label="Enlarge: The ledger. Almost every row offers only **View**; one row here also offers **Edit** and **Remove**, because it has no request behind it.">
-    <img src="../assets/shots/accounts/payments-ledger.png" alt="Every payment recorded, filtered by month." loading="lazy" width="1440">
-  </button>
-  <figcaption>The ledger. Almost every row offers only <strong>View</strong>; one row here also offers <strong>Edit</strong> and <strong>Remove</strong>, because it has no request behind it. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <div class="table-wrap"><table><thead><tr><th scope="col">Kind of payment</th><th scope="col">View</th><th scope="col">Edit</th><th scope="col">Remove</th></tr></thead><tbody>
 <tr><td>Settled against a request</td><td>Yes</td><td>No</td><td>No</td></tr>
 <tr><td>No request behind it, month open, not already removed</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
@@ -128,12 +122,6 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p>The Actions column is where you can tell the two kinds apart at a glance. Opening the edit address for a payment that settled a request takes you to the payment itself rather than to a form whose <strong>Save</strong> could only ever fail.</p></aside>
 <h2 id="editing-a-request-less-payment">Editing a request-less payment</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payment-edit.png" aria-label="Enlarge: The edit form. This particular payment sits in a locked period, so the banner says it is read-only and **Save Payment** is unavailable.">
-    <img src="../assets/shots/accounts/payment-edit.png" alt="The edit form, available only for payments not tied to a request." loading="lazy" width="1440">
-  </button>
-  <figcaption>The edit form. This particular payment sits in a locked period, so the banner says it is read-only and <strong>Save Payment</strong> is unavailable. </figcaption>
-</figure>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Project / Head</strong></td><td><span class="req">Required</span></td><td>What the spend is booked against, chosen from the active heads.</td></tr>
 <tr><td><strong>Paid on</strong></td><td><span class="req">Required</span></td><td>The date the money left the bank.</td></tr>

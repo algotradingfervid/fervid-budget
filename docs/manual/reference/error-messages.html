@@ -132,7 +132,7 @@
 <tr><td>&quot;Only the person who raised a request may ask for it to be cancelled.&quot;</td><td>Asking is the requester’s act, whoever else holds <code>request:cancel</code>.</td><td>An approver with <code>approval:cancel</code> can cancel the request outright with a reason instead.</td></tr>
 <tr><td>&quot;Only the approver this request was sent to can decide its cancellation.&quot;</td><td>The decision belongs to the named approver, not to everybody holding the permission.</td><td>If that approver cannot act, reassign the approval to somebody who can.</td></tr>
 <tr><td>&quot;Only the person holding this reservation can release it.&quot;</td><td>Releasing a claim you do not hold is taking work off a colleague, which needs <code>reservation:reassign</code> — an administrator permission.</td><td>Ask an administrator to reassign the reservation.</td></tr>
-<tr><td>&quot;You do not have permission to record a partial payment.&quot;</td><td>Settling short of the approved amount is its own decision and needs <code>payment:mark_partial</code>.</td><td>Record the payment as settled if that is what it is, or ask a colleague who holds the grant.</td></tr>
+<tr><td>&quot;You do not have permission to record a partial payment.&quot;</td><td>Asking the manager to decide a shortfall needs <code>payment:mark_partial</code>.</td><td>Record the payment as settled if that is what it is, or ask a colleague who holds the grant.</td></tr>
 </tbody></table></div>
 <h3 id="state-refusals-that-also-answer-403">State refusals that also answer 403</h3>
 <p>A few refusals are about the state of the record rather than about you. They keep their own sentence rather than falling back to the permission wording, because sending somebody to an administrator for a grant they already hold helps nobody.</p>
@@ -255,7 +255,7 @@
 <tr><td>&quot;you cannot reassign a request to yourself&quot;</td><td>Picking your own name in the reassign panel. Nobody may, an administrator included.</td></tr>
 <tr><td>&quot;this request is with … now, so it is not yours to reassign&quot;</td><td>Reassigning from a page loaded before an administrator moved the request to somebody else.</td></tr>
 <tr><td>&quot;only a rejected request can be re-raised&quot;</td><td>Re-raising something that was not rejected.</td></tr>
-<tr><td>&quot;choose payment settled or partial settlement&quot;</td><td>A settlement was posted without saying which it is.</td></tr>
+<tr><td>A payment confirmation requires a valid settlement choice</td><td>Explicitly choose full settlement, installment, or manager shortfall review as appropriate.</td></tr>
 <tr><td>&quot;a reason is required for a partial settlement&quot;</td><td>Paying short without explaining why.</td></tr>
 <tr><td>&quot;… is more than the approved …&quot;</td><td>The payment exceeds the approved amount. To pay more, cancel the request and raise a new one.</td></tr>
 <tr><td>&quot;confirm that no payment was initiated before releasing&quot;</td><td>Releasing a claim without ticking the confirmation.</td></tr>

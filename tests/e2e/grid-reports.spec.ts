@@ -97,11 +97,16 @@ test('recoverables-1/-2, grid-2, grid-1 — a recoverable never reaches the grid
   runId
 }) => {
   const amount = '250000';
+  await adminPage.goto('/recoverables');
+  const categoryTable = adminPage.locator('table', { has: adminPage.locator('tfoot td[data-label="Outstanding"]') }).first();
+  const outstandingBefore = paise(await categoryTable.locator('tfoot td[data-label="Outstanding"]').innerText());
+  const overdueBefore = paise(await categoryTable.locator('tfoot td[data-label="Overdue"]').innerText());
+  const countBefore = Number(await categoryTable.locator('tfoot td[data-label="Count"]').innerText());
   const { id, approver } = await raiseAndApproveEmd(adminPage, browser, runId, amount, '2026-01-15');
 
-  // recoverables-1: approved, unpaid, past its return date. It is outstanding,
-  // but money that never left is not overdue — in the category rows, the Total
-  // row and the tile alike.
+  // Approved but unpaid remains visible in the register, with zero money
+  // outstanding. Neither the category balance/count nor the overdue total may
+  // increase before an actual payout.
   for (const [vp, tag] of [[DESKTOP, '1440'], [PHONE, '390']] as const) {
     await adminPage.setViewportSize(vp);
     await adminPage.goto('/recoverables');
@@ -113,9 +118,16 @@ test('recoverables-1/-2, grid-2, grid-1 — a recoverable never reaches the grid
     const total = paise(await table.locator('tfoot td[data-label="Overdue"]').innerText());
     expect(rowSum, 'the By-category overdue rows add up to their own Total row').toBe(total);
     expect(total, 'and the Total row agrees with the Past expected return tile').toBe(tileOverdue);
-    const emdRow = table.locator('tbody tr', { hasText: 'EMD' });
-    expect(paise(await emdRow.locator('td[data-label="Overdue"]').innerText()), 'the unpaid EMD is not overdue').toBe(0);
+    expect(total, 'the unpaid EMD does not increase overdue money').toBe(overdueBefore);
+    expect(paise(await table.locator('tfoot td[data-label="Outstanding"]').innerText()), 'unpaid approval is not money outstanding').toBe(outstandingBefore);
+    expect(Number(await table.locator('tfoot td[data-label="Count"]').innerText()), 'only paid balances enter the outstanding count').toBe(countBefore);
     await shoot(adminPage, `rec1-dashboard-unpaid-${tag}`);
+    await adminPage.goto('/recoverables/list?ageing=unpaid');
+    const unpaidRow = adminPage.locator('tbody tr', { has: adminPage.locator(`a[href="/recoverables/${id}"]`) });
+    await expect(unpaidRow).toBeVisible();
+    expect(paise(await unpaidRow.locator('td[data-label="Outstanding"]').innerText())).toBe(0);
+    expect(paise(await unpaidRow.locator('td[data-label="Paid out"]').innerText())).toBe(0);
+    await expect(unpaidRow.locator('td[data-label="Ageing"]')).toHaveText('Awaiting payment');
   }
   await adminPage.setViewportSize(DESKTOP);
   await adminPage.goto('/recoverables/list?ageing=overdue');
@@ -162,6 +174,13 @@ test('recoverables-1/-2, grid-2, grid-1 — a recoverable never reaches the grid
   const month = today().slice(0, 7);
   for (const [vp, tag] of [[DESKTOP, '1440'], [PHONE, '390']] as const) {
     await adminPage.setViewportSize(vp);
+    await adminPage.goto('/recoverables/list?ageing=overdue');
+    const paidRow = adminPage.locator('tbody tr', { has: adminPage.locator(`a[href="/recoverables/${id}"]`) });
+    await expect(paidRow, 'the paid, overdue deposit is now in the register').toBeVisible();
+    expect(paise(await paidRow.locator('td[data-label="Outstanding"]').innerText())).toBe(Number(amount) * 100);
+    expect(paise(await paidRow.locator('td[data-label="Paid out"]').innerText())).toBe(Number(amount) * 100);
+    await expect(paidRow.locator('td[data-label="Counterparty"]'), 'the known tender authority is the counterparty').toHaveText(`Tender authority ${runId}`);
+    expect(paise(await paidRow.locator('td[data-label="Returned / reconciled"]').innerText())).toBe(0);
     await adminPage.goto(`/grid?month=${month}`);
     const panel = adminPage.locator('section.split', { hasText: 'Recent Payments for' });
     await expect(panel, 'an admin still has the panel').toHaveCount(1);
@@ -414,12 +433,26 @@ test('recoverables-6 + ui-1 — compact total cards on a phone, rows that line u
     );
     expect(blanks, `${path}: empty tfoot cells render as stripes`).toBe(0);
     await adminPage.locator('table.t-cards tfoot').scrollIntoViewIfNeeded();
+    await adminPage.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const footerBox = await adminPage.locator('table.t-cards tfoot').boundingBox();
+    const navBox = await adminPage.locator('.tabbar').boundingBox();
+    expect(footerBox).not.toBeNull();
+    expect(navBox).not.toBeNull();
+    expect(footerBox!.y + footerBox!.height, `${path}: the total remains reachable above fixed navigation`).toBeLessThanOrEqual(navBox!.y + 1);
     await shoot(adminPage, `rec6-tfoot${path.replace(/\//g, '-')}-390`, false);
   }
   await adminPage.setViewportSize(DESKTOP);
   await adminPage.goto('/recoverables/list');
   const desktopCells = await adminPage.locator('table.t-cards tfoot td').evaluateAll(cells => cells.filter(c => (c as HTMLElement).offsetHeight > 0).length);
-  expect(desktopCells, 'on a desktop the spacers still hold Amount under its column').toBe(11);
+  const headerCells = await adminPage.locator('table.t-cards thead th').count();
+  expect(desktopCells, 'desktop footer spans all recovery accounting columns').toBe(headerCells);
+  expect(headerCells, 'outstanding, paid out and reconciled columns remain distinct').toBe(13);
+  const alignment = await adminPage.locator('table.t-cards').evaluate(table => {
+    const header = Array.from(table.querySelectorAll('thead th')).find(cell => cell.textContent?.trim() === 'Outstanding')!.getBoundingClientRect();
+    const footer = table.querySelector('tfoot td[data-label="Outstanding"]')!.getBoundingClientRect();
+    return Math.abs(header.left - footer.left) + Math.abs(header.right - footer.right);
+  });
+  expect(alignment, 'the outstanding total stays directly beneath its financial column').toBeLessThanOrEqual(1);
 
   // ui-1 (b): /months at 1440 — the Actions cell ends where its row ends.
   await adminPage.goto('/months');

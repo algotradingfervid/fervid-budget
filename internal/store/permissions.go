@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -408,6 +409,54 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 		}
 		return err
 	}
+	before := map[string]any{"role": name}
+	oldGrants := []string{}
+	rows, err := tx.QueryContext(ctx, `SELECT resource,action FROM role_permissions WHERE role_id=? ORDER BY resource,action`, roleID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var resource, action string
+		if err := rows.Scan(&resource, &action); err != nil {
+			rows.Close()
+			return err
+		}
+		oldGrants = append(oldGrants, resource+":"+action)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	oldScopes := map[string]string{}
+	rows, err = tx.QueryContext(ctx, `SELECT resource,scope FROM role_data_scope WHERE role_id=? ORDER BY resource`, roleID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var resource, scope string
+		if err := rows.Scan(&resource, &scope); err != nil {
+			rows.Close()
+			return err
+		}
+		oldScopes[resource] = scope
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	before["permissions"], before["data_scopes"] = oldGrants, oldScopes
+	newGrants := []string{}
+	for _, g := range grants {
+		newGrants = append(newGrants, g.Resource+":"+g.Action)
+	}
+	sort.Strings(newGrants)
+	newScopes := map[string]string{}
+	for _, sc := range scopes {
+		newScopes[sc.Resource] = sc.Scope
+	}
+	after := map[string]any{"role": name, "permissions": newGrants, "data_scopes": newScopes}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id=?`, roleID); err != nil {
 		return err
 	}
@@ -427,7 +476,7 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 	if _, err := tx.ExecContext(ctx, `UPDATE roles SET updated_at=CURRENT_TIMESTAMP WHERE id=?`, roleID); err != nil {
 		return err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "role", EntityID: &roleID, Summary: "Updated permissions for role " + name, After: map[string]any{"grants": len(grants), "scopes": len(scopes)}}); err != nil {
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "role", EntityID: &roleID, Summary: "Updated permissions for role " + name, Before: before, After: after}); err != nil {
 		return err
 	}
 	return tx.Commit()

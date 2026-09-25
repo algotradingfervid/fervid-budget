@@ -153,7 +153,7 @@ func (s *Store) SetNotificationSetting(ctx context.Context, actor User, in Notif
 // hold it through any role. It is how an event addressed to "the Accounts
 // group" finds real people without naming a role anywhere.
 func (s *Store) UsersWithPermission(ctx context.Context, resource, action string) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id,u.email,u.name,u.password_hash,u.role,u.active,u.created_at,u.updated_at,u.default_approver_id
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id,u.email,u.name,u.password_hash,u.role,u.active,u.created_at,u.updated_at,u.default_approver_id,u.session_version
 		FROM users u
 		JOIN user_roles ur ON ur.user_id=u.id
 		JOIN role_permissions rp ON rp.role_id=ur.role_id

@@ -83,12 +83,17 @@ func CreateBackup(ctx context.Context, opts BackupOptions) (BackupInfo, error) {
 	if err := copyTree(ctx, opts.AttachmentDir, attachmentBackupPath); err != nil {
 		return BackupInfo{}, err
 	}
+	sourceAttachmentAbs, err := filepath.Abs(opts.AttachmentDir)
+	if err != nil {
+		return BackupInfo{}, err
+	}
 	if err := writeBackupManifest(tempPath, backupManifest{
-		CreatedAt:        createdAt.Format(time.RFC3339),
-		DatabaseFile:     backupDBName,
-		AttachmentDir:    "attachments",
-		SourceDBPath:     opts.DBPath,
-		SourceAttachment: opts.AttachmentDir,
+		CreatedAt:           createdAt.Format(time.RFC3339),
+		DatabaseFile:        backupDBName,
+		AttachmentDir:       "attachments",
+		SourceDBPath:        opts.DBPath,
+		SourceAttachment:    opts.AttachmentDir,
+		SourceAttachmentAbs: sourceAttachmentAbs,
 	}); err != nil {
 		return BackupInfo{}, err
 	}
@@ -143,6 +148,12 @@ func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 	}
 	if err := copyTree(ctx, backupAttachments, newAttachments); err != nil {
 		return errors.Join(err, os.Remove(newDB))
+	}
+
+	// Relocation changes the directory serving files. Rewrite metadata only in
+	// this private staging copy; the immutable backup and the live DB are untouched.
+	if err := rebaseRestoredAttachments(ctx, newDB, opts.BackupPath, opts.AttachmentDir); err != nil {
+		return errors.Join(err, os.Remove(newDB), os.RemoveAll(newAttachments))
 	}
 
 	// The -wal and -shm files belong to the database being replaced. Left beside
@@ -286,11 +297,12 @@ func backupTimeFromName(name string, loc *time.Location) (time.Time, bool) {
 }
 
 type backupManifest struct {
-	CreatedAt        string `json:"created_at"`
-	DatabaseFile     string `json:"database_file"`
-	AttachmentDir    string `json:"attachment_dir"`
-	SourceDBPath     string `json:"source_db_path"`
-	SourceAttachment string `json:"source_attachment_dir"`
+	CreatedAt           string `json:"created_at"`
+	DatabaseFile        string `json:"database_file"`
+	AttachmentDir       string `json:"attachment_dir"`
+	SourceDBPath        string `json:"source_db_path"`
+	SourceAttachment    string `json:"source_attachment_dir"`
+	SourceAttachmentAbs string `json:"source_attachment_absolute,omitempty"`
 }
 
 func backupSQLite(ctx context.Context, sourcePath, destPath string) error {
@@ -478,4 +490,91 @@ func checkContext(ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+// rebaseRestoredAttachments preserves the same relative filename under the
+// manifest's recorded source root. It never guesses from a basename or accepts
+// a traversal path. An ambiguous/malformed backup fails before live replacement.
+func rebaseRestoredAttachments(ctx context.Context, dbPath, backupPath, targetDir string) error {
+	contents, err := os.ReadFile(filepath.Join(backupPath, "manifest.json"))
+	if err != nil {
+		return fmt.Errorf("read restore manifest: %w", err)
+	}
+	var manifest backupManifest
+	if err = json.Unmarshal(contents, &manifest); err != nil {
+		return fmt.Errorf("read restore manifest: %w", err)
+	}
+	targetRoot, err := filepath.Abs(targetDir)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// Ensure rebased metadata is in the file that will be moved, not a WAL sidecar.
+	if _, err = db.ExecContext(ctx, `PRAGMA journal_mode=DELETE`); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"payment_attachments", "request_attachments"} {
+		var exists int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			continue
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id,stored_path FROM `+table)
+		if err != nil {
+			return err
+		}
+		type update struct {
+			id   int64
+			path string
+		}
+		updates := []update{}
+		for rows.Next() {
+			var id int64
+			var stored string
+			if err = rows.Scan(&id, &stored); err != nil {
+				rows.Close()
+				return err
+			}
+			relative := ""
+			matched := false
+			for _, root := range []string{manifest.SourceAttachment, manifest.SourceAttachmentAbs} {
+				if root == "" || filepath.IsAbs(root) != filepath.IsAbs(stored) {
+					continue
+				}
+				rel, e := filepath.Rel(filepath.Clean(root), filepath.Clean(stored))
+				if e == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel) {
+					relative = rel
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				rows.Close()
+				return fmt.Errorf("%w: attachment %d in %s is outside the recorded backup attachment root", ErrValidation, id, table)
+			}
+			updates = append(updates, update{id, filepath.Join(targetRoot, relative)})
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, u := range updates {
+			if _, err = tx.ExecContext(ctx, `UPDATE `+table+` SET stored_path=? WHERE id=?`, u.path, u.id); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }

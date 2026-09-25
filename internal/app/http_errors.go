@@ -110,6 +110,7 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 	// page body gates on the same set the nav does, so a control can never be
 	// visible on a screen its own nav entry is hidden from.
 	data.Perms = a.auth.Permissions(data.User)
+	data.ContextBackHref, data.ContextBackLabel = contextReturn(r, data.Perms)
 	// htmx asks for a fragment, not a page: skip the nav, the tab bar and the
 	// badge query entirely. The permission set still applies — a fragment gates
 	// its controls exactly as the full page would.

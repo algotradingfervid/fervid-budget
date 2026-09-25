@@ -280,7 +280,8 @@ func (s *Service) newRequestView(ctx context.Context, req store.Request, app sto
 	pay, err := s.st.PaymentForRequest(ctx, req.ID)
 	switch {
 	case err == nil:
-		v.PaidAmount, v.PaidOn = pay.Amount, pay.PaidOn
+		// Settlement messages describe the request total, including every installment.
+		v.PaidAmount, v.PaidOn = req.PaidAmount, pay.PaidOn
 	case !errors.Is(err, store.ErrNotFound):
 		return RequestView{}, err
 	}

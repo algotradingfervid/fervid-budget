@@ -15,8 +15,8 @@ import { asRole, probeGet, probePost, probeAnonymous, expectOutcome } from './au
  *
  * Covers: recoverable-category CRUD (V4), per-category field rules (V5/V6),
  * exclusion of recoverable money from budget actuals (V2/V3), the register /
- * dashboard / detail screens, close-on-payment (V7), project linkage (V8),
- * proof of absence for repayment/forfeiture (X2/X4) and the recoverable
+ * dashboard / detail screens, separate payout/recovery lifecycles, project linkage (V8),
+ * append-only recovery events and unsupported legacy aliases, plus the recoverable
  * permission matrix (R6). Full reasoning and expected results are in
  * docs/qa/test-cases/TC-E-recoverables.md — this file is the executable half.
  *
@@ -1060,11 +1060,12 @@ test.describe('TC-E — Recoverables', () => {
     expect(afterReport).toBe(beforeReport);
   });
 
-  test("TC-E-033 — That unpaid recoverable is present in the register and the dashboard's outstanding totals", async ({
+  test("TC-E-033 — An unpaid recoverable is listed with zero outstanding and excluded from paid-balance totals", async ({
     adminPage,
     browser,
     runId
   }) => {
+    const before = await dashboardMetric(adminPage, 'Outstanding');
     const approver = await createApproverUser(adminPage, runId);
     const { number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
       category: 'other',
@@ -1077,25 +1078,24 @@ test.describe('TC-E — Recoverables', () => {
     expect(listBody, 'the unpaid recoverable must appear in the register').toContain(number);
     expect(listBody, 'an unpaid, approved row reads "Awaiting payment"').toContain('Awaiting payment');
 
-    const dashboardBody = (await probeGet(adminPage, '/recoverables')).body;
-    expect(dashboardBody).toContain('Outstanding');
+    const after = await dashboardMetric(adminPage, 'Outstanding');
+    expect(after.count, 'unpaid approvals do not increase outstanding count').toBe(before.count);
+    expect(after.amount, 'unpaid approvals do not increase the outstanding amount').toBe(before.amount);
+    const rows = parseCsv((await probeGet(adminPage, `/recoverables/list.csv?q=${encodeURIComponent(number)}`)).body);
+    expect(rows).toHaveLength(2);
+    expect(parseRupees(rows[1][rows[0].indexOf('Outstanding')])).toBe(0);
+    expect(parseRupees(rows[1][rows[0].indexOf('Paid out')])).toBe(0);
   });
 
   test('TC-E-034 — /recoverables/list.csv total agrees with the on-screen list total', async ({ adminPage }) => {
-    const listBody = (await probeGet(adminPage, '/recoverables/list')).body;
-    const footerMatch = listBody.match(/<td class="num" data-label="Amount">([^<]+)<\/td>\s*<td data-label="">\s*<\/td>\s*<td data-label="">\s*<\/td>\s*<\/tr><\/tfoot>/);
-    // Fall back to a looser scan of the tfoot block if the exact markup shape drifts.
-    const tfootIdx = listBody.indexOf('<tfoot>');
-    const tfoot = listBody.slice(tfootIdx, tfootIdx + 600);
-    const amountCell = tfoot.match(/data-label="Amount">([^<]+)</);
-    expect(amountCell, 'expected an Amount cell in the list <tfoot>').not.toBeNull();
-    const onScreenTotal = parseRupees(amountCell![1]);
-    void footerMatch;
+    await adminPage.goto('/recoverables/list');
+    const onScreenTotal = parseRupees(await adminPage.locator('tfoot td[data-label="Outstanding"]').innerText());
 
     const csvResp = await probeGet(adminPage, '/recoverables/list.csv');
     const rows = parseCsv(csvResp.body);
     const header = rows[0];
-    const amountCol = header.indexOf('Amount');
+    const amountCol = header.indexOf('Outstanding');
+    expect(amountCol, 'CSV has an explicit outstanding column').toBeGreaterThanOrEqual(0);
     const csvTotal = rows
       .slice(1)
       .filter(r => r.length > 1)
@@ -1112,7 +1112,7 @@ test.describe('TC-E — Recoverables', () => {
     const body = (await probeGet(adminPage, '/recoverables')).body;
     for (const want of [
       'Kept out of budget actuals on purpose',
-      'Tracking the money coming back is not in this version',
+      'Track each return and reconciliation',
       'Outstanding',
       'Past expected return',
       'Due in 30 days',
@@ -1171,7 +1171,7 @@ test.describe('TC-E — Recoverables', () => {
   test('TC-E-037 — /recoverables/list.csv reaches the export handler, not the {id} detail handler', async ({ adminPage }) => {
     const resp = await probeGet(adminPage, '/recoverables/list.csv');
     expect(resp.status).toBe(200);
-    expect(resp.body.startsWith('Number,Category,Counterparty,Project,Amount,Paid On,Expected Return,Ageing,Status,Requester,Repayment Notes')).toBe(
+    expect(resp.body.startsWith('Number,Category,Counterparty,Project,Outstanding,Paid out,Recovered or reconciled,Paid On,Expected Return,Ageing,Status,Requester,Repayment Notes')).toBe(
       true
     );
   });
@@ -1196,24 +1196,70 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   test("TC-E-040 — Dashboard Outstanding metric and category rollup agree with the list's own footer total", async ({ adminPage }) => {
-    const dashboardBody = (await probeGet(adminPage, '/recoverables')).body;
-    const stripIdx = dashboardBody.indexOf('metric-strip');
-    const strip = dashboardBody.slice(stripIdx, stripIdx + 700);
-    const outstandingMatch = strip.match(/Outstanding<\/span><span class="metric-value">([^<]+)</);
-    expect(outstandingMatch, 'expected an Outstanding metric value').not.toBeNull();
+    await adminPage.goto('/recoverables/list');
+    const listTotal = parseRupees(await adminPage.locator('tfoot td[data-label="Outstanding"]').innerText());
+    const listAmounts = await adminPage.locator('tbody td[data-label="Outstanding"]').allInnerTexts();
+    expect(listAmounts.reduce((sum, amount) => sum + parseRupees(amount), 0), 'list rows sum to their footer').toBe(listTotal);
+    await adminPage.goto('/recoverables');
+    const categoryTable = adminPage.locator('table').first();
+    const categoryTotal = parseRupees(await categoryTable.locator('tfoot td[data-label="Outstanding"]').innerText());
+    const categoryRows = await categoryTable.locator('tbody td[data-label="Outstanding"]').allInnerTexts();
+    expect(categoryRows.reduce((sum, amount) => sum + parseRupees(amount), 0), 'category rows sum to their footer').toBe(categoryTotal);
+    expect(categoryTotal, 'category and list full-precision totals agree').toBe(listTotal);
+    const subtitle = await adminPage.locator('.page-banner .sub').innerText();
+    expect(parseRupees(subtitle.split(' outstanding')[0]), 'dashboard full-precision summary agrees with the list').toBe(listTotal);
+    await expect(adminPage.locator('.metric').filter({ has: adminPage.locator('.metric-label', { hasText: /^Outstanding$/ }) }).locator('.metric-value')).not.toBeEmpty();
+  });
 
-    const listBody = (await probeGet(adminPage, '/recoverables/list')).body;
-    const tfootIdx = listBody.indexOf('<tfoot>');
-    const tfoot = listBody.slice(tfootIdx, tfootIdx + 600);
-    const listTotalCell = tfoot.match(/data-label="Amount">([^<]+)</);
-    expect(listTotalCell).not.toBeNull();
-
-    // The dashboard shows a short form (e.g. "₹1.20 L"); the list shows the full figure.
-    // Both must be present and non-empty — an exact numeric identity check on the short
-    // form is done separately in the store tests; here the screens' shared source is the
-    // recoverableBaseWhere/recoverableAmount definitions (recoverables.go:250-258).
-    expect(outstandingMatch![1].trim().length).toBeGreaterThan(0);
-    expect(listTotalCell![1].trim().length).toBeGreaterThan(0);
+  test('TC-E-040b — Outstanding dashboard drilldowns exclude unpaid and reconciled siblings in the same category', async ({ adminPage, browser, runId }, testInfo) => {
+    const approver = await createApproverUser(adminPage, runId);
+    const counterparty = `Drilldown Company ${runId}`;
+    const records: Array<{ id: number; number: string }> = [];
+    for (const [index, amount] of ['7000', '8000', '3000'].entries()) {
+      const record = await raiseAndApproveRecoverable(adminPage, browser, `${runId}-${index}`, approver, {
+        category: 'icd', counterparty, amount, expectedReturn: '2027-12-31', notes: 'Same category and counterparty, distinct payout/recovery states'
+      });
+      records.push(record);
+      if (index === 1) continue;
+      await settlePayment(adminPage, record.id, { amount, paidOn: today() });
+      await adminPage.goto(`/recoverables/${record.id}`);
+      const token = await adminPage.locator('#record-recovery input[name="token"]').inputValue();
+      const result = await probePost(adminPage, `/recoverables/${record.id}/events`, { kind: 'return', amount: index === 0 ? '2000' : '3000', occurred_on: today(), reference: `DRILL-${runId}-${index}`, note: 'Bank statement confirms this return; retained for dashboard drilldown evidence.', token });
+      expect(result.status).toBe(303);
+    }
+    for (const [tag, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]] as const) {
+      await adminPage.setViewportSize(viewport);
+      await adminPage.goto('/recoverables');
+      const categoryRow = adminPage.locator('tbody tr', { has: adminPage.locator('td[data-label="Category"] a', { hasText: /^ICD$/ }) });
+      const categoryCount = Number(await categoryRow.locator('td[data-label="Count"]').innerText());
+      const categoryAmount = parseRupees(await categoryRow.locator('td[data-label="Outstanding"]').innerText());
+      await categoryRow.getByRole('link', { name: 'ICD', exact: true }).click();
+      expect(new URL(adminPage.url()).searchParams.get('ageing')).toBe('outstanding');
+      await expect(adminPage.locator('tbody a[href^="/recoverables/"]')).toHaveCount(categoryCount);
+      expect(parseRupees(await adminPage.locator('tfoot td[data-label="Outstanding"]').innerText())).toBe(categoryAmount);
+      await expect(adminPage.locator(`tbody a[href="/recoverables/${records[0].id}"]`)).toHaveCount(1);
+      await expect(adminPage.locator(`tbody a[href="/recoverables/${records[1].id}"]`)).toHaveCount(0);
+      await expect(adminPage.locator(`tbody a[href="/recoverables/${records[2].id}"]`)).toHaveCount(0);
+      await adminPage.goto('/recoverables');
+      await adminPage.locator('td[data-label="Counterparty"]').getByRole('link', { name: counterparty, exact: true }).click();
+      await expect(adminPage.locator('tbody a[href^="/recoverables/"]')).toHaveCount(1);
+      expect(parseRupees(await adminPage.locator('tfoot td[data-label="Outstanding"]').innerText())).toBe(500000);
+      await adminPage.screenshot({ path: testInfo.outputPath(`outstanding-drilldown-${tag}.png`), fullPage: true });
+      const exported = parseCsv((await probeGet(adminPage, '/recoverables/list.csv' + new URL(adminPage.url()).search)).body);
+      expect(exported).toHaveLength(2);
+      expect(exported[1][0]).toBe(records[0].number);
+      await adminPage.goto(`/recoverables/list?counterparty=${encodeURIComponent(counterparty)}`);
+      await expect(adminPage.locator('tbody a[href^="/recoverables/"]')).toHaveCount(3);
+      if (tag === 'mobile') await adminPage.locator('.recovery-filters > summary').click();
+      const form = tag === 'mobile' ? adminPage.locator('.recovery-filters form') : adminPage.locator('form.toolbar');
+      const ageing = form.locator('select[name="ageing"]');
+      for (const [value, expectedId] of [['unpaid', records[1].id], ['recovered', records[2].id], ['outstanding', records[0].id]] as const) {
+        await ageing.selectOption(value);
+        await form.getByRole('button', { name: /^Apply/ }).click();
+        await expect(adminPage.locator('tbody a[href^="/recoverables/"]')).toHaveCount(1);
+        await expect(adminPage.locator(`tbody a[href="/recoverables/${expectedId}"]`)).toHaveCount(1);
+      }
+    }
   });
 
   test('TC-E-041 — .metric-foot now carries a real CSS rule (informational)', async ({ adminPage }) => {
@@ -1225,7 +1271,7 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Section 5 — Close on payment (V7)
+  // Section 5 — Payout classification remains independent of recovery
   // -------------------------------------------------------------------------
 
   test('TC-E-042 — Category and expected-return survive settlement', async ({ adminPage, browser, runId }) => {
@@ -1315,10 +1361,10 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Section 7 — Proof of absence (X2, X4)
+  // Section 7 — Canonical recovery lifecycle and unsupported legacy aliases
   // -------------------------------------------------------------------------
 
-  test('TC-E-046 / 047 — No recoverable repayment route (GET and POST)', async ({ adminPage }) => {
+  test('TC-E-046 / 047 — Unsupported repay aliases remain unavailable (canonical writes use events)', async ({ adminPage }) => {
     for (const path of ['/recoverables/1/repay', '/recoverables/list/repay', '/configuration/recoverable-categories/1/repay']) {
       const get = await probeGet(adminPage, path);
       expect(get.status, `GET ${path} must not exist`).toBe(404);
@@ -1327,7 +1373,7 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-048 / 049 — No forfeiture/write-off route (GET and POST)', async ({ adminPage }) => {
+  test('TC-E-048 / 049 — Unsupported direct forfeiture/write-off aliases remain unavailable', async ({ adminPage }) => {
     for (const path of ['/recoverables/1/forfeit', '/recoverables/1/write-off', '/recoverables/list/forfeit']) {
       const get = await probeGet(adminPage, path);
       expect(get.status, `GET ${path} must not exist`).toBe(404);
@@ -1336,23 +1382,60 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-050 — No repayment or forfeiture control appears in any recoverable screen\'s markup', async ({ adminPage, browser, runId }) => {
+  test('TC-E-050 — Accounts records a dated recovery, retries safely, refuses excess and retains reconciled history', async ({ adminPage, browser, runId }, testInfo) => {
     const approver = await createApproverUser(adminPage, runId);
-    const { id } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
-      category: 'other',
-      amount: '15000',
-      expectedReturn: '2027-03-31',
-      notes: 'Absence-proof probe'
+    const { id, number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+      category: 'other', amount: '7000', expectedReturn: '2027-03-31', notes: 'Recovery lifecycle audit'
     });
-    for (const path of ['/recoverables', '/recoverables/list', `/recoverables/${id}`]) {
-      const body = (await probeGet(adminPage, path)).body;
-      // Strip every <form>/<button>/<a> element's opening tag + inner text and check none
-      // mention repay/forfeit/write-off; the only permitted matches are plain descriptive
-      // <p>/<b> prose, which this regex does not target.
-      const actionableTags = body.match(/<(a|button|form)\b[^>]*>[^<]*/gi) ?? [];
-      const suspicious = actionableTags.filter(tag => /repay|forfeit|write.?off/i.test(tag));
-      expect(suspicious, `${path} must offer no repayment/forfeiture control; found: ${JSON.stringify(suspicious)}`).toEqual([]);
-    }
+    await settlePayment(adminPage, id, { amount: '7000', paidOn: today() });
+    const accounts = await asRole(adminPage, browser, runId, ['Accounts']);
+    try {
+      const page = accounts.page;
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(`/recoverables/${id}`);
+      const balance = () => page.locator('dt').filter({ hasText: /^Outstanding balance$/ }).locator('xpath=following-sibling::dd[1]');
+      expect(parseRupees(await balance().innerText())).toBe(700000);
+      const token = await page.locator('#record-recovery input[name="token"]').inputValue();
+      const fields = { kind: 'return', amount: '2000', occurred_on: today(), reference: `UTR-${runId}`, note: 'Receipt filed against the bank statement for this dated return.', token };
+      await page.getByLabel('Recovery type').selectOption('return');
+      await page.getByLabel('Amount received or reconciled').fill(fields.amount);
+      await page.getByLabel('Recovery date').fill(fields.occurred_on);
+      await page.getByLabel('Bank / accounting reference').fill(fields.reference);
+      await page.getByLabel('Evidence and explanation').fill(fields.note);
+      page.once('dialog', dialog => dialog.accept());
+      await page.getByRole('button', { name: 'Record recovery', exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/recoverables/${id}\\?saved=1#recovery-history$`));
+      expect(parseRupees(await balance().innerText())).toBe(500000);
+      await expect(page.locator('#recovery-history')).toContainText(fields.reference);
+      await expect(page.locator('#recovery-history')).toContainText(fields.occurred_on);
+      await expect(page.locator('#recovery-history')).toContainText('₹2,000.00');
+      await page.screenshot({ path: testInfo.outputPath('recovery-2000-of-7000-mobile.png'), fullPage: true });
+      const retry = await probePost(page, `/recoverables/${id}/events`, fields);
+      expect(retry.status, 'retrying the identical submission is idempotent').toBe(303);
+      await page.reload();
+      expect(parseRupees(await balance().innerText())).toBe(500000);
+      await expect(page.locator('#recovery-history .thread > li')).toHaveCount(1);
+      const nextToken = await page.locator('#record-recovery input[name="token"]').inputValue();
+      const excess = await probePost(page, `/recoverables/${id}/events`, { ...fields, token: nextToken, amount: '6000' });
+      expect(excess.status, 'cannot record more than the remaining balance').toBe(422);
+      expect(excess.body).toContain('outstanding balance');
+      expect(excess.body).toContain('value="6000"');
+      expect(excess.body).toContain(fields.reference);
+      const finish = await probePost(page, `/recoverables/${id}/events`, { ...fields, token: nextToken, kind: 'expense', amount: '5000', reference: `EXP-${runId}`, note: 'Approved expense report reconciles the remaining advance; evidence retained in finance.' });
+      expect(finish.status).toBe(303);
+      await page.reload();
+      expect(parseRupees(await balance().innerText())).toBe(0);
+      await expect(page.locator('#recovery-history .thread > li')).toHaveCount(2);
+      await expect(page.locator('.rh-status')).toContainText('Completed');
+      await expect(page.locator('.rh-status')).toContainText('Reconciled');
+      await expect(page.locator('#record-recovery')).toHaveCount(0);
+      const rows = parseCsv((await probeGet(page, `/recoverables/list.csv?q=${encodeURIComponent(number)}&ageing=recovered`)).body);
+      expect(rows).toHaveLength(2);
+      expect(parseRupees(rows[1][rows[0].indexOf('Outstanding')])).toBe(0);
+      expect(parseRupees(rows[1][rows[0].indexOf('Paid out')])).toBe(700000);
+      expect(parseRupees(rows[1][rows[0].indexOf('Recovered or reconciled')])).toBe(700000);
+      await page.screenshot({ path: testInfo.outputPath('recovery-reconciled-mobile.png'), fullPage: true });
+    } finally { await accounts.close(); }
   });
 
   // -------------------------------------------------------------------------
@@ -1378,6 +1461,8 @@ test.describe('TC-E — Recoverables', () => {
         const resp = await probeGet(requester.page, path);
         expect(resp.status, `Requester must be refused ${path}`).toBe(403);
       }
+      const write = await probePost(requester.page, `/recoverables/${id}/events`, { kind: 'return', amount: '100', occurred_on: today(), reference: 'AUTH-PROBE', note: 'Must never be recorded', token: `refused-${runId}` });
+      expect(write.status, 'Requester must be refused the canonical recovery write route').toBe(403);
     } finally {
       await requester.close();
     }
@@ -1391,6 +1476,8 @@ test.describe('TC-E — Recoverables', () => {
         const resp = await probeGet(manager.page, path);
         expect(resp.status, `Manager must be refused ${path}`).toBe(403);
       }
+      const write = await probePost(manager.page, `/recoverables/${id}/events`, { kind: 'return', amount: '100', occurred_on: today(), reference: 'AUTH-PROBE', note: 'Must never be recorded', token: `refused-${runId}` });
+      expect(write.status, 'Manager must be refused the canonical recovery write route').toBe(403);
     } finally {
       await manager.close();
     }

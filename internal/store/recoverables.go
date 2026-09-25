@@ -326,11 +326,14 @@ func (s *Store) ListRecoverableCategoriesWithUsage(ctx context.Context) ([]Recov
 // by RecoverableReport, RecoverableMetrics and RecoverableRollups so the
 // dashboard totals can never drift from the list underneath them. A request
 // that died before any money left never held money, so it is not outstanding.
-const recoverableBaseWhere = `pr.treatment='recoverable' AND pr.status NOT IN ('rejected','cancelled','withdrawn')`
+const recoverableBaseWhere = `pr.treatment='recoverable' AND (pr.status NOT IN ('rejected','cancelled','withdrawn') OR EXISTS(SELECT 1 FROM payments live_pay WHERE live_pay.request_id=pr.id AND live_pay.voided_at IS NULL))`
 
-// recoverableAmount is the money considered at risk: what actually left when the
-// payment exists, otherwise what was approved, otherwise what was asked for.
-const recoverableAmount = `COALESCE(py.amount, COALESCE(pr.approved_amount, pr.amount))`
+// Outstanding is actual payouts less immutable return/reconciliation events.
+// Aggregate payouts before joining so installments cannot duplicate a request.
+const recoverableAmount = `COALESCE(py.amount,0)-COALESCE(re.amount,0)`
+const recoverableJoins = ` LEFT JOIN (SELECT request_id,MIN(id) AS id,SUM(amount) AS amount,MIN(paid_on) AS paid_on FROM payments WHERE voided_at IS NULL GROUP BY request_id) py ON py.request_id=pr.id
+ LEFT JOIN (SELECT request_id,SUM(amount) AS amount FROM recovery_events GROUP BY request_id) re ON re.request_id=pr.id `
+const recoverableCounterparty = `CASE WHEN pr.type='employee_advance' AND pr.recoverable_category='employee_advance' THEN COALESCE(NULLIF(u.name,''),'Employee') ELSE COALESCE(NULLIF(pr.counterparty,''),NULLIF(pr.vendor_payee,''),'Not recorded') END`
 
 // recoverableScope is the row-visibility half of recoverableBaseWhere: the same
 // predicate the app's canViewRequest applies, expressed for the `pr` alias so
@@ -381,18 +384,18 @@ func recoverableAgeing(paidOn, expectedReturn string, onHold bool, days int) (la
 func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOptions) ([]RecoverableRow, error) {
 	asOf := opts.AsOf
 	if asOf.IsZero() {
-		asOf = time.Now().UTC()
+		asOf = time.Now()
 	}
-	today := asOf.UTC().Format("2006-01-02")
+	today := asOf.Format("2006-01-02")
 
-	q := `SELECT pr.id, pr.number, COALESCE(rc.name,''), COALESCE(pr.counterparty,''), COALESCE(p.name,''),
-		` + recoverableAmount + ` AS amt,
+	q := `SELECT pr.id, pr.number, COALESCE(rc.name,''), ` + recoverableCounterparty + `, COALESCE(p.name,''),
+		` + recoverableAmount + ` AS amt, COALESCE(py.amount,0), COALESCE(re.amount,0),
 		COALESCE(py.paid_on,''), COALESCE(pr.expected_return_date,''), COALESCE(pr.repayment_notes,''),
 		pr.status, COALESCE(u.name,''), COALESCE(pr.on_hold,0),
 		pr.processing_by, COALESCE(pu.name,''), COALESCE(pr.concern_open,0),
 		CAST(julianday(COALESCE(NULLIF(pr.expected_return_date,''),?)) - julianday(?) AS INTEGER) AS days
 		FROM payment_requests pr
-		LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
+		` + recoverableJoins + `
 		LEFT JOIN recoverable_categories rc ON rc.id=pr.recoverable_category_id
 		LEFT JOIN projects p ON p.id=pr.project_id
 		LEFT JOIN users u ON u.id=pr.requester_id
@@ -415,7 +418,7 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 		if to < from {
 			from, to = to, from
 		}
-		q += ` AND substr(COALESCE(py.paid_on,''),1,7) BETWEEN ? AND ?`
+		q += ` AND EXISTS(SELECT 1 FROM payments fp WHERE fp.request_id=pr.id AND fp.voided_at IS NULL AND substr(fp.paid_on,1,7) BETWEEN ? AND ?)`
 		args = append(args, from, to)
 	}
 	if opts.CategoryID > 0 {
@@ -423,30 +426,37 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 		args = append(args, opts.CategoryID)
 	}
 	if cp := strings.TrimSpace(opts.Counterparty); cp != "" {
-		q += ` AND lower(COALESCE(pr.counterparty,''))=lower(?)`
+		q += ` AND lower(` + recoverableCounterparty + `)=lower(?)`
 		args = append(args, cp)
 	}
 	switch opts.Ageing {
+	case "outstanding":
+		q += ` AND (` + recoverableAmount + `)>0`
 	case "overdue":
+		q += ` AND (` + recoverableAmount + `)>0`
 		// Paid rows only, as recoverableAgeing and RecoverableMetrics decide it:
 		// the tile links here, so the filter must list what the tile counts.
 		q += ` AND COALESCE(py.paid_on,'') <> '' AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?`
 		args = append(args, today)
 	case "due30":
+		q += ` AND (` + recoverableAmount + `)>0`
 		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date >= ?
 			AND julianday(pr.expected_return_date) - julianday(?) <= 30`
 		args = append(args, today, today)
 	case "later":
+		q += ` AND (` + recoverableAmount + `)>0`
 		q += ` AND (COALESCE(pr.expected_return_date,'') = '' OR julianday(pr.expected_return_date) - julianday(?) > 30)`
 		args = append(args, today)
 	case "unpaid":
 		q += ` AND py.id IS NULL`
+	case "recovered":
+		q += ` AND py.id IS NOT NULL AND (` + recoverableAmount + `)=0`
 	}
 	if search := strings.ToLower(strings.TrimSpace(opts.Query)); search != "" {
-		q += ` AND (lower(pr.number) LIKE ? ESCAPE '\' OR lower(COALESCE(pr.counterparty,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(u.name,'')) LIKE ? ESCAPE '\')`
+		q += ` AND (lower(pr.number) LIKE ? ESCAPE '\' OR lower(COALESCE(pr.counterparty,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(u.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(pr.vendor_payee,'')) LIKE ? ESCAPE '\')`
 		search = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
 		needle := "%" + search + "%"
-		args = append(args, needle, needle, needle, needle)
+		args = append(args, needle, needle, needle, needle, needle)
 	}
 	switch opts.Order {
 	case "amount":
@@ -472,7 +482,7 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 		var r RecoverableRow
 		var onHold, concernOpen int
 		var processingBy sql.NullInt64
-		if err := rows.Scan(&r.RequestID, &r.Number, &r.Category, &r.Counterparty, &r.Project, &r.Amount,
+		if err := rows.Scan(&r.RequestID, &r.Number, &r.Category, &r.Counterparty, &r.Project, &r.Amount, &r.PaidAmount, &r.RecoveredAmount,
 			&r.PaidOn, &r.ExpectedReturnDate, &r.RepaymentNotes, &r.Status, &r.Requester, &onHold,
 			&processingBy, &r.ProcessingByName, &concernOpen, &r.DaysToReturn); err != nil {
 			return nil, err
@@ -491,6 +501,9 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 			r.DaysToReturn = 0
 		}
 		r.AgeingLabel, r.AgeingTone, r.Overdue = recoverableAgeing(r.PaidOn, r.ExpectedReturnDate, r.OnHold, r.DaysToReturn)
+		if r.PaidAmount > 0 && r.Amount == 0 {
+			r.AgeingLabel, r.AgeingTone, r.Overdue = "Reconciled", "good", false
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -498,60 +511,47 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 
 func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time, viewer RecoverableViewer) (RecoverableMetrics, error) {
 	if asOf.IsZero() {
-		asOf = time.Now().UTC()
+		asOf = time.Now()
 	}
-	today := asOf.UTC().Format("2006-01-02")
-	month := asOf.UTC().Format("2006-01")
-	var m RecoverableMetrics
-	// F-E-05: the overdue pair carries `paid <> ''` because recoverableAgeing
-	// applies exactly that guard per row — it answers "Awaiting payment", not
-	// overdue, before it ever compares dates. Money that never left cannot be
-	// overdue. Without it the dashboard tile counted unpaid, approved requests as
-	// overdue and then sent the reader to a register that showed fewer red rows
-	// than the summary promised.
-	//
-	// Deliberately not applied to the due-in-30 pair: that tile is the calendar of
-	// expected returns coming up, and the register's own `due30` filter does not
-	// filter on payment either, so the two still describe the same population.
-	// The scope rides inside the subquery, so its placeholders bind after the outer
-	// SELECT's — which is why scopeArgs is appended last (F-G-016: the tiles and the
-	// counterparty rollup summarise the same rows the register lists, so if the
-	// register is scoped and these are not, the totals disclose what the list hides).
-	scopeClause, scopeArgs := recoverableScope(viewer)
-	args := append([]any{today, today, today, today, today, today, month, month}, scopeArgs...)
-	err := s.db.QueryRowContext(ctx, `SELECT
-		COALESCE(SUM(amt),0), COUNT(*),
-		COALESCE(SUM(CASE WHEN paid <> '' AND exp <> '' AND exp < ? THEN amt ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN paid <> '' AND exp <> '' AND exp < ? THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN exp <> '' AND exp >= ? AND julianday(exp)-julianday(?) <= 30 THEN amt ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN exp <> '' AND exp >= ? AND julianday(exp)-julianday(?) <= 30 THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN substr(paid,1,7)=? THEN amt ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN substr(paid,1,7)=? THEN 1 ELSE 0 END),0)
-		FROM (SELECT `+recoverableAmount+` AS amt,
-			COALESCE(pr.expected_return_date,'') AS exp, COALESCE(py.paid_on,'') AS paid
-			FROM payment_requests pr
-			LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
-			WHERE `+recoverableBaseWhere+scopeClause+`)`, args...).
-		Scan(&m.OutstandingAmount, &m.OutstandingCount, &m.OverdueAmount, &m.OverdueCount,
-			&m.DueIn30Amount, &m.DueIn30Count, &m.PaidThisMonthAmount, &m.PaidThisMonthCount)
+	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf, Viewer: viewer})
 	if err != nil {
 		return RecoverableMetrics{}, err
 	}
-	return m, nil
+	var m RecoverableMetrics
+	for _, r := range rows {
+		if r.Amount <= 0 {
+			continue
+		}
+		m.OutstandingAmount += r.Amount
+		m.OutstandingCount++
+		// Calendar ageing stays independent of an operational payment hold.
+		if r.HasReturnDate && r.DaysToReturn < 0 {
+			m.OverdueAmount += r.Amount
+			m.OverdueCount++
+		}
+		if r.HasReturnDate && r.DaysToReturn >= 0 && r.DaysToReturn <= 30 {
+			m.DueIn30Amount += r.Amount
+			m.DueIn30Count++
+		}
+	}
+	scope, args := recoverableScope(viewer)
+	args = append([]any{asOf.Format("2006-01")}, args...)
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(py.amount),0),COUNT(*) FROM payments py JOIN payment_requests pr ON pr.id=py.request_id WHERE py.voided_at IS NULL AND substr(py.paid_on,1,7)=? AND `+recoverableBaseWhere+scope, args...).Scan(&m.PaidThisMonthAmount, &m.PaidThisMonthCount)
+	return m, err
 }
 
 func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Time, viewer RecoverableViewer) ([]RecoverableRollup, error) {
 	if asOf.IsZero() {
-		asOf = time.Now().UTC()
+		asOf = time.Now()
 	}
-	today := asOf.UTC().Format("2006-01-02")
+	today := asOf.Format("2006-01-02")
 	var label, detail string
 	switch by {
 	case "category":
 		label = `COALESCE(NULLIF(rc.name,''),'Uncategorised')`
 		detail = `''`
 	case "counterparty":
-		label = `COALESCE(NULLIF(pr.counterparty,''),'Not recorded')`
+		label = recoverableCounterparty
 		detail = `COALESCE(GROUP_CONCAT(DISTINCT rc.name),'')`
 	default:
 		return nil, fmt.Errorf("%w: unknown recoverable rollup dimension %q", ErrValidation, by)
@@ -568,9 +568,10 @@ func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Tim
 		COALESCE(MIN(NULLIF(COALESCE(py.paid_on,''),'')),''),
 		COALESCE(MIN(NULLIF(COALESCE(pr.expected_return_date,''),'')),'')
 		FROM payment_requests pr
-		LEFT JOIN payments py ON py.request_id=pr.id AND py.voided_at IS NULL
+		`+recoverableJoins+`
 		LEFT JOIN recoverable_categories rc ON rc.id=pr.recoverable_category_id
-		WHERE `+recoverableBaseWhere+scopeClause+`
+        LEFT JOIN users u ON u.id=pr.requester_id
+		WHERE `+recoverableBaseWhere+scopeClause+` AND (`+recoverableAmount+`)>0
 		GROUP BY grp
 		ORDER BY 4 DESC, grp`, args...)
 	if err != nil {

@@ -1,0 +1,41 @@
+/* Bounded names preserve financial columns and editable field widths. */
+.matrix.grid { table-layout: fixed; min-width: 1000px; width: 100%; }
+.matrix.grid .project-col { width: 110px; min-width: 110px; max-width: 110px; }
+.matrix.grid .head-col { width: 180px; min-width: 180px; max-width: 180px; left: 110px; }
+.matrix.grid .project-row .project-col { width: 290px; min-width: 290px; max-width: 290px; }
+.matrix.grid .project-title { min-width: 0; white-space: normal; overflow-wrap: anywhere; flex: 1; }
+.matrix.grid .project-toggle { width: 100%; min-width: 0; }
+.matrix.grid .project-count { flex-shrink: 0; }
+.matrix.grid .hname { white-space: normal; overflow-wrap: anywhere; }
+.matrix.grid .num { padding-left: 8px; padding-right: 8px; }
+.grid-scope-note { font-size: 13px; line-height: 1.6; }
+.pill.no-activity { color: #4a4946; background: #eeece7; }
+.heads-setup-form label { min-width: 0; }
+.heads-setup-form label:first-of-type { flex: 1 1 240px; max-width: 350px; }
+.heads-setup-form select { width: 100%; min-width: 0; }
+.heads-editor { table-layout: fixed; width: 100%; }
+.heads-editor th:nth-child(1) { width: 28%; }
+.heads-editor th:nth-child(2) { width: 28%; }
+.heads-editor th:nth-child(3), .heads-editor th:nth-child(5) { width: 10%; }
+.heads-editor th:nth-child(4) { width: 14%; }
+.heads-editor th:nth-child(6) { width: 10%; }
+.heads-editor input:not([type=checkbox]), .heads-editor select { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.budget-editor td { overflow-wrap: anywhere; }
+.budget-editor input { max-width: 100%; }
+.budget-editor [aria-invalid=true] { border: 2px solid #a92f23; }
+.field-error { display: block; color: #a92f23; font-weight: 650; white-space: normal; margin-top: 6px; }
+.budget-saved { display: block; color: #285c42; font-size: 12px; margin-top: 4px; }
+.budget-error-summary { border: 2px solid #a92f23; padding: 16px; margin: 16px 0; }
+.budget-error-summary h2 { margin-top: 0; }
+.budget-error-summary a { color: #8d251b; }
+.budget-editor input:target { outline: 3px solid #9c3e19; outline-offset: 3px; scroll-margin-top: 100px; }
+@media (max-width: 859px) {
+ .heads-setup-form label:first-of-type { max-width: none; }
+ .heads-editor th { width: auto; }
+ .acc .ah-main, .acc .hr-name { min-width: 0; overflow-wrap: anywhere; }
+ .acc .ah-main b { white-space: normal; }
+ .budget-editor td>span { min-width: 0; max-width: 100%; }
+}
+
+/* A payment is evidence of activity, not proof that every payable is settled. */
+.matrix.grid .duepill.recorded { min-width: 0; max-width: 100%; white-space: normal; }

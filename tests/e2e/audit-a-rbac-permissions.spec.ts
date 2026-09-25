@@ -1430,8 +1430,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       request_id: String(W.tProc), amount: '10.00', paid_on: W.today,
       head_id: W.headId, payment_mode: 'bank_transfer', settlement: 'written-off'
     });
-    expect(probe.status, 'settlement is an enumeration of two values, checked in the store (store.go:869)').toBe(400);
-    expect(probe.body.includes('payment settled or partial settlement'), 'and named').toBe(true);
+    expect(probe.status, 'settlement is an explicit disposition vocabulary checked in the store').toBe(400);
+    expect(probe.body.includes('choose how the remaining balance should be handled'), 'and named').toBe(true);
   });
 
   test('TC-A-104 — an amount above the approved ceiling is refused (G13)', async () => {

@@ -510,7 +510,7 @@ func (s *Store) CreateVendor(ctx context.Context, actor User, in VendorInput) (i
 		ActorID: &actor.ID, ActorName: actor.Name, Action: "create",
 		EntityType: "vendor", EntityID: &id,
 		Summary: "Created vendor " + in.Name,
-		After:   vendorAuditPayload(in, in.Bank != nil),
+		After:   vendorAuditPayload(in, in.Bank != nil && normalizedVendorBank(*in.Bank) != (VendorBank{})),
 	}); err != nil {
 		return 0, err
 	}
@@ -531,20 +531,21 @@ func (s *Store) UpdateVendor(ctx context.Context, actor User, id int64, in Vendo
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	var before string
-	err = tx.QueryRowContext(ctx, `SELECT name FROM vendors WHERE id=?`, id).Scan(&before)
-	if err == sql.ErrNoRows {
-		return ErrNotFound
-	}
+	bankTouched := in.Bank != nil && canEditBank(perms)
+	// Read the old values within the write transaction. Bank data is used only
+	// to compare an authorized edit and is never included in audit JSON.
+	beforeVendor, err := scanVendor(tx.QueryRowContext(ctx, `SELECT `+vendorSelect(bankTouched)+` FROM vendors WHERE id=?`, id), bankTouched, false)
 	if err != nil {
 		return err
 	}
+	before := vendorAuditPayload(vendorAuditInput(beforeVendor), false)
+	bankChanged := bankTouched && normalizedVendorBank(*in.Bank) != normalizedVendorBank(*beforeVendor.Bank)
 
 	if _, err := tx.ExecContext(ctx, `UPDATE vendors SET
 		name=?,display_name=?,vendor_type=?,status=?,categories=?,
@@ -558,7 +559,6 @@ func (s *Store) UpdateVendor(ctx context.Context, actor User, id int64, in Vendo
 		return classify(err)
 	}
 
-	bankTouched := in.Bank != nil && canEditBank(perms)
 	if bankTouched {
 		if err := writeVendorBankTx(ctx, tx, id, in.Bank); err != nil {
 			return classify(err)
@@ -568,8 +568,8 @@ func (s *Store) UpdateVendor(ctx context.Context, actor User, id int64, in Vendo
 		ActorID: &actor.ID, ActorName: actor.Name, Action: "update",
 		EntityType: "vendor", EntityID: &id,
 		Summary: "Updated vendor " + in.Name,
-		Before:  map[string]any{"name": before},
-		After:   vendorAuditPayload(in, bankTouched),
+		Before:  before,
+		After:   vendorAuditPayload(in, bankChanged),
 	}); err != nil {
 		return err
 	}
@@ -592,15 +592,26 @@ func writeVendorBankTx(ctx context.Context, tx *sql.Tx, id int64, bank *VendorBa
 // what it changed to. audit:view and vendor_bank:view are different
 // permissions, and an account number in before/after JSON would be a second
 // copy of the secret sitting behind the weaker of the two.
-func vendorAuditPayload(in VendorInput, bankTouched bool) map[string]any {
+func vendorAuditPayload(in VendorInput, bankChanged bool) map[string]any {
 	return map[string]any{
-		"name":         in.Name,
-		"vendor_type":  in.VendorType,
-		"status":       in.Status,
-		"gstin":        in.GSTIN,
-		"city":         in.City,
-		"bank_changed": bankTouched,
+		"audit_version": 2, "name": in.Name, "display_name": in.DisplayName, "vendor_type": in.VendorType, "status": in.Status, "categories": in.Categories,
+		"gstin": in.GSTIN, "pan": in.PAN, "msme_udyam": in.MSMEUdyam, "tds_section": in.TDSSection, "tds_rate": in.TDSRate,
+		"contact_person": in.ContactPerson, "phone": in.Phone, "email": in.Email, "address": in.Address, "city": in.City, "state": in.State, "state_code": in.StateCode, "notes": in.Notes,
+		"bank_changed": bankChanged,
 	}
+}
+func vendorAuditInput(v Vendor) VendorInput {
+	return VendorInput{Name: v.Name, DisplayName: v.DisplayName, VendorType: v.VendorType, Status: v.Status, Categories: v.Categories, GSTIN: v.GSTIN, PAN: v.PAN, MSMEUdyam: v.MSMEUdyam, TDSSection: v.TDSSection, TDSRate: v.TDSRate, ContactPerson: v.ContactPerson, Phone: v.Phone, Email: v.Email, Address: v.Address, City: v.City, State: v.State, StateCode: v.StateCode, Notes: v.Notes}
+}
+func normalizedVendorBank(v VendorBank) VendorBank {
+	v.AccountName = strings.TrimSpace(v.AccountName)
+	v.AccountNumber = strings.TrimSpace(v.AccountNumber)
+	v.IFSC = strings.ToUpper(strings.TrimSpace(v.IFSC))
+	v.BankName = strings.TrimSpace(v.BankName)
+	v.Branch = strings.TrimSpace(v.Branch)
+	v.UPIID = strings.TrimSpace(v.UPIID)
+	v.DefaultPaymentMode = strings.TrimSpace(v.DefaultPaymentMode)
+	return v
 }
 
 // escapeLike neutralises the wildcards in a user-supplied search term so a

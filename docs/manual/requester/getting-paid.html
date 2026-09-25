@@ -118,36 +118,18 @@
 <tr><td><strong>Completed — partial accepted</strong></td><td>Less was paid than approved, and your approver agreed to close it anyway.</td><td>Nothing pending</td></tr>
 </tbody></table></div>
 <h3 id="approved-and-waiting">Approved, and waiting</h3>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-approved.png" aria-label="Enlarge: An approved request. Amount and Approved sit side by side in Details.">
-    <img src="../assets/shots/requester/detail-approved.png" alt="A request that has cleared approval and is waiting for the accounts team." loading="lazy" width="1440">
-  </button>
-  <figcaption>An approved request. Amount and Approved sit side by side in Details. </figcaption>
-</figure>
 <p>The moment a request is approved, <strong>Details</strong> grows a second figure. <strong>Amount</strong> is what you asked for; <strong>Approved</strong> is what your approver signed. They are usually the same. Where they are not, the approved figure is the smaller one — an approver may reduce what was asked for and can never raise it.</p>
 <h3 id="claimed-by-accounts">Claimed by Accounts</h3>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-processing.png" aria-label="Enlarge: A request an accountant has taken. The pill reads With Accounts, and the history records the reservation.">
-    <img src="../assets/shots/requester/detail-processing.png" alt="A request the accounts team has claimed and is working on." loading="lazy" width="1440">
-  </button>
-  <figcaption>A request an accountant has taken. The pill reads With Accounts, and the history records the reservation. </figcaption>
-</figure>
 <p>When an accountant takes the request, the status becomes <strong>With Accounts</strong> and a line appears in the history, naming the accountant: <em>Harsh Agarwal reserved the request for processing</em>. That claim is exclusive — it exists so two people cannot pay the same request twice.</p>
 <h3 id="paid">Paid</h3>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-completed.png" aria-label="Enlarge: A completed request. Payment outcome sets the approved figure against what was actually paid.">
-    <img src="../assets/shots/requester/detail-completed.png" alt="A finished request, showing the payment recorded against it." loading="lazy" width="1440">
-  </button>
-  <figcaption>A completed request. Payment outcome sets the approved figure against what was actually paid. </figcaption>
-</figure>
 <p>A recorded payment adds a <strong>Payment outcome</strong> block between the details and the attachments. It has two or three rows: <strong>Approved</strong> with the signed figure, <strong>Paid on</strong> with the date and the amount that actually went out, and a third row naming the difference between them.</p>
 <h2 id="reading-a-payment-that-is-short">Reading a payment that is short</h2>
-<p>Every payment is recorded either as settling the request or as a partial settlement, and the third row of <strong>Payment outcome</strong> tells you which — the two must never read the same.</p>
+<p>Payments can fully settle the request, keep an installment balance payable, or ask the manager to decide a shortfall. The request shows cumulative payments and the remaining balance. An installment returns it to Approved for another payment under the same approval.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">The third row says</th><th scope="col">What it means</th></tr></thead><tbody>
 <tr><td><strong>Difference · confirmed settled by Accounts</strong></td><td>Accounts declared the obligation discharged. Where they paid the full amount, the difference is ₹0.00; where they paid slightly less, they have confirmed nothing more is owed.</td></tr>
 <tr><td><strong>Still owed to the payee</strong></td><td>A genuine shortfall. The balance has not been paid, and the request has gone to your approver to decide what happens to it.</td></tr>
 </tbody></table></div>
-<p>A partial payment always carries a written reason, and it appears on your request as a banner headed with the accountant's name and the words <strong>marked this a genuine partial payment</strong>, their sentence beneath it. The status becomes <strong>Partial — manager review</strong>, and the request goes back to your approver, who either accepts the shortfall — closing it as <strong>Completed — partial accepted</strong> — or raises a concern with Accounts.</p>
+<p>A partial payment always carries a written reason, and it appears on your request as a banner headed with the accountant's name and the words <strong>marked this a genuine partial payment</strong>, their sentence beneath it. The status becomes <strong>Partial — manager review</strong>, and the request goes back to your approver, who can Keep balance payable for another installment, accept the shortfall and close as <strong>Completed — partial accepted</strong>, or raise a concern with Accounts.</p>
 <aside class="callout callout-warning"><p>Nobody can pay more than was approved. An attempt to is refused outright, with a message saying the amount <em>is more than the approved</em> figure, and <em>to pay more, cancel this request and raise a new one</em>. If the true cost has risen, that is a new request, not a bigger payment.</p></aside>
 <h2 id="if-accounts-put-it-on-hold">If Accounts put it on hold</h2>
 <p>An accountant who cannot pay a request as it stands can park it and ask you something. The request then shows an amber banner headed <strong>This request is on hold</strong>, quoting their question, and adds <em>Payment is blocked until Accounts lifts the hold.</em> The status pill reads <strong>On hold</strong> and the waiting sentence becomes <strong>Waiting on you</strong>.</p>

@@ -167,17 +167,17 @@ func (s *Store) EnsureUser(ctx context.Context, email, name, hash, role string) 
 }
 
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email)))
+	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id,session_version FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email)))
 	return scanUser(row)
 }
 
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id FROM users WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id,session_version FROM users WHERE id=?`, id)
 	return scanUser(row)
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id FROM users ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id,session_version FROM users ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -224,14 +224,33 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, name, role string, act
 	if err := s.RequireAnotherActiveAdmin(ctx, id, role, active); err != nil {
 		return err
 	}
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if passwordHash != "" || !active {
+		if _, err = tx.ExecContext(ctx, `UPDATE users SET session_version=session_version+1 WHERE id=?`, id); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM password_resets WHERE user_id=?`, id); err != nil {
+			return err
+		}
+	}
 	if passwordHash != "" {
-		_, err := s.db.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		_, err = tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 			name, role, boolInt(active), passwordHash, id)
+		if err != nil {
+			return classify(err)
+		}
+		return tx.Commit()
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		name, role, boolInt(active), id)
+	if err != nil {
 		return classify(err)
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		name, role, boolInt(active), id)
-	return classify(err)
+	return tx.Commit()
 }
 
 // UserSaveInput is one submission of the Users screen's edit sheet: the profile,
@@ -345,6 +364,16 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 	} else if _, err := tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		name, in.Role, boolInt(in.Active), approver, in.ID); err != nil {
 		return classify(err)
+	}
+	// Administrator password changes and deactivation supersede email reset
+	// links already issued. Re-activation must not resurrect an old credential.
+	if in.PasswordHash != "" || !in.Active {
+		if _, err = tx.ExecContext(ctx, `UPDATE users SET session_version=session_version+1 WHERE id=?`, in.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM password_resets WHERE user_id=?`, in.ID); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_roles WHERE user_id=?`, in.ID); err != nil {
 		return err
@@ -1012,14 +1041,14 @@ func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
 	return p, err
 }
 
-// PaymentForRequest returns the single payment linked to a request, or
+// PaymentForRequest returns the latest payment linked to a request, or
 // ErrNotFound when none exists yet. It powers the requester's outcome view (Q4).
 func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
 		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.request_id=?`, requestID)
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.request_id=? ORDER BY py.id DESC LIMIT 1`, requestID)
 	var p Payment
 	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
 	if err == sql.ErrNoRows {
@@ -1072,11 +1101,14 @@ var (
 // sees RowsAffected()==0 (S2, S5, L8). Only then — the race is already lost —
 // is the row re-read to name which of the three causes refused it (F-D-02).
 func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := paymentRequestScopeTx(ctx, tx, actor.ID, id); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests
 		SET status='processing', processing_by=?, processing_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
 		WHERE id=? AND status='approved' AND processing_by IS NULL AND on_hold=0`, actor.ID, id)
@@ -1223,12 +1255,12 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 	return tx.Commit()
 }
 
-// RecordPaymentForRequest writes the single linked payment for a request the
-// actor currently holds in 'processing', then transitions it in the same
-// transaction: "settled" → 'completed' (even if paid < approved, S10); "partial"
-// → 'partial_review' (partialReason required, L9). Paid may never exceed the
-// approved amount (G13). The payment and the request move together or not at all
-// (S13); a re-record is refused by the status guard and idx_payments_request (S9).
+// RecordPaymentForRequest atomically appends a payment to the request the actor
+// holds. Installments return to approved with the remaining balance payable;
+// settled closes, while partial asks the manager to decide a proposed shortfall.
+// The cumulative amount cannot exceed approval. Confirmation keys and balance
+// snapshots reject replays and stale forms, including after a fresh reservation.
+// Payments and their attachments commit together and remain immutable.
 //
 // F-D-01: the head, the payee and the invoice number are facts of the request —
 // a manager approved an amount against a project and head, and the entry screen
@@ -1240,8 +1272,8 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, requestID int64, in PaymentInput, settlement, partialReason string, attachment *AttachmentInput) (int64, error) {
 	settlement = strings.TrimSpace(settlement)
 	partialReason = strings.TrimSpace(partialReason)
-	if settlement != "settled" && settlement != "partial" {
-		return 0, fmt.Errorf("%w: choose payment settled or partial settlement", ErrValidation)
+	if settlement != "settled" && settlement != "partial" && settlement != "installment" {
+		return 0, fmt.Errorf("%w: choose how the remaining balance should be handled", ErrValidation)
 	}
 	if settlement == "partial" && partialReason == "" {
 		return 0, fmt.Errorf("%w: a reason is required for a partial settlement", ErrValidation)
@@ -1282,6 +1314,19 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 		}
 		return 0, err
 	}
+	if err := paymentRequestScopeTx(ctx, tx, actor.ID, requestID); err != nil {
+		return 0, err
+	}
+	if in.SubmissionKey != "" {
+		var priorID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM payments WHERE request_id=? AND submission_key=? AND entered_by=?`, requestID, in.SubmissionKey, actor.ID).Scan(&priorID)
+		if err == nil {
+			return 0, fmt.Errorf("%w: this payment confirmation was already recorded", ErrValidation)
+		}
+		if err != sql.ErrNoRows {
+			return 0, err
+		}
+	}
 	if status != "processing" || !processingBy.Valid || processingBy.Int64 != actor.ID {
 		return 0, fmt.Errorf("%w: reserve this request before recording its payment", ErrForbidden)
 	}
@@ -1302,9 +1347,26 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if approved.Valid {
 		ceiling = approved.Int64
 	}
-	if in.Amount > ceiling {
+	var previouslyPaid int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM payments WHERE request_id=? AND voided_at IS NULL`, requestID).Scan(&previouslyPaid); err != nil {
+		return 0, err
+	}
+	if in.ExpectedPaid != nil && *in.ExpectedPaid != previouslyPaid {
+		return 0, fmt.Errorf("%w: another payment was recorded after this form opened; reopen the payment form to use the current balance", ErrValidation)
+	}
+	remaining := ceiling - previouslyPaid
+	if in.Amount < remaining && settlement == "settled" && partialReason == "" {
+		return 0, fmt.Errorf("%w: explain the deduction or agreed adjustment before closing a short payment", ErrValidation)
+	}
+	if in.Amount > remaining {
+		if previouslyPaid > 0 {
+			return 0, fmt.Errorf("%w: %s exceeds the remaining approved balance of %s; additional spending needs a separately approved request", ErrValidation, money.FormatPaise(in.Amount), money.FormatPaise(remaining))
+		}
 		return 0, fmt.Errorf("%w: %s is more than the approved %s — to pay more, cancel this request and raise a new one",
-			ErrValidation, money.FormatPaise(in.Amount), money.FormatPaise(ceiling))
+			ErrValidation, money.FormatPaise(in.Amount), money.FormatPaise(remaining))
+	}
+	if in.Amount == remaining && settlement == "partial" {
+		return 0, fmt.Errorf("%w: this payment clears the remaining balance; choose fully settled instead of shortfall review", ErrValidation)
 	}
 	// A zero head is stored as NULL, never 0 — heads(id) has no row 0, and the
 	// v8 schema keeps the foreign key.
@@ -1318,9 +1380,13 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if vendorID.Valid && vendorID.Int64 != 0 {
 		vendorArg = vendorID.Int64
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO payments(head_id,vendor_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by,request_id,settlement,partial_reason)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		headArg, vendorArg, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, requestID, settlement, partialReason)
+	storedSettlement := settlement
+	if settlement == "installment" {
+		storedSettlement = "partial"
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO payments(head_id,vendor_id,paid_on,amount,vendor_payee,payment_mode,invoice_no,reference_no,remarks,entered_by,request_id,settlement,partial_reason,submission_key)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		headArg, vendorArg, in.PaidOn, in.Amount, in.VendorPayee, in.PaymentMode, in.InvoiceNo, in.ReferenceNo, in.Remarks, actor.ID, requestID, storedSettlement, partialReason, nullableText(in.SubmissionKey))
 	if err != nil {
 		return 0, classify(err)
 	}
@@ -1332,7 +1398,10 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if settlement == "partial" {
 		newStatus = "partial_review"
 	}
-	upd, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing' AND processing_by=?`, newStatus, requestID, actor.ID)
+	if settlement == "installment" && in.Amount < remaining {
+		newStatus = "approved"
+	}
+	upd, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, processing_by=CASE WHEN ?='approved' THEN NULL ELSE processing_by END, processing_at=CASE WHEN ?='approved' THEN NULL ELSE processing_at END, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing' AND processing_by=?`, newStatus, newStatus, newStatus, requestID, actor.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -1343,7 +1412,7 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	}
 	after := paymentFromInput(id, actor, in)
 	after.RequestID = &requestID
-	after.Settlement = settlement
+	after.Settlement = storedSettlement
 	after.PartialReason = partialReason
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment", EntityID: &id, Summary: "Recorded payment " + money.FormatPaise(in.Amount), After: after}); err != nil {
 		return 0, err
@@ -1351,6 +1420,9 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	reqAction, reqSummary := "settle", actor.Name+" settled the request as completed"
 	if settlement == "partial" {
 		reqAction, reqSummary = "mark_partial", actor.Name+" recorded a partial settlement: "+partialReason
+	}
+	if settlement == "installment" {
+		reqAction, reqSummary = "installment", actor.Name+" recorded an installment; "+money.FormatPaise(remaining-in.Amount)+" remains approved for payment"
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: reqAction, EntityType: "payment_request", EntityID: &requestID, Summary: reqSummary, After: map[string]any{"status": newStatus, "payment_id": id}}); err != nil {
 		return 0, err
@@ -1536,7 +1608,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	// the banner is rendered on tabs whose rows do not include them.
 	countQ := `SELECT
 		COALESCE(SUM(CASE WHEN r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0 THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0 THEN COALESCE(r.approved_amount, r.amount) ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0 THEN MAX(0,COALESCE(r.approved_amount, r.amount)-(SELECT COALESCE(SUM(ip.amount),0) FROM payments ip WHERE ip.request_id=r.id AND ip.voided_at IS NULL)) ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.status='processing' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.on_hold=1 AND r.status='approved' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN r.status='partial_review' THEN 1 ELSE 0 END),0),
@@ -1564,7 +1636,8 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		COALESCE(NULLIF(v.name,''),r.vendor_payee,''),
 		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
 		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
-		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at, r.concern_open, r.urgent
+		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at, r.concern_open, r.urgent,
+ (SELECT COALESCE(SUM(ip.amount),0) FROM payments ip WHERE ip.request_id=r.id AND ip.voided_at IS NULL)
 		FROM payment_requests r
 		LEFT JOIN projects p ON p.id=r.project_id
 		LEFT JOIN heads h ON h.id=r.head_id
@@ -1650,7 +1723,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		if err := rows.Scan(&r.ID, &r.Number, &r.ShortTitle, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
 			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
 			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
-			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt, &concernOpen, &urgent); err != nil {
+			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt, &concernOpen, &urgent, &r.PaidAmount); err != nil {
 			return out, err
 		}
 		r.ConcernOpen = concernOpen == 1
@@ -1734,9 +1807,21 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	default:
 		where = append(where, `0`)
 	}
+	if opts.VendorID > 0 {
+		where = append(where, `pr.vendor_id=?`)
+		args = append(args, opts.VendorID)
+	}
 	if validMonth(opts.Month) {
 		where = append(where, `substr(py.paid_on,1,7)=?`)
 		args = append(args, opts.Month)
+	}
+	if opts.ProjectID > 0 {
+		where = append(where, `h.project_id=?`)
+		args = append(args, opts.ProjectID)
+	}
+	if opts.HeadID > 0 {
+		where = append(where, `py.head_id=?`)
+		args = append(args, opts.HeadID)
 	}
 	// The same COALESCE Grid uses, so a historical payment (no request at all)
 	// stays in, exactly as it still counts as an actual there.
@@ -1760,8 +1845,11 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	if len(where) > 0 {
 		q += ` WHERE ` + strings.Join(where, ` AND `)
 	}
-	q += ` ORDER BY py.paid_on DESC, py.created_at DESC LIMIT ?`
-	args = append(args, opts.Limit)
+	q += ` ORDER BY py.paid_on DESC, py.created_at DESC LIMIT ? OFFSET ?`
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+	args = append(args, opts.Limit, opts.Offset)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -1921,7 +2009,10 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 		return GridData{}, err
 	}
 	defer rows.Close()
-	g := GridData{Month: month}
+	g := GridData{Month: month, Filtered: strings.TrimSpace(q) != "" || (status != "" && status != "all"), ScopeLabel: "Company total"}
+	if g.Filtered {
+		g.ScopeLabel = "Filtered subtotal"
+	}
 	if lock, err := s.MonthLock(ctx, month); err == nil {
 		g.Locked = true
 		g.Lock = lock
@@ -1957,6 +2048,8 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 			g.OnTrack++
 		case "not-paid":
 			g.NotPaid++
+		case "no-activity":
+			g.NoActivity++
 		}
 		pt := projectMap[r.ProjectID]
 		if pt == nil {
@@ -1990,7 +2083,7 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 		grp.Total.VariancePercent = money.Percent(grp.Total.Variance, grp.Total.Budget)
 		g.Groups[i] = *grp
 	}
-	g.Total.Project = "Company Total"
+	g.Total.Project = g.ScopeLabel
 	g.Total.Variance = g.Total.Budget - g.Total.Actual
 	g.Total.VariancePercent = money.Percent(g.Total.Variance, g.Total.Budget)
 	return g, rows.Err()
@@ -2016,13 +2109,13 @@ func (s *Store) Report(ctx context.Context, fromMonth, toMonth, mode string) ([]
 		switch mode {
 		case "projects":
 			for _, pt := range grid.Projects {
-				out = append(out, ReportRow{Period: month, Project: pt.Project, Budget: pt.Budget, Actual: pt.Actual, Variance: pt.Variance, VariancePercent: pt.VariancePercent})
+				out = append(out, ReportRow{Period: month, ProjectID: pt.ProjectID, Project: pt.Project, Budget: pt.Budget, Actual: pt.Actual, Variance: pt.Variance, VariancePercent: pt.VariancePercent})
 			}
 		case "monthly":
 			out = append(out, ReportRow{Period: month, Budget: grid.Total.Budget, Actual: grid.Total.Actual, Variance: grid.Total.Variance, VariancePercent: grid.Total.VariancePercent})
 		default:
 			for _, row := range grid.Rows {
-				out = append(out, ReportRow{Period: month, Project: row.Project, Head: row.Head, Budget: row.Budget, Actual: row.Actual, Variance: row.Variance, VariancePercent: row.VariancePercent})
+				out = append(out, ReportRow{Period: month, ProjectID: row.ProjectID, HeadID: row.HeadID, Project: row.Project, Head: row.Head, Budget: row.Budget, Actual: row.Actual, Variance: row.Variance, VariancePercent: row.VariancePercent})
 			}
 		}
 	}
@@ -2329,7 +2422,7 @@ func scanUser(scanner interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var active int
 	var approver sql.NullInt64
-	err := scanner.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &active, &u.CreatedAt, &u.UpdatedAt, &approver)
+	err := scanner.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &active, &u.CreatedAt, &u.UpdatedAt, &approver, &u.SessionVersion)
 	if err == sql.ErrNoRows {
 		return u, ErrNotFound
 	}
@@ -2419,6 +2512,8 @@ func classify(err error) error {
 
 func statusFor(budget, actual int64) string {
 	switch {
+	case budget == 0 && actual == 0:
+		return "no-activity"
 	case actual == 0:
 		return "not-paid"
 	case budget == 0 && actual > 0:

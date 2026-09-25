@@ -616,8 +616,8 @@ func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { 
 	if !ok {
 		t.Fatalf("unpaid recoverable missing from the register: %+v", rows)
 	}
-	if unpaid.PaidOn != "" || unpaid.Amount != 200000 || unpaid.AgeingTone != "approved" {
-		t.Fatalf("unpaid row = %+v, want empty PaidOn, approved amount, approved tone", unpaid)
+	if unpaid.PaidOn != "" || unpaid.Amount != 0 || unpaid.AgeingTone != "approved" {
+		t.Fatalf("unpaid row = %+v, want empty PaidOn, zero outstanding, approved tone", unpaid)
 	}
 	if unpaid.RequestID == 0 {
 		t.Fatal("RecoverableRow.RequestID must be populated so the list can link to the detail screen")
@@ -716,7 +716,7 @@ func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
 	// Paid earlier, due inside 30 days.
 	req3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000403", "completed", "icd", "Harith Infra", "2026-08-10", 100000, false)
 	payRecoverable(t, s, ctx, actor, headID, req3, "2026-03-01", 100000)
-	// Approved, unpaid: outstanding but nothing paid out.
+	// Approved, unpaid: visible in the list but no outstanding money yet.
 	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000404", "approved", "emd", "Ridge Metro", "2026-11-30", 50000, false)
 	// Rejected: invisible everywhere.
 	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000405", "rejected", "emd", "Nobody", "2026-01-01", 999999, false)
@@ -725,8 +725,8 @@ func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.OutstandingAmount != 650000 || m.OutstandingCount != 4 {
-		t.Fatalf("outstanding = %d over %d rows, want 650000 over 4", m.OutstandingAmount, m.OutstandingCount)
+	if m.OutstandingAmount != 600000 || m.OutstandingCount != 3 {
+		t.Fatalf("outstanding = %d over %d rows, want 600000 over 3", m.OutstandingAmount, m.OutstandingCount)
 	}
 	if m.OverdueAmount != 200000 || m.OverdueCount != 1 {
 		t.Fatalf("past expected return = %d over %d, want 200000 over 1", m.OverdueAmount, m.OverdueCount)
@@ -881,9 +881,9 @@ func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 		t.Fatalf("an unpaid recoverable moved the overdue tile to %d over %d; unpaid money cannot be overdue",
 			after.OverdueAmount, after.OverdueCount)
 	}
-	// It is still outstanding — the tile that counts money at risk must see it.
-	if after.OutstandingCount != before.OutstandingCount+1 || after.OutstandingAmount != before.OutstandingAmount+777000 {
-		t.Fatalf("outstanding = %d over %d, want the unpaid row included",
+	// An unpaid request is visible in the register but has no money outstanding.
+	if after.OutstandingCount != before.OutstandingCount || after.OutstandingAmount != before.OutstandingAmount {
+		t.Fatalf("outstanding = %d over %d, want the unpaid row excluded from money outstanding",
 			after.OutstandingAmount, after.OutstandingCount)
 	}
 

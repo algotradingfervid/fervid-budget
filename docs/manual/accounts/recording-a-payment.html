@@ -108,77 +108,11 @@
 <main class="doc">
 <div class="wrap">
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Paying</p>
-<header class="page-head"><h1>Recording a payment</h1><p class="lede">The payment form field by field, and what the product checks before it accepts one.</p></header>
-<p>Recording a payment is two screens. The first collects what left the bank. The second compares it with what was approved and asks you to confirm. Nothing is written until you confirm, and once you have, nothing can change it.</p>
-<p>You reach the form by <a href="../accounts/claiming-a-request.html">claiming a request</a>. If you open it without one, the product asks which request the payment is for.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payment-picker.png" aria-label="Enlarge: The picker, shown when you open the payment form without naming a request. Choosing a row claims it.">
-    <img src="../assets/shots/accounts/payment-picker.png" alt="The picker shown when you open the payment form without naming a request." loading="lazy" width="1440">
-  </button>
-  <figcaption>The picker, shown when you open the payment form without naming a request. Choosing a row claims it. </figcaption>
-</figure>
-<aside class="callout callout-note"><p>The blue banner explains why there is a picker at all: free payment entry has been removed. Every payment now belongs to exactly one approved request. Payments recorded before that change are still in the ledger as history.</p></aside>
-<h2 id="the-form">The form</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payment-form.png" aria-label="Enlarge: The payment form. The card at the top is the request; the fieldsets below it are what you fill in.">
-    <img src="../assets/shots/accounts/payment-form.png" alt="The payment entry form for a request this user has claimed." loading="lazy" width="1440">
-  </button>
-  <figcaption>The payment form. The card at the top is the request; the fieldsets below it are what you fill in. </figcaption>
-</figure>
-<p><strong>What was approved</strong> is a read-only summary of the request: the approved amount, who approved it and when, the payee, the project and head it is charged to, and its purpose. <strong>Open the request →</strong> takes you to the request itself if you need the invoice or the conversation.</p>
-<h3 id="the-fields">The fields</h3>
-<div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
-<tr><td><strong>Approved amount</strong></td><td><span class="opt">Optional</span></td><td>Read-only, and the ceiling for what follows. The hint under it says so: a payment can never exceed this.</td></tr>
-<tr><td><strong>Amount actually paid</strong></td><td><span class="req">Required</span></td><td>What left the bank. It is spelled out in words underneath as you type, and a banner above tells you whether it matches the approved figure.</td></tr>
-<tr><td><strong>Paid on</strong></td><td><span class="req">Required</span></td><td>The date the money left. It opens on today and cannot be in the future.</td></tr>
-<tr><td><strong>Payment mode</strong></td><td><span class="req">Required</span></td><td>Choose from <code>Bank transfer</code>, <code>Cheque</code>, <code>UPI</code>, <code>Cash</code>, <code>Card</code> or <code>Other</code>.</td></tr>
-<tr><td><strong>Transaction / UTR reference</strong></td><td><span class="req">Required</span></td><td>The bank’s reference for the transfer. It is what somebody reading the ledger later matches against a statement.</td></tr>
-<tr><td><strong>Payment advice or proof</strong></td><td><span class="opt">Optional</span></td><td>Attach the bank advice — PDF, JPG or PNG up to 10 MB. It is uploaded once, when you confirm.</td></tr>
-<tr><td><strong>Processing note</strong></td><td><span class="opt">Optional</span></td><td>Free text. The hint is worth reading: the product does no tax arithmetic, so if you deducted anything, say so here and the trail explains the difference.</td></tr>
-</tbody></table></div>
-<aside class="callout callout-note"><p>The payee, the project and head, and the invoice number are not on the form. They are facts of the request the approver signed off, so the product carries them across itself rather than offering you a chance to disagree with them.</p></aside>
-<aside class="callout callout-warning"><p class="callout-title">The one chance to attach proof</p><p>Attach the advice now. Once the payment is saved it will not accept a new document, because a payment tied to a request is sealed the moment it is written.</p></aside>
-<h3 id="what-the-form-refuses">What the form refuses</h3>
-<div class="table-wrap"><table><thead><tr><th scope="col">If you</th><th scope="col">The product says</th></tr></thead><tbody>
-<tr><td>Enter more than the approved amount</td><td>It names both figures and tells you to cancel the request and raise a new one — paying more is a different obligation, not a settlement decision.</td></tr>
-<tr><td>Date the payment in the future</td><td>Money cannot have left the bank after today, so the date is refused.</td></tr>
-<tr><td>Date it inside a locked month</td><td>The month is closed. A banner appears above the form before you start typing, naming the month and telling you to pick a date in an open one or ask for that month to be unlocked.</td></tr>
-<tr><td>Leave the amount, date, mode or reference empty</td><td>The field is required and the form will not move to the confirmation.</td></tr>
-</tbody></table></div>
-<aside class="callout callout-note"><p>The lock is a monthly plan an administrator opened and closed — see <a href="../admin/monthly-plans-and-locking.html">monthly plans and locking</a>.</p></aside>
-<h2 id="confirming-the-settlement">Confirming the settlement</h2>
-<p><strong>Payment settled →</strong> does not save anything. It opens the confirmation, which sets what you are about to record beside what was approved and asks one question: does this discharge the obligation?</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/settlement-sheet.png" aria-label="Enlarge: The confirmation. Here the payment is short of the approved amount, so the sheet asks which kind of shortfall it is.">
-    <img src="../assets/shots/accounts/settlement-sheet.png" alt="The confirmation panel comparing what was approved against what is being paid." loading="lazy" width="1440">
-  </button>
-  <figcaption>The confirmation. Here the payment is short of the approved amount, so the sheet asks which kind of shortfall it is. </figcaption>
-</figure>
-<p>When the two figures match, the sheet says so and the difference reads ₹0.00; confirming closes the request. When they do not, the difference is shown and you choose between two outcomes.</p>
-<div class="table-wrap"><table><thead><tr><th scope="col">Choice</th><th scope="col">What it means</th><th scope="col">Where the request goes</th></tr></thead><tbody>
-<tr><td><strong>Fully settled</strong></td><td>The obligation is discharged. Deductions such as TDS or retention were handled outside this system.</td><td><code>completed</code></td></tr>
-<tr><td><strong>Partial payment</strong></td><td>A balance is genuinely still owed to the payee. A reason is required.</td><td><code>partial_review</code>, waiting on the approver</td></tr>
-</tbody></table></div>
-<p><a href="../accounts/paying-part-of-a-request.html">Paying part of a request</a> covers the second choice in full. The blue note on the sheet states the consequence of either: confirming saves the payment, it cannot be edited or cancelled afterwards, and the request accepts no further payment.</p>
-<ol class="steps">
-<li>Check the two figures at the top of the sheet against the advice in front of you.</li>
-<li>Choose <strong>Fully settled</strong> or <strong>Partial payment</strong>.</li>
-<li>If you chose <strong>Partial payment</strong>, write why only part was paid. The approver reads it.</li>
-<li>Select <strong>Confirm and save payment</strong>.<p class="step-note"><strong>Go back</strong> returns to the form with everything you typed still there.</p></li>
-</ol>
-<h2 id="what-happens-next">What happens next</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payment-detail.png" aria-label="Enlarge: The saved payment. The green banner names who was notified and states that this can no longer be edited or cancelled.">
-    <img src="../assets/shots/accounts/payment-detail.png" alt="A recorded payment: the figures, the reference and the request behind it." loading="lazy" width="1440">
-  </button>
-  <figcaption>The saved payment. The green banner names who was notified and states that this can no longer be edited or cancelled. </figcaption>
-</figure>
-<p>You land on the payment. It shows the approved figure beside the paid one, the payment itself marked <strong>Read-only</strong>, any proof attached to it, and the full trail from the moment the request was submitted to the moment it was settled. The requester and the approver are both notified.</p>
-<aside class="callout callout-tip"><p>The action bar carries <strong>Open the request</strong> and <strong>Back to ledger</strong>. The note beside them is the honest limit of this version: refunds and reversals are outside it.</p></aside>
-<dl class="faq"><dt>I pressed <strong>Confirm and save payment</strong> twice.</dt><dd><p>The second press finds the payment already exists and takes you to it. There is one payment per request and the product will not write a second.</p></dd>
-<dt>The amount I paid included a deduction. Which choice is right?</dt><dd><p><strong>Fully settled</strong>. The sheet spells this out: a deduction handled outside this system still discharges the obligation. Record what you did in the processing note so the trail explains the gap. Choose <strong>Partial payment</strong> only when the payee is genuinely still owed money.</p></dd>
-<dt>I lost the reservation while I was filling the form in.</dt><dd><p>The confirmation re-checks it, and if it has gone you get the conflict screen naming who holds the request now. Nothing you typed was saved and no payment was created — see <a href="../accounts/reservations-and-conflicts.html">reservations and conflicts</a>.</p></dd>
-<dt>Where did the invoice number go?</dt><dd><p>Onto the payment, from the request, without passing through the form. When the request carried one, the payment’s own screen shows it under <strong>Invoice</strong>.</p></dd></dl>
+<header class="page-head"><h1>Recording a payment</h1><p class="lede">Record real money movement against an approved request, then confirm its effect on the balance.</p></header>
+<p>Every new payment belongs to an approved request. Open <strong>Accounts queue</strong> and take a request for processing, or choose one from the payment picker. Only the reservation holder may record it.</p>
+<h2 id="the-form">Enter the transfer</h2><p>The request card supplies the payee, project/head, invoice and approved amount. Check previously paid and remaining figures before entering another installment.</p><ol><li>Enter <strong>Amount actually paid</strong>. It must be positive and no greater than the approval minus all existing active payments.</li><li>Enter the date the money left, an available payment mode and the transaction/reference number. Future dates and locked months are refused.</li><li>Attach any advice or proof and add the processing note. Saved request-linked payments and their documents are permanent.</li><li>Open the settlement confirmation. This preview writes no payment.</li></ol>
+<h2 id="confirming-the-settlement">Confirm the balance outcome</h2><p>If the payment clears the remaining balance, confirm it as <strong>Fully settled</strong>. If it is short, explicitly select <strong>Installment — pay the balance later</strong>, <strong>Fully settled</strong> with a required explanation of the deduction/agreed adjustment, or <strong>Ask manager to accept a shortfall</strong> with a required reason.</p><p><a href="../accounts/paying-part-of-a-request.html">Paying part of a request</a> explains all three paths. An installment preserves the approval for the remaining amount; a full settlement closes it; a requested shortfall decision waits for the manager.</p>
+<h2 id="what-happens-next">After confirming</h2><p>The saved payment screen shows the immutable payment, proof and history. The requester and approver can follow the request outcome. Another installment requires a fresh reservation on the same request. The payment ceiling is recalculated when confirming, so an old form cannot spend past the remaining approval.</p><p>Repeated confirmation of the same submission leads to the already recorded payment. It does not create another installment. Saved payments cannot be edited or cancelled; see <a href="../accounts/correcting-a-payment.html">Correcting a payment</a>.</p>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/claiming-a-request.html"><span>Previous</span>Taking a request for processing</a><a class="pager-next" href="../accounts/paying-part-of-a-request.html"><span>Next</span>Paying part of a request</a></nav>
 </div>
 </main>

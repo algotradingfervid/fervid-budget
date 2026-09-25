@@ -110,12 +110,6 @@
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Paying</p>
 <header class="page-head"><h1>The payments ledger</h1><p class="lede">Every payment recorded, how to filter it, and how to read one in detail.</p></header>
 <p>The ledger is the record of money that has left. It is the sidebar item <strong>Payments ledger</strong>, and it holds every payment ever recorded — the ones settled against a request the way this product now works, and the older ones recorded before that.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payments-ledger.png" aria-label="Enlarge: The ledger for one month. The line under the heading counts the rows and totals the active ones.">
-    <img src="../assets/shots/accounts/payments-ledger.png" alt="Every payment recorded, filtered by month." loading="lazy" width="1440">
-  </button>
-  <figcaption>The ledger for one month. The line under the heading counts the rows and totals the active ones. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <h2 id="what-the-screen-tells-you">What the screen tells you</h2>
 <p>The subtitle under <strong>Payments</strong> is a summary of what is on screen: the month, how many entries matched, and the total of the active ones. Voided rows are counted in the entries and left out of the total.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What is in it</th></tr></thead><tbody>
@@ -138,27 +132,15 @@
 <tr><td><strong>Search</strong></td><td>Matches the project, the head, the payee, the invoice number, the transaction reference and the remarks. The placeholder names the first four.</td></tr>
 </tbody></table></div>
 <p>Rows come newest first by the date the money left. A single month never returns more than 300 rows, so on a very busy month the count in the subtitle is the count of what is on screen.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payments-ledger-empty.png" aria-label="Enlarge: A month with nothing in it. The empty row offers a way straight to the payment form.">
-    <img src="../assets/shots/accounts/payments-ledger-empty.png" alt="What the ledger shows for a month in which nothing was paid." loading="lazy" width="1440">
-  </button>
-  <figcaption>A month with nothing in it. The empty row offers a way straight to the payment form. </figcaption>
-</figure>
 <p>When nothing matches, the table says so and offers <strong>Record a payment</strong>, which opens the picker of approved requests. The same journey starts from <strong>+ Add payment</strong> at the top right.</p>
 <aside class="callout callout-tip"><p>The number on the sidebar’s <strong>Payments ledger</strong> item is not the number of payments. It counts the active payments that have no proof attached — a standing list of the advices still to be chased.</p></aside>
 <aside class="callout callout-note"><p>If the month you are looking at has been locked, <strong>+ Add payment</strong> is replaced by a <code>Locked</code> badge, and a payment dated inside that month is refused. Ask an administrator to unlock it, or date the payment in an open month.</p></aside>
 <h2 id="one-payment-in-detail">One payment in detail</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payment-detail.png" aria-label="Enlarge: A payment settled against a request: the comparison, the payment itself, and the whole story behind it.">
-    <img src="../assets/shots/accounts/payment-detail.png" alt="A recorded payment: the figures, the reference and the request behind it." loading="lazy" width="1440">
-  </button>
-  <figcaption>A payment settled against a request: the comparison, the payment itself, and the whole story behind it. </figcaption>
-</figure>
-<p>A payment that settled a request is the end of that request’s story, and the screen is laid out as one. It has four parts.</p>
+<p>A payment is a permanent record in its request’s story. Installment requests may have several payments and a remaining approved balance. The detail shows the recorded payment alongside the request context.</p>
 <h3 id="the-comparison">The comparison</h3>
 <p>Approved against paid, and the difference between them. On a clean settlement the difference line reads <strong>Difference · confirmed settled by Accounts</strong>. On a partial one it reads <strong>Still owed to the payee</strong>.</p>
 <h3 id="the-payment">The payment</h3>
-<p>Marked <strong>Read-only</strong>, because it is: the date, the mode, the reference, who recorded it and when, the payee, and the settlement — either “Fully settled — deductions handled outside this system” or “Partial — a balance is still owed”. A partial payment also prints the reason given for it.</p>
+<p>Marked <strong>Read-only</strong>, because it is: the date, the mode, the reference, who recorded it and when, the payee, and its disposition: full settlement, an installment with balance remaining, or a shortfall sent for manager review. Recorded explanations remain with the payment.</p>
 <h3 id="the-proof">The proof</h3>
 <p>Both halves of it, when there is any: the bank advice Accounts attached at settlement, and the invoice the request came in with. Each has a <strong>Download</strong> control.</p>
 <h3 id="the-trail">The trail</h3>

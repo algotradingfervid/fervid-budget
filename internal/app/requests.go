@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -290,6 +291,16 @@ func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	data.Error = message
+	data.DuplicateReason = in.DuplicateReason
+	data.RequestRawAmount = r.FormValue("amount")
+	data.RequestFieldErrors = requestFieldErrors(in)
+	if in.Type == "vendor_invoice" {
+		data.Similar, err = a.st.DuplicateInvoices(r.Context(), in, store.RequestListOptions{Scope: a.auth.Scope(auth.CurrentUser(r), "request"), ViewerID: auth.CurrentUser(r).ID})
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+	}
 	data.FormType = in.Type
 	data.Request2 = requestFromInput(in)
 	data.Categories = categoriesForType(in.Type, data.Categories)
@@ -386,6 +397,13 @@ func (a *App) requestDuplicateCheck(w http.ResponseWriter, r *http.Request) {
 		a.log.ErrorContext(r.Context(), "duplicate check failed", "request_id", requestID(r), "error", err)
 		return
 	}
+	visible := similar[:0]
+	for _, match := range similar {
+		if canViewRequest(a.auth.Scope(u, "request"), u, match) {
+			visible = append(visible, match)
+		}
+	}
+	similar = visible
 	if len(similar) == 0 {
 		return
 	}
@@ -416,6 +434,7 @@ func (a *App) vendorChoices(r *http.Request, formType string) ([]store.Vendor, e
 // the submitter's browser did.
 func requestInput(r *http.Request) (store.RequestInput, error) {
 	in := store.RequestInput{
+		DuplicateReason:           r.FormValue("duplicate_reason"),
 		Treatment:                 r.FormValue("treatment"),
 		Type:                      r.FormValue("type"),
 		RecoverableCategory:       r.FormValue("recoverable_category"),
@@ -654,6 +673,7 @@ func (a *App) requests(w http.ResponseWriter, r *http.Request) {
 	for _, tab := range requestTabs {
 		counted := opts
 		counted.Bucket = tab.Key
+		counted.Statuses = nil
 		n, err := a.st.CountRequests(r.Context(), counted)
 		if err != nil {
 			a.respondStoreError(w, r, err)
@@ -669,7 +689,7 @@ func (a *App) requests(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "requests", PageData{Title: "Requests", Requests: page.Requests, Page: page,
 		Scope: opts.Scope, Bucket: bucket, Status: status,
 		TypeFilter: opts.Type, Treatment: opts.Treatment, Query: opts.Query,
-		Counts: counts, Projects: projects})
+		RequestClearHref: requestClearURL(r, opts), Counts: counts, Projects: projects, RequestProjectID: opts.ProjectID, RequestVendorID: opts.VendorID})
 }
 
 // requestDetail is one screen for every audience. The two detail mockups are
@@ -720,6 +740,10 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 		return PageData{}, err
 	}
 	data := PageData{Title: title, Request2: req, Thread: thread, RequestAtts: atts}
+	data.RequestPayments, err = a.st.RequestPayments(r.Context(), req.ID)
+	if err != nil {
+		return PageData{}, err
+	}
 	// A7: the reassign-the-approval control needs somebody to reassign it to. The
 	// list is ListApprovers — everyone holding approval:approve except the
 	// requester — which is the same list the request form offers and the same rule
@@ -1046,6 +1070,9 @@ func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored 
 	// does must not vanish because one field was refused.
 	noteLegacyDeposit(&data, stored)
 	data.Error = message
+	data.RequestRawAmount = r.FormValue("amount")
+	data.RequestFieldErrors = requestFieldErrors(in)
+	data.DuplicateReason = in.DuplicateReason
 	name := "request_edit"
 	if stored.Status == "returned" {
 		name = "request_returned"
@@ -1690,4 +1717,23 @@ func optionalID(id int64) *int64 {
 		return nil
 	}
 	return &id
+}
+
+// requestClearURL clears user filters while retaining the access scope, current
+// bucket and fixed vendor/report context that brought the reader to the list.
+func requestClearURL(r *http.Request, opts store.RequestListOptions) string {
+	q := url.Values{"scope": {opts.Scope}, "bucket": {opts.Bucket}}
+	if opts.VendorID > 0 {
+		q.Set("vendor_id", fmt.Sprint(opts.VendorID))
+	}
+	if back := safeReportBack(r.URL.Query().Get("back")); back != "" {
+		q.Set("back", back)
+		if opts.ProjectID > 0 {
+			q.Set("project_id", fmt.Sprint(opts.ProjectID))
+		}
+	}
+	if target := auth.SafeReturnPath(r.URL.Query().Get("return_to")); target != "" && target != "/" {
+		q.Set("return_to", target)
+	}
+	return "/requests?" + q.Encode()
 }

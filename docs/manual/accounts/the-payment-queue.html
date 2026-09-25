@@ -110,16 +110,10 @@
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Paying</p>
 <header class="page-head"><h1>The payment queue</h1><p class="lede">Approved requests waiting to be paid, and how the tabs divide the work.</p></header>
 <p>The payment queue is the accounts team’s starting point. It is the sidebar item <strong>Accounts queue</strong>, and the number on it is the count of approved requests nobody has claimed yet.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-approved.png" aria-label="Enlarge: The queue on its first tab: approved requests nobody has taken.">
-    <img src="../assets/shots/accounts/queue-approved.png" alt="Approved requests nobody has claimed yet — the accounts team’s starting point." loading="lazy" width="1440">
-  </button>
-  <figcaption>The queue on its first tab: approved requests nobody has taken. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <h2 id="reading-the-top-of-the-screen">Reading the top of the screen</h2>
 <p>Four tiles sit above the tabs. They count your whole view of the data, not the tab you are on and not the rows a search has left on screen — so typing in the search box narrows the table and never moves the numbers.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Tile</th><th scope="col">What it counts</th></tr></thead><tbody>
-<tr><td><strong>Approved, unclaimed</strong></td><td>Requests that are approved, unclaimed and not on hold — the only ones you may take. The figure underneath is their total value.</td></tr>
+<tr><td><strong>Approved, unclaimed</strong></td><td>Requests that are approved, unclaimed and not on hold — the only ones you may take. The figure underneath is their remaining approved balance after existing payments.</td></tr>
 <tr><td><strong>Reserved by you</strong></td><td>Requests you are holding. The line underneath reads <code>All recent</code> unless one has been open longer than a day, in which case it says how many.</td></tr>
 <tr><td><strong>Reserved by others</strong></td><td>Requests a colleague is holding. You can see them; you cannot take them.</td></tr>
 <tr><td><strong>On hold</strong></td><td>Approved requests parked with a question. They are waiting on the requester, not on you.</td></tr>
@@ -136,36 +130,12 @@
 <h3 id="approved-unclaimed">Approved, unclaimed</h3>
 <p>This is the takeable set. Every row carries <strong>Take for processing</strong>, which claims the request and opens the payment form — see <a href="../accounts/claiming-a-request.html">taking a request for processing</a>.</p>
 <h3 id="processing">Processing</h3>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-processing.png" aria-label="Enlarge: The Processing tab. Each row names its holder, and your own rows say **Reserved by you** with the time the claim started.">
-    <img src="../assets/shots/accounts/queue-processing.png" alt="Requests somebody has claimed, and who is holding each one." loading="lazy" width="1440">
-  </button>
-  <figcaption>The Processing tab. Each row names its holder, and your own rows say <strong>Reserved by you</strong> with the time the claim started. </figcaption>
-</figure>
 <p>A row you hold offers <strong>Resume</strong>. Everybody else’s names the holder and offers <strong>View</strong> only. Once a claim has been open more than a day, <strong>Resume</strong> takes you to a screen about the claim itself rather than back to the payment form — <a href="../accounts/reservations-and-conflicts.html">reservations and conflicts</a> covers what to do there.</p>
 <h3 id="on-hold">On hold</h3>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-hold.png" aria-label="Enlarge: The On hold tab. These are approved requests Accounts has paused with a question.">
-    <img src="../assets/shots/accounts/queue-hold.png" alt="Approved requests parked with a reason, waiting on the requester." loading="lazy" width="1440">
-  </button>
-  <figcaption>The On hold tab. These are approved requests Accounts has paused with a question. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <p>A hold does not change a request’s status — it stays approved — but it takes the request out of the takeable set until somebody in Accounts lifts it. <strong>Read reply</strong> opens the request, where the question and the requester’s answer sit in the conversation. See <a href="../accounts/holding-a-request.html">putting a request on hold</a>.</p>
 <h3 id="partial-review">Partial review</h3>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-partial-review.png" aria-label="Enlarge: The Partial review tab. Every row is a shortfall waiting on an approver’s decision.">
-    <img src="../assets/shots/accounts/queue-partial-review.png" alt="Requests paid short, now waiting on the approver to accept or object." loading="lazy" width="1440">
-  </button>
-  <figcaption>The Partial review tab. Every row is a shortfall waiting on an approver’s decision. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
-<p>These are requests that were paid less than the approved amount. They are marked <code>partial_review</code> — the screen writes it <strong>Partial — manager review</strong> — and the decision is not yours: the approver either accepts the difference or raises a concern. See <a href="../accounts/paying-part-of-a-request.html">paying part of a request</a>.</p>
+<p>These are requests that were paid less than the approved amount. They are marked <code>partial_review</code> — the screen writes it <strong>Partial — manager review</strong> — and the decision is not yours: the approver can keep the balance payable, accept and close the difference, or raise a concern. See <a href="../accounts/paying-part-of-a-request.html">paying part of a request</a>.</p>
 <h3 id="paid">Paid</h3>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-paid.png" aria-label="Enlarge: The Paid tab. `Completed` closed cleanly; `Completed — partial accepted` closed with a shortfall the approver wrote off.">
-    <img src="../assets/shots/accounts/queue-paid.png" alt="The finished work, kept for reference." loading="lazy" width="1440">
-  </button>
-  <figcaption>The Paid tab. <code>Completed</code> closed cleanly; <code>Completed — partial accepted</code> closed with a shortfall the approver wrote off. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <p>A few rows here offer <strong>Resume</strong> rather than <strong>View</strong>. Those are the ones you settled yourself, and following that control lands on a refusal, because the request has already been paid. Open the request from its number in the first column instead — the payment is linked from there.</p>
 <h2 id="finding-one-request">Finding one request</h2>
 <p>The search box above the table matches the request number, the requester, the payee, the project, the head and the amount. It searches within the tab you are on, and it leaves the tiles alone.</p>
@@ -175,7 +145,7 @@
 <p>If any of the requests you are holding has been reserved for longer than the reminder threshold, a banner appears above the table saying how many, with a <strong>Review</strong> button that takes you to the Processing tab. Nothing is ever released for you: a transfer may already be moving through a bank portal, so the product nudges and a person decides.</p>
 <dl class="faq"><dt>The tile says 130 and the first tab lists more rows than that.</dt><dd><p>The tile counts only what you may take — approved, unclaimed and not on hold. The tab also lists the requests somebody has already claimed, so that you can see who holds the one you were about to pay rather than having it silently hidden from you.</p></dd>
 <dt>A request I expected is missing from every tab.</dt><dd><p>The queue only holds requests that reached approval. Anything still awaiting a decision, returned, rejected, withdrawn or cancelled never appears here. <a href="../reference/request-lifecycle.html">The request lifecycle</a> lists every status and the routes between them.</p></dd>
-<dt>Can I pay several requests at once?</dt><dd><p>No. The line under the heading states the rule the product is built on: one request, one payment.</p></dd></dl>
+<dt>Can I pay several requests at once?</dt><dd><p>No bulk payment entry is offered. Record one payment submission at a time. A request can have multiple installments, each within its remaining approval.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/what-you-can-do.html"><span>Previous</span>What the accounts role can do</a><a class="pager-next" href="../accounts/claiming-a-request.html"><span>Next</span>Taking a request for processing</a></nav>
 </div>
 </main>

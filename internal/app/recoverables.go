@@ -2,10 +2,14 @@ package app
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/csv"
+	"encoding/hex"
 	"errors"
+	"fervidbudget/internal/money"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"fervidbudget/internal/auth"
@@ -21,7 +25,7 @@ import (
 // "25 days overdue" to a fixed clock.
 
 func (a *App) recoverablesDashboard(w http.ResponseWriter, r *http.Request) {
-	asOf := time.Now().UTC()
+	asOf := time.Now()
 	// The summary is scoped for the same reason the register is (F-G-016/F-E-03).
 	// Wave 4 scoped the rows and left these three aggregates company-wide, which
 	// left the disclosure half-closed: the counterparty rollup names counterparties
@@ -73,7 +77,7 @@ func (a *App) recoverableListOptions(r *http.Request) store.RecoverableReportOpt
 	q := r.URL.Query()
 	ageing := q.Get("ageing")
 	switch ageing {
-	case "overdue", "due30", "later", "unpaid": // allow-list; anything else means "all"
+	case "outstanding", "overdue", "due30", "later", "unpaid", "recovered": // allow-list; anything else means "all"
 	default:
 		ageing = ""
 	}
@@ -91,7 +95,7 @@ func (a *App) recoverableListOptions(r *http.Request) store.RecoverableReportOpt
 		Query:        q.Get("q"),
 		Ageing:       ageing,
 		Order:        order,
-		AsOf:         time.Now().UTC(),
+		AsOf:         time.Now(),
 		// Set here, at the one place the list and its CSV both pass through, so the
 		// download cannot drift from the screen the way F-G-016 found it had.
 		Viewer: a.recoverableViewer(r),
@@ -138,7 +142,7 @@ func (a *App) recoverablesList(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "recoverables_list", PageData{
 		Title: "All recoverables", Recoverables: rows, RecoverableTotal: total,
 		Categories: cats, CategoryID: opts.CategoryID, Ageing: opts.Ageing,
-		From: opts.From, To: opts.To, Query: opts.Query,
+		From: opts.From, To: opts.To, Query: opts.Query, RecoveryCounterparty: opts.Counterparty, RecoveryOrder: opts.Order,
 	})
 }
 
@@ -160,9 +164,9 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 		EntityType: "recoverable_report", Summary: "Exported recoverable payments · " + scope})
 	var body bytes.Buffer
 	cw := csv.NewWriter(&body)
-	_ = cw.Write([]string{"Number", "Category", "Counterparty", "Project", "Amount", "Paid On", "Expected Return", "Ageing", "Status", "Requester", "Repayment Notes"})
+	_ = cw.Write([]string{"Number", "Category", "Counterparty", "Project", "Outstanding", "Paid out", "Recovered or reconciled", "Paid On", "Expected Return", "Ageing", "Status", "Requester", "Repayment Notes"})
 	for _, row := range rows {
-		_ = cw.Write([]string{row.Number, row.Category, row.Counterparty, row.Project, csvAmount(row.Amount),
+		_ = cw.Write([]string{row.Number, row.Category, row.Counterparty, row.Project, csvAmount(row.Amount), csvAmount(row.PaidAmount), csvAmount(row.RecoveredAmount),
 			row.PaidOn, row.ExpectedReturnDate, row.AgeingLabel, row.Status, row.Requester, row.RepaymentNotes})
 	}
 	cw.Flush()
@@ -178,6 +182,30 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) recoverableDetail(w http.ResponseWriter, r *http.Request) {
+	a.renderRecoverableDetail(w, r, store.RecoveryInput{}, "", http.StatusOK)
+}
+
+func (a *App) recordRecovery(w http.ResponseWriter, r *http.Request) {
+	in := store.RecoveryInput{Kind: r.FormValue("kind"), AmountText: r.FormValue("amount"), OccurredOn: r.FormValue("occurred_on"), Reference: r.FormValue("reference"), Note: r.FormValue("note"), Token: r.FormValue("token")}
+	amount, err := money.ParsePaise(in.AmountText)
+	if err == nil {
+		in.Amount = amount
+		_, err = a.st.RecordRecovery(r.Context(), auth.CurrentUser(r), parseID(r.PathValue("id")), in)
+	} else {
+		err = fmt.Errorf("%w: enter a valid recovery amount", store.ErrValidation)
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrValidation) {
+			a.renderRecoverableDetail(w, r, in, strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": "), http.StatusUnprocessableEntity)
+		} else {
+			a.respondStoreError(w, r, err)
+		}
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/recoverables/%d?saved=1#recovery-history", parseID(r.PathValue("id"))), http.StatusSeeOther)
+}
+
+func (a *App) renderRecoverableDetail(w http.ResponseWriter, r *http.Request, input store.RecoveryInput, recoveryError string, status int) {
 	id := parseID(r.PathValue("id"))
 	req, err := a.st.Request(r.Context(), id)
 	if err != nil {
@@ -200,7 +228,7 @@ func (a *App) recoverableDetail(w http.ResponseWriter, r *http.Request) {
 	// Reuse the register query so ageing here and in the list can never
 	// disagree; the number is unique, so it returns exactly this row.
 	rows, err := a.st.RecoverableReport(r.Context(), store.RecoverableReportOptions{
-		Query: req.Number, AsOf: time.Now().UTC(), Viewer: a.recoverableViewer(r)})
+		Query: req.Number, AsOf: time.Now(), Viewer: a.recoverableViewer(r)})
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -225,7 +253,28 @@ func (a *App) recoverableDetail(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.render(w, r, "recoverable_detail", PageData{
+	events, err := a.st.RecoveryEvents(r.Context(), u, req.ID)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	if input.Token == "" {
+		var token [24]byte
+		if _, err := rand.Read(token[:]); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		input.Token = hex.EncodeToString(token[:])
+	}
+	if input.OccurredOn == "" {
+		input.OccurredOn = time.Now().Format("2006-01-02")
+	}
+	notice := ""
+	if r.URL.Query().Get("saved") == "1" {
+		notice = "Recovery recorded. The outstanding balance and dated history have been updated."
+	}
+	a.renderStatus(w, r, status, "recoverable_detail", PageData{
+		RecoveryEvents: events, RecoveryInput: input, RecoveryError: recoveryError, CanRecordRecovery: a.auth.Can(u, "payment", "create") && row.Amount > 0, Notice: notice,
 		Title: "Recoverable " + req.Number, Request2: req, Recoverable: row,
 		RecPayment: pay, HasPayment: payErr == nil, Thread: thread,
 	})

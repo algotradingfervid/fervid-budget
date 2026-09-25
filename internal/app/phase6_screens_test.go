@@ -37,7 +37,7 @@ func TestEveryListScreenRestacksOnMobile(t *testing.T) {
 			resp := s.request(http.MethodGet, route, nil, "")
 			requireStatus(t, resp, http.StatusOK)
 			body := responseBody(t, resp)
-			if !strings.Contains(body, `class="t-cards"`) {
+			if !strings.Contains(body, `class="t-cards"`) && !strings.Contains(body, `class="t-cards `) {
 				t.Fatalf("%s still renders a table that cannot restack on a phone", route)
 			}
 			assertTCardsLabelled(t, body)

@@ -111,12 +111,6 @@
 <header class="page-head"><h1>What an approver can do</h1><p class="lede">The five decisions available to you, and the limits of the role.</p></header>
 <p>An approver decides whether money is allowed to leave. You do not raise the requests and you do not pay them — somebody asks, you decide, and the accounts team settles what you approved.</p>
 <p>The product routes each request to one person by name. That person is the request's approver, and while the request waits, it waits on them. Your home screen opens on what is waiting on you.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/shared/dashboard-manager.png" aria-label="Enlarge: The home screen for an approver: what needs deciding, and nothing else.">
-    <img src="../assets/shots/shared/dashboard-manager.png" alt="The home screen for an approver, led by what is waiting on their decision." loading="lazy" width="1440">
-  </button>
-  <figcaption>The home screen for an approver: what needs deciding, and nothing else. </figcaption>
-</figure>
 <h2 id="the-decisions-you-take">The decisions you take</h2>
 <p>Every decision is taken on one request at a time, from the request's own screen. There is no bulk approval — the approvals queue says so at the foot of the page.</p>
 <div class="table-wrap"><table><caption>The seven controls an approver can be offered, and what each one does.</caption><thead><tr><th scope="col">Decision</th><th scope="col">The control</th><th scope="col">Offered when</th><th scope="col">Where it leaves the request</th></tr></thead><tbody>
@@ -126,18 +120,12 @@
 <tr><td>Reassign</td><td><strong>Reassign approval</strong></td><td>The request is <code>pending</code> and another approver exists</td><td>Still <code>pending</code>, but routed to a different approver</td></tr>
 <tr><td>Decide a cancellation</td><td><strong>Decide the cancellation</strong></td><td>The requester has asked to cancel</td><td><code>cancelled</code>, or back to <code>approved</code></td></tr>
 <tr><td>Cancel outright</td><td><strong>Cancel with reason</strong></td><td>The request is <code>approved</code> and nobody has asked</td><td><code>cancelled</code></td></tr>
-<tr><td>Review a shortfall</td><td><strong>Decide the partial payment</strong></td><td>Accounts paid less than you approved</td><td>Closed as <code>completed_partial</code>, or left open with your concern recorded</td></tr>
+<tr><td>Review a shortfall</td><td><strong>Decide the partial payment</strong></td><td>Accounts paid less than you approved</td><td>Returned to Approved to keep the balance payable, closed as <code>completed_partial</code>, or left under review with your concern recorded</td></tr>
 </tbody></table></div>
 <aside class="callout callout-note"><p>Every one of these is a two-press action. The control in the bar along the bottom opens a panel; nothing is written until you press the button inside that panel. Closing the panel changes nothing.</p></aside>
 <h2 id="whose-decision-it-is">Whose decision it is</h2>
 <p>The action panels appear only for the person the request was routed to. Holding the approver role is not enough: if you open somebody else's request you see the whole thing — the amounts, the purpose, the conversation — with no action bar at the bottom.</p>
 <p>Reassignment is the one exception, and it is deliberate. It is offered to anybody who holds the reassign permission, because it is the way out when the routed approver has left or can no longer act. <a href="../manager/reassigning.html">Reassigning an approval</a> explains it.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/manager/request-pending.png" aria-label="Enlarge: A request routed to you. The four controls sit along the bottom.">
-    <img src="../assets/shots/manager/request-pending.png" alt="The request as its approver sees it, with the full action bar along the bottom." loading="lazy" width="1440">
-  </button>
-  <figcaption>A request routed to you. The four controls sit along the bottom. </figcaption>
-</figure>
 <h2 id="what-you-can-see">What you can see</h2>
 <p>Your request scope is the whole organisation, so <strong>My requests</strong> in the sidebar opens every request in the product, not only the ones addressed to you — the heading on that screen reads <em>All requests</em> to say so. The approvals queue is the narrower view: only the rows where you are the approver.</p>
 <p>Two reporting screens come with the role. <a href="../manager/the-variance-grid.html">The variance grid</a> shows budget against actual for every head in a month, and <a href="../manager/reports.html">Reports</a> roll the same figures up by month, by project or by head. Both are worth a look before you approve something large.</p>

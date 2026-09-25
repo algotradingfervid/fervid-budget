@@ -511,7 +511,7 @@ func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
 		`class="choice"`,
 		`class="outcome good"`, "Completed",
 		`class="outcome warn"`, "Manager review",
-		`data-when="settlement:partial"`,
+		`name="partial_reason"`, `value="installment"`,
 		`class="banner info"`, "cannot be edited or cancelled",
 		`value="settled"`, `value="partial"`,
 	} {
@@ -603,7 +603,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
 	// Settle for less than approved (S10).
-	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N221260725004417"}}
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "partial_reason": {"Agreed TDS deduction"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N221260725004417"}}
 	resp := s.postForm("/payments", form)
 	requireStatus(t, resp, http.StatusSeeOther)
 	loc := resp.Header.Get("Location")
@@ -656,7 +656,7 @@ func TestDoubleConfirmLandsOnTheExistingPayment(t *testing.T) {
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme"}, "settlement": {"settled"}, "reference_no": {"N1"}}
+	form := url.Values{"submission_key": {"double-confirm-fixture"}, "request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme"}, "settlement": {"settled"}, "reference_no": {"N1"}}
 	first := s.postForm("/payments", form)
 	requireStatus(t, first, http.StatusSeeOther)
 	_ = responseBody(t, first)
@@ -818,7 +818,7 @@ func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
 
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N1"}}
+	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "partial_reason": {"Agreed TDS deduction"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N1"}}
 	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
 
 	s.login("ravi@example.test", "RequesterPass123")

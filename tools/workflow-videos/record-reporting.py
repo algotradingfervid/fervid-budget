@@ -1,0 +1,7 @@
+from capture import *
+video('20-reports-grid','Trace reports from totals to transactions','Manager · Accounts',['Monthly project and head reports','Date ranges','Payment drilldown','CSV scope','Variance filters'],['Actuals are recorded active budget payments','Recovery and voided payments excluded','Payment detail access may restrict visible records'])
+with scene('20-reports-grid','01-monthly','Start with the period and report level','Reports compare planned budget with recorded actual payments. Start by choosing a date range and a view: monthly, projects, or heads. Remaining is budget less actual, and used shows the share consumed. These totals describe recorded budget payments. They do not prove every request is fully settled, and they exclude recoverable deposits such as the advances we just followed.'):
+ fill('From','2026-09');fill('To','2026-09');click('button','Run');click('link','View projects')
+with scene('20-reports-grid','02-project','Narrow from a month to one project','The project view breaks the selected period into project totals. Choose View heads beside a project to inspect its categories of spending. The next page preserves the period and displays the selected project context. Use the source report link to return without rebuilding the date range. This makes it possible to investigate a variance through successive levels.'):
+ click('link','View heads',nth=0)
+print([(n.get('role'),n.get('name'),n.get('url')) for n in snapshot() if n.get('role') in ['textbox','link','button']][-20:])

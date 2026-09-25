@@ -13,6 +13,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,9 +49,12 @@ type Warning struct {
 }
 
 type PageData struct {
-	Title string
-	User  store.User
-	Shell Shell
+	PaymentModeChoices []PaymentModeChoice
+	ContextBackHref    string
+	ContextBackLabel   string
+	Title              string
+	User               store.User
+	Shell              Shell
 	// Perms is how a template asks whether the signed-in user may do something.
 	// No template compares a role name: every gated control names the resource
 	// and action its route is guarded by, and the permission set answers. It is
@@ -68,39 +72,66 @@ type PageData struct {
 	// active set a new record may choose from; AllProjects is what a row select
 	// on an existing record must offer, so a retired project still has an option
 	// to be selected and Save cannot silently move the record (F-G-033).
-	AllProjects    []store.Project
-	Heads          []store.Head
-	Users          []store.User
-	Payments       []store.Payment
-	PaymentTotal   int64
-	Payment        store.Payment
-	PaymentAmount  string
-	Attachments    []store.Attachment
-	MonthPlans     []store.MonthPlan
-	Audit          []store.AuditEntry
-	Reports        []store.ReportRow
-	Summary        ReportSummary
-	Backups        []string
-	From           string
-	To             string
-	Mode           string
-	TargetMonth    string
-	SourceMonth    string
-	SelectedHeadID int64
-	IncludeVoided  bool
-	AuditEntity    string
-	AuditAction    string
-	AuditActor     string
-	AuditFrom      string
-	AuditTo        string
-	AuditID        string
-	AuditPage      store.AuditPage
-	CloseGrid      store.GridData
-	Locked         bool
-	BudgetInputs   map[int64]string
-	BudgetErrors   map[int64]string
-	ErrorCode      int
-	RequestID      string
+	AllProjects          []store.Project
+	Heads                []store.Head
+	Users                []store.User
+	Payments             []store.Payment
+	PaymentTotal         int64
+	Payment              store.Payment
+	PaymentAmount        string
+	SubmissionKey        string
+	RequestPayments      []store.Payment
+	RequestFieldErrors   map[string]string
+	RequestClearHref     string
+	RequestProjectID     int64
+	RequestVendorID      int64
+	RequestRawAmount     string
+	DuplicateReason      string
+	Attachments          []store.Attachment
+	MonthPlans           []store.MonthPlan
+	Audit                []store.AuditEntry
+	Reports              []store.ReportRow
+	Summary              ReportSummary
+	Backups              []string
+	BackupRows           []BackupRow
+	BackupLocation       string
+	BackupDBPath         string
+	BackupAttachmentPath string
+	RecoveryContact      string
+	RecoveryName         string
+	LoginNext            string
+	ResetEmailAvailable  bool
+	ResetToken           string
+	VendorTab            string
+	VendorModeOptions    []string
+	VendorGSTError       string
+	From                 string
+	To                   string
+	Mode                 string
+	TargetMonth          string
+	SourceMonth          string
+	SelectedHeadID       int64
+	IncludeVoided        bool
+	AuditEntity          string
+	AuditAction          string
+	AuditActor           string
+	AuditFrom            string
+	AuditTo              string
+	AuditID              string
+	AuditPage            store.AuditPage
+	CloseGrid            store.GridData
+	Locked               bool
+	BudgetInputs         map[int64]string
+	BudgetErrors         map[int64]string
+	BudgetSaved          int
+	BudgetSaveFailed     bool
+	ReportProjectID      int64
+	ReportHeadID         int64
+	ReportBack           string
+	ReportURL            string
+	ReportContext        string
+	ErrorCode            int
+	RequestID            string
 
 	// Roles admin screen.
 	Roles          []store.Role
@@ -221,11 +252,17 @@ type PageData struct {
 	// by-category row links to ?category={id} — the filter the list actually
 	// honours — instead of a free-text search that cannot reproduce the count
 	// it was clicked from (F-G-012). RecoverableRollup carries no id of its own.
-	CategoryIDs map[string]int64
-	Ageing      string
-	Recoverable store.RecoverableRow
-	RecPayment  store.Payment
-	HasPayment  bool
+	CategoryIDs          map[string]int64
+	Ageing               string
+	RecoveryCounterparty string
+	RecoveryOrder        string
+	RecoveryEvents       []store.RecoveryEvent
+	RecoveryInput        store.RecoveryInput
+	CanRecordRecovery    bool
+	RecoveryError        string
+	Recoverable          store.RecoverableRow
+	RecPayment           store.Payment
+	HasPayment           bool
 
 	// Notifications (Phase 5). Notifs is the user's own centre; NotifSettings
 	// and MailCfg are the admin rules screen.
@@ -301,30 +338,32 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 			}
 			return ""
 		},
-		"voided":         func(p store.Payment) bool { return p.VoidedAt != nil },
-		"usedPct":        usedPct,
-		"usedText":       usedText,
-		"remainingText":  remainingText,
-		"dueClass":       dueClass,
-		"dueText":        dueText,
-		"roleText":       roleText,
-		"boolText":       boolText,
-		"actionText":     actionText,
-		"actionClass":    actionClass,
-		"entityText":     entityText,
-		"jsonPretty":     jsonPretty,
-		"hasText":        hasText,
-		"fileSize":       fileSize,
-		"barClass":       barClass,
-		"varClass":       varClass,
-		"statusText":     statusText,
-		"statusFor":      statusForView,
-		"planStatusText": planStatusText,
-		"paymentMode":    paymentModeText,
-		"vendorType":     vendorTypeText,
-		"vendorStatus":   vendorStatusText,
-		"categories":     categoryChain,
-		"plural":         plural,
+		"voided":           func(p store.Payment) bool { return p.VoidedAt != nil },
+		"usedPct":          usedPct,
+		"usedText":         usedText,
+		"remainingText":    remainingText,
+		"dueClass":         dueClass,
+		"dueText":          dueText,
+		"roleText":         roleText,
+		"boolText":         boolText,
+		"actionText":       actionText,
+		"actionClass":      actionClass,
+		"entityText":       entityText,
+		"jsonPretty":       jsonPretty,
+		"hasText":          hasText,
+		"fileSize":         fileSize,
+		"barClass":         barClass,
+		"varClass":         varClass,
+		"statusText":       statusText,
+		"reportDetailURL":  reportDetailURL,
+		"budgetInputValue": budgetInputValue,
+		"statusFor":        statusForView,
+		"planStatusText":   planStatusText,
+		"paymentMode":      paymentModeText,
+		"vendorType":       vendorTypeText,
+		"vendorStatus":     vendorStatusText,
+		"categories":       categoryChain,
+		"plural":           plural,
 		// Payment requests. `deref` exists because several request columns are
 		// nullable (*int64) and html/template cannot compare a pointer to an int.
 		"deref": func(p *int64) int64 {
@@ -368,21 +407,23 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"fileKind":     fileKind,
 		// Payment linking and settlement (Phase 3). Display only: every rule
 		// these read from is enforced in the store.
-		"hhmm":          hhmm,
-		"since":         since,
-		"reservedLabel": reservedLabel,
-		"stale":         stale,
-		"activeHold":    activeHold,
-		"sub":           subPaise,
-		"approvedOf":    approvedOf,
-		"trailAction":   trailAction,
-		"auditTone":     auditTone,
-		"auditGlyph":    auditGlyph,
-		"auditPhrase":   auditPhrase,
-		"trailBody":     trailBody,
-		"initials":      initials,
-		"paymentModes":  paymentModes,
-		"queueTabs":     func() []queueTab { return queueTabs },
+		"hhmm":               hhmm,
+		"since":              since,
+		"reservedLabel":      reservedLabel,
+		"stale":              stale,
+		"activeHold":         activeHold,
+		"sub":                subPaise,
+		"approvedOf":         approvedOf,
+		"trailAction":        trailAction,
+		"auditTone":          auditTone,
+		"auditGlyph":         auditGlyph,
+		"auditPhrase":        auditPhrase,
+		"trailBody":          trailBody,
+		"initials":           initials,
+		"roleAuditChanges":   roleAuditChanges,
+		"vendorAuditChanges": vendorAuditChanges,
+		"paymentModes":       paymentModes,
+		"queueTabs":          func() []queueTab { return queueTabs },
 		// Configuration. The screen is a rendering of this table, so a later
 		// phase adds a section by appending to it and nothing else.
 		"configSections": func() []ConfigSection { return configSections },
@@ -459,6 +500,10 @@ func contextWithTimeout() struct {
 func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
 	mux.HandleFunc("GET /login", a.loginForm)
+	mux.HandleFunc("GET /login/help", a.loginHelp)
+	mux.HandleFunc("POST /login/help", a.withCSRF(a.passwordResetRequest))
+	mux.HandleFunc("GET /login/reset", a.passwordResetForm)
+	mux.HandleFunc("POST /login/reset", a.withCSRF(a.passwordResetPost))
 	// POST /login is deliberately outside withCSRF: there is no session yet to
 	// protect, and a pre-session token buys nothing (F-A-10). It is the single
 	// exception to the rule that every mutating POST is wrapped, so it is
@@ -490,6 +535,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /months", a.auth.RequirePermission("month", "view", http.HandlerFunc(a.months)))
 	mux.Handle("POST /months", a.auth.RequirePermission("month", "create", http.HandlerFunc(a.withCSRF(a.monthCreate))))
 	mux.Handle("GET /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentForm)))
+	mux.Handle("POST /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.withCSRF(a.paymentForm))))
 	mux.Handle("GET /payments/new/options", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentPickerOptions)))
 	mux.Handle("GET /payments/lock-status", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentLockStatus)))
 	mux.Handle("GET /payments", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.payments)))
@@ -526,6 +572,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /recoverables/list", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverablesList)))
 	mux.Handle("GET /recoverables/list.csv", a.auth.RequirePermission("recoverable_report", "export", http.HandlerFunc(a.exportRecoverable)))
 	mux.Handle("GET /recoverables/{id}", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverableDetail)))
+	mux.Handle("POST /recoverables/{id}/events", a.auth.RequirePermission("recoverable_report", "view", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.withCSRF(a.recordRecovery)))))
 
 	// The user's own notification centre (Phase 5). Authenticated session only:
 	// every row is already scoped to the caller by the store, so a permission
@@ -553,6 +600,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /vendors", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorsList)))
 	mux.Handle("GET /vendors/new", a.auth.RequirePermission("vendor", "create", http.HandlerFunc(a.vendorNew)))
 	mux.Handle("GET /vendors/search", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorSearch)))
+	mux.Handle("GET /vendors/{id}/{tab}", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorRelated)))
 	mux.Handle("GET /vendors/{id}", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorDetail)))
 	mux.Handle("POST /vendors", a.auth.RequirePermission("vendor", "create", http.HandlerFunc(a.withCSRF(a.vendorCreate))))
 	mux.Handle("POST /vendors/{id}", a.auth.RequirePermission("vendor", "edit", http.HandlerFunc(a.withCSRF(a.vendorUpdate))))
@@ -755,12 +803,12 @@ func (a *App) withCSRF(fn func(http.ResponseWriter, *http.Request)) func(http.Re
 }
 
 func (a *App) loginForm(w http.ResponseWriter, r *http.Request) {
-	a.render(w, r, "login", PageData{Title: "Login"})
+	a.render(w, r, "login", PageData{Title: "Login", LoginNext: auth.SafeReturnPath(r.URL.Query().Get("next"))})
 }
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		a.renderStatus(w, r, http.StatusBadRequest, "login", PageData{Title: "Login", Error: "Invalid form"})
+		a.renderStatus(w, r, http.StatusBadRequest, "login", PageData{Title: "Login", LoginNext: auth.SafeReturnPath(r.FormValue("next")), Error: "Invalid form"})
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
@@ -768,7 +816,7 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		if locked, until, lockErr := a.st.LoginLocked(r.Context(), email); lockErr == nil && locked {
 			a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "login_failed", EntityType: "user", EntityID: &u.ID, Summary: "Login blocked until " + until.Format(time.RFC3339), IP: r.RemoteAddr})
-			a.render(w, r, "login", PageData{Title: "Login", Error: "Too many failed attempts. Try again later."})
+			a.render(w, r, "login", PageData{Title: "Login", LoginNext: auth.SafeReturnPath(r.FormValue("next")), Error: "Too many failed attempts. Try again later."})
 			return
 		}
 	}
@@ -783,7 +831,7 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 			actorName = u.Name
 		}
 		a.recordAudit(r, store.AuditInput{ActorID: actorID, ActorName: actorName, Action: "login_failed", EntityType: "user", EntityID: actorID, Summary: "Failed login attempt", IP: r.RemoteAddr})
-		a.render(w, r, "login", PageData{Title: "Login", Error: "Invalid email or password"})
+		a.render(w, r, "login", PageData{Title: "Login", LoginNext: auth.SafeReturnPath(r.FormValue("next")), Error: "Invalid email or password"})
 		return
 	}
 	if err := a.st.ResetLoginFailures(r.Context(), email); err != nil {
@@ -791,7 +839,13 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auth.Login(w, r, u)
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "login", EntityType: "user", EntityID: &u.ID, Summary: "Logged in", IP: r.RemoteAddr})
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	next := a.authorizedLoginNext(r, u, r.FormValue("next"))
+	// Explain a denied or unavailable internal destination without exposing it.
+	// Invalid external destinations are still discarded outright.
+	if next == "/" && auth.SafeReturnPath(r.FormValue("next")) != "/" {
+		next = "/?login_fallback=1"
+	}
+	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) {
@@ -899,6 +953,9 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusBadRequest, "Payments must be linked to an approved request.", nil)
 		return
 	}
+	if _, ok := a.loadPaymentRequest(w, r, linkedID); !ok {
+		return
+	}
 	settlement := r.FormValue("settlement")
 	// Writing off a shortfall to the approver's queue is its own decision, and
 	// payment:mark_partial is the verb the vocabulary declares for it. It cannot
@@ -925,7 +982,7 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		// failure: the payment this request needed already exists, so go to it —
 		// saying that nothing new was written, because a repeat carrying a
 		// different figure otherwise landed under "Payment saved" (settlement-5).
-		if pay, perr := a.st.PaymentForRequest(r.Context(), linkedID); perr == nil {
+		if pay, perr := a.st.PaymentBySubmission(r.Context(), linkedID, u.ID, in.SubmissionKey); perr == nil {
 			a.redirectToPayment(w, r, pay.ID, "duplicate")
 			return
 		}
@@ -937,7 +994,7 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	// different people for different things.
 	if settlement == "settled" {
 		a.fire(r, notify.EventPaymentSettled, linkedID)
-	} else {
+	} else if settlement == "partial" {
 		a.fire(r, notify.EventPaymentPartialReview, linkedID)
 	}
 	a.redirectToPayment(w, r, payID, "saved")
@@ -1446,14 +1503,21 @@ func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 			// replaces, because that phrase is what the reader — and the shipped
 			// regression guard — recognises. What it no longer says is that
 			// everything was refused, because it no longer is.
-			message = fmt.Sprintf("%d invalid budget %s left unchanged; everything else was saved.",
-				len(fieldErrors), plural(len(fieldErrors), "amount was", "amounts were"))
+			message = fmt.Sprintf("%d budget %s saved. %d invalid budget %s not saved; correct the marked fields below.",
+				len(updates), plural(len(updates), "amount", "amounts"), len(fieldErrors), plural(len(fieldErrors), "amount was", "amounts were"))
 		}
 		// reRenderStatus keeps a locked month a 409 here too (F-G-026).
-		a.renderStatus(w, r, reRenderStatus(saveErr), "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, BudgetErrors: fieldErrors, Error: message})
+		a.renderStatus(w, r, reRenderStatus(saveErr), "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, BudgetErrors: fieldErrors, BudgetSaved: len(updates), BudgetSaveFailed: saveErr != nil, Error: message})
 		return
 	}
 	http.Redirect(w, r, "/budgets?month="+month, http.StatusSeeOther)
+}
+
+func budgetInputValue(inputs map[int64]string, headID, amount int64) string {
+	if raw, submitted := inputs[headID]; submitted {
+		return raw
+	}
+	return money.FormatPaise(amount)
 }
 
 // parseBudgetPaise reads a budget figure. A budget of zero is a real and
@@ -2175,7 +2239,7 @@ func (a *App) backups(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(names)))
-	a.render(w, r, "backups", PageData{Title: "Backups", Backups: names})
+	a.render(w, r, "backups", PageData{Title: "Backups", Backups: names, BackupRows: a.backupRows(names), BackupLocation: a.cfg.BackupDir, BackupDBPath: a.cfg.DBPath, BackupAttachmentPath: a.cfg.AttachmentDir, RecoveryName: a.cfg.AdminName, RecoveryContact: a.cfg.AdminEmail})
 }
 
 func (a *App) backupCreate(w http.ResponseWriter, r *http.Request) {
@@ -2199,15 +2263,125 @@ func (a *App) report(w http.ResponseWriter, r *http.Request) {
 		from, to = to, from
 	}
 	mode := strings.TrimPrefix(r.URL.Path, "/reports/")
+	projectID, headID := parseID(r.URL.Query().Get("project_id")), parseID(r.URL.Query().Get("head_id"))
+	// A drilldown keeps stable IDs: names may overlap or be edited.
+	if headID > 0 {
+		mode = "heads"
+	} else if projectID > 0 && mode == "monthly" {
+		mode = "projects"
+	}
 	rows, err := a.st.Report(r.Context(), from, to, mode)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	if mode != "monthly" {
+	// Preserve an explicitly selected project/head even in a period with no
+	// activity, so date shortcuts retain a visible scope and budget link.
+	if mode != "monthly" && projectID == 0 && headID == 0 {
 		rows = nonEmptyReportRows(rows)
 	}
-	a.render(w, r, "reports", PageData{Title: "Reports", Reports: rows, Summary: summarizeReports(rows), From: from, To: to, Mode: mode})
+	filtered := rows[:0]
+	contextLabel := ""
+	for _, row := range rows {
+		if projectID > 0 && row.ProjectID != projectID {
+			continue
+		}
+		if headID > 0 && row.HeadID != headID {
+			continue
+		}
+		filtered = append(filtered, row)
+		if projectID > 0 {
+			contextLabel = row.Project
+		}
+		if headID > 0 {
+			contextLabel = row.Project + " / " + row.Head
+		}
+	}
+	rows = filtered
+	// A retired head may have no grid row in the new month. Still name the
+	// selected scope, rather than making an empty result appear unfiltered.
+	if contextLabel == "" && headID > 0 {
+		heads, err := a.st.ListHeads(r.Context(), false)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		for _, head := range heads {
+			if head.ID == headID && (projectID == 0 || head.ProjectID == projectID) {
+				contextLabel = head.Project + " / " + head.Name
+				break
+			}
+		}
+	} else if contextLabel == "" && projectID > 0 {
+		projects, err := a.st.ListProjects(r.Context(), false)
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		for _, project := range projects {
+			if project.ID == projectID {
+				contextLabel = project.Name
+				break
+			}
+		}
+	}
+	back := safeReportBack(r.URL.Query().Get("back"))
+	query := url.Values{"from": {from}, "to": {to}}
+	if projectID > 0 {
+		query.Set("project_id", strconv.FormatInt(projectID, 10))
+	}
+	if headID > 0 {
+		query.Set("head_id", strconv.FormatInt(headID, 10))
+	}
+	if back != "" {
+		query.Set("back", back)
+	}
+	data := PageData{Title: "Reports", Reports: rows, Summary: summarizeReports(rows), From: from, To: to, Mode: mode,
+		ReportProjectID: projectID, ReportHeadID: headID, ReportBack: back,
+		ReportURL: "/reports/" + mode + "?" + query.Encode(), ReportContext: contextLabel}
+	u := auth.CurrentUser(r)
+	// The aggregate report permission does not grant permission to individual payments.
+	if headID > 0 && a.auth.Can(u, "payment", "view") {
+		for _, row := range rows {
+			payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Month: row.Period,
+				HeadID: headID, ProjectID: projectID, Status: "active", ExcludeRecoverable: true,
+				Scope: a.auth.Scope(u, "payment"), ViewerID: u.ID, Limit: 300})
+			if err != nil {
+				a.respondStoreError(w, r, err)
+				return
+			}
+			data.Payments = append(data.Payments, payments...)
+		}
+	}
+	a.render(w, r, "reports", data)
+}
+
+func safeReportBack(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" {
+		return ""
+	}
+	switch u.Path {
+	case "/reports/monthly", "/reports/projects", "/reports/heads":
+		return u.RequestURI()
+	}
+	return ""
+}
+
+func reportDetailURL(row store.ReportRow, back string) string {
+	mode := "projects"
+	q := url.Values{"from": {row.Period}, "to": {row.Period}}
+	if row.ProjectID > 0 {
+		mode = "heads"
+		q.Set("project_id", strconv.FormatInt(row.ProjectID, 10))
+	}
+	if row.HeadID > 0 {
+		q.Set("head_id", strconv.FormatInt(row.HeadID, 10))
+	}
+	if back = safeReportBack(back); back != "" {
+		q.Set("back", back)
+	}
+	return "/reports/" + mode + "?" + q.Encode()
 }
 
 func (a *App) exportGrid(w http.ResponseWriter, r *http.Request) {
@@ -2281,13 +2455,21 @@ func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 
 func paymentInput(r *http.Request) (store.PaymentInput, error) {
 	in := store.PaymentInput{
-		HeadID:      parseID(r.FormValue("head_id")),
-		PaidOn:      r.FormValue("paid_on"),
-		VendorPayee: r.FormValue("vendor_payee"),
-		PaymentMode: r.FormValue("payment_mode"),
-		InvoiceNo:   r.FormValue("invoice_no"),
-		ReferenceNo: r.FormValue("reference_no"),
-		Remarks:     r.FormValue("remarks"),
+		SubmissionKey: r.FormValue("submission_key"),
+		HeadID:        parseID(r.FormValue("head_id")),
+		PaidOn:        r.FormValue("paid_on"),
+		VendorPayee:   r.FormValue("vendor_payee"),
+		PaymentMode:   r.FormValue("payment_mode"),
+		InvoiceNo:     r.FormValue("invoice_no"),
+		ReferenceNo:   r.FormValue("reference_no"),
+		Remarks:       r.FormValue("remarks"),
+	}
+	if raw := r.FormValue("expected_paid"); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			return in, fmt.Errorf("%w: invalid payment balance; reopen the form", store.ErrValidation)
+		}
+		in.ExpectedPaid = &value
 	}
 	amount, err := money.ParsePaise(r.FormValue("amount"))
 	in.Amount = amount
@@ -2526,6 +2708,8 @@ func varClass(variance int64) string {
 
 func statusText(status string) string {
 	switch status {
+	case "no-activity":
+		return "No activity"
 	case "over":
 		return "Over budget"
 	case "under":
@@ -2554,6 +2738,8 @@ func planStatusText(status string) string {
 
 func statusForView(budget, actual int64) string {
 	switch {
+	case budget == 0 && actual == 0:
+		return "no-activity"
 	case actual == 0:
 		return "not-paid"
 	case budget == 0 && actual > 0:
@@ -2568,19 +2754,28 @@ func statusForView(budget, actual int64) string {
 }
 
 func dueClass(dueDay, month, status string) string {
+	if status == "no-activity" {
+		return "none"
+	}
+	// Grid status is budget utilization, not the settlement state of its requests.
 	if status != "not-paid" {
-		return "settled"
+		return "recorded"
 	}
 	day, ok := dueDayNumber(dueDay)
 	if !ok || !validMonthInput(month) {
 		return "none"
 	}
+	start, err := time.Parse("2006-01", month)
+	if err != nil {
+		return "none"
+	}
+	last := start.AddDate(0, 1, -1).Day()
+	if day > last {
+		day = last
+	}
 	now := time.Now()
 	if now.Format("2006-01") != month {
-		target, err := time.Parse("2006-01-02", fmt.Sprintf("%s-%02d", month, day))
-		if err != nil {
-			return "none"
-		}
+		target := time.Date(start.Year(), start.Month(), day, 0, 0, 0, 0, now.Location())
 		if target.Before(now) {
 			return "overdue"
 		}
@@ -2597,10 +2792,16 @@ func dueClass(dueDay, month, status string) string {
 }
 
 func dueText(dueDay, month, status string) string {
+	if status == "no-activity" {
+		if strings.TrimSpace(dueDay) != "" {
+			return "Usual day " + dueDay
+		}
+		return "No planned spend"
+	}
 	class := dueClass(dueDay, month, status)
 	switch class {
-	case "settled":
-		return "Settled"
+	case "recorded":
+		return "Payment recorded"
 	case "overdue":
 		return "Overdue"
 	case "today":
@@ -2716,6 +2917,8 @@ func boolText(v bool) string {
 // so the filter can never offer an action this cannot name.
 func actionText(action string) string {
 	switch action {
+	case "recovery":
+		return "Recovery recorded"
 	case "create":
 		return "Created"
 	case "update", "edit":
@@ -2844,7 +3047,7 @@ func auditActions() []auditOption {
 		"cancel_request", "cancel", "approval_reassign",
 		"process", "release", "reassign", "hold", "unhold",
 		"settle", "mark_partial", "accept_partial", "concern", "remind",
-		"void", "lock", "unlock", "settings", "export",
+		"recovery", "void", "lock", "unlock", "settings", "export",
 		"login", "logout", "login_failed",
 	}
 	out := make([]auditOption, 0, len(values))

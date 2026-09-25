@@ -15,14 +15,15 @@ var (
 )
 
 type User struct {
-	ID           int64
-	Email        string
-	Name         string
-	PasswordHash string
-	Role         string
-	Active       bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	SessionVersion int64
+	ID             int64
+	Email          string
+	Name           string
+	PasswordHash   string
+	Role           string
+	Active         bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 	// DefaultApproverID is who approves this user's requests unless the request
 	// says otherwise (G9); 0 means none. A user is never their own default —
 	// SetUserDefaultApprover enforces it.
@@ -202,6 +203,9 @@ type ProjectTotal struct {
 }
 
 type GridData struct {
+	NoActivity int
+	Filtered   bool
+	ScopeLabel string
 	Month      string
 	Rows       []GridRow
 	Projects   []ProjectTotal
@@ -224,6 +228,8 @@ type GridGroup struct {
 }
 
 type ReportRow struct {
+	ProjectID       int64
+	HeadID          int64
 	Period          string
 	Project         string
 	Head            string
@@ -237,6 +243,8 @@ type ReportRow struct {
 // fields are computed against RecoverableReportOptions.AsOf, never time.Now(),
 // so both the screens and their tests are deterministic.
 type RecoverableRow struct {
+	PaidAmount         int64
+	RecoveredAmount    int64
 	RequestID          int64
 	Number             string
 	Category           string
@@ -270,7 +278,7 @@ type RecoverableReportOptions struct {
 	CategoryID   int64
 	Counterparty string
 	Query        string
-	Ageing       string    // "" | "overdue" | "due30" | "later" | "unpaid"
+	Ageing       string    // "" | "outstanding" | "overdue" | "due30" | "later" | "unpaid" | "recovered"
 	Order        string    // "" (overdue first, then soonest return) | "amount" | "paid_on" | "number"
 	AsOf         time.Time // zero → time.Now().UTC() at normalisation
 	Viewer       RecoverableViewer
@@ -305,7 +313,7 @@ type RecoverableViewer struct {
 func RecoverableViewerAll() RecoverableViewer { return RecoverableViewer{Scope: ScopeAll} }
 
 // RecoverableMetrics is the four-number strip on the recoverables dashboard.
-// Outstanding counts every live recoverable, paid or not; PaidThisMonth counts
+// Outstanding counts paid balances still owed; PaidThisMonth counts
 // only money that actually left in the calendar month containing asOf.
 type RecoverableMetrics struct {
 	OutstandingAmount   int64
@@ -333,14 +341,16 @@ type RecoverableRollup struct {
 }
 
 type PaymentInput struct {
-	HeadID      int64
-	PaidOn      string
-	Amount      int64
-	VendorPayee string
-	PaymentMode string
-	InvoiceNo   string
-	ReferenceNo string
-	Remarks     string
+	ExpectedPaid  *int64 // displayed cumulative amount; rejects a stale installment form
+	SubmissionKey string // unique browser confirmation; retries cannot create another installment
+	HeadID        int64
+	PaidOn        string
+	Amount        int64
+	VendorPayee   string
+	PaymentMode   string
+	InvoiceNo     string
+	ReferenceNo   string
+	Remarks       string
 	// Now is the injected clock validatePayment measures PaidOn against
 	// (F-D-06): a payment dated after Now's date is refused, because money
 	// cannot have left the bank in the future. Zero means "no clock supplied",
@@ -352,10 +362,14 @@ type PaymentInput struct {
 }
 
 type PaymentListOptions struct {
-	Month  string
-	Query  string
-	Status string
-	Limit  int
+	VendorID  int64
+	Offset    int
+	ProjectID int64
+	HeadID    int64
+	Month     string
+	Query     string
+	Status    string
+	Limit     int
 	// Scope + ViewerID enforce the `payment` data scope (F-A-04 / F-G-003),
 	// mirroring RequestListOptions: "own" (and "assigned", which has no
 	// routed-to meaning on the ledger and narrows the same way rather than
@@ -373,6 +387,7 @@ type PaymentListOptions struct {
 }
 
 type Request struct {
+	PaidAmount                int64 // sum of immutable, nonvoided payments
 	ID                        int64
 	Number                    string
 	Status                    string
@@ -429,6 +444,7 @@ type Request struct {
 }
 
 type RequestInput struct {
+	DuplicateReason           string
 	Treatment                 string
 	Type                      string
 	RecoverableCategory       string
@@ -461,6 +477,7 @@ type RequestInput struct {
 }
 
 type RequestListOptions struct {
+	VendorID int64
 	Scope    string // "own" | "assigned" | "held" | "all" — "held" is the viewer's own reservations
 	ViewerID int64
 	Status   string   // "" or "all" = any status; otherwise exact status

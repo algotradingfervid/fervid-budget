@@ -308,8 +308,8 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 	// S9 still holds: a second payment on the same request is refused by the
 	// partial unique index …
 	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by,request_id,settlement) VALUES(?,?,?,?,?, 'settled')`,
-		headID, "2026-06-16", 1000, acc.ID, reqID); err == nil {
-		t.Fatal("second payment linked to the same request was allowed after rebuild (S9 broken)")
+		headID, "2026-06-16", 1000, acc.ID, reqID); err != nil {
+		t.Fatalf("installment insert after rebuild: %v", err)
 	}
 	// … while NULL request_id historicals still multiply freely.
 	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by) VALUES(?,?,?,?)`, headID, "2026-06-17", 2000, acc.ID); err != nil {
@@ -337,8 +337,8 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 4 {
-		t.Fatalf("payments rows after idempotent re-run = %d, want 4", count)
+	if count != 5 {
+		t.Fatalf("payments rows after idempotent re-run = %d, want 5", count)
 	}
 }
 

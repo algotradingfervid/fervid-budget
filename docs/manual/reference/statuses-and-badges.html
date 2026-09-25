@@ -110,12 +110,7 @@
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Reference</p>
 <header class="page-head"><h1>Statuses and badges</h1><p class="lede">What each badge means on sight, in the colours the product uses.</p></header>
 <p>Every request carries a small coloured badge and, beside it, one plain sentence naming who owes the next action. The badge is the status. The sentence is the &quot;waiting on&quot; line, and it is computed in one place, so the list, the queue and the request itself can never give you three different answers.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/requests-all.png" aria-label="Enlarge: The request list. Every card carries the badge and, on the right, the waiting line — in brand colour when the answer is you.">
-    <img src="../assets/shots/requester/requests-all.png" alt="Every request this person has ever raised, in one list." loading="lazy" width="1440">
-  </button>
-  <figcaption>The request list. Every card carries the badge and, on the right, the waiting line — in brand colour when the answer is you. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
+<p>The <strong>My requests</strong> tabs group these states by whether work remains: Open contains Awaiting approval, Returned, Approved, Cancellation requested, With Accounts and Partial — manager review. Closed contains Completed, Completed — partial accepted, Rejected, Withdrawn and Cancelled. Open plus Closed covers All under the same filters. See <a href="../requester/tracking-your-requests.html#the-four-tabs">Tracking your requests</a>.</p>
 <h2 id="the-eleven-statuses">The eleven statuses</h2>
 <p>The left column is the value the system stores and the one you can filter a list by. The second is the wording the interface actually prints.</p>
 <div class="table-wrap"><table><caption>Every status the product stores, and the words it shows for each.</caption><thead><tr><th scope="col">Stored value</th><th scope="col">What the badge says</th><th scope="col">What it means</th><th scope="col">Whose move it is next</th></tr></thead><tbody>
@@ -127,18 +122,12 @@
 <tr><td><code>cancellation_requested</code></td><td><strong>Cancellation requested</strong></td><td>The requester has asked for an approved request to be cancelled. Payment is frozen while the ask stands.</td><td>The approver. The line names them.</td></tr>
 <tr><td><code>cancelled</code></td><td><strong>Cancelled</strong></td><td>The request was cancelled, either because the approver accepted the ask or because they cancelled it outright with a reason.</td><td>Nobody. The line reads &quot;Cancelled. Nothing can be paid against it&quot;.</td></tr>
 <tr><td><code>processing</code></td><td><strong>With Accounts</strong></td><td>Somebody in Accounts has claimed the request so that nobody else can pay it at the same time.</td><td>Accounts. If you are the person holding it, the line reads &quot;Waiting on you&quot;.</td></tr>
-<tr><td><code>partial_review</code></td><td><strong>Partial — manager review</strong></td><td>Accounts paid less than was approved and gave a reason. The unpaid balance is still owed and somebody has to decide about it.</td><td>The approver. The line names them.</td></tr>
+<tr><td><code>partial_review</code></td><td><strong>Partial — manager review</strong></td><td>Accounts paid less than was approved and gave a reason. The unpaid balance is under review: the approver can keep it payable, accept and close it, or raise a concern.</td><td>The approver. The line names them.</td></tr>
 <tr><td><code>completed</code></td><td><strong>Completed</strong></td><td>The request was paid and closed by Accounts.</td><td>Nobody. The line reads &quot;Nothing pending&quot;.</td></tr>
 <tr><td><code>completed_partial</code></td><td><strong>Completed — partial accepted</strong></td><td>Less was paid than was approved and the approver accepted the shortfall, writing the balance off. Deliberately distinct from a clean completion.</td><td>Nobody. The line reads &quot;Nothing pending&quot;.</td></tr>
 </tbody></table></div>
 <h2 id="on-hold-which-has-no-status-of-its-own">On hold, which has no status of its own</h2>
 <p>A held request is still <code>approved</code>. What changes is that it drops out of the set Accounts can claim, and the badge is replaced: wherever you would expect <strong>Approved — awaiting payment</strong>, a held request shows <strong>On hold</strong> instead, and the waiting line names the requester rather than Accounts, because it is their answer everybody is waiting for.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-hold.png" aria-label="Enlarge: The On hold tab of the payment queue. Every row shows the **On hold** badge and offers **Read reply** rather than a way to pay it.">
-    <img src="../assets/shots/accounts/queue-hold.png" alt="Approved requests parked with a reason, waiting on the requester." loading="lazy" width="1440">
-  </button>
-  <figcaption>The On hold tab of the payment queue. Every row shows the <strong>On hold</strong> badge and offers <strong>Read reply</strong> rather than a way to pay it. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <aside class="callout callout-note"><p>There is no <code>on_hold</code> status and there never was. If a screen shows <strong>On hold</strong>, the stored status behind it is <code>approved</code> — which is why a held request disappears from the &quot;approved and unclaimed&quot; count while still being an approved request.</p></aside>
 <h2 id="where-the-accounts-screens-say-it-differently">Where the accounts screens say it differently</h2>
 <p><code>processing</code> is the one status the payment screens spell out rather than summarise, because the person holding the claim is the whole point of it. On the request and in the request list the badge reads <strong>With Accounts</strong>. On the payment queue and on the conflict screen it names the holder instead: <strong>Reserved by you</strong> with the time you took it, <strong>Reserved by</strong> a colleague’s name, or <strong>Processing</strong> followed by the holder’s name. The stored status is <code>processing</code> in every case.</p>
@@ -152,12 +141,6 @@
 <tr><td>Grey and faded brick</td><td><strong>Withdrawn</strong>, <strong>Cancelled</strong>, <strong>Rejected — final</strong></td><td>Closed without payment. These are drawn quieter than the live states on purpose.</td></tr>
 </tbody></table></div>
 <p><strong>With Accounts</strong> and <strong>On hold</strong> additionally carry fine diagonal stripes. That is the product saying somebody has their hand on this request right now — either an accountant holding a reservation, or a question waiting on a reply.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-paid.png" aria-label="Enlarge: The Paid tab, where the two green badges sit side by side: the filled **Completed** and the outlined **Completed — partial accepted**.">
-    <img src="../assets/shots/accounts/queue-paid.png" alt="The finished work, kept for reference." loading="lazy" width="1440">
-  </button>
-  <figcaption>The Paid tab, where the two green badges sit side by side: the filled <strong>Completed</strong> and the outlined <strong>Completed — partial accepted</strong>. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <h2 id="the-other-badges-you-will-see">The other badges you will see</h2>
 <p>Not every badge is a status. Three more appear beside them and mean something different.</p>
 <div class="table-wrap"><table><caption>Badges that qualify a request rather than describing where it is.</caption><thead><tr><th scope="col">Badge</th><th scope="col">Where it appears</th><th scope="col">What it means</th></tr></thead><tbody>

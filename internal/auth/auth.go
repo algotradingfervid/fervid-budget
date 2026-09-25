@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,9 @@ func HashPassword(password string) (string, error) {
 // ValidatePassword keeps the local bootstrap password compatible while
 // preventing trivially short credentials in user-management workflows.
 func ValidatePassword(password string) error {
+	if len(password) > 72 {
+		return fmt.Errorf("password must be at most 72 bytes; use fewer characters if it contains symbols or non-English letters")
+	}
 	if len(password) < 8 {
 		return fmt.Errorf("password must be at least 8 characters")
 	}
@@ -66,7 +70,7 @@ func CheckPassword(hash, password string) bool {
 func (m *Manager) Login(w http.ResponseWriter, r *http.Request, user store.User) {
 	exp := time.Now().Add(12 * time.Hour).Unix()
 	payload := fmt.Sprintf("%d:%d", user.ID, exp)
-	sig := m.sign(payload)
+	sig := m.sign(payload + ":" + user.PasswordHash + ":" + strconv.FormatInt(user.SessionVersion, 10))
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: base64.RawURLEncoding.EncodeToString([]byte(payload + ":" + sig)), Path: "/", HttpOnly: true, Secure: m.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
 	m.EnsureCSRF(w, r)
 }
@@ -87,7 +91,11 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 func (m *Manager) RequireLogin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if CurrentUser(r).ID == 0 {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			target := "/login"
+			if r.Method == http.MethodGet && r.URL.RequestURI() != "/" {
+				target += "?next=" + url.QueryEscape(SafeReturnPath(r.URL.RequestURI()))
+			}
+			http.Redirect(w, r, target, http.StatusSeeOther)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -213,9 +221,6 @@ func (m *Manager) userFromRequest(r *http.Request) (store.User, bool) {
 		return store.User{}, false
 	}
 	payload := parts[0] + ":" + parts[1]
-	if !hmac.Equal([]byte(m.sign(payload)), []byte(parts[2])) {
-		return store.User{}, false
-	}
 	exp, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
 		return store.User{}, false
@@ -228,6 +233,9 @@ func (m *Manager) userFromRequest(r *http.Request) (store.User, bool) {
 	if err != nil || !u.Active {
 		return store.User{}, false
 	}
+	if !hmac.Equal([]byte(m.sign(payload+":"+u.PasswordHash+":"+strconv.FormatInt(u.SessionVersion, 10))), []byte(parts[2])) {
+		return store.User{}, false
+	}
 	return u, true
 }
 
@@ -235,4 +243,17 @@ func (m *Manager) sign(payload string) string {
 	mac := hmac.New(sha256.New, []byte(m.cfg.SessionKey))
 	mac.Write([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// SafeReturnPath only accepts same-origin absolute paths. Encoded separators,
+// backslashes and control characters cannot turn the destination into a host.
+func SafeReturnPath(value string) string {
+	u, err := url.Parse(value)
+	if err != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") || strings.ContainsAny(u.Path, "\\\r\n") || strings.ContainsAny(value, "\r\n") {
+		return "/"
+	}
+	if u.Path == "/login" || strings.HasPrefix(u.Path, "/login/") || u.Path == "/logout" {
+		return "/"
+	}
+	return u.RequestURI()
 }

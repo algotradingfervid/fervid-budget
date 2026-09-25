@@ -125,12 +125,6 @@
 </tbody></table></div>
 <h2 id="recoverable-money">Recoverable money</h2>
 <p>A deposit is not an expense. When you mark a request recoverable you are saying the organisation expects the money back, and the product keeps it out of budget actuals and tracks it separately.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/form-recoverable.png" aria-label="Enlarge: The recoverable treatment chosen on an employee advance. Picking it reveals the category, the expected return date and the repayment terms.">
-    <img src="../assets/shots/requester/form-recoverable.png" alt="The extra fields that appear when you say the money is expected back." loading="lazy" width="1440">
-  </button>
-  <figcaption>The recoverable treatment chosen on an employee advance. Picking it reveals the category, the expected return date and the repayment terms. </figcaption>
-</figure>
 <div class="table-wrap"><table><caption>Words that only appear once the treatment is recoverable.</caption><thead><tr><th scope="col">Term</th><th scope="col">What it means here</th></tr></thead><tbody>
 <tr><td>Recoverable</td><td>The treatment for a deposit, guarantee, loan or advance you expect back. Choosing it demands three things: a category, an expected return date, and the repayment or refund terms.</td></tr>
 <tr><td>Recoverable category</td><td>What kind of recoverable this is. The list is maintained by your administrator, and each entry may demand something extra — EMD and PBG each require a related project; ICD and Security deposit each require a counterparty company; Employee advance and Other require nothing beyond the three above.</td></tr>
@@ -140,12 +134,6 @@
 <tr><td>ICD</td><td>Inter-corporate deposit. A built-in recoverable category, which requires a counterparty company.</td></tr>
 <tr><td>Recoverables register</td><td>The screen that tracks money expected back, totalled by category and by counterparty, with what is outstanding and what is past its expected return date.</td></tr>
 </tbody></table></div>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/recoverables.png" aria-label="Enlarge: The recoverables register. The banner states the rule the whole treatment turns on: these payments never appear in the variance grid or in project spend.">
-    <img src="../assets/shots/accounts/recoverables.png" alt="Money expected back, summarised by category and by counterparty." loading="lazy" width="1440">
-  </button>
-  <figcaption>The recoverables register. The banner states the rule the whole treatment turns on: these payments never appear in the variance grid or in project spend. </figcaption>
-</figure>
 <aside class="callout callout-note"><p>A recoverable request carries no expense head, and its payment is written without one. That is why recoverable spend cannot show up in the variance grid or the monthly report — both are built by joining payments to heads.</p></aside>
 <aside class="callout callout-note"><p>Of the four request types, only an employee advance may carry the recoverable treatment. A vendor invoice, a vendor advance and a reimbursement are budget expenses and the product refuses them any other way.</p></aside>
 <h2 id="approving">Approving</h2>
@@ -165,8 +153,8 @@
 <tr><td>Release</td><td>Giving a reservation up so the request returns to the open queue. It demands a written reason and a tick confirming no payment was started. There is no automatic release.</td></tr>
 <tr><td>Reassigning a reservation</td><td>Handing a claim straight to a named colleague, without the request becoming takeable in between. It needs <code>reservation:reassign</code>, which is an administrator permission.</td></tr>
 <tr><td>Stale reservation</td><td>A claim that has been open longer than the configured number of days with no payment recorded. Nothing is released automatically — a transfer sitting for a day may well be moving through a bank portal — the product only puts the choice in front of a person.</td></tr>
-<tr><td>Settlement</td><td>The accountant’s verdict on a payment, and it has exactly two values. <strong>Settled</strong> closes the request as completed. <strong>Partial</strong> says money is still owed and sends the request back to the approver.</td></tr>
-<tr><td>Partial settlement</td><td>A payment smaller than the approved amount, recorded with a written reason for the shortfall. It is the one outcome Accounts cannot close on its own.</td></tr>
+<tr><td>Settlement</td><td>The accountant’s balance decision. Fully settled closes the request; Installment keeps the unpaid amount payable under the same approval; Ask manager to accept a shortfall sends the decision to the approver.</td></tr>
+<tr><td>Partial settlement</td><td>A payment recorded with a required reason and a request for the manager to decide the remaining shortfall. It differs from an installment, which directly keeps the balance payable.</td></tr>
 <tr><td>Shortfall</td><td>The difference between what was approved and what was actually paid on a partial settlement. It is what the approver is being asked to decide about.</td></tr>
 <tr><td>Hold</td><td>Accounts pausing an approved request with a question — bank details that do not match, an invoice number that does not exist. The status stays <code>approved</code>; the request drops out of the takeable set until the hold is lifted, and only Accounts lifts it.</td></tr>
 <tr><td>Concern</td><td>The approver pushing back on a shortfall rather than accepting it. It reverses nothing — the money has already left — it puts the objection in the conversation and leaves the request in review.</td></tr>
@@ -174,12 +162,6 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p>A payment linked to a request is sealed. It cannot be amended and it cannot be voided, and the partial-review screen says so in as many words: <strong>Cannot be edited</strong>. The way to correct a mistaken settlement is an accounting adjustment outside this product, not an edit to the record of what happened.</p></aside>
 <h2 id="budget">Budget</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/manager/grid.png" aria-label="Enlarge: The variance grid for one month: projects, the heads beneath them, and budget against actual for each.">
-    <img src="../assets/shots/manager/grid.png" alt="Budget against actual for every head in a month, with over- and under-spend called out." loading="lazy" width="1440">
-  </button>
-  <figcaption>The variance grid for one month: projects, the heads beneath them, and budget against actual for each. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <div class="table-wrap"><table><caption>The vocabulary of the budget structure.</caption><thead><tr><th scope="col">Term</th><th scope="col">What it means here</th></tr></thead><tbody>
 <tr><td>Project</td><td>The top level of the budget structure. Every budget expense is booked to a project and to a head within it.</td></tr>
 <tr><td>Head</td><td>Short for expense head: the line within a project that spending is booked against — Office Rent, Freight &amp; Logistics, Staff Welfare. A head belongs to exactly one project, and a request must name a head under the project it names.</td></tr>
@@ -187,7 +169,7 @@
 <tr><td>Budget</td><td>The figure a head is allowed for one month. Budgets are set month by month, not once for the year.</td></tr>
 <tr><td>Actual</td><td>What has actually been paid against a head in that month. Recoverable payments are excluded by design.</td></tr>
 <tr><td>Remaining</td><td>Budget minus actual, shown both as an amount and as a percentage. The grid also shows how much of the budget has been used.</td></tr>
-<tr><td>Variance grid</td><td>The screen that lays budget against actual for every head in a month, grouped by project, with a company total at the bottom.</td></tr>
+<tr><td>Variance grid</td><td>The screen that lays budget against actual for every head in a month, grouped by project, with a company total when unfiltered or a clearly labelled filtered subtotal when narrowed.</td></tr>
 <tr><td>Monthly plan</td><td>A month that has been opened for budgeting. A month has to exist as a plan before budgets can be set in it.</td></tr>
 <tr><td>Month lock</td><td>Closing a month so its budgets and payments become read-only. Locking and unlocking both demand a written reason. A locked month refuses new payments dated inside it, refuses budget edits, and blocks an approval whose Needed by date falls in it.</td></tr>
 </tbody></table></div>

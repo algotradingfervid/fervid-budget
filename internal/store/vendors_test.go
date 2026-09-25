@@ -748,8 +748,7 @@ func TestVendorOpenRequestsUsesTheProductsOwnOpenBucket(t *testing.T) {
 	}
 	// Every status that is not in the open bucket, so the count is a filter and
 	// not just a row count.
-	for _, status := range []string{"rejected", "withdrawn", "cancelled", "processing",
-		"partial_review", "completed", "completed_partial"} {
+	for _, status := range []string{"rejected", "withdrawn", "cancelled", "completed", "completed_partial"} {
 		seq++
 		seedVendorRequest(t, s, ctx, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
 	}

@@ -1,0 +1,18 @@
+{
+  "name": "fervid-workflow-videos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tts": "node tts.mjs",
+    "assets": "node render-assets.mjs",
+    "assemble": "python3 assemble.py"
+  },
+  "dependencies": {
+    "@playwright/cli": "0.1.21",
+    "@remotion/bundler": "4.0.529",
+    "@remotion/renderer": "4.0.529",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.529"
+  }
+}

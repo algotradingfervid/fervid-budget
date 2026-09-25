@@ -395,6 +395,10 @@ ON CONFLICT(key) DO NOTHING;
 		Name:    "request_concern_open",
 		Up:      upRequestConcernOpen,
 	},
+	{Version: 16, Name: "recovery_events", Up: upRecoveryEvents},
+	{Version: 17, Name: "request_installments", Up: upInstallments},
+	{Version: 18, Name: "password_reset", Up: UpPasswordReset},
+	{Version: 19, Name: "session_revocation", Up: UpSessionRevocation},
 }
 
 // upRequestConcernOpen adds payment_requests.concern_open, guarded by

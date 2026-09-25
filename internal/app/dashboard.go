@@ -155,7 +155,11 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		areas = append(areas, WorkArea{Key: "admin", Icon: "⚙", Title: "Administration", Links: links})
 	}
 
-	a.render(w, r, "dashboard", PageData{Title: "Home", Areas: areas, Counts: counts})
+	notice := ""
+	if r.URL.Query().Get("login_fallback") == "1" {
+		notice = loginFallbackNotice
+	}
+	a.render(w, r, "dashboard", PageData{Title: "Home", Areas: areas, Counts: counts, Notice: notice})
 }
 
 // adminLinks are the administration area's destinations, each gated on the

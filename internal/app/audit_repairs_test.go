@@ -937,7 +937,7 @@ func (s *appTestServer) seedRecoverableRequest(seq int, requesterID, managerID i
 		s.t.Fatal(err)
 	}
 	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,amount,purpose,short_title,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,'approved','recoverable','employee_advance',?,?,?,?,?,?,'2027-03-31',?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		VALUES(?,'approved','recoverable','recoverable',?,?,?,?,?,?,'2027-03-31',?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
 		fmt.Sprintf("PR-2026-%06d", seq), code, catID, amount, "Inter-corporate deposit", "ICD",
 		counterparty, "Refundable on maturity", requesterID, managerID, amount, managerID)
 	if err != nil {

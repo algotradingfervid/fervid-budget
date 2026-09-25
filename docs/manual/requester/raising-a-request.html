@@ -111,12 +111,6 @@
 <header class="page-head"><h1>Raising a request</h1><p class="lede">Filling in the form and sending it for approval, field by field.</p></header>
 <p>Once you have picked a type, the second screen is the request itself. It is one form, one button, and one act: there is no draft to save and come back to. Pressing <strong>Submit request</strong> creates the request, gives it its number and sends it to your approver, all at the same moment.</p>
 <h2 id="the-form-top-to-bottom">The form, top to bottom</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/form-vendor-invoice.png" aria-label="Enlarge: Step 2 of 2, here for a vendor invoice. The fieldsets run in a fixed order and only the middle of the form changes with the type.">
-    <img src="../assets/shots/requester/form-vendor-invoice.png" alt="The form for paying a vendor against an invoice." loading="lazy" width="1440">
-  </button>
-  <figcaption>Step 2 of 2, here for a vendor invoice. The fieldsets run in a fixed order and only the middle of the form changes with the type. </figcaption>
-</figure>
 <p>Every fieldset is the same on every type except two: the block under <strong>What is this for</strong>, which follows your treatment choice, and the type's own block — <strong>Vendor and invoice</strong>, <strong>Vendor and advance</strong>, <strong>Your expense</strong> or <strong>Advance details</strong>. A red asterisk marks the fields the product will insist on.</p>
 <h3 id="what-is-this-for">What is this for</h3>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
@@ -142,12 +136,6 @@
 <tr><td>Reimbursement</td><td><strong>Your expense</strong></td><td><strong>Paid to</strong> (your name, fixed) and <strong>Expense date</strong></td></tr>
 <tr><td>Employee advance</td><td><strong>Advance details</strong></td><td><strong>Paid to</strong> (your name, fixed) and <strong>What the money is for</strong></td></tr>
 </tbody></table></div>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/form-reimbursement.png" aria-label="Enlarge: The reimbursement form. Paid to carries your name and cannot be edited; the hint explains why.">
-    <img src="../assets/shots/requester/form-reimbursement.png" alt="The form for claiming back money you spent yourself." loading="lazy" width="1440">
-  </button>
-  <figcaption>The reimbursement form. Paid to carries your name and cannot be edited; the hint explains why. </figcaption>
-</figure>
 <h3 id="purpose-and-documents">Purpose and documents</h3>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Purpose</strong></td><td><span class="req">Required</span></td><td>A free-text box. This is where you explain the spend to somebody who was not in the conversation.</td></tr>
@@ -169,12 +157,6 @@
 <p>You land on a confirmation screen. It leads with <strong>Submitted.</strong>, followed by your approver's name and <strong>has been notified.</strong> It shows the request's new number and amount, and lays out <strong>What happens next</strong> in three steps: your approver reviews it, Accounts picks it up once approved, and it settles. The buttons at the foot are <strong>Raise another</strong>, <strong>My requests</strong> and <strong>View this request</strong>.</p>
 <aside class="callout callout-warning"><p class="callout-title">Nothing is saved until you submit</p><p>There is no draft. Nothing you type is stored until you press <strong>Submit request</strong>, so do not leave the form half-filled and expect to come back to it. If you close the tab, you start again.</p></aside>
 <h2 id="when-the-form-comes-back">When the form comes back</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/form-validation.png" aria-label="Enlarge: A submission the product refused: the red band across the top names the first problem it found, and the form comes back with everything you typed still in place. Every field it insists on carries a red asterisk beside its label.">
-    <img src="../assets/shots/requester/form-validation.png" alt="The refusal shown when a request is submitted without the details it requires." loading="lazy" width="1440">
-  </button>
-  <figcaption>A submission the product refused: the red band across the top names the first problem it found, and the form comes back with everything you typed still in place. Every field it insists on carries a red asterisk beside its label. </figcaption>
-</figure>
 <p>If something is missing or contradictory, the form returns with a red band across the top carrying one sentence — the first problem it found. Everything you had already typed is still there; you are never made to fill the page in twice.</p>
 <div class="table-wrap"><table><caption>The wording is the product’s own, taken from the running system.</caption><thead><tr><th scope="col">What the band says</th><th scope="col">What to do</th></tr></thead><tbody>
 <tr><td><code>a short title is required — it is what your approver sees in their list</code></td><td>Type a <strong>Short title</strong>.</td></tr>
@@ -194,9 +176,7 @@
 <tr><td><code>say why this is urgent</code></td><td>You ticked <strong>Mark this urgent</strong> and left the reason empty.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-note"><p>Every one of these rules is enforced on the server, not only in the browser. Hiding a field or switching one off in the page does not get a request past them.</p></aside>
-<h2 id="the-duplicate-warning">The duplicate warning</h2>
-<p>When you leave the <strong>Amount</strong> field — and, on a vendor invoice, the <strong>Invoice number</strong> field — the product quietly looks for requests that resemble this one: the same payee, and either an amount within about one per cent or the very same invoice reference, raised in the last thirty days. If it finds any, a warning appears above the buttons listing them, saying <em>Same payee and a close amount in the last 30 days. Check before you submit — you can still go ahead.</em></p>
-<aside class="callout callout-tip"><p>The warning never blocks you. Repeat payments are real — the same rent, the same monthly retainer — so the product points and you decide.</p></aside>
+<h2 id="the-duplicate-warning">The duplicate warning</h2><p>A vendor invoice matching the same vendor, normalised invoice number and invoice year requires review before it can be submitted again. The warning links to matching requests your access permits. For a legitimate separate request, provide an override explanation of at least 10 characters; that reason is retained in the audit history. A different invoice year is not treated as the same invoice.</p><p>For a remaining balance on an already approved invoice, ask Accounts to use the existing request's installment workflow instead of raising the invoice again. Similar-payment advisory warnings may also help identify repeats; always compare the source invoice and current request.</p>
 <h2 id="the-request-number">The request number</h2>
 <p>The number is issued at submission and never changes afterwards. In this organisation it is shaped <code>PR-2026-000426</code>: a prefix, the year, and a running count. Editing a request keeps its number; withdrawing it keeps it; only raising a brand-new request produces a new one.</p>
 <dl class="faq"><dt>Can I save this and finish it tomorrow?</dt><dd><p>No — there are no drafts. Either submit it, or raise it again tomorrow from scratch. A submitted request can still be edited while it is awaiting approval, so submitting early is usually the safer choice.</p></dd>

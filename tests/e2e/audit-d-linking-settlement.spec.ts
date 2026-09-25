@@ -145,7 +145,9 @@ async function entryFields(page: Page, id: number) {
   return {
     head_id: await value('head_id'),
     vendor_payee: await value('vendor_payee'),
-    invoice_no: await value('invoice_no')
+    invoice_no: await value('invoice_no'),
+    submission_key: await value('submission_key'),
+    expected_paid: await value('expected_paid')
   };
 }
 
@@ -1420,7 +1422,7 @@ test.describe('D · the entry screen and its prefill', () => {
     // screen reader does not (it is aria-hidden). Both are asserted, so the
     // exact wording is pinned either way.
     for (const [id, text, required] of [
-      ['approved', 'Approved amount', false],
+      ['approved', 'Remaining approved balance', false],
       ['amount', 'Amount actually paid', true],
       ['paid_on', 'Paid on', true],
       ['payment_mode', 'Payment mode', true],
@@ -1487,7 +1489,7 @@ test.describe('D · the entry screen and its prefill', () => {
     await expect(c.admin.getByLabel('Amount actually paid'), 'prefilled with what was approved').toHaveValue(
       '4,200.00'
     );
-    await expect(c.admin.getByLabel('Approved amount')).toHaveValue('₹4,200.00');
+    await expect(c.admin.getByLabel('Remaining approved balance')).toHaveValue('₹4,200.00');
     await expect(c.admin.getByLabel('Paid on'), 'and with today, because that is when money usually moves').toHaveValue(
       /^\d{4}-\d{2}-\d{2}$/
     );
@@ -1744,7 +1746,9 @@ test.describe('D · settlement outcomes', () => {
     const sheet = await openSheet(adminPage);
     await expect(sheet.locator('.cmp-row.diff')).toContainText('1,500.00');
     await expect(sheet.locator('.outcome.good')).toHaveText('Completed');
+    await expect(sheet.locator('input[name="settlement"]:checked')).toHaveCount(0);
     await sheet.locator('input[name="settlement"][value="settled"]').check();
+    await sheet.getByLabel('Reason for any deduction or shortfall').fill('Contractual adjustment agreed; the remaining obligation is discharged.');
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
 
     await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
@@ -1829,13 +1833,10 @@ test.describe('D · settlement outcomes', () => {
     await takeFromQueue(adminPage, request);
     await fillEntry(adminPage, { amount: '4000.00', reference: `UTR-PARTIAL-${runId}` });
     const sheet = await openSheet(adminPage);
-    await expect(sheet.locator('.outcome.warn')).toHaveText('Manager review');
-    await expect(
-      sheet.locator('[data-when="settlement:partial"]'),
-      'the reason appears only once partial is chosen'
-    ).toBeHidden();
+    await expect(sheet.locator('.outcome.warn')).toHaveText(['Keep payable', 'Manager review']);
+    await expect(sheet.locator('input[name="settlement"]:checked'), 'short payment needs an explicit disposition').toHaveCount(0);
     await sheet.locator('input[name="settlement"][value="partial"]').check();
-    await sheet.getByLabel('Why only part was paid').fill(`Retention held back until handover ${runId}`);
+    await sheet.getByLabel('Reason for any deduction or shortfall').fill(`Retention held back until handover ${runId}`);
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
     await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
     await expect(adminPage.locator('.pill.partial')).toBeVisible();
@@ -1979,10 +1980,10 @@ test.describe('D · settlement outcomes', () => {
 });
 
 // ===========================================================================
-// I — one payment per request, and immutability (S9, S12, S15, X5, X6)
+// I — duplicate confirmations and immutability (S9, S12, S15, X5, X6)
 // ===========================================================================
 
-test.describe('D · one request, one payment, never edited', () => {
+test.describe('D · duplicate confirmations and immutable payment history', () => {
   test.beforeEach(async ({}, testInfo) => {
     test.skip(testInfo.project.name !== 'chromium', 'Immutability is a server property.');
   });
@@ -2010,7 +2011,7 @@ test.describe('D · one request, one payment, never edited', () => {
     });
     expect(
       second.status,
-      'S9: the request has left processing and idx_payments_request is unique on request_id'
+      'the same issued confirmation key resolves to its original immutable payment even when the stale body differs'
     ).toBe(303);
     expect(second.location, 'a double confirm goes to the payment that already exists').toBe(paymentPath);
 
@@ -2234,7 +2235,7 @@ test.describe('D · tampering with the settlement', () => {
     for (const settlement of ['', 'completed', 'SETTLED', 'part', 'refund']) {
       const probe = await probePost(adminPage, '/payments', { ...base, settlement });
       expect(probe.status, `settlement=${JSON.stringify(settlement)} is not in the vocabulary`).toBe(400);
-      expect(probe.body).toContain('choose payment settled or partial settlement');
+      expect(probe.body).toContain('choose how the remaining balance should be handled');
     }
 
     for (const amount of ['0', '0.00', '-100.00', 'not-money', '', '  ', '1e400']) {
@@ -2578,7 +2579,9 @@ test.describe('D · the reserve→settle journey on a phone', () => {
     await expect(sheet.locator('.cmp-row.diff')).toContainText('600.00');
     await noOverflow('the settlement sheet');
 
+    await expect(sheet.locator('input[name="settlement"]:checked')).toHaveCount(0);
     await sheet.locator('input[name="settlement"][value="settled"]').check();
+    await sheet.getByLabel('Reason for any deduction or shortfall').fill('Contractual adjustment agreed; the remaining obligation is discharged.');
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
     await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
     await expect(adminPage.locator('.pill.completed')).toBeVisible();

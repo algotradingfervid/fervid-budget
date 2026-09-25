@@ -675,7 +675,7 @@ func TestDuplicateCheckWarnsAndNeverBlocks(t *testing.T) {
 	}
 	// The wording must not promise a block.
 	lower := strings.ToLower(body)
-	if !strings.Contains(lower, "you can still") && !strings.Contains(lower, "check before you submit") {
+	if !strings.Contains(lower, "written override reason") {
 		t.Fatalf("the warning does not say the submit may still proceed: %s", body)
 	}
 
@@ -831,7 +831,7 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 		t.Fatal("the pending request does not name its approver")
 	}
 	// The tabs carry counts that come from the same SQL as the rows.
-	if !strings.Contains(body, `href="/requests?bucket=needs-me`) {
+	if !strings.Contains(body, `bucket=needs-me`) {
 		t.Fatal("the Needs me tab is missing")
 	}
 	needsMe := responseBody(t, s.request(http.MethodGet, "/requests?bucket=needs-me", nil, ""))

@@ -111,12 +111,7 @@
 <header class="page-head"><h1>The variance grid</h1><p class="lede">Budget against actual for every head in a month, and how to read the colours.</p></header>
 <p><strong>Variance grid</strong> in the sidebar opens the widest screen in the product: one row for every expense head in every project, for one month, with what was budgeted beside what was spent. It is the screen to consult before approving something large against a head you do not know well.</p>
 <p>The line under the heading states the arithmetic the whole page rests on — <em>remaining = budget - actual</em>.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/manager/grid.png" aria-label="Enlarge: The variance grid for one month, grouped by project.">
-    <img src="../assets/shots/manager/grid.png" alt="Budget against actual for every head in a month, with over- and under-spend called out." loading="lazy" width="1440">
-  </button>
-  <figcaption>The variance grid for one month, grouped by project. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
+<p>The Due column’s <strong>Payment recorded</strong> label confirms budget payment activity only. It does not mean every request charged to that head is settled: installments and manager-kept balances may remain payable. Read the request to check its remaining obligation.</p>
 <h2 id="the-four-figures-at-the-top">The four figures at the top</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">Figure</th><th scope="col">What it is</th></tr></thead><tbody>
 <tr><td><strong>Budget</strong></td><td>Everything budgeted across every head, for the month shown.</td></tr>
@@ -132,18 +127,18 @@
 <p>Rows are grouped by project. The project line is a running total for the heads beneath it and can be collapsed; each head then carries its own figures.</p>
 <div class="table-wrap"><table><caption>The columns of the grid, left to right. The screenshot is cut off at the right edge; two more columns follow.</caption><thead><tr><th scope="col">Column</th><th scope="col">What it holds</th></tr></thead><tbody>
 <tr><td><strong>Project</strong> / <strong>Head</strong></td><td>The budget line. The project row totals the heads under it.</td></tr>
-<tr><td><strong>Due</strong></td><td>A pill saying where the head stands against its due day: <strong>Settled</strong>, <strong>Overdue</strong>, <strong>Due today</strong>, <strong>Upcoming</strong>, or <strong>No due day</strong>. The small number under the pill is the due day itself.</td></tr>
+<tr><td><strong>Due</strong></td><td>A pill saying where the head stands against its due day: <strong>Payment recorded</strong>, <strong>Overdue</strong>, <strong>Due today</strong>, <strong>Upcoming</strong>, or <strong>No due day</strong>. The small number under the pill is the due day itself.</td></tr>
 <tr><td><strong>Budget</strong></td><td>What was set for this head this month.</td></tr>
 <tr><td><strong>Actual</strong></td><td>What was paid against it this month.</td></tr>
 <tr><td><strong>Remaining ₹</strong></td><td>Budget minus actual. Green while there is money left, red once it is negative.</td></tr>
 <tr><td><strong>Remaining %</strong></td><td>The same figure as a share of the budget. It reads <em>N/A</em> where no budget was set.</td></tr>
 <tr><td><strong>Used</strong></td><td>A bar and a percentage: actual as a share of budget.</td></tr>
 </tbody></table></div>
-<p>Two columns sit beyond the right edge of the picture above. <strong>Status</strong> repeats the head's standing as a pill, and <strong>Action</strong> offers a control to record a payment — which the approver role does not carry, so for you that column is empty. The table ends with a <strong>Company total</strong> row.</p>
+<p>The final columns remain beside the financial comparison. <strong>Status</strong> repeats the head's standing as a pill, and <strong>Action</strong> offers a control to record a payment — which the approver role does not carry, so for you that column is empty. The table ends with <strong>Company total</strong> when unfiltered or <strong>Filtered subtotal</strong> when search/status filters apply. A filtered view also shows visible-versus-total head counts and separately labelled full-month figures.</p>
 <h2 id="the-five-statuses-and-the-legend">The five statuses, and the legend</h2>
 <p>The row of swatches under the filters is a legend and a count in one: it names each status and says how many heads are in it this month.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Status</th><th scope="col">What it means</th></tr></thead><tbody>
-<tr><td><strong>Not paid</strong></td><td>Nothing has been paid against this head this month, whatever its budget.</td></tr>
+<tr><td><strong>Not paid</strong></td><td>A budget exists but no actual payment is recorded this month. <strong>No activity</strong> means both budget and actual are zero and is excluded from unpaid counts.</td></tr>
 <tr><td><strong>Unbudgeted</strong></td><td>Money has been paid against a head with no budget set for the month.</td></tr>
 <tr><td><strong>Under</strong></td><td>Spend is below budget.</td></tr>
 <tr><td><strong>On track</strong></td><td>Spend equals the budget exactly.</td></tr>
@@ -154,7 +149,7 @@
 <p>Three filters sit above the table, and <strong>Apply</strong> runs them together.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Control</th><th scope="col">What it does</th></tr></thead><tbody>
 <tr><td><strong>Month</strong></td><td>Which month to show. The grid always shows one month at a time.</td></tr>
-<tr><td><strong>Status</strong></td><td>Narrows to one of <em>Unbudgeted spend</em>, <em>Over budget</em>, <em>Under budget</em>, <em>On track</em> or <em>Not paid</em>, or leaves it at <em>All</em>.</td></tr>
+<tr><td><strong>Status</strong></td><td>Narrows to one of <em>Unbudgeted spend</em>, <em>Over budget</em>, <em>Under budget</em>, <em>On track</em> <em>Not paid</em> or <em>No activity</em>, or leaves it at <em>All</em>.</td></tr>
 <tr><td><strong>Search</strong></td><td>Matches on head or project name.</td></tr>
 </tbody></table></div>
 <p>A month an administrator has closed carries a <strong>Locked</strong> pill beside the project count, and a line saying who locked it and why. A locked month refuses new budget and payment changes; see <a href="../admin/monthly-plans-and-locking.html">Monthly plans and locking</a>.</p>

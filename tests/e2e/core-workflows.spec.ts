@@ -200,6 +200,8 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
 
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     await expect(adminPage.locator('.overlay .sheet')).toBeVisible();
+    await expect(adminPage.locator('.overlay .sheet input[name="settlement"]:checked')).toHaveCount(0);
+    await adminPage.locator('.overlay .sheet input[name="settlement"][value="settled"]').check();
     await adminPage.locator('.overlay .sheet')
       .getByRole('button', { name: 'Confirm and save payment' }).click();
 
@@ -223,9 +225,14 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
 
     // The reservation survived the refusal, so correcting the figure is one
     // click away — the accountant never has to fight for the request again.
-    await sheet.getByRole('link', { name: 'Go back' }).click();
+    await sheet.getByRole('button', { name: 'Go back' }).click();
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     await expect(adminPage.locator('.reserve-bar')).toContainText('Reserved by you');
+    await expect(adminPage.getByLabel('Amount actually paid')).toHaveValue('6,000.00');
+    await expect(adminPage.getByLabel('Paid on')).toHaveValue('2026-06-15');
+    await expect(adminPage.getByLabel('Payment mode')).toHaveValue('bank_transfer');
+    await expect(adminPage.getByLabel('Transaction / UTR reference')).toHaveValue(`UTR-${runId}`);
+    await expect(adminPage.getByLabel('Processing note')).toHaveValue(`Retain this note ${runId}`);
   });
 
   test('the primary grid is keyboard reachable and has no detectable axe violations', async ({ adminPage }) => {

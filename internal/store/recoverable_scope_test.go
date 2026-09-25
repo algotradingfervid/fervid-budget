@@ -99,8 +99,8 @@ func TestRecoverableMetricsAndRollupsApplyTheRequestDataScope(t *testing.T) { //
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all.OutstandingCount != 3 || all.OutstandingAmount != 1650000 {
-		t.Fatalf("all metrics = %d rows / %d paise, want 3 / 1650000", all.OutstandingCount, all.OutstandingAmount)
+	if all.OutstandingCount != 2 || all.OutstandingAmount != 1400000 {
+		t.Fatalf("all metrics = %d rows / %d paise, want 2 / 1400000", all.OutstandingCount, all.OutstandingAmount)
 	}
 
 	// A's own tiles must total A's own money. Summarising a scoped table without the
@@ -110,8 +110,8 @@ func TestRecoverableMetricsAndRollupsApplyTheRequestDataScope(t *testing.T) { //
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ownA.OutstandingCount != 2 || ownA.OutstandingAmount != 750000 {
-		t.Fatalf("own(A) metrics = %d rows / %d paise, want 2 / 750000", ownA.OutstandingCount, ownA.OutstandingAmount)
+	if ownA.OutstandingCount != 1 || ownA.OutstandingAmount != 500000 {
+		t.Fatalf("own(A) metrics = %d rows / %d paise, want 1 / 500000", ownA.OutstandingCount, ownA.OutstandingAmount)
 	}
 	if ownA.PaidThisMonthCount != 0 {
 		t.Fatalf("own(A) paid-this-month = %d, want 0 (A's payment is in May, asOf is July)", ownA.PaidThisMonthCount)

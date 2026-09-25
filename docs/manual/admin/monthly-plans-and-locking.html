@@ -111,12 +111,6 @@
 <header class="page-head"><h1>Monthly plans and locking</h1><p class="lede">Opening a month, closing it, and what a locked month refuses.</p></header>
 <p>Budgets live per month, so every month has to be opened before anything can be budgeted in it. A month is opened here, reviewed here, and — once the figures are settled and reported — locked, which stops anybody writing into it by accident.</p>
 <h2 id="the-monthly-plans-screen">The monthly plans screen</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/months.png" aria-label="Enlarge: Every month the product knows about, newest first, with a row of shortcuts each.">
-    <img src="../assets/shots/admin/months.png" alt="Every budget month and whether it is open or locked." loading="lazy" width="1440">
-  </button>
-  <figcaption>Every month the product knows about, newest first, with a row of shortcuts each. </figcaption>
-</figure>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What it shows</th></tr></thead><tbody>
 <tr><td>Month</td><td>The month, with the number of heads it covers underneath.</td></tr>
 <tr><td>Status</td><td><code>Open</code> or <code>Locked</code>. A locked month also shows the date and time it was locked.</td></tr>
@@ -139,25 +133,13 @@
 <aside class="callout callout-note"><p>A month that is already locked cannot be recreated — the create is refused with the locked-month message. Unlock it first if you genuinely need to rebuild its plan.</p></aside>
 <h2 id="locking-a-month">Locking a month</h2>
 <p>The lock control is not on the monthly plans screen. It lives in a <strong>Month Close</strong> panel at the foot of the variance grid for that month, and it is drawn only for somebody whose role carries the month lock permission — the <strong>Process</strong> column of the Budgets &amp; variance grid row on <a href="../admin/roles-and-permissions.html">Roles and permissions</a>.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/grid-earlier-month.png" aria-label="Enlarge: The variance grid for 2026-03 — the screen the lock lives on. The Month Close panel sits below the grid, past the foot of this capture.">
-    <img src="../assets/shots/admin/grid-earlier-month.png" alt="The same grid pointed at a month with budgets but little spending." loading="lazy" width="1440">
-  </button>
-  <figcaption>The variance grid for 2026-03 — the screen the lock lives on. The Month Close panel sits below the grid, past the foot of this capture. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <ol class="steps">
 <li>Open <strong>Variance grid</strong> and pick the month you want to close.</li>
-<li>Scroll to the <strong>Month Close</strong> panel at the foot of the screen.<p class="step-note">The line above the form counts what you might want to look at first: how many heads are unpaid, how many have unbudgeted spend, and how many are over budget.</p></li>
+<li>Scroll to the <strong>Month Close</strong> panel at the foot of the screen.<p class="step-note">The line above the form counts what you might want to look at first: how many budgeted heads are unpaid, how many have unbudgeted spend, and how many are over budget across the entire month. Zero-budget, zero-activity heads are separately identified and excluded from unpaid counts.</p></li>
 <li>Type a <strong>Lock reason</strong>.<p class="step-note">It is required. The reason goes into the audit trail and is shown on the grid while the month stays locked.</p></li>
 <li>Select <strong>Lock Month</strong> and confirm.<p class="step-note">The browser asks &quot;Lock 2026-03? Budgets and payments will become read-only.&quot; first.</p></li>
 </ol>
 <p>The month’s row on the monthly plans screen changes to a <code>Locked</code> pill with the time it was locked underneath.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/months-locked.png" aria-label="Enlarge: The same list with 2026-03 closed. The lock is stamped with its date and time.">
-    <img src="../assets/shots/admin/months-locked.png" alt="A month that has been closed, which no longer accepts new payments." loading="lazy" width="1440">
-  </button>
-  <figcaption>The same list with 2026-03 closed. The lock is stamped with its date and time. </figcaption>
-</figure>
 <h3 id="what-a-locked-month-refuses">What a locked month refuses</h3>
 <div class="table-wrap"><table><thead><tr><th scope="col">Attempt</th><th scope="col">What happens</th></tr></thead><tbody>
 <tr><td>Saving budgets for that month</td><td>Refused. The screen disables every box and says so before you try.</td></tr>

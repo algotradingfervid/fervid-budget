@@ -213,7 +213,7 @@ test.describe('raising a request', () => {
     await adminPage.locator('#head').selectOption({ index: 1 });
     await adminPage.getByLabel('Amount').fill('18400');
     await adminPage.getByLabel('Amount').blur();
-    await expect(adminPage.locator('#dup-check .banner.warn')).toContainText('you can still go ahead');
+    await expect(adminPage.locator('#dup-check .banner.warn')).toContainText('Review these possible matches before submitting');
     // The e2e database persists between runs, so there may be older look-alikes
     // in the list too — that is the feature working, not a fixture leaking.
     await expect(adminPage.locator('#dup-check')).toContainText(`Hyderabad site visit ${runId}`);

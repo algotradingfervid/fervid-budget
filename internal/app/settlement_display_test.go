@@ -220,7 +220,7 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 550000)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"},
+	form := url.Values{"submission_key": {"saved-banner-fixture"}, "request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"},
 		"amount": {"5500.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"UTR-1"}, "payment_mode": {"bank_transfer"}}
 	resp := s.postForm("/payments", form)
 	requireStatus(t, resp, http.StatusSeeOther)
@@ -245,9 +245,9 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 		t.Fatalf("refused repeat landed on %q, want the existing payment %q", got, loc)
 	}
 	dup := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
-	mustContain(t, "refused repeat", dup, "already", "nothing new was saved", "5,500.00")
+	mustContain(t, "refused repeat", dup, "already", "No additional payment was saved", "5,500.00")
 	mustNotContain(t, "refused repeat", dup, "Payment saved", "5,000.00")
-	mustNotContain(t, "the visit after the refused repeat", responseBody(t, s.request(http.MethodGet, loc, nil, "")), "nothing new was saved")
+	mustNotContain(t, "the visit after the refused repeat", responseBody(t, s.request(http.MethodGet, loc, nil, "")), "No additional payment was saved")
 
 	// A blocked edit lands on the payment with the reason, once.
 	resp = s.request(http.MethodGet, loc+"/edit", nil, "")
@@ -277,7 +277,7 @@ func TestSettlementSheetClosersDismissInPlaceOnTheHtmxPath(t *testing.T) {
 		`<a class="sh-close" `+href+` data-close="settle-sheet"`,
 		`<a class="btn outline" `+href+` data-close="settle-sheet">Go back</a>`)
 	page := responseBody(t, s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), form))
-	mustContain(t, "no-JS page", page, `<a class="btn outline" `+href+`>Go back</a>`)
+	mustContain(t, "no-JS page", page, strconvPath(`<button class="btn outline" type="submit" formaction="/payments/new?request=%d" formmethod="post" formnovalidate>Go back</button>`, reqID))
 	mustNotContain(t, "no-JS page", page, `data-close="settle-sheet"`)
 }
 

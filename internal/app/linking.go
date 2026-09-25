@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -137,12 +139,31 @@ func heldByCaller(req store.Request, userID int64) bool {
 	return req.Status == "processing" && req.ProcessingBy != nil && *req.ProcessingBy == userID
 }
 
+// loadPaymentRequest applies the same current data scope as request details.
+// Holding a reservation or knowing its ID does not bypass a revoked scope.
+func (a *App) loadPaymentRequest(w http.ResponseWriter, r *http.Request, id int64) (store.Request, bool) {
+	u := auth.CurrentUser(r)
+	req, err := a.st.Request(r.Context(), id)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return store.Request{}, false
+	}
+	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)
+		return store.Request{}, false
+	}
+	return req, true
+}
+
 // requestRecordPayment is the reservation entry point. It is gated on
 // reservation:reserve rather than payment:create because taking work out of the
 // queue is a different act from recording money leaving the bank.
 func (a *App) requestRecordPayment(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	u := auth.CurrentUser(r)
+	if _, ok := a.loadPaymentRequest(w, r, id); !ok {
+		return
+	}
 	if err := a.st.ReserveRequest(r.Context(), u, id); err != nil {
 		if errors.Is(err, store.ErrForbidden) {
 			req, rerr := a.st.Request(r.Context(), id)
@@ -308,9 +329,8 @@ func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]Pa
 // reader needs to know who has it and what they can do instead (G15).
 func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int64) {
 	u := auth.CurrentUser(r)
-	req, err := a.st.Request(r.Context(), linkedID)
-	if err != nil {
-		a.respondStoreError(w, r, err)
+	req, ok := a.loadPaymentRequest(w, r, linkedID)
+	if !ok {
 		return
 	}
 	if !heldByCaller(req, u.ID) {
@@ -328,24 +348,70 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 	// on the confirmation (F-G-020). The month tested is the one the date field
 	// opens on, which is the month a settlement recorded now would land in.
 	paidOn := time.Now().Format("2006-01-02")
-	a.render(w, r, "payment_form", PageData{
+	var token [24]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		a.respondError(w, r, http.StatusInternalServerError, "Could not prepare payment confirmation.", err)
+		return
+	}
+	settings, err := a.st.AppSettings(r.Context())
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	choices := configuredPaymentChoices(settings)
+	vendor := store.Vendor{}
+	defaultMode := ""
+	if req.VendorID != nil {
+		vendor, err = a.st.Vendor(r.Context(), *req.VendorID, a.auth.Permissions(u))
+		if err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		if vendor.Bank != nil {
+			candidate := canonicalPaymentMode(vendor.Bank.DefaultPaymentMode)
+			for _, choice := range choices {
+				if choice.Value == candidate {
+					defaultMode = candidate
+				}
+			}
+		}
+	}
+	data := PageData{
+		PaymentModeChoices: choices, Vendor: vendor,
 		Title:          "Record payment",
+		SubmissionKey:  hex.EncodeToString(token[:]),
 		Request2:       req,
 		SelectedHeadID: headID,
 		ReserveMine:    true,
 		Month:          paidOn[:7],
 		Locked:         a.st.IsLocked(r.Context(), paidOn[:7]),
 		Payment: store.Payment{
-			HeadID: headID,
-			PaidOn: paidOn,
-			Amount: approvedOf(req),
+			PaymentMode: defaultMode,
+			HeadID:      headID,
+			PaidOn:      paidOn,
+			Amount:      approvedOf(req) - req.PaidAmount,
 			// The display payee, not the snapshot column: a vendor_invoice names
 			// its payee with vendor_id and leaves vendor_payee empty, so the
 			// snapshot would write a payment with nobody to pay.
 			VendorPayee: req.Vendor,
 			InvoiceNo:   req.InvoiceNo,
 		},
-	})
+	}
+	// A rejected confirmation posts its values back to this read-only form.
+	// Keep them in the body, not a URL that exposes references or processing notes.
+	if r.Method == http.MethodPost {
+		data.PaymentAmount = r.FormValue("amount")
+		data.Payment.Amount, _ = money.ParsePaise(data.PaymentAmount)
+		data.Payment.PaidOn = r.FormValue("paid_on")
+		data.Payment.PaymentMode = r.FormValue("payment_mode")
+		data.Payment.ReferenceNo = r.FormValue("reference_no")
+		data.Payment.Remarks = r.FormValue("remarks")
+		if validDateInput(data.Payment.PaidOn) {
+			data.Month = data.Payment.PaidOn[:7]
+			data.Locked = a.st.IsLocked(r.Context(), data.Month)
+		}
+	}
+	a.render(w, r, "payment_form", data)
 }
 
 // paymentLockStatus is the banner fragment the "Paid on" field re-asks for on
@@ -386,9 +452,8 @@ func (a *App) paymentPickerOptions(w http.ResponseWriter, r *http.Request) {
 func (a *App) settlementPreview(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	id := pathID(r)
-	req, err := a.st.Request(r.Context(), id)
-	if err != nil {
-		a.respondStoreError(w, r, err)
+	req, ok := a.loadPaymentRequest(w, r, id)
+	if !ok {
 		return
 	}
 	// Losing the reservation between entry and confirmation is a screen, not an
@@ -403,14 +468,19 @@ func (a *App) settlementPreview(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("%w: enter a valid amount", store.ErrValidation))
 		return
 	}
-	approved := approvedOf(req)
+	approved := approvedOf(req) - req.PaidAmount
 	a.renderSettlement(w, r, http.StatusOK, req, SettlementPreview{
 		Approved:   approved,
 		Paid:       paid,
 		Difference: approved - paid,
 		Match:      approved == paid,
-		Settlement: "settled",
-		Fields:     settlementFields(r),
+		Settlement: func() string {
+			if approved == paid {
+				return "settled"
+			}
+			return ""
+		}(),
+		Fields: settlementFields(r),
 	}, "")
 }
 
@@ -419,7 +489,7 @@ func (a *App) settlementPreview(w http.ResponseWriter, r *http.Request) {
 // live form on the htmx path, and is re-offered on the no-JS confirmation.
 func settlementFields(r *http.Request) map[string]string {
 	out := map[string]string{}
-	for _, k := range []string{"amount", "paid_on", "payment_mode", "reference_no", "invoice_no", "remarks", "vendor_payee", "head_id"} {
+	for _, k := range []string{"amount", "paid_on", "payment_mode", "reference_no", "invoice_no", "remarks", "vendor_payee", "head_id", "submission_key", "expected_paid"} {
 		if v := r.FormValue(k); v != "" {
 			out[k] = v
 		}
@@ -451,12 +521,11 @@ func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID i
 		a.respondStoreError(w, r, cause)
 		return
 	}
-	req, rerr := a.st.Request(r.Context(), linkedID)
-	if rerr != nil {
-		a.respondStoreError(w, r, rerr)
+	req, ok := a.loadPaymentRequest(w, r, linkedID)
+	if !ok {
 		return
 	}
-	approved := approvedOf(req)
+	approved := approvedOf(req) - req.PaidAmount
 	// The typed amount is echoed back even when it is what was rejected: a
 	// malformed figure parses to zero here and the field below still shows the
 	// characters the accountant actually entered.
@@ -583,6 +652,17 @@ func partialTrail(entries []store.AuditEntry, comments []store.RequestComment) [
 // was written off stays visible for the life of the record.
 func (a *App) requestAcceptPartial(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
+	if _, ok := a.loadPaymentRequest(w, r, id); !ok {
+		return
+	}
+	if r.FormValue("decision") == "continue" {
+		if err := a.st.ContinuePartial(r.Context(), auth.CurrentUser(r), id, r.FormValue("note")); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
+		return
+	}
 	if err := a.st.AcceptPartial(r.Context(), auth.CurrentUser(r), id, r.FormValue("note")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -1134,13 +1214,18 @@ func (a *App) mergedTrail(r *http.Request, requestID int64, paymentID int64) ([]
 	if err != nil {
 		return nil, err
 	}
-	if paymentID > 0 {
-		pay, perr := a.st.Audit(r.Context(), "payment", paymentID, 200)
+	payments, err := a.st.RequestPayments(r.Context(), requestID)
+	if err != nil {
+		return nil, err
+	}
+	for _, payment := range payments {
+		pay, perr := a.st.Audit(r.Context(), "payment", payment.ID, 200)
 		if perr != nil {
 			return nil, perr
 		}
 		entries = append(entries, pay...)
 	}
+
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].CreatedAt.Equal(entries[j].CreatedAt) {
 			return entries[i].ID < entries[j].ID

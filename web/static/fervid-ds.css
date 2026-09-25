@@ -4873,3 +4873,86 @@ td .t-sub {
     grid-column: 1 / -1;
   }
 }
+
+/* UX review: keyboard navigation, control boundaries and narrow-screen text. */
+:root {
+  --input-border: #81766b;
+  --focus: 0 0 0 3px #245b8f;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  border-color: var(--input-border);
+}
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"],
+.field-error input,
+.field-error select,
+.field-error textarea {
+  border-color: var(--fb-danger);
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--fb-accent);
+}
+
+.sidebar :focus-visible {
+  outline: 3px solid #ffdc8c;
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+/* Keep mobile navigation focus inside the rounded, clipped list. */
+.more-sheet .ms-list a:focus-visible {
+  outline: 3px solid #245b8f;
+  outline-offset: -3px;
+  box-shadow: none;
+}
+.more-sheet .ms-close:focus-visible {
+  outline: 3px solid #ffdc8c;
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.skip-link {
+  position: fixed;
+  left: 12px;
+  top: 8px;
+  z-index: 10000;
+  padding: 10px 16px;
+  color: #fff;
+  background: #245b8f;
+  border-radius: 6px;
+  transform: translateY(-160%);
+}
+.skip-link:focus {
+  transform: translateY(0);
+  color: #fff;
+  outline: 3px solid #ffdc8c;
+  outline-offset: 2px;
+}
+main.page:focus { outline: none; box-shadow: none; }
+
+.type-card,
+.type-card > * { min-width: 0; }
+.type-card .tc-tag {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.error-summary {
+  border: 2px solid var(--fb-danger);
+  border-radius: 6px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  background: #fff;
+}
+.error-summary a { color: var(--fb-danger); text-decoration: underline; }
+.error-summary h2 { margin: 0 0 8px; font-size: 18px; }
+.error-summary ul { margin: 0; padding-left: 20px; }
+.field-error-message { margin: 4px 0; }
+
+/* Contact links embedded in explanatory text remain identifiable without color. */
+a[href^="mailto:"] { text-decoration: underline; }

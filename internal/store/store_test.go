@@ -932,7 +932,7 @@ func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 // TestValidatePaymentRefusesFutureDateAgainstInjectedClock is F-D-06.
 //
 // The rule reads the injected clock when the caller supplies one, so a test can
-// pin the day — and falls back to time.Now().UTC() when it does not, so the
+// pin the day — and falls back to the server's local day when it does not, so the
 // rule is enforced whether or not anybody remembered to wire a clock. The
 // second half is the fix: the check shipped skipping on a zero Now, no
 // production caller ever set the field, and the guard therefore refused nothing
@@ -978,11 +978,12 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	// forgets to inject a clock guards nothing, which is what F-D-06 found.
 	// Both dates are relative to the real day, so this cannot rot into a test
 	// that passes only until the calendar catches up with a literal.
-	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	localToday := time.Now()
+	tomorrow := localToday.AddDate(0, 0, 1).Format("2006-01-02")
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: tomorrow, Amount: 1000}); !errors.Is(err, ErrValidation) {
 		t.Fatalf("clockless payment dated %s = %v, want ErrValidation — the default must be enforcement, not a skip", tomorrow, err)
 	}
-	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	yesterday := localToday.AddDate(0, 0, -1).Format("2006-01-02")
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: yesterday, Amount: 1000}); err != nil {
 		t.Fatalf("clockless payment dated %s = %v; the past is not what this rule refuses", yesterday, err)
 	}

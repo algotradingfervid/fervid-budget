@@ -35,16 +35,19 @@ const templates = `
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} - Fervid Budget</title>
   <link rel="stylesheet" href="/static/fervid-ds.css">
+  <link rel="stylesheet" href="/static/budget-ux.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/fervid-app.js" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 {{if eq .Shell.Chrome "app"}}<div class="appshell">
 {{template "shell_sidebar" .}}
 {{template "shell_topbar" .}}
 {{end}}
-<main class="page">
+<main class="page" id="main-content" tabindex="-1">
 <div class="page-inner">
+{{if .ContextBackHref}}<p class="context-back"><a href="{{.ContextBackHref}}">← {{.ContextBackLabel}}</a></p>{{end}}
 {{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive">{{.Error}}</div>{{end}}
 {{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
 {{end}}
@@ -90,9 +93,16 @@ const templates = `
 </div>{{end}}
 
 {{define "login"}}
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Login - Fervid Budget</title><link rel="stylesheet" href="/static/fervid-ds.css"></head>
-<body class="login-body"><main class="login-card"><h1>Fervid Budget</h1>{{if .Error}}<div class="alert error" role="alert" aria-live="assertive">{{.Error}}</div>{{end}}<form method="post" action="/login" class="stack"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Login</button></form></main></body></html>
+{{template "login_top" .}}<h1>Fervid Budget</h1>{{template "login_flash" .}}<form method="post" action="/login" class="stack"><input type="hidden" name="next" value="{{.LoginNext}}"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Login</button></form><p><a href="/login/help">Can't sign in?</a></p>{{template "login_bottom" .}}
 {{end}}
+{{define "login_top"}}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} - Fervid Budget</title><link rel="stylesheet" href="/static/fervid-ds.css"></head><body class="login-body"><main class="login-card">{{end}}
+{{define "login_bottom"}}</main></body></html>{{end}}
+{{define "login_flash"}}{{if .Error}}<div class="alert error" role="alert" aria-live="assertive">{{.Error}}</div>{{end}}{{if .Notice}}<div class="alert success" role="status">{{.Notice}}</div>{{end}}{{end}}
+{{define "login_help"}}{{template "login_top" .}}<h1>Can't sign in?</h1>{{template "login_flash" .}}
+{{if .ResetEmailAvailable}}<p>Request a one-time password reset link. It expires after 30 minutes.</p><form method="post" action="/login/help" class="stack"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Account email<input name="email" type="email" autocomplete="username" maxlength="254" required></label><button class="primary">Send reset link</button></form>{{else}}<p>Email password reset is not enabled for this installation. Your administrator can restore access without email.</p>{{end}}
+<section><h2>Contact your administrator</h2><p>{{if .RecoveryName}}{{.RecoveryName}}{{else}}Your Fervid Budget administrator{{end}}{{if .RecoveryContact}} · <a href="mailto:{{.RecoveryContact}}?subject=Fervid%20Budget%20sign-in%20help">{{.RecoveryContact}}</a>{{end}}</p><p>Send your account email and describe the sign-in problem. Never send your password. The administrator verifies your identity, opens Users, resets your password and unlocks the account if needed. Receive the replacement privately.</p><p>If this contact is unavailable or uses a local-only email address, contact the person who installed Fervid Budget using your organisation's usual channel.</p></section><p><a href="/login">Back to sign in</a></p>{{template "login_bottom" .}}{{end}}
+{{define "password_reset"}}{{template "login_top" .}}<h1>Set a new password</h1>{{template "login_flash" .}}
+{{if .ResetToken}}<form method="post" action="/login/reset" class="stack"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="token" value="{{.ResetToken}}"><p>Use at least 8 characters, including a letter and a number. Existing sessions will be signed out.</p><label>New password<input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label><label>Confirm password<input name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label><button class="primary">Reset password</button></form>{{end}}<p><a href="/login/help">Request another reset link</a> · <a href="/login">Back to sign in</a></p>{{template "login_bottom" .}}{{end}}
 
 {{define "error_page"}}
 {{template "top" .}}
@@ -124,7 +134,7 @@ const templates = `
 {{template "top" .}}
 <div class="gridhead">
   <div class="between" id="grid-summary">
-    <div><div class="eyebrow">Budget vs actuals</div><h1>Variance grid</h1><p class="sub muted">{{.Month}} · {{len .Grid.Rows}} {{plural (len .Grid.Rows) "head" "heads"}} · remaining = budget - actual</p></div>
+    <div><div class="eyebrow">Budget vs actuals</div><h1>Variance grid</h1><p class="sub muted">{{.Month}} · {{.Grid.ScopeLabel}} · {{len .Grid.Rows}} {{plural (len .Grid.Rows) "head" "heads"}} · remaining = budget - actual</p></div>
     <div class="head-actions"><span class="countpill">{{len .Grid.Projects}} {{plural (len .Grid.Projects) "project" "projects"}}</span>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</div>
   </div>
   <div class="metric-strip compact" id="grid-metrics">
@@ -165,16 +175,18 @@ const templates = `
         hx-select-oob="#grid-summary,#grid-metrics,#grid-legend,#grid-export,#grid-add"
         hx-push-url="true" hx-sync="this:queue last" hx-history="false" data-skip-shown-filters>
     <label>Month<input class="input" type="month" name="month" value="{{.Month}}"></label>
-    <label>Status<select class="select" name="status"><option value="all">All</option><option value="unbudgeted" {{select .Status "unbudgeted"}}>Unbudgeted spend</option><option value="over" {{select .Status "over"}}>Over budget</option><option value="under" {{select .Status "under"}}>Under budget</option><option value="on-track" {{select .Status "on-track"}}>On track</option><option value="not-paid" {{select .Status "not-paid"}}>Not paid</option></select></label>
+    <label>Status<select class="select" name="status"><option value="all">All</option><option value="unbudgeted" {{select .Status "unbudgeted"}}>Unbudgeted spend</option><option value="over" {{select .Status "over"}}>Over budget</option><option value="under" {{select .Status "under"}}>Under budget</option><option value="on-track" {{select .Status "on-track"}}>On track</option><option value="no-activity" {{select .Status "no-activity"}}>No activity</option><option value="not-paid" {{select .Status "not-paid"}}>Not paid</option></select></label>
     <label class="search-label">Search<input class="input" name="q" value="{{.Query}}" placeholder="Search head or project..."></label>
     <div class="spacer"></div>
     <button>Apply</button>{{if .Perms.Can "grid" "export"}}<a class="btn outline" id="grid-export" href="/export.csv?month={{.Month}}&status={{.Status}}&q={{.Query}}">⤓ Export</a>{{end}}{{if .Perms.Can "payment" "create"}}<a class="btn primary" id="grid-add" href="/payments/new?month={{.Month}}">+ Add payment</a>{{end}}
   </form>
-  <div class="legend" id="grid-legend"><span class="lk"><span class="sw none"></span>Not paid {{.Grid.NotPaid}}</span><span class="lk"><span class="sw warn"></span>Unbudgeted {{.Grid.Unbudgeted}}</span><span class="lk"><span class="sw ok"></span>Under {{.Grid.Under}}</span><span class="lk"><span class="sw track"></span>On track {{.Grid.OnTrack}}</span><span class="lk"><span class="sw bad"></span>Over {{.Grid.Over}}</span></div>
+  <div class="legend" id="grid-legend"><span class="lk"><span class="sw none"></span>No activity {{.Grid.NoActivity}}</span><span class="lk"><span class="sw none"></span>Not paid {{.Grid.NotPaid}}</span><span class="lk"><span class="sw warn"></span>Unbudgeted {{.Grid.Unbudgeted}}</span><span class="lk"><span class="sw ok"></span>Under {{.Grid.Under}}</span><span class="lk"><span class="sw track"></span>On track {{.Grid.OnTrack}}</span><span class="lk"><span class="sw bad"></span>Over {{.Grid.Over}}</span></div>
 </div>
 <div id="grid-body">
+<p class="grid-scope-note">Actuals show payments recorded against each head. A recorded payment does not mean every request is fully settled; open requests can still have a payable balance.</p>
+{{if .Grid.Filtered}}<p class="grid-scope-note">Showing {{len .Grid.Rows}} of {{len .CloseGrid.Rows}} heads. Totals and status counts above describe the filtered rows. <a href="/grid?month={{.Month}}">Clear filters</a></p><p class="grid-scope-note">Full month company total: budget {{money .CloseGrid.Total.Budget}} · actual {{money .CloseGrid.Total.Actual}} · remaining {{money .CloseGrid.Total.Variance}}. Month Close always reviews the full month.</p>{{end}}
 {{if .Grid.Locked}}<div class="locked">Month {{.Month}} is locked by {{.Grid.Lock.ActorName}}. Reason: {{.Grid.Lock.Reason}}</div>{{end}}
-<div class="gridwrap d-only"><div class="card scroll"><table class="matrix grid"><caption class="sr-only">Budget versus actuals by project and head</caption><thead><tr><th class="sticky project-col">Project</th><th class="sticky head-col">Head</th><th class="c">Due</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining ₹</th><th class="num">Remaining %</th><th class="c">Used</th><th class="c">Status</th><th class="c">Action</th></tr></thead><tbody>{{range .Grid.Groups}}<tr class="project-row" data-project-id="{{.ProjectID}}"><td class="sticky project-col" colspan="2"><button class="project-toggle" type="button" data-project-toggle="{{.ProjectID}}" aria-expanded="true"><span class="chev" aria-hidden="true">▾</span><span class="project-title">{{.Project}}</span><span class="project-count">{{len .Rows}} {{plural (len .Rows) "head" "heads"}}</span></button></td><td></td><td class="num">{{money .Total.Budget}}</td><td class="num">{{money .Total.Actual}}</td><td class="num {{varClass .Total.Variance}}">{{money .Total.Variance}}</td><td class="num">{{remainingText .Total.Budget .Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Total.Budget .Total.Actual)}}"><i style="--pct:{{usedPct .Total.Budget .Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Total.Budget .Total.Actual}}</span></div></td><td></td><td></td></tr>{{range .Rows}}<tr class="head {{if eq .Status "not-paid"}}unpaid{{end}}" data-project-row="{{.ProjectID}}"><td class="sticky project-col project-spacer" aria-hidden="true"></td><td class="sticky head-col"><span class="hname">{{.Head}}</span></td><td class="c due"><span class="duepill {{dueClass .DueDay $.Month .Status}}">{{dueText .DueDay $.Month .Status}}</span><small>{{.DueDay}}</small></td><td class="num">{{money .Budget}}</td><td class="num">{{money .Actual}}</td><td class="num {{varClass .Variance}}">{{money .Variance}}</td><td class="num">{{remainingText .Budget .Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Budget .Actual}}</span></div></td><td class="c"><span class="pill {{.Status}}">{{statusText .Status}}</span></td><td class="c">{{if and .Active (not $.Grid.Locked) ($.Perms.Can "payment" "create")}}<a class="btn small" href="/payments/new?month={{$.Month}}&head_id={{.HeadID}}">Add</a>{{else if $.Grid.Locked}}<small class="muted">Locked</small>{{else if not .Active}}<small class="muted">Retired</small>{{end}}</td></tr>{{end}}{{else}}<tr><td colspan="10" class="empty">No heads found. Add projects and heads to begin.</td></tr>{{end}}</tbody><tfoot><tr class="total"><td colspan="2"><span class="tlabel">Company total</span></td><td class="c">—</td><td class="num">{{money .Grid.Total.Budget}}</td><td class="num">{{money .Grid.Total.Actual}}</td><td class="num {{varClass .Grid.Total.Variance}}">{{money .Grid.Total.Variance}}</td><td class="num">{{remainingText .Grid.Total.Budget .Grid.Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Grid.Total.Budget .Grid.Total.Actual)}}"><i style="--pct:{{usedPct .Grid.Total.Budget .Grid.Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Grid.Total.Budget .Grid.Total.Actual}}</span></div></td><td></td><td></td></tr></tfoot></table></div></div>
+<div class="gridwrap d-only"><div class="card scroll"><table class="matrix grid"><caption class="sr-only">Budget versus actuals by project and head</caption><thead><tr><th class="sticky project-col">Project</th><th class="sticky head-col">Head</th><th class="c">Due</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining ₹</th><th class="num">Remaining %</th><th class="c">Used</th><th class="c">Status</th><th class="c">Action</th></tr></thead><tbody>{{range .Grid.Groups}}<tr class="project-row" data-project-id="{{.ProjectID}}"><td class="sticky project-col" colspan="2"><button class="project-toggle" type="button" data-project-toggle="{{.ProjectID}}" aria-expanded="true"><span class="chev" aria-hidden="true">▾</span><span class="project-title" title="{{.Project}}">{{.Project}}</span><span class="project-count">{{len .Rows}} {{plural (len .Rows) "head" "heads"}}</span></button></td><td></td><td class="num">{{money .Total.Budget}}</td><td class="num">{{money .Total.Actual}}</td><td class="num {{varClass .Total.Variance}}">{{money .Total.Variance}}</td><td class="num">{{remainingText .Total.Budget .Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Total.Budget .Total.Actual)}}"><i style="--pct:{{usedPct .Total.Budget .Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Total.Budget .Total.Actual}}</span></div></td><td></td><td></td></tr>{{range .Rows}}<tr class="head {{if eq .Status "not-paid"}}unpaid{{end}}" data-project-row="{{.ProjectID}}"><td class="sticky project-col project-spacer" aria-hidden="true"></td><td class="sticky head-col"><span class="hname">{{.Head}}</span></td><td class="c due"><span class="duepill {{dueClass .DueDay $.Month .Status}}">{{dueText .DueDay $.Month .Status}}</span><small>{{.DueDay}}</small></td><td class="num">{{money .Budget}}</td><td class="num">{{money .Actual}}</td><td class="num {{varClass .Variance}}">{{money .Variance}}</td><td class="num">{{remainingText .Budget .Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Budget .Actual}}</span></div></td><td class="c"><span class="pill {{.Status}}">{{statusText .Status}}</span></td><td class="c">{{if and .Active (not $.Grid.Locked) ($.Perms.Can "payment" "create")}}<a class="btn small" href="/payments/new?month={{$.Month}}&head_id={{.HeadID}}">Add</a>{{else if $.Grid.Locked}}<small class="muted">Locked</small>{{else if not .Active}}<small class="muted">Retired</small>{{end}}</td></tr>{{end}}{{else}}<tr><td colspan="10" class="empty">{{if .Grid.Filtered}}No heads match these filters. <a href="/grid?month={{.Month}}">Clear filters</a> to show all heads for {{.Month}}.{{else}}No heads found. <a href="/heads">Add projects and heads</a> to begin.{{end}}</td></tr>{{end}}</tbody><tfoot><tr class="total"><td colspan="2"><span class="tlabel">{{.Grid.ScopeLabel}}</span></td><td class="c">—</td><td class="num">{{money .Grid.Total.Budget}}</td><td class="num">{{money .Grid.Total.Actual}}</td><td class="num {{varClass .Grid.Total.Variance}}">{{money .Grid.Total.Variance}}</td><td class="num">{{remainingText .Grid.Total.Budget .Grid.Total.Actual}}</td><td><div class="usedcell"><div class="vbar {{barClass (statusFor .Grid.Total.Budget .Grid.Total.Actual)}}"><i style="--pct:{{usedPct .Grid.Total.Budget .Grid.Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Grid.Total.Budget .Grid.Total.Actual}}</span></div></td><td></td><td></td></tr></tfoot></table></div></div>
 
 {{/* The variance grid is the widest screen in the app and is the one table that
      cannot restack into cards — a head means nothing without its project, its
@@ -206,7 +218,7 @@ const templates = `
     </div>
   </div>
   {{else}}
-  <div class="empty">No heads found. <a href="/heads">Add projects and heads</a> to begin.</div>
+  <div class="empty">{{if .Grid.Filtered}}No heads match these filters. <a href="/grid?month={{.Month}}">Clear filters</a> to show all heads for {{.Month}}.{{else}}No heads found. <a href="/heads">Add projects and heads</a> to begin.{{end}}</div>
   {{end}}
 </div>
 
@@ -214,7 +226,7 @@ const templates = `
      handler hands a caller without that verb no rows, and the panel is not
      rendered for them either: an empty panel told them "No payments in this
      month." beside actuals the same page showed as paid (grid-1). */}}
-{{if or (.Perms.Can "payment" "view") (.Perms.Can "month" "lock")}}<section class="split">{{if .Perms.Can "payment" "view"}}<div><h2>Recent Payments for {{.Month}}</h2><div class="table-wrap"><table class="t-cards"><thead><tr><th>Date</th><th>Project / Head</th><th>Amount</th><th>Payee</th></tr></thead><tbody>{{range .Payments}}<tr><td class="t-lead" data-label="Date">{{.PaidOn}}</td><td data-label="Project / Head"><a href="/payments/{{.ID}}">{{.Project}} / {{.Head}}</a></td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Payee">{{.VendorPayee}}</td></tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No payments in this month.</td></tr>{{end}}</tbody></table></div></div>{{end}}{{if .Perms.Can "month" "lock"}}<div><h2>Month Close</h2>{{if .Grid.Locked}}<p class="muted">Unlocking reopens this month for budget and payment changes.</p><form method="post" action="/months/{{.Month}}/unlock" onsubmit="return confirm('Unlock {{.Month}} and allow changes again?')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Unlock reason<input name="reason" required></label><button>Unlock Month</button></form>{{else}}<p class="muted">{{.CloseGrid.NotPaid}} {{plural .CloseGrid.NotPaid "head is" "heads are"}} unpaid, {{.CloseGrid.Unbudgeted}} {{plural .CloseGrid.Unbudgeted "has" "have"}} unbudgeted spend, and {{.CloseGrid.Over}} {{plural .CloseGrid.Over "is" "are"}} over budget. Review before closing.</p><form method="post" action="/months/{{.Month}}/lock" onsubmit="return confirm('Lock {{.Month}}? Budgets and payments will become read-only.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Lock reason<input name="reason" required></label><button>Lock Month</button></form>{{end}}</div>{{end}}</section>{{end}}
+{{if or (.Perms.Can "payment" "view") (.Perms.Can "month" "lock")}}<section class="split">{{if .Perms.Can "payment" "view"}}<div><h2>Recent Payments for {{.Month}}</h2><div class="table-wrap"><table class="t-cards"><thead><tr><th>Date</th><th>Project / Head</th><th>Amount</th><th>Payee</th></tr></thead><tbody>{{range .Payments}}<tr><td class="t-lead" data-label="Date">{{.PaidOn}}</td><td data-label="Project / Head"><a href="/payments/{{.ID}}">{{.Project}} / {{.Head}}</a></td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Payee">{{.VendorPayee}}</td></tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No payments in this month.</td></tr>{{end}}</tbody></table></div></div>{{end}}{{if .Perms.Can "month" "lock"}}<div><h2>Month Close</h2>{{if .Grid.Locked}}<p class="muted">Unlocking reopens this month for budget and payment changes.</p><form method="post" action="/months/{{.Month}}/unlock" onsubmit="return confirm('Unlock {{.Month}} and allow changes again?')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Unlock reason<input name="reason" required></label><button>Unlock Month</button></form>{{else}}<p class="muted">Full month: {{.CloseGrid.NotPaid}} {{plural .CloseGrid.NotPaid "budgeted head is" "budgeted heads are"}} unpaid, {{.CloseGrid.Unbudgeted}} {{plural .CloseGrid.Unbudgeted "has" "have"}} unbudgeted spend, and {{.CloseGrid.Over}} {{plural .CloseGrid.Over "is" "are"}} over budget. {{.CloseGrid.NoActivity}} heads have no budget or activity and are excluded from unpaid counts. Review before closing.</p><form method="post" action="/months/{{.Month}}/lock" onsubmit="return confirm('Lock {{.Month}}? Budgets and payments will become read-only.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Lock reason<input name="reason" required></label><button>Lock Month</button></form>{{end}}</div>{{end}}</section>{{end}}
 </div>
 {{template "bottom" .}}
 {{end}}
@@ -284,16 +296,16 @@ const templates = `
 <div class="banner good">
   <span class="b-ico" aria-hidden="true">✓</span>
   <div>
-    <b>Payment saved. The request is {{if eq .Request2.Status "partial_review"}}with the manager{{else}}completed{{end}}.</b>
-    <p>{{.Request2.RequesterName}} and {{.Request2.ManagerName}} have been notified. This payment can no longer be edited or cancelled.</p>
+    <b>Payment saved. The request is {{if eq .Request2.Status "partial_review"}}with the manager{{else if eq .Request2.Status "approved"}}still payable for the remaining balance{{else}}completed{{end}}.</b>
+    <p>{{if ne .Request2.Status "approved"}}{{.Request2.RequesterName}} and {{.Request2.ManagerName}} have been notified. {{else}}The remaining balance stays on the same approval. {{end}}This payment can no longer be edited or cancelled.</p>
   </div>
 </div>
 {{else if eq .Outcome "duplicate"}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">i</span>
   <div>
-    <b>This request already has its payment</b>
-    <p>{{.Request2.Number}} was settled by PAY-{{.Payment.ID}} for {{money .Payment.Amount}}, so nothing new was saved. A request accepts exactly one payment; any balance needs a fresh request.</p>
+    <b>This payment confirmation was already recorded</b>
+    <p>PAY-{{.Payment.ID}} for {{money .Payment.Amount}} was already recorded against {{.Request2.Number}}. No additional payment was saved. The current request balance is shown below.</p>
   </div>
 </div>
 {{else if eq .Outcome "immutable"}}
@@ -301,7 +313,7 @@ const templates = `
   <span class="b-ico" aria-hidden="true">i</span>
   <div>
     <b>This payment cannot be edited</b>
-    <p>It settled {{.Request2.Number}}, and a payment linked to a request is never amended or cancelled. Nothing was changed.</p>
+    <p>It was recorded against {{.Request2.Number}}, and a payment linked to a request is never amended or cancelled. Nothing was changed. The current request balance is shown below.</p>
   </div>
 </div>
 {{end}}
@@ -325,16 +337,17 @@ const templates = `
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
   <div class="cmp-row"><span class="l">Paid</span><span class="v">{{money .Payment.Amount}}</span></div>
+  <div class="cmp-row"><span class="l">Total paid on this request</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
   {{/* The balance row reads the request's status, not only the payment's
        settlement: an accepted shortfall keeps settlement="partial" for ever,
        and "still owed" over "Completed — partial accepted" was a contradiction
        (partial-1). */}}
   {{if eq .Request2.Status "completed_partial"}}
-  <div class="cmp-row"><span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
-  {{else if eq .Payment.Settlement "partial"}}
-  <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  <div class="cmp-row"><span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
+  {{else if ne .Request2.Status "completed"}}
+  <div class="cmp-row diff"><span class="l">Still owed to the payee{{if eq .Request2.Status "partial_review"}} · awaiting manager decision{{else}} · remaining approved balance{{end}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
   {{else}}
-  <div class="cmp-row match"><span class="l">Difference · confirmed settled by Accounts</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  <div class="cmp-row match"><span class="l">Difference · {{if gt (sub (approvedOf .Request2) .Request2.PaidAmount) 0}}agreed deduction or adjustment · {{end}}confirmed settled by Accounts</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
   {{end}}
 </div>
 
@@ -347,14 +360,14 @@ const templates = `
     <div><dt>Recorded by</dt><dd>{{.Payment.EnteredByName}} at {{date .Payment.CreatedAt}}</dd></div>
     <div><dt>Payee</dt><dd>{{if and .Request2.VendorID (.Perms.Can "vendor" "view")}}<a href="/vendors/{{deref .Request2.VendorID}}">{{.Payment.VendorPayee}}</a>{{else}}{{.Payment.VendorPayee}}{{end}}</dd></div>
     {{if .Payment.InvoiceNo}}<div><dt>Invoice</dt><dd class="num">{{.Payment.InvoiceNo}}</dd></div>{{end}}
-    <div><dt>Settlement</dt><dd>{{if eq .Payment.Settlement "partial"}}Partial — a balance is still owed{{else}}Fully settled — deductions handled outside this system{{end}}</dd></div>
-    {{if .Payment.PartialReason}}<div style="grid-column:1/-1"><dt>Partial reason</dt><dd>{{.Payment.PartialReason}}</dd></div>{{end}}
+    <div><dt>Recorded settlement</dt><dd>{{if eq .Payment.Settlement "partial"}}Partial payment recorded{{else}}Fully settled — deductions handled outside this system{{end}}</dd></div>
+    {{if .Payment.PartialReason}}<div style="grid-column:1/-1"><dt>Settlement reason</dt><dd>{{.Payment.PartialReason}}</dd></div>{{end}}
     {{if .Payment.Remarks}}<div style="grid-column:1/-1"><dt>Processing note</dt><dd>{{.Payment.Remarks}}</dd></div>{{end}}
   </dl>
   {{/* Said here, on every visit, now that the confirmation banner is shown
        once: the reader who arrives from the ledger months later still needs
        to know why there is no Edit (S12). */}}
-  <p class="hint">This payment settled {{.Request2.Number}} and can no longer be edited or cancelled.</p>
+  <p class="hint">This payment was recorded against {{.Request2.Number}} and can no longer be edited or cancelled. The current request balance is shown above.</p>
 </div>
 
 {{if or .Attachments .RequestAtts}}
@@ -443,7 +456,7 @@ const templates = `
   <div>
     <div class="eyebrow">Accounts · payment entry</div>
     <h1>Record the payment</h1>
-    <p class="sub">{{.Request2.Number}} · {{.Request2.Vendor}} · one request, one payment</p>
+    <p class="sub">{{.Request2.Number}} · {{.Request2.Vendor}} · one approval, linked payments</p>
   </div>
 </section>
 
@@ -468,17 +481,20 @@ const templates = `
 <form method="post" action="/payments" enctype="multipart/form-data">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="request_id" value="{{.Request2.ID}}">
+  <input type="hidden" name="submission_key" value="{{.SubmissionKey}}">
+  <input type="hidden" name="expected_paid" value="{{.Request2.PaidAmount}}">
   <input type="hidden" name="head_id" value="{{.SelectedHeadID}}">
   <input type="hidden" name="vendor_payee" value="{{.Request2.Vendor}}">
   <input type="hidden" name="invoice_no" value="{{.Request2.InvoiceNo}}">
+  {{if .Vendor.Bank}}<section class="banner"><div><b>Vendor payment destination · {{.Vendor.Name}}</b>{{if .Vendor.Bank.UPIID}}<p>UPI ID: <strong>{{.Vendor.Bank.UPIID}}</strong></p>{{end}}{{if .Vendor.Bank.AccountNumber}}<p>Bank: {{.Vendor.Bank.AccountName}} · account {{.Vendor.Bank.AccountNumber}} · IFSC {{.Vendor.Bank.IFSC}}</p>{{end}}<p>Use the destination that matches the payment mode. Confirm current details with the vendor before making a transfer.</p></div></section>{{end}}
   <fieldset>
     <legend>Payment</legend>
     <div class="form-grid">
       <div class="field span-6">
-        <label for="approved">Approved amount</label>
-        <input id="approved" value="{{money (approvedOf .Request2)}}" readonly
-               data-approved="{{approvedOf .Request2}}">
-        <span class="hint">A payment can never exceed this. Overpayment means cancelling and raising a new request.</span>
+        <label for="approved">Remaining approved balance</label>
+        <input id="approved" value="{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}" readonly
+               data-approved="{{sub (approvedOf .Request2) .Request2.PaidAmount}}">
+        <span class="hint">A payment can never exceed this. Earlier installments are already deducted.</span>
       </div>
       <div class="field span-6 money-field">
         <label for="amount">Amount actually paid <span class="req" aria-hidden="true">*</span></label>
@@ -508,7 +524,7 @@ const templates = `
       <div class="field span-4 m-half"><label for="payment_mode">Payment mode <span class="req" aria-hidden="true">*</span></label>
         <select id="payment_mode" name="payment_mode" required>
           <option value="">Choose…</option>
-          {{range paymentModes}}<option value="{{.}}" {{select . $.Payment.PaymentMode}}>{{paymentMode .}}</option>{{end}}
+          {{range .PaymentModeChoices}}<option value="{{.Value}}" {{select .Value $.Payment.PaymentMode}}>{{.Label}}</option>{{end}}
         </select>
       </div>
       <div class="field span-4"><label for="reference_no">Transaction / UTR reference <span class="req" aria-hidden="true">*</span></label><input id="reference_no" name="reference_no" class="num" value="{{.Payment.ReferenceNo}}" required></div>
@@ -578,31 +594,32 @@ const templates = `
            dismiss it in place and the typed amount, mode and reference survive
            (settlement-6). Anchors, not buttons: a button here would submit the
            form it sits in, and without JavaScript the href is the way back. */}}
-      <a class="sh-close" href="/payments/new?request={{.Request2.ID}}"{{if .Settlement.Fragment}} data-close="settle-sheet"{{end}} aria-label="Close">✕</a>
+      {{if .Settlement.Fragment}}<a class="sh-close" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet" aria-label="Close">✕</a>{{else}}<button class="sh-close" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate aria-label="Close">✕</button>{{end}}
     </div>
     <div class="sh-body stack-12">
       {{if .Error}}<div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">✕</span><div><b>{{.Error}}</b><p>Nothing has been saved. Correct it and confirm again.</p></div></div>{{end}}
       <div class="compare">
-        <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money .Settlement.Approved}}</span></div>
+        <div class="cmp-row"><span class="l">Remaining before this payment</span><span class="v">{{money .Settlement.Approved}}</span></div>
         <div class="cmp-row"><span class="l">Actually paid</span><span class="v">{{money .Settlement.Paid}}</span></div>
         {{if .Settlement.Match}}
         <div class="cmp-row match"><span class="l">Difference</span><span class="v">{{money 0}}</span></div>
         {{else}}
-        <div class="cmp-row diff"><span class="l">Difference</span><span class="v">{{money .Settlement.Difference}} lower ⚠</span></div>
+        <div class="cmp-row diff"><span class="l">Difference</span><span class="v">{{if lt .Settlement.Difference 0}}Amount exceeds the remaining approved balance{{else}}{{money .Settlement.Difference}} remaining{{end}} ⚠</span></div>
         {{end}}
       </div>
 
       <div>
-        <span class="flabel" style="margin-bottom:6px">{{if .Settlement.Match}}This matches the approved amount. Confirm to close the request.{{else}}You paid less than was approved. Which is it?{{end}}</span>
+        <span class="flabel" style="margin-bottom:6px">{{if .Settlement.Match}}This matches the approved amount. Confirm to close the request.{{else if lt .Settlement.Difference 0}}Reduce the payment amount to the remaining approved balance.{{else}}Choose what happens to the remaining balance.{{end}}</span>
         <div class="choice">
+          {{if gt .Settlement.Difference 0}}<label><input type="radio" name="settlement" value="installment" required {{if eq .Settlement.Settlement "installment"}}checked{{end}}><span><b>Installment — pay the balance later</b><small>{{money .Settlement.Difference}} remains approved on this request. Record the next payment here.</small></span><span class="outcome warn">Keep payable</span></label>{{end}}
           <label>
-            <input type="radio" name="settlement" value="settled" {{if ne .Settlement.Settlement "partial"}}checked{{end}}>
+            <input type="radio" name="settlement" value="settled" required {{if eq .Settlement.Settlement "settled"}}checked{{end}}>
             <span><b>Fully settled</b><small>The obligation is discharged. Deductions such as TDS or retention were handled outside this system.</small></span>
             <span class="outcome good">Completed</span>
           </label>
           <label>
             <input type="radio" name="settlement" value="partial" {{if eq .Settlement.Settlement "partial"}}checked{{end}}>
-            <span><b>Partial payment</b><small>A balance is genuinely still owed to the payee.</small></span>
+            <span><b>Ask manager to accept a shortfall</b><small>Pause further payment while the approver decides whether to write off the remaining balance.</small></span>
             <span class="outcome warn">Manager review</span>
           </label>
         </div>
@@ -610,21 +627,21 @@ const templates = `
 
       {{/* aria-required, not required: a hidden required control makes the form
            unsubmittable in Chrome. The store re-enforces this server-side. */}}
-      <div class="field" data-when="settlement:partial" {{if ne .Settlement.Settlement "partial"}}hidden{{end}}>
-        <label for="partial_reason">Why only part was paid <span class="req" aria-hidden="true">*</span></label>
-        <textarea id="partial_reason" name="partial_reason" aria-required="true" placeholder="{{.Request2.ManagerName}} reads this when deciding whether to close it.">{{.Settlement.PartialReason}}</textarea>
+      <div class="field">
+        <label for="partial_reason">Reason for any deduction or shortfall <span class="req" aria-hidden="true">*</span></label>
+        <textarea id="partial_reason" name="partial_reason" aria-required="true" placeholder="Required for a short payment that closes the obligation or asks for a writeoff. Explain the deduction or agreed adjustment.">{{.Settlement.PartialReason}}</textarea>
       </div>
 
       <div class="banner info" style="margin:0">
         <span class="b-ico" aria-hidden="true">i</span>
         <div>
           <b>Confirming saves the payment</b>
-          <p>It cannot be edited or cancelled afterwards. The request accepts no further payment — any balance needs a fresh request.</p>
+          <p>It cannot be edited or cancelled afterwards. Choose an installment to keep the remaining approved balance payable.</p>
         </div>
       </div>
     </div>
     <div class="sh-foot">
-      <a class="btn outline" href="/payments/new?request={{.Request2.ID}}"{{if .Settlement.Fragment}} data-close="settle-sheet"{{end}}>Go back</a>
+      {{if .Settlement.Fragment}}<a class="btn outline" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet">Go back</a>{{else}}<button class="btn outline" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate>Go back</button>{{end}}
       <span class="row-end"></span>
       <button class="btn primary" type="submit" formaction="/payments" formmethod="post">Confirm and save payment</button>
     </div>
@@ -703,7 +720,7 @@ const templates = `
   <a class="co is-taken" href="/requests/{{.ID}}">
     <span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
       <small>{{if .OnHold}}On hold — {{.HoldReason}}{{else if .ProcessingByName}}Reserved by {{.ProcessingByName}} at {{hhmm .ProcessingAt}} — you cannot take this one{{else}}{{reqStatus .Status}} — you cannot take this one{{end}}</small></span>
-    <span class="co-amt">{{money (approvedOf .)}}</span>
+    <span class="co-amt">{{money (sub (approvedOf .) .PaidAmount)}}</span>
   </a>
   {{end}}
   {{if and (not .Linkable.Available) (not .Linkable.Unavailable)}}<div class="co"><span class="co-main"><b>No approved requests match</b><small>Clear the search, or check the queue.</small></span></div>{{end}}
@@ -715,7 +732,7 @@ const templates = `
      store.Request. */}}
 {{define "picker_row"}}<span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
     <small>{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}{{.RequesterName}} · {{if eq .Treatment "recoverable"}}Recoverable{{if .Project}} · {{.Project}}{{end}}{{else}}{{.Project}} / {{.Head}}{{end}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
-  <span class="co-amt">{{money (approvedOf .)}}</span>{{end}}
+  <span class="co-amt">{{money (sub (approvedOf .) .PaidAmount)}}</span>{{end}}
 
 {{define "payment_pick_request"}}
 {{template "top" .}}
@@ -787,7 +804,7 @@ const templates = `
   <div>
     <div class="eyebrow">Accounts</div>
     <h1>Payment queue</h1>
-    <p class="sub">{{.Linkable.Counts.Approved}} approved and unclaimed · {{money .Linkable.Counts.ApprovedAmount}} · one request, one payment</p>
+    <p class="sub">{{.Linkable.Counts.Approved}} approved and unclaimed · {{money .Linkable.Counts.ApprovedAmount}} · one approval, linked payments</p>
   </div>
   <div class="pb-actions">
     {{if .Perms.Can "payment" "create"}}<a class="btn primary" href="/payments/new">＋ Record a payment</a>{{end}}
@@ -849,7 +866,7 @@ const templates = `
         <td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a> <span class="t-sub">{{.RequesterName}} · approved {{datep .ApprovedAt}}</span></td>
         <td data-label="Payee">{{.Vendor}}</td>
         <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
-        <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
+        <td class="num" data-label="Amount">{{if or (eq .Status "approved") (eq .Status "processing")}}{{money (sub (approvedOf .) .PaidAmount)}}<span class="subline">remaining approved</span>{{else}}{{money (approvedOf .)}}{{end}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
         <td data-label="Status">{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}<span class="pill approved">Approved</span></td>
         <td class="c" data-label="Action">{{if $.Perms.Can "reservation" "reserve"}}<form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn small primary" type="submit">Take for processing</button></form>{{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}</td>
@@ -860,7 +877,7 @@ const templates = `
         <td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a> <span class="t-sub">{{.RequesterName}} · approved {{datep .ApprovedAt}}</span></td>
         <td data-label="Payee">{{.Vendor}}</td>
         <td data-label="Project / head">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</td>
-        <td class="num" data-label="Amount">{{money (approvedOf .)}}</td>
+        <td class="num" data-label="Amount">{{if or (eq .Status "approved") (eq .Status "processing")}}{{money (sub (approvedOf .) .PaidAmount)}}<span class="subline">remaining approved</span>{{else}}{{money (approvedOf .)}}{{end}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
         <td data-label="Status">
           {{if and .Urgent (ne .Status "completed") (ne .Status "completed_partial")}}<span class="pill urgent">Urgent</span> {{end}}
@@ -1032,10 +1049,10 @@ const templates = `
 
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
-  <div class="cmp-row"><span class="l">Paid on {{dateLong .Payment.PaidOn}}</span><span class="v">{{money .Payment.Amount}}</span></div>
+  <div class="cmp-row"><span class="l">Total paid to date</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
   {{/* "payee", as the request and the payment screens say: a reimbursement
        is owed to the employee, not to a vendor (partial-1). */}}
-  <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
 </div>
 
 <div class="banner warn">
@@ -1122,7 +1139,7 @@ const templates = `
      the person who can carry it out. */}}
 {{if and (eq .User.ID .Request2.ManagerID) (.Perms.Can "approval" "accept_partial")}}
 <div class="action-bar">
-  <span class="ab-note d-only">No further payment can be attached either way.</span>
+  <span class="ab-note d-only">Choose a writeoff only when the balance is no longer owed.</span>
   <span class="row-end"></span>
   <button class="btn outline" type="button" data-open="concern-sheet">Raise a concern</button>
   {{/* The mockup's green .btn.approve has no rule in fervid-ds.css, so the
@@ -1130,17 +1147,18 @@ const templates = `
   <button class="btn primary" type="button" data-open="close-sheet">Accept and close</button>
 </div>
 
+{{if and (eq .Request2.ManagerID .User.ID) (.Perms.Can "approval" "accept_partial")}}<form class="card stack-12" method="post" action="/requests/{{.Request2.ID}}/accept-partial"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="decision" value="continue"><h2>Pay the remaining balance later</h2><p>Keep {{money (sub (approvedOf .Request2) .Request2.PaidAmount)}} payable on this approval. No new request is needed.</p><label for="continue-note">Payment plan or reason</label><textarea id="continue-note" name="note" required></textarea><button class="btn primary" type="submit">Keep balance payable</button></form>{{end}}
 <div class="overlay" id="close-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/accept-partial">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <div class="sh-head"><div><h2>Accept {{money .Payment.Amount}} and close?</h2><p class="sh-sub">{{.Request2.Number}} · {{money (sub (approvedOf .Request2) .Payment.Amount)}} will never be paid against this request</p></div><button class="sh-close" type="button" data-close="close-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-head"><div><h2>Accept {{money .Request2.PaidAmount}} and close?</h2><p class="sh-sub">{{.Request2.Number}} · {{money (sub (approvedOf .Request2) .Request2.PaidAmount)}} will never be paid against this request</p></div><button class="sh-close" type="button" data-close="close-sheet" aria-label="Close">✕</button></div>
     <div class="sh-body stack-12">
       <div class="compare">
         <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
-        <div class="cmp-row"><span class="l">Paid and accepted</span><span class="v">{{money .Payment.Amount}}</span></div>
-        <div class="cmp-row diff"><span class="l">Written off from this request</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+        <div class="cmp-row"><span class="l">Total paid and accepted</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
+        <div class="cmp-row diff"><span class="l">Written off from this request</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
       </div>
-      <p class="hint" style="margin:0">The request closes as <b>Completed — partial accepted</b>. If the balance is still due later, {{.Request2.RequesterName}} raises a new request for {{money (sub (approvedOf .Request2) .Payment.Amount)}}.</p>
+      <p class="hint" style="margin:0">The request closes as <b>Completed — partial accepted</b>. Only accept this if the balance is no longer owed. Otherwise choose Keep balance payable to continue against this approval.</p>
       <div class="field"><label for="cl-note">Note <span class="opt" aria-hidden="true">optional</span></label><textarea id="cl-note" name="note" placeholder="Recorded in the history and visible to everyone."></textarea></div>
     </div>
     <div class="sh-foot"><button class="btn outline" type="button" data-close="close-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Accept and close</button></div>
@@ -1401,7 +1419,8 @@ const templates = `
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Monthly plan</div><h1>Budgets</h1><p class="sub muted">Edit planned spend per head for the selected month.</p></div>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</section>
 <form class="toolbar" method="get"><label>Month<input type="month" name="month" value="{{.Month}}"></label><button>Open</button><a class="btn outline" href="/months">Month history</a><a class="btn outline" href="/grid?month={{.Month}}">View grid</a></form>{{if .Grid.Locked}}<div class="locked">This month is locked. Unlock it with a reason before changing budgets or payments.</div>{{end}}
-<form class="budget-editor" method="post" action="/budgets"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="month" value="{{.Month}}"><table class="t-cards"><thead><tr><th>Project</th><th>Head</th><th>Status</th><th>Budget</th><th class="num">Actual</th><th class="num">Used</th></tr></thead><tbody>{{range .Grid.Rows}}<tr><td data-label="Project">{{.Project}}</td><td class="t-lead" data-label="Head">{{.Head}}</td><td data-label="Status">{{if .Active}}<span class="pill good">Active</span>{{else}}<span class="pill neutral">Retired</span>{{end}}</td><td data-label="Budget"><span><input name="budget_{{.HeadID}}" aria-label="Budget for {{.Project}} / {{.Head}}" value="{{if $.BudgetInputs}}{{index $.BudgetInputs .HeadID}}{{else}}{{money .Budget}}{{end}}" {{if or $.Grid.Locked (not .Active)}}disabled{{end}}>{{if not .Active}}<span class="hint">Retired: kept for history, not editable.</span>{{end}}</span></td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No active heads for this month. <a href="/heads">Add a head</a> first.</td></tr>{{end}}</tbody></table><div class="form-actions"><button class="primary" {{if .Grid.Locked}}disabled{{end}}>Save Budgets</button></div></form>
+{{if .BudgetErrors}}<div class="budget-error-summary" role="region" aria-labelledby="budget-errors-heading" tabindex="-1"><h2 id="budget-errors-heading">Correct the unsaved budgets</h2><ul>{{range .Grid.Rows}}{{$row := .}}{{with index $.BudgetErrors .HeadID}}<li><a href="#budget_{{$row.HeadID}}">{{$row.Project}} / {{$row.Head}}: {{.}}</a></li>{{end}}{{end}}</ul></div>{{end}}
+<form class="budget-editor" method="post" action="/budgets"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="month" value="{{.Month}}"><table class="t-cards"><thead><tr><th>Project</th><th>Head</th><th>Status</th><th>Budget</th><th class="num">Actual</th><th class="num">Used</th></tr></thead><tbody>{{range .Grid.Rows}}{{$row := .}}<tr><td data-label="Project">{{.Project}}</td><td class="t-lead" data-label="Head">{{.Head}}</td><td data-label="Status">{{if .Active}}<span class="pill good">Active</span>{{else}}<span class="pill neutral">Retired</span>{{end}}</td><td data-label="Budget"><span><input id="budget_{{.HeadID}}" name="budget_{{.HeadID}}" inputmode="decimal" {{if index $.BudgetErrors .HeadID}}aria-invalid="true" aria-describedby="budget_error_{{.HeadID}}"{{end}} aria-label="Budget for {{.Project}} / {{.Head}}" value="{{budgetInputValue $.BudgetInputs .HeadID .Budget}}" {{if or $.Grid.Locked (not .Active)}}disabled{{end}}>{{with index $.BudgetErrors .HeadID}}<span class="field-error" id="budget_error_{{$row.HeadID}}">Not saved: {{.}}</span>{{else}}{{if and $.BudgetInputs (not $.BudgetSaveFailed)}}<span class="budget-saved">Saved</span>{{end}}{{end}}{{if not .Active}}<span class="hint">Retired: kept for history, not editable.</span>{{end}}</span></td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No active heads for this month. <a href="/heads">Add a head</a> first.</td></tr>{{end}}</tbody></table><div class="form-actions"><button class="primary" {{if .Grid.Locked}}disabled{{end}}>Save Budgets</button></div></form>
 {{template "bottom" .}}
 {{end}}
 
@@ -1416,8 +1435,8 @@ const templates = `
 {{define "heads"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Setup</div><h1>Heads</h1><p class="sub muted">Maintain spend heads, due days, and sort order.</p></div></section>
-<form class="toolbar setup-form" method="post" action="/heads"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project<select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label><label>Head name<input name="name" required></label><label>Due day<input name="due_day" type="number" min="1" max="31" placeholder="5"></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Head</button></form>
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Project</th><th>Head</th><th>Due</th><th>Status</th><th>Order</th><th>Update</th></tr></thead><tbody>{{range .Heads}}{{$head := .}}<tr><td data-label="Project">{{/* $.AllProjects, not $.Projects. This screen lists every head, retired
+<form class="toolbar setup-form heads-setup-form" method="post" action="/heads"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project<select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label><label>Head name<input name="name" required></label><label>Due day<input name="due_day" type="number" min="1" max="31" placeholder="5"></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Head</button></form>
+<div class="table-wrap"><table class="t-cards heads-editor"><thead><tr><th>Project</th><th>Head</th><th>Due</th><th>Status</th><th>Order</th><th>Update</th></tr></thead><tbody>{{range .Heads}}{{$head := .}}<tr><td data-label="Project">{{/* $.AllProjects, not $.Projects. This screen lists every head, retired
      projects included (T12), and the row select used to be populated from the
      active set only — so a head whose project had been retired had no matching
      option, the browser selected the first one, and that row's own Save moved the
@@ -1431,7 +1450,7 @@ const templates = `
      229 x 24 option elements and 470 KB, of which a reader ever reads one. The
      one option that is rendered is looked up rather than taken from the head, so
      it keeps its "(retired)" marker: which project a head is filed under is the
-     whole point of the column. */}}<select form="head-{{.ID}}" name="project_id" aria-label="Project for {{.Name}}" data-project-select data-chosen="{{$head.ProjectID}}">{{range $.AllProjects}}{{if eq .ID $head.ProjectID}}<option value="{{.ID}}" selected>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}</select></td><td class="t-lead" data-label="Head"><input form="head-{{.ID}}" name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Due"><input form="head-{{.ID}}" name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td><td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="head-{{.ID}}" name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update"><span><form id="head-{{.ID}}" method="post" action="/heads"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="head-{{.ID}}">Save</button></span></td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No heads yet. Add the first one above.</td></tr>{{end}}</tbody></table></div>
+     whole point of the column. */}}<select form="head-{{.ID}}" name="project_id" aria-label="Project for {{.Name}}" title="{{.Project}}" data-project-select data-chosen="{{$head.ProjectID}}">{{range $.AllProjects}}{{if eq .ID $head.ProjectID}}<option value="{{.ID}}" selected>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}</select></td><td class="t-lead" data-label="Head"><input form="head-{{.ID}}" name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Due"><input form="head-{{.ID}}" name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td><td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="head-{{.ID}}" name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update"><span><form id="head-{{.ID}}" method="post" action="/heads"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="head-{{.ID}}">Save</button></span></td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No heads yet. Add the first one above.</td></tr>{{end}}</tbody></table></div>
 {{/* Every project, once, for the row pickers above. Retired ones are included
      and marked, because a head already filed under a retired project must keep
      showing it — only the Add form above is restricted to the active set. */}}
@@ -1705,14 +1724,10 @@ const templates = `
 </section>
 
 {{if .Vendor.ID}}
-<div class="segmented">
-  <a class="is-active" href="/vendors/{{.Vendor.ID}}">Record</a>
-  <a aria-disabled="true">Requests <span class="n">Soon</span></a>
-  <a aria-disabled="true">Payments <span class="n">Soon</span></a>
-  <a aria-disabled="true">History <span class="n">Soon</span></a>
-</div>
+{{template "vendor_tabs" .}}
 {{end}}
 
+{{if .VendorGSTError}}<div class="alert error" role="alert"><b>Correct this field</b><ul><li><a href="#v-gst">{{.VendorGSTError}}</a></li></ul></div>{{end}}
 <form method="post" action="{{if .Vendor.ID}}/vendors/{{.Vendor.ID}}{{else}}/vendors{{end}}">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
 
@@ -1737,7 +1752,7 @@ const templates = `
   <fieldset {{if not .VendorEditable}}disabled{{end}}>
     <legend>Statutory</legend>
     <div class="form-grid">
-      <div class="field span-4 m-half"><label for="v-gst">GSTIN</label><input id="v-gst" class="num" name="gstin" value="{{.Vendor.GSTIN}}" maxlength="15"><span class="hint">15 characters, or blank if the vendor has none.</span></div>
+      <div class="field span-4 m-half"><label for="v-gst">GSTIN</label><input id="v-gst" class="num" name="gstin" value="{{.Vendor.GSTIN}}" maxlength="15" {{if .VendorGSTError}}aria-invalid="true" aria-describedby="v-gst-error"{{end}}>{{if .VendorGSTError}}<span id="v-gst-error" class="field-error">{{.VendorGSTError}}</span>{{end}}<span class="hint">15 characters, or blank if the vendor has none.</span></div>
       <div class="field span-4 m-half"><label for="v-pan">PAN</label><input id="v-pan" class="num" name="pan" value="{{.Vendor.PAN}}"></div>
       <div class="field span-4 m-half"><label for="v-msme">MSME / Udyam number</label><input id="v-msme" class="num" name="msme_udyam" value="{{.Vendor.MSMEUdyam}}"></div>
       <div class="field span-4 m-half"><label for="v-tds">TDS section</label><select id="v-tds" name="tds_section">
@@ -1783,9 +1798,7 @@ const templates = `
       <div class="field span-3 m-half"><label for="b-upi">UPI ID</label><input id="b-upi" name="upi_id" value="{{.Vendor.Bank.UPIID}}" placeholder="Optional" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
       <div class="field span-3 m-half"><label for="b-mode">Default mode</label><select id="b-mode" name="default_payment_mode" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
         <option value="" {{select .Vendor.Bank.DefaultPaymentMode ""}}>Not set</option>
-        <option value="bank_transfer" {{select .Vendor.Bank.DefaultPaymentMode "bank_transfer"}}>Bank transfer — NEFT</option>
-        <option value="rtgs" {{select .Vendor.Bank.DefaultPaymentMode "rtgs"}}>RTGS</option>
-        <option value="cheque" {{select .Vendor.Bank.DefaultPaymentMode "cheque"}}>Cheque</option>
+        {{range .VendorModeOptions}}<option value="{{.}}" {{select . $.Vendor.Bank.DefaultPaymentMode}}>{{.}}</option>{{end}}
       </select></div>
       <div class="field span-3 m-half"><label for="b-terms">Payment terms (days)</label><input id="b-terms" class="num" type="number" min="0" name="payment_terms_days" value="{{.Vendor.Bank.PaymentTermsDays}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
     </div>
@@ -2086,8 +2099,8 @@ const templates = `
       {{end}}
     </div>
     <div class="field span-6 m-half">
-      <label for="expected-return">Expected return date <span class="req" aria-hidden="true">*</span></label>
-      <input id="expected-return" type="date" name="expected_return_date" aria-required="true" value="{{.Request2.ExpectedReturnDate}}">
+      <label for="expected-return">Expected return date <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "expected-return"}}<span class="field-error-message" id="error-expected-return">{{.}}</span>{{end}}
+      <input id="expected-return" type="date" name="expected_return_date" aria-required="true" value="{{.Request2.ExpectedReturnDate}}" {{if index .RequestFieldErrors "expected-return"}}aria-invalid="true" aria-describedby="error-expected-return"{{end}}>
     </div>
     {{/* Which extra fields a category needs is the category's own data, so an
          admin-added one behaves like a seeded one. data-when carries the current
@@ -2117,8 +2130,8 @@ const templates = `
     </div>
     {{end}}
     <div class="field span-12">
-      <label for="terms">Repayment or refund terms <span class="req" aria-hidden="true">*</span></label>
-      <textarea id="terms" name="repayment_notes" aria-required="true">{{.Request2.RepaymentNotes}}</textarea>
+      <label for="terms">Repayment or refund terms <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "terms"}}<span class="field-error-message" id="error-terms">{{.}}</span>{{end}}
+      <textarea id="terms" name="repayment_notes" aria-required="true" {{if index .RequestFieldErrors "terms"}}aria-invalid="true" aria-describedby="error-terms"{{end}}>{{.Request2.RepaymentNotes}}</textarea>
     </div>
     <div class="field span-12">
       <div class="banner brand" style="margin:0">
@@ -2136,9 +2149,9 @@ const templates = `
   <legend>Charge it to</legend>
   <div class="form-grid">
     <div class="field span-6 m-half">
-      <label for="project">Project <span class="req" aria-hidden="true">*</span></label>
+      <label for="project">Project <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "project"}}<span class="field-error-message" id="error-project">{{.}}</span>{{end}}
       <select id="project" name="project_id" aria-required="true"
-              hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
+              hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change" {{if index .RequestFieldErrors "project"}}aria-invalid="true" aria-describedby="error-project"{{end}}>
         <option value="">Choose a project</option>
         {{/* "(retired)" only ever appears on the edit form: offerRetiredRefs adds
              the request's own project or head back when it was retired after the
@@ -2149,8 +2162,8 @@ const templates = `
       <span class="hint">Picking a project narrows the heads below to that project's own.</span>
     </div>
     <div class="field span-6 m-half">
-      <label for="head">Head <span class="req" aria-hidden="true">*</span></label>
-      <select id="head" name="head_id" aria-required="true">
+      <label for="head">Head <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "head"}}<span class="field-error-message" id="error-head">{{.}}</span>{{end}}
+      <select id="head" name="head_id" aria-required="true" {{if index .RequestFieldErrors "head"}}aria-invalid="true" aria-describedby="error-head"{{end}}>
         <option value="">Choose a head</option>
         {{range .Heads}}{{if or (not (deref $.Request2.ProjectID)) (eq .ProjectID (deref $.Request2.ProjectID))}}<option value="{{.ID}}" {{if eq (deref $.Request2.HeadID) .ID}}selected{{end}}>{{.Project}} / {{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}
       </select>
@@ -2172,6 +2185,7 @@ const templates = `
      bank details live on the vendor record behind vendor_bank (Phase 1V). */}}
 {{define "request_form"}}
 {{template "top" .}}
+{{template "request_error_summary" .}}
 <section class="page-banner">
   <div>
     <div class="eyebrow">New request · step 2 of 2</div>
@@ -2189,8 +2203,8 @@ const templates = `
     <legend>What is this for</legend>
     <div class="form-grid">
       <div class="field span-12">
-        <label for="short-title">Short title <span class="req" aria-hidden="true">*</span></label>
-        <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required>
+        <label for="short-title">Short title <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "short-title"}}<span class="field-error-message" id="error-short-title">{{.}}</span>{{end}}
+        <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required {{if index .RequestFieldErrors "short-title"}}aria-invalid="true" aria-describedby="error-short-title"{{end}}>
         <span class="hint">What your approver will see in their approval list.</span>
       </div>
       {{/* The recoverable treatment is only offered where the store will accept
@@ -2243,9 +2257,9 @@ const templates = `
     <legend>Amount and timing</legend>
     <div class="form-grid">
       <div class="field span-6 money-field">
-        <label for="amount">Amount <span class="req" aria-hidden="true">*</span></label>
-        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required
-          hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur"></span>
+        <label for="amount">Amount <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "amount"}}<span class="field-error-message" id="error-amount">{{.}}</span>{{end}}
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{if .RequestRawAmount}}{{.RequestRawAmount}}{{else}}{{amountValue .Request2.Amount}}{{end}}" required
+          hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur" {{if index .RequestFieldErrors "amount"}}aria-invalid="true" aria-describedby="error-amount"{{end}}></span>
         <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
       </div>
       <div class="field span-6 m-half">
@@ -2274,7 +2288,7 @@ const templates = `
     <legend>Vendor and {{if eq .FormType "vendor_invoice"}}invoice{{else}}advance{{end}}</legend>
     <div class="form-grid">
       <div class="field span-6">
-        <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>
+        <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "vendor"}}<span class="field-error-message" id="error-vendor">{{.}}</span>{{end}}
         {{/* The combobox is offered only to somebody who may actually reach
              GET /vendors/search. Everyone else — and every browser with no
              JavaScript — gets the plain select below, which posts the same
@@ -2284,7 +2298,7 @@ const templates = `
         <span class="combo">
           <input class="combo-input" id="vendor" name="q" aria-required="true" autocomplete="off" value="{{.Request2.Vendor}}"
                  placeholder="Type a name, GSTIN or city"
-                 hx-get="/vendors/search" hx-trigger="input changed delay:250ms" hx-target="#vendor-options">
+                 hx-get="/vendors/search" hx-trigger="input changed delay:250ms" hx-target="#vendor-options" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
           <span class="combo-caret" aria-hidden="true">▾</span>
         </span>
         <div id="vendor-options"></div>
@@ -2300,7 +2314,7 @@ const templates = `
         <input type="hidden" name="vendor_id" id="vendor-id" data-combo-value value="{{deref .Request2.VendorID}}">
         <span class="hint">Type to search the vendor master. Bank details stay in the vendor record — never on this form.</span>
         {{else}}
-        <select id="vendor" name="vendor_id" aria-required="true">
+        <select id="vendor" name="vendor_id" aria-required="true" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
           <option value="">Choose a vendor</option>
           {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
         </select>
@@ -2309,18 +2323,18 @@ const templates = `
       </div>
       {{if eq .FormType "vendor_invoice"}}
       <div class="field span-3 m-half">
-        <label for="invoice-no">Invoice number <span class="req" aria-hidden="true">*</span></label>
+        <label for="invoice-no">Invoice number <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "invoice-no"}}<span class="field-error-message" id="error-invoice-no">{{.}}</span>{{end}}
         <input id="invoice-no" name="invoice_no" value="{{.Request2.InvoiceNo}}" required
-               hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur">
+               hx-post="/requests/duplicate-check" hx-include="closest form" hx-target="#dup-check" hx-trigger="blur" {{if index .RequestFieldErrors "invoice-no"}}aria-invalid="true" aria-describedby="error-invoice-no"{{end}}>
       </div>
       <div class="field span-3 m-half">
-        <label for="invoice-date">Invoice date <span class="req" aria-hidden="true">*</span></label>
-        <input id="invoice-date" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required>
+        <label for="invoice-date">Invoice date <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "invoice-date"}}<span class="field-error-message" id="error-invoice-date">{{.}}</span>{{end}}
+        <input id="invoice-date" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required {{if index .RequestFieldErrors "invoice-date"}}aria-invalid="true" aria-describedby="error-invoice-date"{{end}}>
       </div>
       {{else}}
       <div class="field span-6">
-        <label for="advance-reason">Reason for the advance <span class="req" aria-hidden="true">*</span></label>
-        <input id="advance-reason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required>
+        <label for="advance-reason">Reason for the advance <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "advance-reason"}}<span class="field-error-message" id="error-advance-reason">{{.}}</span>{{end}}
+        <input id="advance-reason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required {{if index .RequestFieldErrors "advance-reason"}}aria-invalid="true" aria-describedby="error-advance-reason"{{end}}>
       </div>
       {{end}}
     </div>
@@ -2337,8 +2351,8 @@ const templates = `
         <span class="hint">Reimbursements always pay the person raising them.</span>
       </div>
       <div class="field span-6 m-half">
-        <label for="expense-date">Expense date <span class="req" aria-hidden="true">*</span></label>
-        <input id="expense-date" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required>
+        <label for="expense-date">Expense date <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "expense-date"}}<span class="field-error-message" id="error-expense-date">{{.}}</span>{{end}}
+        <input id="expense-date" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required {{if index .RequestFieldErrors "expense-date"}}aria-invalid="true" aria-describedby="error-expense-date"{{end}}>
       </div>
     </div>
   </fieldset>
@@ -2365,8 +2379,8 @@ const templates = `
     <legend>Purpose and documents</legend>
     <div class="form-grid">
       <div class="field span-12">
-        <label for="purpose">Purpose <span class="req" aria-hidden="true">*</span></label>
-        <textarea id="purpose" name="purpose" required>{{.Request2.Purpose}}</textarea>
+        <label for="purpose">Purpose <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "purpose"}}<span class="field-error-message" id="error-purpose">{{.}}</span>{{end}}
+        <textarea id="purpose" name="purpose" required {{if index .RequestFieldErrors "purpose"}}aria-invalid="true" aria-describedby="error-purpose"{{end}}>{{.Request2.Purpose}}</textarea>
       </div>
       <div class="field span-12">
         <span class="flabel">Supporting document {{if eq (index .Settings "require_attachments") "1"}}<span class="req" aria-hidden="true">*</span>{{else}}<span class="opt" aria-hidden="true">optional</span>{{end}}</span>
@@ -2394,8 +2408,8 @@ const templates = `
     <legend>Who approves it</legend>
     <div class="form-grid">
       <div class="field span-6">
-        <label for="approver">Approver <span class="req" aria-hidden="true">*</span></label>
-        <select id="approver" name="manager_id" required {{if eq (index .Settings "allow_approver_choice") "0"}}disabled{{end}}>
+        <label for="approver">Approver <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "approver"}}<span class="field-error-message" id="error-approver">{{.}}</span>{{end}}
+        <select id="approver" name="manager_id" required {{if eq (index .Settings "allow_approver_choice") "0"}}disabled{{end}} {{if index .RequestFieldErrors "approver"}}aria-invalid="true" aria-describedby="error-approver"{{end}}>
           <option value="">Choose an approver</option>
           {{range .Approvers}}<option value="{{.ID}}" {{if eq $.Request2.ManagerID .ID}}selected{{end}}>{{.Name}}{{if eq $.Request2.ManagerID .ID}} (your default){{end}}</option>{{end}}
         </select>
@@ -2420,6 +2434,7 @@ const templates = `
        between the requester and the submit button: an empty answer leaves it
        empty, and a full one only points. */}}
   <div id="dup-check" aria-live="polite">{{if .Similar}}{{template "request_duplicates" .}}{{end}}</div>
+  {{if eq .FormType "vendor_invoice"}}<div class="field"><label for="duplicate-reason">Duplicate invoice override reason <span class="opt">only if a match is found</span></label><textarea id="duplicate-reason" name="duplicate_reason">{{.DuplicateReason}}</textarea><span class="hint">Check existing requests first. To intentionally reuse the same vendor invoice in the same year, explain why in at least 10 characters. The reason is recorded in the audit trail.</span></div>{{end}}
 
   <div class="action-bar">
     <span class="ab-note d-only">Submitting sends it to your approver and creates the request number.</span>
@@ -2485,6 +2500,7 @@ const templates = `
       <button class="sh-close" type="button" data-close="filter-sheet" aria-label="Close">✕</button>
     </div>
     <div class="sh-body stack-12">
+      <input type="hidden" name="vendor_id" value="{{.RequestVendorID}}"><input type="hidden" name="scope" value="{{.Scope}}">
       <input type="hidden" name="bucket" value="{{.Bucket}}">
       <div class="field"><label for="fs-ty">Type</label><select id="fs-ty" name="type">
         <option value="">Any type</option>
@@ -2497,12 +2513,12 @@ const templates = `
       </select></div>
       <div class="field"><label for="fs-pr">Project</label><select id="fs-pr" name="project_id">
         <option value="">All projects</option>
-        {{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        {{range .Projects}}<option value="{{.ID}}" {{if eq $.RequestProjectID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
       </select></div>
       <div class="field"><label for="fs-q">Search</label><input id="fs-q" name="q" value="{{.Query}}"></div>
     </div>
     <div class="sh-foot">
-      <a class="btn outline" href="/requests">Clear all</a>
+      <a class="btn outline" href="{{.RequestClearHref}}">Clear filters</a>
       <span class="row-end"></span>
       <button class="btn primary" type="submit">Show requests</button>
     </div>
@@ -2532,12 +2548,13 @@ const templates = `
     <p class="sub">{{if .Page.Truncated}}{{len .Requests}} of {{.Page.Total}} shown{{else}}{{len .Requests}} shown{{end}} · sorted by who is holding them up</p>
   </div>
   <div class="pb-actions">
-    <a class="btn outline" href="/requests/export.csv?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;q={{.Query}}">⤓ Export CSV</a>
+    <a class="btn outline" href="/requests/export.csv?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;type={{.TypeFilter}}&amp;project_id={{.RequestProjectID}}&amp;vendor_id={{.RequestVendorID}}&amp;treatment={{.Treatment}}&amp;status={{.Status}}&amp;q={{.Query}}">⤓ Export CSV</a>
     {{if .Perms.Can "request" "create"}}<a class="btn primary" href="/requests/new">＋ New request</a>{{end}}
   </div>
 </section>
 
 <form class="toolbar" method="get" action="/requests">
+  <input type="hidden" name="vendor_id" value="{{.RequestVendorID}}"><input type="hidden" name="project_id" value="{{.RequestProjectID}}"><input type="hidden" name="scope" value="{{.Scope}}">
   <input type="hidden" name="bucket" value="{{.Bucket}}">
   <div class="field search"><label for="q">Search</label><input id="q" name="q" value="{{.Query}}" placeholder="Number, payee, invoice, purpose…"></div>
   <div class="field"><label for="ty">Type</label><select id="ty" name="type">
@@ -2554,19 +2571,21 @@ const templates = `
 </form>
 
 <form class="m-filters" method="get" action="/requests">
+  <input type="hidden" name="vendor_id" value="{{.RequestVendorID}}"><input type="hidden" name="project_id" value="{{.RequestProjectID}}"><input type="hidden" name="scope" value="{{.Scope}}">
   <input type="hidden" name="bucket" value="{{.Bucket}}">
-  <span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search requests…" aria-label="Search requests"></span>
+  <input type="hidden" name="type" value="{{.TypeFilter}}"><input type="hidden" name="treatment" value="{{.Treatment}}"><span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search requests…" aria-label="Search requests"></span>
   <button class="btn filter-btn" type="button" data-open="filter-sheet">Filters</button>
 </form>
 
+<p class="filter-reset"><a class="btn outline" href="{{.RequestClearHref}}">Clear filters</a> <span class="hint">Open includes payment in progress. Closed includes completed, rejected, withdrawn and cancelled requests.</span></p>
 <div class="segmented" style="margin-bottom:12px">
   {{range requestTabs}}<a class="{{if eq $.Bucket .Key}}is-active{{end}}"
     {{if eq $.Bucket .Key}}aria-current="page"{{end}}
-    href="/requests?bucket={{.Key}}&amp;q={{$.Query}}">{{.Label}} <span class="n">{{index $.Counts .Key}}</span></a>{{end}}
+    href="/requests?scope={{$.Scope}}&amp;bucket={{.Key}}&amp;type={{$.TypeFilter}}&amp;project_id={{$.RequestProjectID}}&amp;vendor_id={{$.RequestVendorID}}&amp;treatment={{$.Treatment}}&amp;q={{$.Query}}">{{.Label}} <span class="n">{{index $.Counts .Key}}</span></a>{{end}}
 </div>
 
 <div class="req-list">
-  {{range .Requests}}{{template "request_card" (card . $.User.ID)}}{{else}}<p class="empty">No requests match. Try another tab, or clear the filters.</p>{{end}}
+  {{range .Requests}}{{template "request_card" (card . $.User.ID)}}{{else}}<p class="empty">No requests match. <a href="{{.RequestClearHref}}">Clear filters</a> or choose another tab.</p>{{end}}
 </div>
 
 {{/* Paging, so nothing is merely unreachable. The cap is real — a screen does not
@@ -2577,8 +2596,8 @@ const templates = `
 <div class="cluster" style="margin-top:14px">
   <span class="muted small">Showing {{if .Requests}}{{add .Page.Offset 1}}–{{add .Page.Offset (len .Requests)}}{{else}}0{{end}} of {{.Page.Total}}</span>
   <span class="row-end"></span>
-  {{if .Page.Offset}}<a class="btn outline" href="/requests?bucket={{.Bucket}}&amp;status={{.Status}}&amp;type={{.TypeFilter}}&amp;treatment={{.Treatment}}&amp;q={{urlquery .Query}}&amp;offset={{sub0 .Page.Offset .Page.Limit}}">← Newer</a>{{end}}
-  {{if .Page.Truncated}}<a class="btn outline" href="/requests?bucket={{.Bucket}}&amp;status={{.Status}}&amp;type={{.TypeFilter}}&amp;treatment={{.Treatment}}&amp;q={{urlquery .Query}}&amp;offset={{add .Page.Offset (len .Requests)}}">Older →</a>{{end}}
+  {{if .Page.Offset}}<a class="btn outline" href="/requests?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;status={{.Status}}&amp;type={{.TypeFilter}}&amp;project_id={{.RequestProjectID}}&amp;vendor_id={{.RequestVendorID}}&amp;treatment={{.Treatment}}&amp;q={{urlquery .Query}}&amp;offset={{sub0 .Page.Offset .Page.Limit}}">← Newer</a>{{end}}
+  {{if .Page.Truncated}}<a class="btn outline" href="/requests?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;status={{.Status}}&amp;type={{.TypeFilter}}&amp;project_id={{.RequestProjectID}}&amp;vendor_id={{.RequestVendorID}}&amp;treatment={{.Treatment}}&amp;q={{urlquery .Query}}&amp;offset={{add .Page.Offset (len .Requests)}}">Older →</a>{{end}}
 </div>
 {{end}}
 
@@ -2636,7 +2655,7 @@ const templates = `
     <div class="sh-body stack-12">
       <div class="field money-field">
         <label for="ap-amount">Amount approved</label>
-        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="ap-amount" name="approved_amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="ap-amount" name="approved_amount" inputmode="decimal" value="{{if .RequestRawAmount}}{{.RequestRawAmount}}{{else}}{{amountValue .Request2.Amount}}{{end}}" required></span>
         <span class="in-words">{{inWords .Request2.Amount}}</span>
         <span class="hint">You may approve a smaller amount than was asked for.</span>
       </div>
@@ -2817,27 +2836,28 @@ const templates = `
 <div class="section-head"><h2>Payment outcome</h2></div>
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
-  <div class="cmp-row"><span class="l">Paid on {{dateLong .Payment.PaidOn}}</span><span class="v">{{money .Payment.Amount}}</span></div>
+  <div class="cmp-row"><span class="l">Total paid to date</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
   {{/* The status decides the row, not the settlement alone: an accepted
        shortfall keeps settlement="partial", and "still owed" under
        "Completed — partial accepted · Nothing pending" contradicted the
        manual's own meaning of the row (partial-1). */}}
   {{if eq .Request2.Status "completed_partial"}}
-  <div class="cmp-row"><span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
-  {{else if eq .Payment.Settlement "partial"}}
-  <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  <div class="cmp-row"><span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
+  {{else if ne .Request2.Status "completed"}}
+  <div class="cmp-row diff"><span class="l">Still owed to the payee{{if eq .Request2.Status "partial_review"}} · awaiting manager decision{{else}} · remaining approved balance{{end}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
   {{else}}
-  <div class="cmp-row match"><span class="l">Difference · confirmed settled by Accounts</span><span class="v">{{money (sub (approvedOf .Request2) .Payment.Amount)}}</span></div>
+  <div class="cmp-row match"><span class="l">Difference · {{if gt (sub (approvedOf .Request2) .Request2.PaidAmount) 0}}agreed deduction or adjustment · {{end}}confirmed settled by Accounts</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
   {{end}}
 </div>
 {{if .Payment.PartialReason}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">i</span>
-  <div><b>{{.Payment.EnteredByName}} marked this a genuine partial payment</b><p>{{.Payment.PartialReason}}</p></div>
+  <div><b>{{.Payment.EnteredByName}} provided this settlement reason</b><p>{{.Payment.PartialReason}}</p></div>
 </div>
 {{end}}
 {{end}}
 
+{{if .RequestPayments}}<div class="card" id="payment-history"><div class="card-head"><h2>Payment history</h2><span>{{len .RequestPayments}} linked payments</span></div><ul>{{range .RequestPayments}}<li>{{if $.Perms.Can "payment" "view"}}<a href="/payments/{{.ID}}">PAY-{{.ID}}</a>{{else}}PAY-{{.ID}}{{end}} · {{dateLong .PaidOn}} · {{money .Amount}} · {{.ReferenceNo}}</li>{{end}}</ul></div>{{end}}
 <div class="section-head"><h2>Attachments</h2><span class="small muted">{{len .RequestAtts}} {{plural (len .RequestAtts) "file" "files"}}</span></div>
 <div class="stack-8">
   {{/* The request's own route, not /attachments/{id}: that one reads
@@ -2873,7 +2893,7 @@ const templates = `
   {{if and $mine (eq .Request2.Status "pending") (.Perms.Can "request" "withdraw")}}
     <form method="post" action="/requests/{{.Request2.ID}}/withdraw"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn outline" type="submit">Withdraw</button></form>
   {{end}}
-  {{if and $mine (eq .Request2.Status "approved") (.Perms.Can "request" "cancel")}}
+  {{if and $mine (eq .Request2.Status "approved") (eq .Request2.PaidAmount 0) (.Perms.Can "request" "cancel")}}
     <a class="btn outline" href="/requests/{{.Request2.ID}}/cancel">Request cancellation</a>
   {{end}}
   {{if and $mine (eq .Request2.Status "rejected") (.Perms.Can "request" "reraise")}}
@@ -2884,7 +2904,7 @@ const templates = `
     {{if .Perms.Can "approval" "return"}}<button class="btn outline" type="button" data-open="return-sheet">Return for correction</button>{{end}}
     {{if .Perms.Can "approval" "approve"}}<button class="btn primary" type="button" data-open="approve-sheet">Approve {{money .Request2.Amount}}</button>{{end}}
   {{end}}
-  {{if and $mineToDecide (eq .Request2.Status "approved") (.Perms.Can "approval" "cancel")}}
+  {{if and $mineToDecide (eq .Request2.Status "approved") (eq .Request2.PaidAmount 0) (.Perms.Can "approval" "cancel")}}
     <a class="btn danger outline" href="/requests/{{.Request2.ID}}/cancellation">Cancel with reason</a>
   {{end}}
   {{if and (eq .Request2.Status "cancellation_requested") $mineToDecide (.Perms.Can "approval" "cancel")}}
@@ -2983,7 +3003,7 @@ const templates = `
      text is never trusted — the hidden id is what the server reads. */}}
 {{define "request_vendor_field"}}
 <div class="field span-6">
-  <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>
+  <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "vendor"}}<span class="field-error-message" id="error-vendor">{{.}}</span>{{end}}
   {{if .Perms.Can "vendor" "view"}}
   <span class="combo">
     {{/* name="q", as the create form's identical control has. htmx sends the
@@ -2995,7 +3015,7 @@ const templates = `
          trusted; #vendor-id is what the server reads. */}}
     <input class="combo-input" id="vendor" name="q" aria-required="true" autocomplete="off" value="{{.Request2.Vendor}}"
            placeholder="Type a name, GSTIN or city"
-           hx-get="/vendors/search" hx-trigger="input changed delay:250ms" hx-target="#vendor-options">
+           hx-get="/vendors/search" hx-trigger="input changed delay:250ms" hx-target="#vendor-options" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
     <span class="combo-caret" aria-hidden="true">▾</span>
   </span>
   <div id="vendor-options"></div>
@@ -3009,7 +3029,7 @@ const templates = `
   <input type="hidden" name="vendor_id" id="vendor-id" data-combo-value value="{{deref .Request2.VendorID}}">
   <span class="hint">Bank details stay in the vendor record — never on this form.</span>
   {{else}}
-  <select id="vendor" name="vendor_id" aria-required="true">
+  <select id="vendor" name="vendor_id" aria-required="true" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
     <option value="">Choose a vendor</option>
     {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
   </select>
@@ -3046,6 +3066,7 @@ const templates = `
 
 {{define "request_edit"}}
 {{template "top" .}}
+{{template "request_error_summary" .}}
 <section class="page-banner">
   <div>
     <div class="eyebrow">{{.Request2.Number}} · {{reqStatus .Request2.Status}}</div>
@@ -3083,8 +3104,8 @@ const templates = `
     <legend>What is this for</legend>
     <div class="form-grid">
       <div class="field span-12">
-        <label for="short-title">Short title <span class="req" aria-hidden="true">*</span></label>
-        <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required>
+        <label for="short-title">Short title <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "short-title"}}<span class="field-error-message" id="error-short-title">{{.}}</span>{{end}}
+        <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required {{if index .RequestFieldErrors "short-title"}}aria-invalid="true" aria-describedby="error-short-title"{{end}}>
       </div>
     </div>
   </fieldset>
@@ -3099,8 +3120,8 @@ const templates = `
     <legend>Amount and timing</legend>
     <div class="form-grid">
       <div class="field span-6 money-field">
-        <label for="amount">Amount <span class="req" aria-hidden="true">*</span></label>
-        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <label for="amount">Amount <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "amount"}}<span class="field-error-message" id="error-amount">{{.}}</span>{{end}}
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{if .RequestRawAmount}}{{.RequestRawAmount}}{{else}}{{amountValue .Request2.Amount}}{{end}}" required {{if index .RequestFieldErrors "amount"}}aria-invalid="true" aria-describedby="error-amount"{{end}}></span>
         <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
       </div>
       <div class="field span-6 m-half">
@@ -3204,6 +3225,7 @@ const templates = `
          screen's own "Save corrections". */}}
     <button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}"{{if eq .Request2.Status "returned"}} name="submit_action" value="resubmit"{{end}}>Save and notify {{.Request2.ManagerName}}</button>
   </div>
+{{template "duplicate_override" .}}
 </form>
 {{template "bottom" .}}
 {{end}}
@@ -3225,6 +3247,7 @@ const templates = `
      is missing from the body is a field the store reads as cleared. */}}
 {{define "request_returned"}}
 {{template "top" .}}
+{{template "request_error_summary" .}}
 {{template "request_head" .}}
 
 <div class="banner warn">
@@ -3287,7 +3310,7 @@ const templates = `
       {{end}}
       <div class="field span-4 money-field">
         <label for="rt-amt">Amount <span class="req" aria-hidden="true">*</span></label>
-        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="rt-amt" name="amount" inputmode="decimal" value="{{amountValue .Request2.Amount}}" required></span>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="rt-amt" name="amount" inputmode="decimal" value="{{if .RequestRawAmount}}{{.RequestRawAmount}}{{else}}{{amountValue .Request2.Amount}}{{end}}" required></span>
         <span class="in-words">{{if .Request2.Amount}}{{inWords .Request2.Amount}}{{else}}Enter the amount you are requesting{{end}}</span>
       </div>
       <div class="field span-12"><label for="rt-purpose">Purpose <span class="req" aria-hidden="true">*</span></label><textarea id="rt-purpose" name="purpose" required>{{.Request2.Purpose}}</textarea></div>
@@ -3324,6 +3347,7 @@ const templates = `
     <button class="btn primary" type="submit" name="submit_action" value="resubmit">Resubmit for approval</button>
     {{end}}
   </div>
+{{template "duplicate_override" .}}
 </form>
 
 {{template "request_thread" .}}
@@ -3537,12 +3561,14 @@ const templates = `
      exist — the same rent, the same monthly retainer. The system points, the
      person decides." The endpoint that renders this is a read; the submit does
      not consult it and cannot be failed by it. */}}
+{{define "duplicate_override"}}{{if eq .Request2.Type "vendor_invoice"}}<div class="field"><label for="duplicate-reason">Duplicate invoice override reason</label><textarea id="duplicate-reason" name="duplicate_reason">{{.DuplicateReason}}</textarea><span class="hint">Only needed when changing this to a vendor invoice already recorded in the same year. Explain why in at least 10 characters.</span></div>{{end}}{{end}}
+{{define "request_error_summary"}}{{if .RequestFieldErrors}}<div class="error-summary" role="alert" tabindex="-1"><h2>Check the highlighted fields</h2><ul>{{range $id,$message := .RequestFieldErrors}}<li><a href="#{{$id}}">{{$message}}</a></li>{{end}}</ul></div>{{end}}{{end}}
 {{define "request_duplicates"}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">⚠</span>
   <div>
     <b>{{if eq (len .Similar) 1}}A similar request already exists{{else}}{{len .Similar}} similar requests already exist{{end}}</b>
-    <p>Same payee and a close amount in the last 30 days. Check before you submit — you can still go ahead.</p>
+    <p>Review these possible matches before submitting. An existing vendor invoice in the same year requires a written override reason. Continue installments on the existing approval.</p>
     <div class="req-list" style="margin-top:8px">
       {{range .Similar}}
       <a class="req-card" href="/requests/{{.ID}}">
@@ -3886,7 +3912,7 @@ const templates = `
      screen whose stated purpose is reviewing who changed financial records could
      not be pointed at the workflow (F-G-004/F-C-06). */}}
 <form class="toolbar" method="get"><label>Entity<select name="entity"><option value="">All</option>{{range auditEntities}}<option value="{{.Value}}" {{select $.AuditEntity .Value}}>{{.Label}}</option>{{end}}</select></label><label>Action<select name="action"><option value="">All</option>{{range auditActions}}<option value="{{.Value}}" {{select $.AuditAction .Value}}>{{.Label}}</option>{{end}}</select></label><label>Actor<input name="actor" value="{{.AuditActor}}" placeholder="Name"></label><label>From<input type="date" name="from" value="{{.AuditFrom}}"></label><label>To<input type="date" name="to" value="{{.AuditTo}}"></label><button>Filter</button><a class="btn outline" href="/audit">Reset</a></form>
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>When</th><th>Actor</th><th>Entity</th><th>Action</th><th>Summary</th></tr></thead><tbody>{{range .Audit}}<tr><td class="t-lead" data-label="When">{{date .CreatedAt}}</td><td data-label="Actor">{{.ActorName}}</td><td data-label="Entity">{{entityText .EntityType}}</td><td data-label="Action"><span class="pill {{actionClass .Action}}">{{actionText .Action}}</span></td><td data-label="Summary"><span>{{.Summary}}{{if or (hasText .BeforeJSON) (hasText .AfterJSON)}}<details><summary>Before / after</summary>{{if hasText .BeforeJSON}}<pre>{{jsonPretty .BeforeJSON}}</pre>{{end}}{{if hasText .AfterJSON}}<pre>{{jsonPretty .AfterJSON}}</pre>{{end}}</details>{{end}}</span></td></tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No audit entries match these filters.</td></tr>{{end}}</tbody></table></div>
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>When</th><th>Actor</th><th>Entity</th><th>Action</th><th>Summary</th></tr></thead><tbody>{{range .Audit}}<tr><td class="t-lead" data-label="When">{{date .CreatedAt}}</td><td data-label="Actor">{{.ActorName}}</td><td data-label="Entity">{{entityText .EntityType}}</td><td data-label="Action"><span class="pill {{actionClass .Action}}">{{actionText .Action}}</span></td><td data-label="Summary"><span>{{.Summary}}{{if eq .EntityType "role"}}<ul class="audit-changes">{{range roleAuditChanges .}}<li>{{.}}</li>{{end}}</ul>{{if and .EntityID ($.Perms.Can "role" "view")}}<a href="/roles?role={{.EntityID}}">Open affected role</a>{{end}}{{else}}{{if or (hasText .BeforeJSON) (hasText .AfterJSON)}}<details><summary>Before / after</summary>{{if hasText .BeforeJSON}}<pre>{{jsonPretty .BeforeJSON}}</pre>{{end}}{{if hasText .AfterJSON}}<pre>{{jsonPretty .AfterJSON}}</pre>{{end}}</details>{{end}}{{end}}</span></td></tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No audit entries match these filters.</td></tr>{{end}}</tbody></table></div>
 {{/* The log is paged, never silently cut (audit-1). The links repeat every
      filter, so a page boundary never widens the set. */}}
 {{if or .AuditPage.Truncated .AuditPage.Offset}}
@@ -3902,20 +3928,24 @@ const templates = `
 
 {{define "reports"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Analysis</div><h1>Reports</h1><p class="sub muted">{{.From}} to {{.To}} · {{.Mode}} view</p></div><div class="head-actions">{{if .Perms.Can "budget" "view"}}<a class="btn outline" href="/months">Monthly plans</a>{{end}}{{if .Perms.Can "report" "export"}}<a class="btn outline" href="/reports/ytd.csv?from={{.From}}&to={{.To}}&level={{.Mode}}">Export CSV</a>{{end}}</div></section>
-<div class="tabs"><a class="tab {{if eq .Mode "monthly"}}is-active{{end}}" href="/reports/monthly?from={{.From}}&to={{.To}}">Monthly</a><a class="tab {{if eq .Mode "projects"}}is-active{{end}}" href="/reports/projects?from={{.From}}&to={{.To}}">Projects</a><a class="tab {{if eq .Mode "heads"}}is-active{{end}}" href="/reports/heads?from={{.From}}&to={{.To}}">Heads</a></div>
-<form class="toolbar" method="get"><label>From<input type="month" name="from" value="{{.From}}"></label><label>To<input type="month" name="to" value="{{.To}}"></label><button>Run</button><a class="btn outline" href="/reports/{{.Mode}}?from={{.Month}}&to={{.Month}}">Current month</a></form>
+<section class="page-banner"><div><div class="eyebrow">Analysis</div><h1>Reports</h1><p class="sub muted">{{.From}} to {{.To}} · {{.Mode}} view</p></div><div class="head-actions">{{if .Perms.Can "budget" "view"}}<a class="btn outline" href="/months">Monthly plans</a>{{end}}{{if .Perms.Can "report" "export"}}<a class="btn outline" href="/reports/ytd.csv?from={{.From}}&to={{.To}}&level={{.Mode}}">{{if or .ReportProjectID .ReportHeadID}}Export full {{.Mode}} report CSV{{else}}Export CSV{{end}}</a>{{end}}</div></section>
+{{if .ReportBack}}<p><a class="btn outline" href="{{.ReportBack}}">← Back to source report</a></p>{{end}}
+{{if .ReportContext}}<p class="report-context"><b>Showing: {{.ReportContext}}</b> · {{.From}} to {{.To}}</p>{{end}}
+<div class="tabs"><a class="tab {{if eq .Mode "monthly"}}is-active{{end}}" href="/reports/monthly?from={{.From}}&to={{.To}}">Monthly</a><a class="tab {{if eq .Mode "projects"}}is-active{{end}}" href="/reports/projects?from={{.From}}&to={{.To}}{{if .ReportProjectID}}&project_id={{.ReportProjectID}}{{end}}">Projects</a><a class="tab {{if eq .Mode "heads"}}is-active{{end}}" href="/reports/heads?from={{.From}}&to={{.To}}{{if .ReportProjectID}}&project_id={{.ReportProjectID}}{{end}}">Heads</a></div>
+<form class="toolbar" method="get">{{if .ReportProjectID}}<input type="hidden" name="project_id" value="{{.ReportProjectID}}">{{end}}{{if .ReportHeadID}}<input type="hidden" name="head_id" value="{{.ReportHeadID}}">{{end}}{{if .ReportBack}}<input type="hidden" name="back" value="{{.ReportBack}}">{{end}}<label>From<input type="month" name="from" value="{{.From}}"></label><label>To<input type="month" name="to" value="{{.To}}"></label><button>Run</button><a class="btn outline" href="/reports/{{.Mode}}?from={{.Month}}&to={{.Month}}{{if .ReportProjectID}}&project_id={{.ReportProjectID}}{{end}}{{if .ReportHeadID}}&head_id={{.ReportHeadID}}{{end}}{{if .ReportBack}}&back={{.ReportBack}}{{end}}">Current month</a></form>
 <div class="metric-strip"><div class="metric"><span class="metric-label">Budget</span><span class="metric-value">{{short .Summary.Budget}}</span></div><div class="metric"><span class="metric-label">Actual</span><span class="metric-value">{{short .Summary.Actual}}</span></div><div class="metric"><span class="metric-label">Remaining</span><span class="metric-value {{varClass .Summary.Variance}}">{{short .Summary.Variance}}</span></div><div class="metric"><span class="metric-label">Used</span><span class="metric-value">{{.Summary.UsedPercent}}</span></div></div>
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Period</th>{{if ne .Mode "monthly"}}<th>Project</th>{{end}}{{if eq .Mode "heads"}}<th>Head</th>{{end}}<th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th></tr></thead><tbody>{{range .Reports}}<tr><td class="t-lead" data-label="Period">{{.Period}}</td>{{if ne $.Mode "monthly"}}<td data-label="Project">{{.Project}}</td>{{end}}{{if eq $.Mode "heads"}}<td data-label="Head">{{.Head}}</td>{{end}}<td class="num" data-label="Budget">{{money .Budget}}</td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td></tr>{{else}}<tr><td colspan="7" class="empty" data-label="">No report rows for this range. <a href="/budgets">Set a budget</a> to start comparing.</td></tr>{{end}}</tbody></table></div>
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>Period</th>{{if ne .Mode "monthly"}}<th>Project</th>{{end}}{{if eq .Mode "heads"}}<th>Head</th>{{end}}<th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th><th>Details</th></tr></thead><tbody>{{range .Reports}}<tr><td class="t-lead" data-label="Period">{{.Period}}</td>{{if ne $.Mode "monthly"}}<td data-label="Project">{{.Project}}</td>{{end}}{{if eq $.Mode "heads"}}<td data-label="Head">{{.Head}}</td>{{end}}<td class="num" data-label="Budget">{{money .Budget}}</td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td><td data-label="Details">{{if $.ReportHeadID}}{{if $.Perms.Can "budget" "view"}}<a href="/budgets?month={{.Period}}&report_back={{$.ReportURL}}#budget_{{.HeadID}}">View budget</a>{{end}}{{else}}<a href="{{reportDetailURL . $.ReportURL}}">{{if eq $.Mode "monthly"}}View projects{{else if eq $.Mode "projects"}}View heads{{else}}View budget and payments{{end}}</a>{{end}}</td></tr>{{else}}<tr><td colspan="8" class="empty" data-label="">No report rows for this range. {{if .Perms.Can "budget" "view"}}<a href="/budgets">Set a budget</a> to start comparing.{{else}}An authorised budget editor can check the monthly plan.{{end}}</td></tr>{{end}}</tbody></table></div>
+{{if .ReportHeadID}}{{if .Perms.Can "payment" "view"}}<section class="report-payments"><h2>Payments behind these actuals</h2><p class="muted">Active budget payments for this head and date range, limited to the latest 300 per month and your payment access. Recoverable deposits and voided payments are excluded. Restricted payment access may show fewer records than the report total.</p><div class="table-wrap"><table class="t-cards"><thead><tr><th>Date</th><th>Payee</th><th>Invoice / reference</th><th class="num">Amount</th><th>Record</th></tr></thead><tbody>{{range .Payments}}<tr><td data-label="Date">{{.PaidOn}}</td><td data-label="Payee">{{.VendorPayee}}</td><td data-label="Invoice / reference">{{.InvoiceNo}} {{.ReferenceNo}}</td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Record"><a href="/payments/{{.ID}}?report_back={{$.ReportURL}}">Open payment {{.ID}}</a></td></tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No matching payments available with your payment access.</td></tr>{{end}}</tbody></table></div></section>{{end}}{{end}}
 {{template "bottom" .}}
 {{end}}
 
 {{define "backups"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Operations</div><h1>Backups</h1><p class="sub muted">Create timestamped backups of the SQLite database and payment attachments.</p></div><form method="post" action="/backups" onsubmit="return confirm('Create a fresh backup now?')"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="primary">Create Backup</button></form></section>
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Backup folder</th><th>Status</th></tr></thead><tbody>{{range .Backups}}<tr><td class="t-lead" data-label="Backup folder">{{.}}</td><td data-label="Status"><span class="pill good">Available</span></td></tr>{{else}}<tr><td colspan="2" class="empty" data-label="">No backups created yet. Use Create Backup above.</td></tr>{{end}}</tbody></table></div>
-{{template "bottom" .}}
-{{end}}
+<section class="page-banner"><div><div class="eyebrow">Operations</div><h1>Backups</h1><p class="sub muted">Database and payment/request attachments. Creating a backup does not verify a restore.</p></div>{{if .Perms.Can "backup" "create"}}<form method="post" action="/backups"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="primary">Create Backup</button></form>{{end}}</section>
+<p>Stored on the application server: <code>{{.BackupLocation}}</code>. Operator: {{.RecoveryName}}{{if .RecoveryContact}} · <a href="mailto:{{.RecoveryContact}}">{{.RecoveryContact}}</a>{{end}}.</p>
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>Created</th><th>Backup folder</th><th>Readiness</th><th>Recovery</th></tr></thead><tbody>{{range .BackupRows}}<tr><td data-label="Created">{{.CreatedAt}}</td><td data-label="Backup folder">{{.Name}}</td><td data-label="Readiness">{{.Status}}</td><td data-label="Recovery"><details><summary>Operator restore command</summary><p>Run from the Fervid Budget project directory on the server, with the application stopped. Follow the checks below first.</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{.RestoreCommand}}</pre></details></td></tr>{{else}}<tr><td colspan="4" data-label="">No backups created yet. An operator with Create Backup permission can create one.</td></tr>{{end}}</tbody></table></div>
+<section id="recovery-instructions"><h2>Restore safely with your operator</h2><ol><li>Agree the recovery point and expected data loss. Newer changes will be replaced.</li><li>Copy the selected backup folder to protected storage. Verify it contains <code>fervid.db</code>, <code>attachments/</code> and <code>manifest.json</code>.</li><li>Test the restore into a separate database and attachment directory. Compare expected records, totals and attachment downloads before touching production.</li><li>Stop the application and its schedulers. Preserve the current database, SQLite sidecar files and attachment directory together as a rollback copy.</li><li>Run the selected command on the server. The command targets database <code>{{.BackupDBPath}}</code> and attachments <code>{{.BackupAttachmentPath}}</code>. For an installed binary, replace <code>go run ./cmd/server</code> with that binary.</li><li>Restart with the same configuration. Sign in and verify totals, requests and attachments. If validation fails, stop and have the operator restore the preserved rollback copy.</li></ol><p>Configuration and external secrets are managed separately. Record the last successful restore test in your operations log; “files present” is not evidence of recoverability.</p></section>
+{{template "bottom" .}}{{end}}
 
 {{/* Admin notification rules — mockups/screens/admin-notifications.html.
 
@@ -4100,7 +4130,7 @@ const templates = `
     <h1>Recoverable payments</h1>
     <p class="sub">{{money .RecMetrics.OutstandingAmount}} outstanding across {{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "payment" "payments"}} · none of it counts as budget spend</p>
   </div>
-  <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv">⤓ Export CSV</a>{{end}}</div>
+  <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?ageing=outstanding">⤓ Export CSV</a>{{end}}</div>
 </section>
 
 <div class="banner brand">
@@ -4112,9 +4142,9 @@ const templates = `
 </div>
 
 <div class="metric-strip">
-  <div class="metric"><span class="metric-label">Outstanding</span><span class="metric-value">{{short .RecMetrics.OutstandingAmount}}</span><span class="metric-foot">{{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "payment" "payments"}}</span></div>
-  <div class="metric warn"><span class="metric-label">Past expected return</span><span class="metric-value">{{short .RecMetrics.OverdueAmount}}</span><span class="metric-foot">{{.RecMetrics.OverdueCount}} overdue</span></div>
-  <div class="metric"><span class="metric-label">Due in 30 days</span><span class="metric-value">{{short .RecMetrics.DueIn30Amount}}</span><span class="metric-foot">{{.RecMetrics.DueIn30Count}} {{plural .RecMetrics.DueIn30Count "payment" "payments"}}</span></div>
+  <a class="metric" href="/recoverables/list?ageing=outstanding"><span class="metric-label">Outstanding</span><span class="metric-value">{{short .RecMetrics.OutstandingAmount}}</span><span class="metric-foot">{{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "payment" "payments"}}</span></a>
+  <a class="metric warn" href="/recoverables/list?ageing=overdue"><span class="metric-label">Past expected return</span><span class="metric-value">{{short .RecMetrics.OverdueAmount}}</span><span class="metric-foot">{{.RecMetrics.OverdueCount}} overdue</span></a>
+  <a class="metric" href="/recoverables/list?ageing=due30"><span class="metric-label">Due in 30 days</span><span class="metric-value">{{short .RecMetrics.DueIn30Amount}}</span><span class="metric-foot">{{.RecMetrics.DueIn30Count}} {{plural .RecMetrics.DueIn30Count "payment" "payments"}}</span></a>
   <div class="metric"><span class="metric-label">Paid out this month</span><span class="metric-value">{{short .RecMetrics.PaidThisMonthAmount}}</span><span class="metric-foot">{{.RecMetrics.PaidThisMonthCount}} {{plural .RecMetrics.PaidThisMonthCount "payment" "payments"}}</span></div>
 </div>
 
@@ -4127,12 +4157,12 @@ const templates = `
          category name, so the row that said 1 landed on a different number
          (F-G-012). A row with no category ("Uncategorised") maps to no id and is
          correctly not a link. */}}
-    <td class="t-lead" data-label="Category">{{$id := index $.CategoryIDs .Label}}{{if $id}}<a href="/recoverables/list?category={{$id}}">{{.Label}}</a>{{else}}{{.Label}}{{end}}</td>
+    <td class="t-lead" data-label="Category">{{$id := index $.CategoryIDs .Label}}{{if $id}}<a href="/recoverables/list?category={{$id}}&amp;ageing=outstanding">{{.Label}}</a>{{else}}{{.Label}}{{end}}</td>
     <td class="c" data-label="Count">{{.Count}}</td>
     <td class="num" data-label="Outstanding">{{money .Outstanding}}</td>
     <td class="num{{if .Overdue}} bad-num{{end}}" data-label="Overdue">{{if .Overdue}}{{money .Overdue}}{{else}}—{{end}}</td>
     <td data-label="Oldest">{{if .Oldest}}{{.Oldest}}{{else}}Not yet paid{{end}}</td>
-  </tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No recoverable payments yet.</td></tr>{{end}}</tbody>
+  </tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No outstanding paid balances. Unpaid and reconciled requests remain in the full list.</td></tr>{{end}}</tbody>
   <tfoot><tr>
     <td data-label="">Total</td>
     <td class="c" data-label="Count">{{.RecMetrics.OutstandingCount}}</td>
@@ -4146,19 +4176,19 @@ const templates = `
 <div class="table-wrap"><table class="t-cards">
   <thead><tr><th>Counterparty</th><th>Categories</th><th class="c">Items</th><th class="num">Outstanding</th><th>Expected back</th></tr></thead>
   <tbody>{{range .ByCounterparty}}<tr>
-    <td class="t-lead" data-label="Counterparty"><a href="/recoverables/list?counterparty={{urlquery .Label}}">{{.Label}}</a></td>
+    <td class="t-lead" data-label="Counterparty"><a href="/recoverables/list?counterparty={{urlquery .Label}}&amp;ageing=outstanding">{{.Label}}</a></td>
     <td data-label="Categories">{{if .Detail}}{{.Detail}}{{else}}—{{end}}</td>
     <td class="c" data-label="Items">{{.Count}}</td>
     <td class="num" data-label="Outstanding">{{money .Outstanding}}</td>
     <td data-label="Expected back">{{if .ExpectedBack}}{{.ExpectedBack}}{{else}}No fixed date{{end}}</td>
-  </tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No counterparties yet.</td></tr>{{end}}</tbody>
+  </tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No outstanding counterparty balances.</td></tr>{{end}}</tbody>
 </table></div>
 
 <div class="banner locked">
   <span class="b-ico" aria-hidden="true">i</span>
   <div>
-    <b>Tracking the money coming back is not in this version</b>
-    <p>A recoverable closes when its payment is made. Repayments, forfeitures, and converting a lost deposit into an expense are deliberately out of scope — they need an accounting adjustment process, not an edit to a completed payment.</p>
+    <b>Track each return and reconciliation</b>
+    <p>Open a recoverable to record money returned, an expense reconciliation, or a documented balance adjustment. Payout completion and recovery completion are separate. Entries preserve the original payment and retain a dated audit trail.</p>
   </div>
 </div>
 {{template "bottom" .}}
@@ -4174,34 +4204,40 @@ const templates = `
 <section class="page-banner">
   <div>
     <div class="eyebrow">Recoverable payments</div>
-    <h1>All recoverables</h1>
-    <p class="sub">Aged against the expected return date · overdue shown in red</p>
+    <h1>{{if eq .Ageing "outstanding"}}Outstanding recoverables{{else}}All recoverables{{end}}</h1>
+    <p class="sub">Aged against the expected return date · overdue shown in red{{if .RecoveryCounterparty}} · Counterparty: {{.RecoveryCounterparty}}{{end}}</p>
   </div>
-  <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?category={{.CategoryID}}&amp;ageing={{.Ageing}}&amp;q={{urlquery .Query}}">⤓ Export CSV</a>{{end}}</div>
+  <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?category={{.CategoryID}}&amp;ageing={{.Ageing}}&amp;q={{urlquery .Query}}&amp;counterparty={{urlquery .RecoveryCounterparty}}&amp;from={{.From}}&amp;to={{.To}}&amp;order={{.RecoveryOrder}}">⤓ Export CSV</a>{{end}}</div>
 </section>
 
-<form class="toolbar" method="get" action="/recoverables/list">
+<form class="toolbar d-only" method="get" action="/recoverables/list">
+ <input type="hidden" name="counterparty" value="{{.RecoveryCounterparty}}"><input type="hidden" name="from" value="{{.From}}"><input type="hidden" name="to" value="{{.To}}"><input type="hidden" name="order" value="{{.RecoveryOrder}}">
   <div class="field search"><label for="q">Search</label><input id="q" name="q" value="{{.Query}}" placeholder="Counterparty, project, request number…"></div>
   <div class="field"><label for="cat">Category</label><select id="cat" name="category">
     <option value="0">All categories</option>
     {{range .Categories}}<option value="{{.ID}}" {{if eq $.CategoryID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
   </select></div>
   <div class="field"><label for="age">Ageing</label><select id="age" name="ageing">
-    <option value="">All</option>
+    <option value="">All</option><option value="outstanding" {{select .Ageing "outstanding"}}>Outstanding</option>
     <option value="overdue" {{select .Ageing "overdue"}}>Overdue</option>
     <option value="due30" {{select .Ageing "due30"}}>Due in 30 days</option>
     <option value="later" {{select .Ageing "later"}}>Due later</option>
     <option value="unpaid" {{select .Ageing "unpaid"}}>Not yet paid</option>
+    <option value="recovered" {{select .Ageing "recovered"}}>Reconciled</option>
   </select></div>
-  <span class="row-end"></span><button class="btn">Apply</button>
+  <span class="row-end"></span><button class="btn">Apply</button><a class="btn outline" href="/recoverables/list">Reset</a>
 </form>
 
-<form class="m-filters" method="get" action="/recoverables/list">
-  <input type="hidden" name="category" value="{{.CategoryID}}">
-  <input type="hidden" name="ageing" value="{{.Ageing}}">
-  <span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search recoverables…" aria-label="Search recoverables"></span>
-  <button class="btn filter-btn" type="submit">Filters</button>
-</form>
+<details class="m-only recovery-filters" {{if or .CategoryID .Ageing}}open{{end}}>
+ <summary class="btn outline">Filters</summary>
+ <form class="stack-12" method="get" action="/recoverables/list">
+ <input type="hidden" name="counterparty" value="{{.RecoveryCounterparty}}"><input type="hidden" name="from" value="{{.From}}"><input type="hidden" name="to" value="{{.To}}"><input type="hidden" name="order" value="{{.RecoveryOrder}}">
+  <label for="rec-mobile-q">Search</label><input id="rec-mobile-q" name="q" value="{{.Query}}" placeholder="Search recoverables…">
+  <label for="rec-mobile-category">Category</label><select id="rec-mobile-category" name="category"><option value="0">All categories</option>{{range .Categories}}<option value="{{.ID}}" {{if eq $.CategoryID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <label for="rec-mobile-ageing">Ageing</label><select id="rec-mobile-ageing" name="ageing"><option value="">All</option><option value="outstanding" {{select .Ageing "outstanding"}}>Outstanding</option><option value="overdue" {{select .Ageing "overdue"}}>Overdue</option><option value="due30" {{select .Ageing "due30"}}>Due in 30 days</option><option value="later" {{select .Ageing "later"}}>Due later</option><option value="unpaid" {{select .Ageing "unpaid"}}>Not yet paid</option><option value="recovered" {{select .Ageing "recovered"}}>Reconciled</option></select>
+  <div class="cluster"><button class="btn primary" type="submit">Apply filters</button><a class="btn outline" href="/recoverables/list">Reset</a></div>
+ </form>
+</details>
 
 <div class="table-wrap"><table class="t-cards">
   {{/* Status, Requester and Repayment notes are here because the CSV beside this
@@ -4209,27 +4245,27 @@ const templates = `
        ever looked at the register had no way to know the download said more
        (F-E-04). The table scrolls inside its own .table-wrap, so eleven columns cost
        the page no horizontal scroll. */}}
-  <thead><tr><th>Request</th><th>Category</th><th>Counterparty</th><th>Project</th><th class="num">Amount</th><th>Paid on</th><th>Expected back</th><th>Ageing</th><th>Status</th><th>Requester</th><th>Repayment notes</th></tr></thead>
+  <thead><tr><th>Request</th><th>Category</th><th>Counterparty</th><th>Project</th><th class="num">Outstanding</th><th class="num">Paid out</th><th class="num">Returned / reconciled</th><th>Paid on</th><th>Expected back</th><th>Ageing</th><th>Status</th><th>Requester</th><th>Repayment notes</th></tr></thead>
   <tbody>{{range .Recoverables}}<tr>
     <td class="t-lead" data-label="Request"><a href="/recoverables/{{.RequestID}}">{{.Number}}</a></td>
     <td data-label="Category"><span class="pill recoverable">{{.Category}}</span></td>
     <td data-label="Counterparty">{{if .Counterparty}}{{.Counterparty}}{{else}}Not recorded{{end}}</td>
     <td data-label="Project">{{if .Project}}{{.Project}}{{else}}Not project linked{{end}}</td>
-    <td class="num" data-label="Amount">{{money .Amount}}</td>
+    <td class="num" data-label="Outstanding">{{money .Amount}}</td><td class="num" data-label="Paid out">{{money .PaidAmount}}</td><td class="num" data-label="Returned / reconciled">{{money .RecoveredAmount}}</td>
     <td data-label="Paid on">{{if .PaidOn}}{{.PaidOn}}{{else}}Not yet paid{{end}}</td>
     <td data-label="Expected back">{{if .HasReturnDate}}{{.ExpectedReturnDate}}{{else}}No fixed date{{end}}</td>
     <td data-label="Ageing"><span class="pill {{.AgeingTone}}">{{.AgeingLabel}}</span></td>
     <td data-label="Status">{{$p := rowPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span></td>
     <td data-label="Requester">{{.Requester}}</td>
     <td data-label="Repayment notes">{{if .RepaymentNotes}}{{.RepaymentNotes}}{{else}}Not recorded{{end}}</td>
-  </tr>{{else}}<tr><td colspan="11" class="empty" data-label="">No recoverable payments match these filters.</td></tr>{{end}}</tbody>
+  </tr>{{else}}<tr><td colspan="13" class="empty" data-label="">No recoverable payments match these filters.</td></tr>{{end}}</tbody>
   <tfoot><tr>
     {{/* The spacers only hold the Amount under its column on a desktop. Below
          860px the tfoot restacks into a card and each empty cell became a
          blank stripe, so they are .d-only (recoverables-6). */}}
     <td data-label="">{{len .Recoverables}} shown</td>
     <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
-    <td class="num" data-label="Amount">{{money .RecoverableTotal}}</td>
+    <td class="num" data-label="Outstanding">{{money .RecoverableTotal}}</td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
     <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
     <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
   </tr></tfoot>
@@ -4248,8 +4284,9 @@ const templates = `
 <div class="req-head">
   <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money .Recoverable.Amount}}</span></div>
   <h1>{{.Request2.Purpose}}</h1>
-  <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Recoverable.PaidOn}} · paid {{.Recoverable.PaidOn}}{{end}} · <span class="pill recoverable">Recoverable · {{.Recoverable.Category}}</span></p>
-  <div class="rh-status">{{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span><span class="pill {{.Recoverable.AgeingTone}}">{{.Recoverable.AgeingLabel}}</span></div>
+  <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Recoverable.PaidOn}} · first paid {{.Recoverable.PaidOn}}{{end}} · <span class="pill recoverable">Recoverable · {{.Recoverable.Category}}</span></p>
+  <p class="rh-meta">Outstanding balance · {{money .Recoverable.Amount}}</p>
+  <div class="rh-status"><span>Payout:</span> {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span><span>Recovery:</span> <span class="pill {{.Recoverable.AgeingTone}}">{{.Recoverable.AgeingLabel}}</span></div>
 </div>
 
 {{if .Recoverable.Overdue}}
@@ -4257,7 +4294,7 @@ const templates = `
   <span class="b-ico" aria-hidden="true">◷</span>
   <div>
     <b>Past its expected return date</b>
-    <p>Expected {{.Recoverable.ExpectedReturnDate}}. This is a reporting flag only — chasing the money and recording its return happen outside this version.</p>
+    <p>Expected {{.Recoverable.ExpectedReturnDate}}. Record each return below; the remaining balance stays outstanding until it is fully returned or reconciled.</p>
   </div>
 </div>
 {{end}}
@@ -4265,9 +4302,11 @@ const templates = `
 <div class="card">
   <div class="card-head"><h2>Recoverable details</h2><span class="pill recoverable no-dot">Not in budget actuals</span></div>
   <dl class="dl">
-    <div><dt>Amount</dt><dd class="big">{{money .Recoverable.Amount}}</dd></div>
+    <div><dt>Outstanding balance</dt><dd class="big">{{money .Recoverable.Amount}}</dd></div>
+    <div><dt>Total paid out</dt><dd>{{money .Recoverable.PaidAmount}}</dd></div>
+    <div><dt>Returned or reconciled</dt><dd>{{money .Recoverable.RecoveredAmount}}</dd></div>
     <div><dt>Category</dt><dd>{{.Recoverable.Category}}</dd></div>
-    <div><dt>Counterparty</dt><dd>{{if .Request2.Counterparty}}{{.Request2.Counterparty}}{{else}}Not recorded{{end}}</dd></div>
+    <div><dt>Counterparty</dt><dd>{{.Recoverable.Counterparty}}</dd></div>
     <div><dt>Related project</dt><dd>{{if .Request2.Project}}{{.Request2.Project}}{{else}}Not project linked{{end}}</dd></div>
     <div><dt>Expected return</dt><dd>{{if .Recoverable.HasReturnDate}}{{.Recoverable.ExpectedReturnDate}}{{else}}No fixed date{{end}}</dd></div>
     <div><dt>Ageing</dt><dd>{{.Recoverable.AgeingLabel}}</dd></div>
@@ -4275,7 +4314,7 @@ const templates = `
   </dl>
 </div>
 
-<div class="section-head"><h2>Payment</h2></div>
+<div class="section-head"><h2>Latest payment</h2><a href="/requests/{{.Request2.ID}}">All payments and request →</a></div>
 <div class="card">
 {{if .HasPayment}}
   <dl class="dl">
@@ -4287,9 +4326,32 @@ const templates = `
     <div><dt>Payee</dt><dd>{{.RecPayment.VendorPayee}}</dd></div>
   </dl>
 {{else}}
-  <p class="empty">Approved but not yet paid. The money has not left, so nothing is outstanding against a counterparty yet.</p>
+  <p class="empty">{{if eq .Request2.Status "pending"}}Awaiting approval. No payment has been recorded.{{else if eq .Request2.Status "returned"}}Returned for correction. No payment has been recorded.{{else if eq .Request2.Status "rejected"}}This request was rejected. No payment was recorded.{{else if eq .Request2.Status "cancelled"}}This request was cancelled. No payment was recorded.{{else if eq .Request2.Status "withdrawn"}}This request was withdrawn. No payment was recorded.{{else if eq .Request2.Status "approved"}}Approved but not yet paid.{{else if eq .Request2.Status "processing"}}With Accounts for payment. No payment has been recorded.{{else if eq .Request2.Status "cancellation_requested"}}Cancellation requested. No payment has been recorded.{{else}}No payment has been recorded for this request.{{end}} There is no recorded payout to recover.</p>
 {{end}}
 </div>
+
+<section id="recovery-history">
+ <div class="section-head"><h2>Recovery history</h2></div>
+ <p class="hint">Every entry reduces the outstanding balance. Original payouts remain unchanged. Expense reconciliations and adjustments record an approved accounting entry; they do not automatically charge a budget head. Reference the bank receipt, expense report, or authorised journal.</p>
+ <ol class="thread">{{range .RecoveryEvents}}<li><span class="tl-dot" aria-hidden="true">↩</span><div class="tl-head"><b>{{.Label}} · {{money .Amount}}</b><time>{{.OccurredOn}}</time></div><div class="tl-body"><p><b>Reference:</b> {{.Reference}}</p><p>{{.Note}}</p><small>Recorded by {{.ActorName}} · {{date .CreatedAt}}</small></div></li>{{else}}<li><p class="empty">No returns or reconciliations recorded yet.</p></li>{{end}}</ol>
+</section>
+{{if .CanRecordRecovery}}
+<section class="card" id="record-recovery">
+ <div class="card-head"><h2>Record recovery</h2></div>
+ {{if .RecoveryError}}<div id="recovery-error" class="banner warn" role="alert"><div><b>Recovery was not saved</b><p>{{.RecoveryError}}</p><a href="#recovery-amount">Review the recovery details</a></div></div>{{end}}
+ <form method="post" action="/recoverables/{{.Request2.ID}}/events" class="stack-12" onsubmit="return confirm('Record this recovery permanently? Check the amount, date, and evidence before continuing.')">
+  <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="token" value="{{.RecoveryInput.Token}}">
+  <div class="form-grid">
+   <div class="field span-6"><label for="recovery-kind">Recovery type</label><select id="recovery-kind" name="kind" required><option value="">Choose a type</option><option value="return" {{select .RecoveryInput.Kind "return"}}>Money returned</option><option value="expense" {{select .RecoveryInput.Kind "expense"}}>Expense reconciled</option><option value="adjustment" {{select .RecoveryInput.Kind "adjustment"}}>Balance adjustment</option></select></div>
+   <div class="field span-6"><label for="recovery-amount">Amount received or reconciled (₹)</label><input id="recovery-amount" name="amount" inputmode="decimal" value="{{.RecoveryInput.AmountText}}" required aria-describedby="recovery-amount-help{{if .RecoveryError}} recovery-error{{end}}"><span id="recovery-amount-help" class="hint">Up to {{money .Recoverable.Amount}} outstanding. Each entry is permanent.</span></div>
+   <div class="field span-6"><label for="recovery-date">Recovery date</label><input id="recovery-date" type="date" name="occurred_on" value="{{.RecoveryInput.OccurredOn}}" required></div>
+   <div class="field span-6"><label for="recovery-ref">Bank / accounting reference</label><input id="recovery-ref" name="reference" value="{{.RecoveryInput.Reference}}" maxlength="240" required></div>
+   <div class="field span-12"><label for="recovery-note">Evidence and explanation</label><textarea id="recovery-note" name="note" rows="3" maxlength="4000" required aria-describedby="recovery-note-help">{{.RecoveryInput.Note}}</textarea><span id="recovery-note-help" class="hint">State what happened and where the receipt or approved expense/journal is kept. For an adjustment, include who authorised it and why.</span></div>
+  </div>
+  <button class="btn primary" type="submit">Record recovery</button>
+ </form>
+</section>
+{{else if .HasPayment}}<p class="hint">{{if eq .Recoverable.Amount 0}}Fully reconciled. All recovery entries remain available above.{{else}}Accounts can record a return or reconciliation for this balance.{{end}}</p>{{end}}
 
 <div class="section-head"><h2>History and conversation</h2></div>
 <ol class="thread">
@@ -4316,11 +4378,27 @@ const templates = `
 {{end}}
 
 <div class="action-bar">
-  <span class="ab-note d-only">Recording the refund is out of scope for this version.</span>
+  <span class="ab-note d-only">Payouts and recovery entries retain their own history.</span>
   <span class="row-end"></span>
   <a class="btn outline" href="/recoverables/list">Back to list</a>
   {{if .Perms.Can "recoverable_report" "export"}}<a class="btn" href="/recoverables/list.csv?q={{urlquery .Request2.Number}}">⤓ Export this record</a>{{end}}
 </div>
 {{template "bottom" .}}
 {{end}}
+
+{{define "vendor_tabs"}}<nav class="segmented" aria-label="Vendor sections">
+<a class="{{if not .VendorTab}}is-active{{end}}" href="/vendors/{{.Vendor.ID}}">Record</a>
+{{if .Perms.Can "request" "view"}}<a class="{{if eq .VendorTab "requests"}}is-active{{end}}" href="/vendors/{{.Vendor.ID}}/requests">Requests</a>{{end}}
+{{if .Perms.Can "payment" "view"}}<a class="{{if eq .VendorTab "payments"}}is-active{{end}}" href="/vendors/{{.Vendor.ID}}/payments">Payments</a>{{end}}
+{{if .Perms.Can "audit" "view"}}<a class="{{if eq .VendorTab "history"}}is-active{{end}}" href="/vendors/{{.Vendor.ID}}/history">History</a>{{end}}
+</nav>{{end}}
+{{define "vendor_related"}}
+{{template "top" .}}
+<section class="page-banner"><div><div class="eyebrow">Vendor · {{.VendorTab}}</div><h1>{{.Vendor.Name}}</h1><p class="sub">Only records your permissions allow you to view are shown.</p></div><a class="btn outline" href="/vendors">Back to vendors</a></section>
+{{template "vendor_tabs" .}}
+{{if eq .VendorTab "requests"}}<div class="table-wrap"><table class="t-cards"><thead><tr><th>Request</th><th>Purpose</th><th>Amount</th><th>Status</th></tr></thead><tbody>{{range .Requests}}<tr><td data-label="Request"><a href="/requests/{{.ID}}?return_to=/vendors/{{$.Vendor.ID}}/requests">{{.Number}}</a></td><td data-label="Purpose">{{.Purpose}}</td><td data-label="Amount">{{money .Amount}}</td><td data-label="Status">{{.Status}}</td></tr>{{else}}<tr><td colspan="4" data-label="">No requests for this vendor within your access.</td></tr>{{end}}</tbody></table></div>{{end}}
+{{if eq .VendorTab "payments"}}<p class="muted">Payments linked to this vendor's requests, including voided records. Historical unlinked payments have no verified vendor association.</p><div class="table-wrap"><table class="t-cards"><thead><tr><th>Payment</th><th>Paid on</th><th>Amount</th><th>Invoice</th><th>Status</th></tr></thead><tbody>{{range .Payments}}<tr><td data-label="Payment"><a href="/payments/{{.ID}}?return_to=/vendors/{{$.Vendor.ID}}/payments">Payment {{.ID}}</a></td><td data-label="Paid on">{{.PaidOn}}</td><td data-label="Amount">{{money .Amount}}</td><td data-label="Invoice">{{.InvoiceNo}}</td><td data-label="Status">{{if .VoidedAt}}Voided{{else}}Recorded{{end}}</td></tr>{{else}}<tr><td colspan="5" data-label="">No linked payments for this vendor within your access.</td></tr>{{end}}</tbody></table></div>{{end}}
+{{if eq .VendorTab "history"}}<div class="table-wrap"><table class="t-cards"><thead><tr><th>When</th><th>By</th><th>Change</th></tr></thead><tbody>{{range .Audit}}<tr><td data-label="When">{{.CreatedAt}}</td><td data-label="By">{{.ActorName}}</td><td data-label="Change">{{.Summary}}<details><summary>Details</summary><ul>{{range vendorAuditChanges .}}<li>{{.}}</li>{{end}}</ul></details></td></tr>{{else}}<tr><td colspan="3" data-label="">No vendor history within your access.</td></tr>{{end}}</tbody></table></div>{{end}}
+<div class="cluster">{{if .Page.Offset}}<a class="btn outline" href="/vendors/{{.Vendor.ID}}/{{.VendorTab}}?offset={{sub0 .Page.Offset 50}}">Previous</a>{{end}}{{if .Page.Truncated}}<a class="btn outline" href="/vendors/{{.Vendor.ID}}/{{.VendorTab}}?offset={{add .Page.Offset 50}}">Next</a>{{end}}</div>
+{{template "bottom" .}}{{end}}
 `

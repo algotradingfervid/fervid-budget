@@ -112,12 +112,6 @@
 <p>An account number and an IFSC are the two pieces of data that turn a request into money leaving a bank. They are held on the vendor record, and they are the one block in the product with their own permission — separate from the permission that opens the rest of the vendor.</p>
 <p>The consequence is that &quot;can see vendors&quot; and &quot;can see how to pay them&quot; are two different grants, and most people are meant to hold only the first.</p>
 <h2 id="where-the-block-is">Where the block is</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/vendor-detail.png" aria-label="Enlarge: A vendor record. The Payment details block sits between Contact and Notes, behind its own padlocked banner.">
-    <img src="../assets/shots/admin/vendor-detail.png" alt="A vendor’s details, bank information and payment history." loading="lazy" width="1440">
-  </button>
-  <figcaption>A vendor record. The Payment details block sits between Contact and Notes, behind its own padlocked banner. </figcaption>
-</figure>
 <p>On a vendor you are allowed to see it, the block is headed <strong>Payment details — restricted</strong> and opens with a padlocked banner: &quot;Visible only with vendor bank permission. They are deliberately kept off the employee request form — an employee raising a request never sees or types them.&quot;</p>
 <h2 id="the-fields">The fields</h2>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
@@ -127,7 +121,7 @@
 <tr><td><strong>Bank</strong></td><td><span class="opt">Optional</span></td><td>The bank.</td></tr>
 <tr><td><strong>Branch</strong></td><td><span class="opt">Optional</span></td><td>The branch.</td></tr>
 <tr><td><strong>UPI ID</strong></td><td><span class="opt">Optional</span></td><td>Optional, and marked as such on the form.</td></tr>
-<tr><td><strong>Default mode</strong></td><td><span class="opt">Optional</span></td><td><code>Not set</code>, <code>Bank transfer — NEFT</code>, <code>RTGS</code> or <code>Cheque</code>. The mode you would normally pay this vendor by.</td></tr>
+<tr><td><strong>Default mode</strong></td><td><span class="opt">Optional</span></td><td>The enabled payment modes from Configuration, or Not set. Existing legacy values remain visible. When Accounts has bank-detail access, an enabled vendor default is preselected on payment entry; a disabled legacy default is not automatically selected.</td></tr>
 <tr><td><strong>Payment terms (days)</strong></td><td><span class="opt">Optional</span></td><td>How many days the vendor is normally given. A number.</td></tr>
 </tbody></table></div>
 <ol class="steps">
@@ -154,7 +148,7 @@
 <aside class="callout callout-warning"><p class="callout-title">Backups carry them too</p><p>A backup contains the bank block in full, because it is a copy of the database. Anybody who can reach the backup folder on the server has the account numbers, whatever their role inside the product says. See <a href="../admin/backups.html">Backups</a>.</p></aside>
 <dl class="faq"><dt>I can open a vendor but the Payment details block is padlocked.</dt><dd><p>Your role does not hold the vendor bank view grant. It is a different grant from the one that let you open the vendor.</p></dd>
 <dt>I can see the bank details but cannot type in them.</dt><dd><p>You hold view and not edit. Both are on the <strong>Vendor bank details</strong> row of <a href="../admin/roles-and-permissions.html">Roles and permissions</a>.</p></dd>
-<dt>Does the accounts team need this grant to record a payment?</dt><dd><p>Recording a payment does not require it — the payment form asks for the mode and the reference, not the account number. Whether your accounts team needs to read the details to make the transfer is a question about how they bank, not about the product.</p></dd>
+<dt>Does the accounts team need this grant to record a payment?</dt><dd><p>Recording a payment does not require it. Bank account/UPI details and vendor defaults on payment entry are visible only when Accounts also has bank-detail access. Whether your accounts team needs to read the details to make the transfer is a question about how they bank, not about the product.</p></dd>
 <dt>Are bank details written into the audit trail?</dt><dd><p>No. A vendor save writes an audit row carrying the name, type, status, GSTIN and city, and for the bank block only a <code>bank_changed</code> flag saying whether it was touched. The trail records that somebody changed the details, not what they changed them to.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../admin/vendors.html"><span>Previous</span>Vendors</a><a class="pager-next" href="../admin/recoverable-categories.html"><span>Next</span>Recoverable categories</a></nav>
 </div>

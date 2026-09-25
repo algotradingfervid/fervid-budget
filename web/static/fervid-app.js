@@ -679,6 +679,14 @@
     });
   }
 
+  function focusErrorSummary(root) {
+    var summary = root.querySelector(".error-summary:not([data-focused])");
+    if (!summary || !summary.getClientRects().length) return;
+    summary.setAttribute("data-focused", "true");
+    summary.setAttribute("tabindex", "-1");
+    summary.focus();
+  }
+
   function init() {
     initAccordions(document);
     syncConditionals(document);
@@ -688,6 +696,7 @@
     initFollowSelects(document);
     reopenRefusedSheets(document);
     openServedDialogs(document);
+    focusErrorSummary(document);
   }
 
   /* A sheet whose form the server refused comes back with data-reopen and the

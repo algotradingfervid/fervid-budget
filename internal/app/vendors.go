@@ -136,7 +136,21 @@ func (a *App) renderVendorForm(w http.ResponseWriter, r *http.Request, status in
 	if v.ID != 0 {
 		title = v.Name
 	}
+	settings, err := a.st.AppSettings(r.Context())
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	mode := ""
+	if v.Bank != nil {
+		mode = v.Bank.DefaultPaymentMode
+	}
+	gstError := ""
+	if strings.Contains(strings.ToLower(errMsg), "gstin") {
+		gstError = errMsg
+	}
 	a.renderStatus(w, r, status, "vendor_detail", PageData{
+		VendorModeOptions: vendorPaymentModes(settings, mode), VendorGSTError: gstError,
 		Title:          title,
 		Vendor:         v,
 		VendorEditable: editable,
@@ -198,4 +212,110 @@ func vendorFromInput(id int64, in store.VendorInput) store.Vendor {
 		Address: in.Address, City: in.City, State: in.State, StateCode: in.StateCode,
 		Notes: in.Notes, Bank: in.Bank,
 	}
+}
+
+// vendorRelated keeps the supplier context while applying the reader's ordinary
+// request/payment scope. Vendor access alone never grants access to its records.
+func (a *App) vendorRelated(w http.ResponseWriter, r *http.Request) {
+	u := auth.CurrentUser(r)
+	perms := a.auth.Permissions(u)
+	v, err := a.st.Vendor(r.Context(), pathID(r), perms)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	tab := r.PathValue("tab")
+	resource := map[string]string{"requests": "request", "payments": "payment", "history": "audit"}[tab]
+	if resource == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if !perms.Can(resource, "view") {
+		a.respondError(w, r, http.StatusForbidden, "You do not have permission to view these records.", nil)
+		return
+	}
+	offset := int(parseID(r.URL.Query().Get("offset")))
+	if offset < 0 {
+		offset = 0
+	}
+	data := PageData{Title: v.Name, Vendor: v, VendorTab: tab, Page: store.RequestPage{Offset: offset, Limit: 50}}
+	switch tab {
+	case "requests":
+		page, e := a.st.ListRequestsPage(r.Context(), store.RequestPageOptions{RequestListOptions: store.RequestListOptions{VendorID: v.ID, Scope: a.effectiveScope(u, "all"), ViewerID: u.ID, Bucket: "all", Limit: 50}, Offset: offset})
+		err = e
+		data.Requests, data.Page = page.Requests, page
+	case "payments":
+		data.Payments, err = a.st.ListPayments(r.Context(), store.PaymentListOptions{VendorID: v.ID, Scope: perms.Scope("payment"), ViewerID: u.ID, Status: "all", Limit: 51, Offset: offset})
+		if len(data.Payments) > 50 {
+			data.Page.Truncated = true
+			data.Payments = data.Payments[:50]
+		}
+	case "history":
+		page, e := a.st.AuditPage(r.Context(), store.AuditQuery{EntityType: "vendor", EntityID: v.ID, Limit: 50, Offset: offset})
+		err = e
+		data.Audit = page.Entries
+		data.Page.Truncated = page.Truncated
+		data.Page.Total = page.Total
+	}
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "vendor_related", data)
+}
+
+func vendorPaymentModes(settings map[string]string, current string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, value := range strings.Split(settings["payment_modes"], ",") {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			out = append(out, value)
+			seen[value] = true
+		}
+	}
+	// Preserve an older/custom value on unrelated edits, even if configuration
+	// no longer offers it for new vendors.
+	if current != "" && !seen[current] {
+		out = append(out, current)
+	}
+	return out
+}
+
+type PaymentModeChoice struct{ Value, Label string }
+
+func canonicalPaymentMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "neft", "bank transfer", "bank_transfer":
+		return "bank_transfer"
+	case "rtgs":
+		return "rtgs"
+	case "dd", "demand draft":
+		return "dd"
+	case "upi":
+		return "upi"
+	case "cheque":
+		return "cheque"
+	case "cash":
+		return "cash"
+	case "card":
+		return "card"
+	case "other":
+		return "other"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+func configuredPaymentChoices(settings map[string]string) []PaymentModeChoice {
+	out := []PaymentModeChoice{}
+	seen := map[string]bool{}
+	for _, label := range strings.Split(settings["payment_modes"], ",") {
+		label = strings.TrimSpace(label)
+		value := canonicalPaymentMode(label)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, PaymentModeChoice{Value: value, Label: label})
+		}
+	}
+	return out
 }

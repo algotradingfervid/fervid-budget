@@ -122,14 +122,16 @@
 <tr><td><code>pending</code></td><td><code>pending</code></td><td><strong>Reassign approval</strong></td><td>Anybody holding <code>approval:reassign</code> whose data scope reaches the request</td><td>A reason, and a new approver who holds <code>approval:approve</code> and is not the requester. Only a pending request can be reassigned.</td></tr>
 <tr><td><code>returned</code></td><td><code>pending</code></td><td><strong>Resubmit for approval</strong></td><td>The person who raised it, holding <code>request:edit</code></td><td>The corrected request has to pass the same checks the first submission did. <strong>Save corrections</strong> saves without resending.</td></tr>
 <tr><td><code>approved</code></td><td><code>processing</code></td><td><strong>Take for processing</strong></td><td>Anybody holding <code>reservation:reserve</code></td><td>The request must be approved, unclaimed and not on hold. Two people pressing at once: the first one wins and the second gets a conflict screen.</td></tr>
-<tr><td><code>approved</code></td><td><code>cancellation_requested</code></td><td><strong>Request cancellation</strong></td><td>The person who raised it, holding <code>request:cancel</code></td><td>A reason. Payment freezes the moment it succeeds.</td></tr>
-<tr><td><code>approved</code></td><td><code>cancelled</code></td><td><strong>Cancel with reason</strong></td><td>The approver the request was sent to, holding <code>approval:cancel</code></td><td>A reason. Nobody needs to have asked first.</td></tr>
+<tr><td><code>approved</code></td><td><code>cancellation_requested</code></td><td><strong>Request cancellation</strong></td><td>The person who raised it, holding <code>request:cancel</code></td><td>A reason and no payment already recorded. Payment freezes the moment it succeeds.</td></tr>
+<tr><td><code>approved</code></td><td><code>cancelled</code></td><td><strong>Cancel with reason</strong></td><td>The approver the request was sent to, holding <code>approval:cancel</code></td><td>A reason and no payment already recorded. Nobody needs to have asked first.</td></tr>
 <tr><td><code>cancellation_requested</code></td><td><code>cancelled</code></td><td>Accept the cancellation, from <strong>Decide the cancellation</strong></td><td>The approver the request was sent to, holding <code>approval:cancel</code></td><td>A note is optional.</td></tr>
 <tr><td><code>cancellation_requested</code></td><td><code>approved</code></td><td>Decline the cancellation, from <strong>Decide the cancellation</strong></td><td>The approver the request was sent to, holding <code>approval:cancel</code></td><td>A written reason. This is the only route back to <code>approved</code> from the frozen state — approving again will not do it.</td></tr>
 <tr><td><code>processing</code></td><td><code>approved</code></td><td><strong>Release</strong> the reservation</td><td>The person holding it, with <code>reservation:release</code>. Releasing somebody else’s needs <code>reservation:reassign</code></td><td>A reason, and the tick confirming no payment was started.</td></tr>
 <tr><td><code>processing</code></td><td><code>processing</code></td><td><strong>Reassign</strong> the reservation</td><td>Anybody holding <code>reservation:reassign</code></td><td>A reason, the same confirmation, and an active colleague who holds <code>payment:process</code>. The request never returns to the open queue in between.</td></tr>
-<tr><td><code>processing</code></td><td><code>completed</code></td><td>Record the payment and confirm it as settled</td><td>The person holding the reservation, with <code>payment:create</code> and <code>payment:settle</code></td><td>An amount no greater than the approved amount, a payment date that is neither in the future nor in a locked month, and a live head unless the request is recoverable.</td></tr>
+<tr><td><code>processing</code></td><td><code>completed</code></td><td>Record the payment and confirm it as settled</td><td>The person holding the reservation, with <code>payment:create</code> and <code>payment:settle</code></td><td>An amount no greater than the remaining approved balance, with an explanation if a short amount is marked fully settled, a payment date that is neither in the future nor in a locked month, and a live head unless the request is recoverable.</td></tr>
 <tr><td><code>processing</code></td><td><code>partial_review</code></td><td>Record the payment and mark it a partial settlement</td><td>The same person, and also <code>payment:mark_partial</code></td><td>Everything above, plus a written reason for paying short.</td></tr>
+<tr><td><code>processing</code></td><td><code>approved</code></td><td><strong>Installment — pay the balance later</strong></td><td>The reservation holder with payment creation/settlement access</td><td>Record an amount below the remaining approval. The payment is permanent and the reservation is released; the balance remains payable.</td></tr>
+<tr><td><code>partial_review</code></td><td><code>approved</code></td><td><strong>Keep balance payable</strong></td><td>The assigned approver with shortfall-decision access</td><td>A required plan note returns the unpaid balance to Accounts under the original approval.</td></tr>
 <tr><td><code>partial_review</code></td><td><code>completed_partial</code></td><td><strong>Accept and close</strong></td><td>The approver the request was sent to, holding <code>approval:accept_partial</code></td><td>A note is optional. The unpaid balance is written off for good.</td></tr>
 <tr><td><code>partial_review</code></td><td><code>partial_review</code></td><td><strong>Raise a concern</strong></td><td>The approver the request was sent to, holding <code>approval:accept_partial</code></td><td>A comment. It goes into the conversation and the request stays in review.</td></tr>
 <tr><td><code>rejected</code></td><td>a new <code>pending</code> request</td><td><strong>Raise it again</strong></td><td>The person who raised it, holding <code>request:reraise</code></td><td>Only from <code>rejected</code>. It creates a fresh request with its own number; the rejected one stays rejected for ever.</td></tr>
@@ -139,61 +141,19 @@
 <p>Most requests take five steps and nothing else: submitted, approved, taken for processing, paid, closed. This is that path.</p>
 <h3 id="1-submitted">1. Submitted</h3>
 <p>You fill in the form and press <strong>Submit request</strong>. There is no save-and-finish-later: the request is created already in <code>pending</code>, it takes its number at that instant, and it appears in the queue of the approver you chose. The badge reads <strong>Awaiting approval</strong> and the line beside it names the person it is waiting on.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/manager/request-pending.png" aria-label="Enlarge: A pending request as its approver sees it. The four decisions sit at the bottom: **Reject**, **Return for correction**, **Approve**, and **Reassign approval**.">
-    <img src="../assets/shots/manager/request-pending.png" alt="The request as its approver sees it, with the full action bar along the bottom." loading="lazy" width="1440">
-  </button>
-  <figcaption>A pending request as its approver sees it. The four decisions sit at the bottom: <strong>Reject</strong>, <strong>Return for correction</strong>, <strong>Approve</strong>, and <strong>Reassign approval</strong>. </figcaption>
-</figure>
 <h3 id="2-approved">2. Approved</h3>
 <p>The approver presses <strong>Approve</strong>. The amount on that sheet can be lowered but never raised — the approved amount is the ceiling Accounts may pay to, so raising it would create an obligation nobody asked for. The answer to needing more money is a new request.</p>
 <p>Or they press <strong>Return for correction</strong> instead. That is not a rejection: the request goes back to <code>returned</code>, keeps its number and its whole history, and the requester gets a correction form with the approver's comment above it. <strong>Save corrections</strong> keeps it with them; <strong>Resubmit for approval</strong> sends it back and returns the status to <code>pending</code>.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-returned.png" aria-label="Enlarge: A returned request. The banner carries the approver’s words, and the line under it says plainly that returned is not rejected.">
-    <img src="../assets/shots/requester/detail-returned.png" alt="The approver’s reason for returning a request, and the form to correct and resubmit it." loading="lazy" width="1440">
-  </button>
-  <figcaption>A returned request. The banner carries the approver’s words, and the line under it says plainly that returned is not rejected. </figcaption>
-</figure>
 <p>Once approved, the request is locked to the requester. It can no longer be edited or withdrawn; the only thing they may do is ask for it to be cancelled.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-approved.png" aria-label="Enlarge: An approved request. The banner spells out the lock, and the one control left is **Request cancellation**.">
-    <img src="../assets/shots/requester/detail-approved.png" alt="A request that has cleared approval and is waiting for the accounts team." loading="lazy" width="1440">
-  </button>
-  <figcaption>An approved request. The banner spells out the lock, and the one control left is <strong>Request cancellation</strong>. </figcaption>
-</figure>
 <h3 id="3-taken-for-processing">3. Taken for processing</h3>
 <p>Somebody in Accounts presses <strong>Take for processing</strong> from the payment queue. That claim is the whole point of the <code>processing</code> status: while one person holds it, nobody else can record a payment against it, so the same invoice cannot be paid twice. The badge the requester sees changes to <strong>With Accounts</strong>.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-processing.png" aria-label="Enlarge: A claimed request. The history shows the reservation as its own line, naming who took it: &quot;Harsh Agarwal reserved the request for processing&quot;.">
-    <img src="../assets/shots/requester/detail-processing.png" alt="A request the accounts team has claimed and is working on." loading="lazy" width="1440">
-  </button>
-  <figcaption>A claimed request. The history shows the reservation as its own line, naming who took it: &quot;Harsh Agarwal reserved the request for processing&quot;. </figcaption>
-</figure>
 <h3 id="4-paid">4. Paid</h3>
 <p>The accountant fills in the payment and confirms it. If the figure matches what was approved — or is short and they confirm the request as settled anyway — the request closes as <code>completed</code> in the same transaction that writes the payment. The two either both happen or neither does.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-completed.png" aria-label="Enlarge: A completed request. Payment outcome compares what was approved with what was paid, and the difference below it.">
-    <img src="../assets/shots/requester/detail-completed.png" alt="A finished request, showing the payment recorded against it." loading="lazy" width="1440">
-  </button>
-  <figcaption>A completed request. Payment outcome compares what was approved with what was paid, and the difference below it. </figcaption>
-</figure>
 <h3 id="5-or-paid-short-and-sent-back-to-the-approver">5. Or paid short, and sent back to the approver</h3>
-<p>The one outcome Accounts cannot close on its own is money still owed. Marking a payment a partial settlement moves the request to <code>partial_review</code> and puts it back in front of the approver with the shortfall and the accountant’s written reason. The approver either accepts the shortfall — closing the request as <code>completed_partial</code>, which stays visibly different from a clean <code>completed</code> for the life of the record — or raises a concern, which leaves the request in review and starts a conversation.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/manager/partial-review.png" aria-label="Enlarge: A shortfall waiting on its approver: approved against paid, what is still owed, and the two decisions at the bottom.">
-    <img src="../assets/shots/manager/partial-review.png" alt="What the approver sees when Accounts paid less than was approved." loading="lazy" width="1440">
-  </button>
-  <figcaption>A shortfall waiting on its approver: approved against paid, what is still owed, and the two decisions at the bottom. </figcaption>
-</figure>
-<aside class="callout callout-warning"><p>Neither decision moves money and neither can amend the payment. Accepting writes the balance off permanently. Raising a concern reverses nothing — the money has already left.</p></aside>
+<p>An installment returns the request to Approved for the remaining balance. If Accounts instead asks the manager to accept a shortfall, the request moves to Partial — manager review. The approver can Keep balance payable, Accept and close the permanent write-off, or Raise a concern.</p>
+<aside class="callout callout-warning"><p>None of these decisions moves money or amends the recorded payment. Keeping the balance payable permits Accounts to record a later installment. Accepting writes the balance off permanently. Raising a concern reverses nothing — the money has already left.</p></aside>
 <h2 id="the-cancellation-branch">The cancellation branch</h2>
 <p>An approved request cannot be taken back on the requester’s own say-so, because Accounts may already be acting on it. The requester asks instead, and the request moves to <code>cancellation_requested</code>. Payment freezes at that moment: no accountant can reserve or pay it while the approver is deciding.</p>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-cancellation-asked.png" aria-label="Enlarge: A cancellation the requester has asked for. The banner names who has to decide and repeats the reason given.">
-    <img src="../assets/shots/requester/detail-cancellation-asked.png" alt="What the raiser sees after asking to cancel an approved request." loading="lazy" width="1440">
-  </button>
-  <figcaption>A cancellation the requester has asked for. The banner names who has to decide and repeats the reason given. </figcaption>
-</figure>
 <p>The approver accepts, and the request is <code>cancelled</code> for good. Or they decline with a written reason, and it returns to <code>approved</code> and becomes payable again. Declining is the only route back — an approver who tries to approve the frozen request instead is refused and told to decide the cancellation first.</p>
 <h2 id="holds-which-are-not-a-status">Holds, which are not a status</h2>
 <p>When Accounts needs something answered before they can pay — bank details that do not match the vendor master, an invoice number that does not exist — they put the request on hold with a question. The status stays <code>approved</code>. What changes is that the request drops out of the takeable set, so nobody can claim it, and the badge on every screen reads <strong>On hold</strong> instead.</p>

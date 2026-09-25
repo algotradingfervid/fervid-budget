@@ -49,7 +49,10 @@ func seedRecoverable(t *testing.T, s *appTestServer, headID int64, number, code,
 // value on a phone. Asserted by test, because it is invisible on a desktop.
 func assertTCardsLabelled(t *testing.T, body string) {
 	t.Helper()
-	for _, chunk := range strings.Split(body, `class="t-cards"`)[1:] {
+	for _, chunk := range strings.Split(body, `class="t-cards`)[1:] {
+		if !strings.HasPrefix(chunk, `"`) && !strings.HasPrefix(chunk, " ") {
+			continue
+		}
 		table := chunk
 		if end := strings.Index(table, "</table>"); end >= 0 {
 			table = table[:end]
@@ -76,8 +79,8 @@ func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) { // G18
 	body := responseBody(t, s.request(http.MethodGet, "/recoverables", nil, ""))
 	for _, want := range []string{
 		"Recoverable payments",
-		"Kept out of budget actuals on purpose",                 // .banner.brand explainer
-		"Tracking the money coming back is not in this version", // .banner.locked
+		"Kept out of budget actuals on purpose", // .banner.brand explainer
+		"Track each return and reconciliation",  // .banner.locked
 		"Outstanding", "Past expected return", "Due in 30 days", "Paid out this month",
 		"By category", "By counterparty",
 		"Beacon Infra Ltd", "Ridge Metro tender authority",
@@ -111,7 +114,7 @@ func TestRecoverablesListScreenAndExport(t *testing.T) {
 			t.Fatalf("recoverables list missing %q", want)
 		}
 	}
-	for _, want := range []string{`class="t-cards"`, `class="m-filters"`, `class="pill recoverable"`, "<tfoot>", `name="ageing"`} {
+	for _, want := range []string{`class="t-cards"`, `class="m-only recovery-filters"`, `class="pill recoverable"`, "<tfoot>", `name="ageing"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("recoverables list missing design-system markup %q", want)
 		}
@@ -133,7 +136,7 @@ func TestRecoverablesListScreenAndExport(t *testing.T) {
 	resp := s.request(http.MethodGet, "/recoverables/list.csv?from=2026-08&to=2026-08", nil, "")
 	requireStatus(t, resp, http.StatusOK)
 	csv := responseBody(t, resp)
-	if !strings.HasPrefix(csv, "Number,Category,Counterparty,Project,Amount,Paid On,Expected Return,Ageing,Status,Requester,Repayment Notes") {
+	if !strings.HasPrefix(csv, "Number,Category,Counterparty,Project,Outstanding,Paid out,Recovered or reconciled,Paid On,Expected Return,Ageing,Status,Requester,Repayment Notes") {
 		t.Fatalf("recoverable CSV header unexpected: %s", csv)
 	}
 	if !strings.Contains(csv, "Beacon Infra Ltd") {
@@ -169,7 +172,7 @@ func TestRecoverableDetailScreen(t *testing.T) { // G17
 	for _, want := range []string{
 		"PR-2026-000097", "Coastal Power Utilities Ltd", "EMD",
 		"Past its expected return date", // the overdue banner copy
-		"Recoverable details", "Payment", "History and conversation",
+		"Recoverable details", "Latest payment", "History and conversation",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("recoverable detail missing %q", want)
@@ -207,6 +210,9 @@ func TestRecoverableDetailShowsUnpaidState(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recoverable")
 	reqID := seedRecoverable(t, s, headID, "PR-2026-000099", "emd", "Ridge Metro", "2027-06-30", "", 300000)
+	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET status='approved' WHERE id=?`, reqID); err != nil {
+		t.Fatal(err)
+	}
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 
 	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", reqID), nil, ""))

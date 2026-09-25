@@ -111,12 +111,6 @@
 <header class="page-head"><h1>Budgets</h1><p class="lede">Setting the figures each head is allowed, month by month.</p></header>
 <p>A budget is one number: what a single expense head is allowed to spend in a single month. There is no annual figure and no project-level figure — the project total on the variance grid is the sum of its heads, and the year is the sum of its months. This screen is where those numbers are typed.</p>
 <h2 id="the-screen">The screen</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/budgets.png" aria-label="Enlarge: The budget editor for one month. Every active head gets a row and a box to type in.">
-    <img src="../assets/shots/admin/budgets.png" alt="The figures each head is allowed, month by month." loading="lazy" width="1440">
-  </button>
-  <figcaption>The budget editor for one month. Every active head gets a row and a box to type in. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <p>The toolbar at the top holds the month and three ways out of it. <strong>Open</strong> loads the month you picked. <strong>Month history</strong> goes to <a href="../admin/monthly-plans-and-locking.html">Monthly plans</a>. <strong>View grid</strong> goes to the variance grid for the same month.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What it shows</th></tr></thead><tbody>
 <tr><td>Project</td><td>The project the head belongs to.</td></tr>
@@ -126,14 +120,14 @@
 <tr><td>Actual</td><td>What has actually been paid against the head in this month, so far.</td></tr>
 <tr><td>Used</td><td>Actual as a percentage of budget.</td></tr>
 </tbody></table></div>
-<aside class="callout callout-note"><p>Actual and Used are read-only and they update themselves. A head that has been overspent shows a percentage above 100 — the capture above has one at 486%, which is a real thing the screen will show you rather than an error.</p></aside>
+<aside class="callout callout-note"><p>Actual and Used are read-only and they update themselves. A head that has been overspent shows a percentage above 100; this is a valid overspend indicator.</p></aside>
 <h2 id="setting-the-figures">Setting the figures</h2>
 <ol class="steps">
 <li>Pick the month in <strong>Month</strong> and select <strong>Open</strong>.</li>
 <li>Type the figures into the <strong>Budget</strong> boxes.<p class="step-note">Amounts are shown the way the product writes money everywhere else — ₹2,23,300.00. The rupee sign and the grouping commas are both optional when you type. An empty box means no budget; a negative figure is refused with <code>a budget cannot be negative</code>, and anything that is not a number with <code>enter a number, or leave it empty for no budget</code>.</p></li>
-<li>Select <strong>Save Budgets</strong> at the foot of the table.<p class="step-note">One press saves the whole month. Every figure you changed is written, and each write leaves its own audit row.</p></li>
+<li>Select <strong>Save Budgets</strong> at the foot of the table.<p class="step-note">One press saves valid submitted budget figures. Invalid fields stay unsaved; the response counts saved and rejected values, and accepted changes leave audit rows.</p></li>
 </ol>
-<aside class="callout callout-note"><p class="callout-title">One bad box does not lose the rest</p><p>If one box cannot be read, only that box is rejected. Everything else on the page is still saved, and the screen comes back naming the fields it could not understand with your typing still in them. A single stray character does not cost you the whole month.</p></aside>
+<aside class="callout callout-note"><p class="callout-title">One bad box does not lose the rest</p><p>If one box cannot be read, only that box is rejected. Other valid fields are saved. The summary links to each rejected field; the field has an adjacent Not saved explanation, and accepted fields show Saved. Your invalid typing remains available to correct. A single stray character does not cost you the whole month.</p></aside>
 <aside class="callout callout-tip"><p>A month that already has budgets is easier to copy than to retype. Create the next month with <strong>Copy from month</strong> on <a href="../admin/monthly-plans-and-locking.html">Monthly plans</a>, then come here and adjust the handful of heads that changed.</p></aside>
 <h2 id="what-you-cannot-edit">What you cannot edit</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">Situation</th><th scope="col">What the screen does</th></tr></thead><tbody>

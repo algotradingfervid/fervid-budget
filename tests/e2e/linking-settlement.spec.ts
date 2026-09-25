@@ -65,9 +65,27 @@ test.describe('payment linking and settlement', () => {
     await expect(sheet).toBeVisible();
     await expect(sheet.locator('.cmp-row.diff')).toContainText('1,000.00');
     await expect(sheet.locator('.outcome.good')).toHaveText('Completed');
-    await expect(sheet.locator('.outcome.warn')).toHaveText('Manager review');
-    // The partial reason only appears once partial is chosen.
-    await expect(sheet.locator('[data-when="settlement:partial"]')).toBeHidden();
+    await expect(sheet.locator('.outcome.warn')).toHaveText(['Keep payable', 'Manager review']);
+    // Short payments require a deliberate disposition. This test closes with
+    // an explained adjustment; an installment would keep the balance payable.
+    await expect(sheet.locator('input[name="settlement"]:checked')).toHaveCount(0);
+    await sheet.locator('input[name="settlement"][value="settled"]').check();
+    // A short close without an explanation must fail without losing the form.
+    const refusedPayment = adminPage.waitForResponse(response => response.url().endsWith('/payments') && response.request().method() === 'POST');
+    await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
+    expect((await refusedPayment).status()).toBe(400);
+    await expect(adminPage).toHaveURL(/\/payments$/);
+    await expect(sheet.locator('.banner.bad')).toContainText('explain the deduction');
+    await sheet.getByRole('button', { name: 'Go back' }).click();
+    await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
+    await expect(adminPage.getByLabel('Amount actually paid')).toHaveValue('4,000.00');
+    await expect(adminPage.getByLabel('Paid on')).toHaveValue('2026-07-24');
+    await expect(adminPage.getByLabel('Payment mode')).toHaveValue('bank_transfer');
+    await expect(adminPage.getByLabel('Transaction / UTR reference')).toHaveValue(`UTR-${request.id}`);
+    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+    await expect(sheet.locator('input[name="settlement"]:checked')).toHaveCount(0);
+    await sheet.locator('input[name="settlement"][value="settled"]').check();
+    await sheet.locator('textarea[name="partial_reason"]').fill('Agreed contractual deduction of 1000; no balance remains owed.');
 
     // Confirm: one POST, and we land on the payment (S10).
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
@@ -83,7 +101,9 @@ test.describe('payment linking and settlement', () => {
     // The page never scrolls sideways at 390 px.
     const overflow = await adminPage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);
-    expect(errors).toEqual([]);
+    // Chromium reports the deliberately exercised HTTP400 as a resource error.
+    // Exactly that expected response is allowed; script and all other errors fail.
+    expect(errors).toEqual(['console: Failed to load resource: the server responded with a status of 400 (Bad Request)']);
   });
 
   test('a second accountant gets the conflict screen, not an error page', async ({ adminPage, secondPage, runId }) => {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fervid UX Review"
+  short_description: "Autonomous UX audit with research and evidence"
+  default_prompt: "Use $fervid-ux-review to audit Fervid Budget, research every open UX question, verify findings, and deliver a prioritized report without changing the product."

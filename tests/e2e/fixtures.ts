@@ -315,8 +315,8 @@ export async function settlePayment(
 
   const settlement = opts.settlement ?? 'settled';
   await sheet.locator(`input[name="settlement"][value="${settlement}"]`).check();
-  if (settlement === 'partial') {
-    await sheet.getByLabel('Why only part was paid').fill(opts.partialReason ?? 'A balance is still owed.');
+  if (settlement === 'partial' || opts.partialReason) {
+    await sheet.getByLabel('Reason for any deduction or shortfall').fill(opts.partialReason ?? 'A balance is still owed.');
   }
 
   await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();

@@ -591,6 +591,7 @@ func TestAttachmentPolicyAsksForAReasonInsteadOfBlocking(t *testing.T) {
 		in.ShortTitle, in.ProjectID, in.HeadID = "Freight", 1, headID
 		in.Amount, in.Purpose, in.ManagerID = 64500, "freight", mgr.ID
 		in.VendorID, in.InvoiceNo, in.InvoiceDate = vendorID, "KL/2026/0788", "2026-07-21"
+		in.DuplicateReason = "Intentional duplicate fixture for attachment policy"
 		return s.CreateRequest(ctx, req, in)
 	}
 	// Off by default: no file, no reason, accepted.

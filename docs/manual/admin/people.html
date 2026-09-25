@@ -111,12 +111,6 @@
 <header class="page-head"><h1>People and accounts</h1><p class="lede">Adding colleagues, setting who approves for whom, and deactivating leavers.</p></header>
 <p><strong>Users</strong> is the roll of everybody with an account. It is where a new colleague gets one, where somebody's roles change, where you set who approves their requests, and where a leaver is switched off. Nothing on this screen deletes a person: accounts are deactivated, never removed, so the requests and payments they touched keep their name on them.</p>
 <h2 id="reading-the-list">Reading the list</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/users.png" aria-label="Enlarge: The people screen. One row per account, sorted by name.">
-    <img src="../assets/shots/admin/users.png" alt="Everybody with an account, the roles they hold, and who approves their requests." loading="lazy" width="1440">
-  </button>
-  <figcaption>The people screen. One row per account, sorted by name. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What it holds</th></tr></thead><tbody>
 <tr><td>Name</td><td>The person, as the product will show them everywhere else.</td></tr>
 <tr><td>Email</td><td>What they sign in with. Stored lower-case, and it must contain an <code>@</code>.</td></tr>
@@ -127,12 +121,6 @@
 </tbody></table></div>
 <p>The sub-line under the heading — &quot;A person can hold several roles at once&quot; — is the thing to hold on to. Roles add up. Somebody who holds both Requester and Manager can raise requests and decide other people's, and their menu is the union of the two.</p>
 <h2 id="adding-somebody">Adding somebody</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/user-new-sheet.png" aria-label="Enlarge: The Add user panel. It asks for the minimum, and the rest is set afterwards.">
-    <img src="../assets/shots/admin/user-new-sheet.png" alt="The panel for creating an account: email, name, roles and a starting password." loading="lazy" width="1440">
-  </button>
-  <figcaption>The Add user panel. It asks for the minimum, and the rest is set afterwards. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <ol class="steps">
 <li>Select <strong>＋ Add user</strong> at the top right.</li>
 <li>Type their <strong>Email</strong>. This is what they will sign in with.</li>
@@ -143,14 +131,8 @@
 <li>Select <strong>Add User</strong>.<p class="step-note">The new account appears in the list, and the creation is written to the audit trail.</p></li>
 </ol>
 <aside class="callout callout-note"><p class="callout-title">What the Role field actually does</p><p>The <strong>Role</strong> choice on this panel also seeds the person’s first role: choosing <code>Admin</code> gives the new account the Admin role, and choosing <code>Data entry</code> gives it Accounts. If neither is what you want, open the new row’s <strong>Edit</strong> panel straight away and set the roles properly.</p></aside>
-<aside class="callout callout-warning"><p class="callout-title">The starting password</p><p>There is no self-service password reset anywhere in the product, so the password you type here is the one the person will use to sign in for the first time. Give it to them over a channel you trust, and ask them to tell you if they cannot get in.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">The starting password</p><p>Give the starting password over a trusted channel. <strong>Can’t sign in?</strong> offers email reset when configured, or an administrator/operator route when it is not. Administrators can reset or unlock accounts here; see <a href="../getting-started/signing-in.html">Signing in</a>.</p></aside>
 <h2 id="changing-somebody">Changing somebody</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/user-edit-sheet.png" aria-label="Enlarge: The edit panel, opened on one person. The email is shown but not editable here.">
-    <img src="../assets/shots/admin/user-edit-sheet.png" alt="The panel for changing somebody’s roles, approver or password." loading="lazy" width="1440">
-  </button>
-  <figcaption>The edit panel, opened on one person. The email is shown but not editable here. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Name</strong></td><td><span class="req">Required</span></td><td>How they appear on every request, approval and payment.</td></tr>
 <tr><td><strong>Roles</strong></td><td><span class="opt">Optional</span></td><td>One tick box per role, each with its description: <code>Accounts — Process approved requests and record payments.</code>, <code>Admin — Full administrative access.</code>, <code>Manager — Review and decide on payment requests.</code>, <code>Requester — Raise and manage your own payment requests.</code> Tick as many as apply.</td></tr>

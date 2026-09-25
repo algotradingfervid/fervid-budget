@@ -112,12 +112,6 @@
 <p>The vendor master is the list of everybody the company pays that is not an employee. A requester picks from it rather than typing a name, so the same supplier is spelt the same way on every request, and the reporting can add them up.</p>
 <p>A vendor record has four ordinary parts — identity, statutory numbers, contact details and notes — and one restricted part, the bank block, which is covered on its own page: <a href="../admin/vendor-bank-details.html">Vendor bank details</a>.</p>
 <h2 id="the-vendor-list">The vendor list</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/vendors.png" aria-label="Enlarge: The vendor list. The sub-line under the heading counts what is there and what is missing.">
-    <img src="../assets/shots/admin/vendors.png" alt="Every vendor, with how much has been paid to each." loading="lazy" width="1440">
-  </button>
-  <figcaption>The vendor list. The sub-line under the heading counts what is there and what is missing. </figcaption>
-</figure>
 <p>The line under the heading is a summary of the master itself: how many vendors are active, how many are missing a GSTIN, and the reminder that bank details are visible only with permission.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What it shows</th></tr></thead><tbody>
 <tr><td>Vendor</td><td>The name, linking to the record. Its categories, if any, sit underneath.</td></tr>
@@ -128,7 +122,7 @@
 <tr><td>Open requests</td><td>How many requests naming this vendor are still in flight.</td></tr>
 <tr><td>Status</td><td><code>Active</code> or <code>Inactive</code>.</td></tr>
 </tbody></table></div>
-<p>The row across the foot totals the two figures for whatever the filters left on screen, and says how many of the whole master you are looking at — &quot;12 shown of 12&quot; in the capture above.</p>
+<p>The row across the foot totals the two figures for whatever the filters left on screen, and says how many of the whole master you are looking at.</p>
 <h3 id="the-gstin-banner">The GSTIN banner</h3>
 <p>When any vendor has no GSTIN, a banner appears above the filters counting them. It is a nudge, not a block — the wording is explicit that &quot;They can still be paid. The gap shows up in vendor reporting until someone fills it in.&quot; <strong>Show them</strong> filters the list down to exactly those vendors, and <strong>Show all</strong> puts it back.</p>
 <h3 id="finding-a-vendor">Finding a vendor</h3>
@@ -143,12 +137,6 @@
 <li>Select <strong>Apply</strong>.</li>
 </ol>
 <h2 id="adding-a-vendor">Adding a vendor</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/vendor-new.png" aria-label="Enlarge: The blank vendor form. Only two fields carry the required marker.">
-    <img src="../assets/shots/admin/vendor-new.png" alt="The blank vendor form, including the bank details block." loading="lazy" width="1440">
-  </button>
-  <figcaption>The blank vendor form. Only two fields carry the required marker. </figcaption>
-</figure>
 <ol class="steps">
 <li>Select <strong>＋ Add vendor</strong>.</li>
 <li>Type the <strong>Vendor name</strong>. It must be unique across the master.</li>
@@ -179,15 +167,10 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p class="callout-title">TDS is recorded, not calculated</p><p>The statutory block is a record, not a calculator. The hint beside it says so: the numbers are recorded for reference only, this system never computes tax, and Accounts confirms deductions outside it.</p></aside>
 <h2 id="one-vendor-in-detail">One vendor in detail</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/admin/vendor-detail.png" aria-label="Enlarge: A vendor record. The same form as the blank one, filled in, with a bar of tabs above it.">
-    <img src="../assets/shots/admin/vendor-detail.png" alt="A vendor’s details, bank information and payment history." loading="lazy" width="1440">
-  </button>
-  <figcaption>A vendor record. The same form as the blank one, filled in, with a bar of tabs above it. </figcaption>
-</figure>
 <p>The record is the form. There is no read-only view and no separate edit screen — if your role carries the vendor edit permission you can change what you are looking at and select <strong>Save vendor</strong>; if it does not, every box is disabled and the only control is <strong>Back to vendors</strong>. The foot of the form carries the record’s dates: when it was created, and when it was last edited.</p>
-<aside class="callout callout-warning"><p class="callout-title">The Requests, Payments and History tabs</p><p>Three of the four tabs above the form — <strong>Requests</strong>, <strong>Payments</strong> and <strong>History</strong> — are marked <code>Soon</code>. They are announcements of screens that do not exist yet, not links, and selecting them does nothing. Only <strong>Record</strong> is built.</p>
-<p>Until they are, the vendor-level figures you have are <strong>Paid this year</strong> and <strong>Open requests</strong> on the list, and the <a href="../accounts/the-payments-ledger.html">payments ledger</a> filtered by hand.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">The Requests, Payments and History tabs</p><p><strong>Requests</strong>, <strong>Payments</strong> and <strong>History</strong> are working links to this vendor’s supporting records. Each needs its corresponding request, payment or audit permission, and record lists obey your data scope. Open a linked record and use the contextual back link to return to the vendor.</p>
+<p>Vendor Payments contains payments linked to requests naming this vendor; historical unlinked payments cannot be attributed to a vendor ID with certainty. Use the broader ledger for those historical records.</p></aside>
+<p>Invalid GSTIN errors appear beside the field and in a linked summary while preserving the rest of the form. The bank default-payment-mode options follow the configured enabled modes and retain an existing legacy value.</p>
 <h2 id="retiring-a-vendor">Retiring a vendor</h2>
 <ol class="steps">
 <li>Open the vendor.</li>

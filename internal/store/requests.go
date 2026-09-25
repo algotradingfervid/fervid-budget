@@ -548,7 +548,8 @@ const requestSelect = `SELECT r.id,r.number,r.status,r.treatment,r.type,r.recove
  r.requester_id,COALESCE(ru.name,''),r.manager_id,COALESCE(mu.name,''),
  r.approved_amount,r.approved_by,COALESCE(au.name,''),r.approved_at,
  r.decision_reason,r.cancel_reason,r.on_hold,r.hold_reason,r.processing_by,COALESCE(pu.name,''),r.processing_at,r.concern_open,
- r.reminder_last_sent,r.submitted_at,r.created_at,r.updated_at
+ r.reminder_last_sent,r.submitted_at,r.created_at,r.updated_at,
+ (SELECT COALESCE(SUM(py.amount),0) FROM payments py WHERE py.request_id=r.id AND py.voided_at IS NULL)
 FROM payment_requests r
 LEFT JOIN projects p ON p.id=r.project_id
 LEFT JOIN heads h ON h.id=r.head_id
@@ -573,7 +574,7 @@ func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 		&r.RequesterID, &r.RequesterName, &r.ManagerID, &r.ManagerName,
 		&approvedAmt, &approvedBy, &r.ApprovedByName, &approvedAt,
 		&r.DecisionReason, &r.CancelReason, &onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt, &concernOpen,
-		&reminder, &submitted, &r.CreatedAt, &r.UpdatedAt)
+		&reminder, &submitted, &r.CreatedAt, &r.UpdatedAt, &r.PaidAmount)
 	if err == sql.ErrNoRows {
 		return r, ErrNotFound
 	}
@@ -698,6 +699,9 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 		return 0, err
 	}
 	defer tx.Rollback()
+	if err := requireDuplicateReasonTx(ctx, tx, in, 0); err != nil {
+		return 0, err
+	}
 	year, err := requestNumberYear(tx, time.Now().UTC())
 	if err != nil {
 		return 0, err
@@ -736,8 +740,13 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 	// P5 hook: notify in.ManagerID here.
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "submit", EntityType: "payment_request", EntityID: &id,
-		Summary: actor.Name + " submitted request " + number + " for " + money.FormatPaise(in.Amount),
-		After:   map[string]any{"number": number, "type": in.Type, "amount": in.Amount, "manager_id": in.ManagerID}}); err != nil {
+		Summary: actor.Name + " submitted request " + number + " for " + money.FormatPaise(in.Amount) + func() string {
+			if strings.TrimSpace(in.DuplicateReason) != "" {
+				return " — duplicate override: " + strings.TrimSpace(in.DuplicateReason)
+			}
+			return ""
+		}(),
+		After: map[string]any{"number": number, "type": in.Type, "amount": in.Amount, "manager_id": in.ManagerID, "duplicate_override_reason": strings.TrimSpace(in.DuplicateReason)}}); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -857,7 +866,7 @@ func (s *Store) attachmentsRequired(ctx context.Context) (bool, error) {
 // including excludeUserID. The request form's approver control is built from
 // exactly this list, so a requester's own name is never selectable (G8).
 func (s *Store) ListApprovers(ctx context.Context, excludeUserID int64) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id,u.email,u.name,u.password_hash,u.role,u.active,u.created_at,u.updated_at,u.default_approver_id
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id,u.email,u.name,u.password_hash,u.role,u.active,u.created_at,u.updated_at,u.default_approver_id,u.session_version
  FROM users u
  JOIN user_roles ur ON ur.user_id=u.id
  JOIN role_permissions rp ON rp.role_id=ur.role_id
@@ -1004,6 +1013,11 @@ func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 	if !editableStatuses[before.Status] {
 		return fmt.Errorf("%w: %s cannot be edited", ErrValidation, statusPhrase(before.Status))
 	}
+	if before.VendorID == nil || *before.VendorID != in.VendorID || before.InvoiceNo != in.InvoiceNo || before.InvoiceDate != in.InvoiceDate {
+		if err := requireDuplicateReasonTx(ctx, tx, in, id); err != nil {
+			return err
+		}
+	}
 	// Pending edits reset the reminder timer and reroute to the chosen approver.
 	// P5 hook: re-notify the (possibly new) approver here.
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET
@@ -1032,7 +1046,12 @@ func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 	}
 	return recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "update", EntityType: "payment_request", EntityID: &id,
-		Summary: actor.Name + " edited request " + before.Number, Before: before, After: after})
+		Summary: actor.Name + " edited request " + before.Number + func() string {
+			if strings.TrimSpace(in.DuplicateReason) != "" {
+				return " — duplicate override: " + strings.TrimSpace(in.DuplicateReason)
+			}
+			return ""
+		}(), Before: before, After: after})
 }
 
 func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error {
@@ -1370,6 +1389,12 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 	if !canTransition(before.Status, "cancellation_requested") {
 		return fmt.Errorf("%w: %s cannot be sent for cancellation", ErrValidation, statusPhrase(before.Status))
 	}
+	// Installments can return to approved after money has left. Cancellation
+	// must never hide that paid obligation or its recoverable balance.
+	if before.PaidAmount > 0 {
+		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	}
+
 	// The hold is suspended by the freeze, not destroyed by it (F-C-07).
 	//
 	// `on_hold=1` still implies `status='approved'` — that invariant is what lets
@@ -1452,6 +1477,12 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 	if before.Status != "cancellation_requested" || !canTransition(before.Status, to) {
 		return fmt.Errorf("%w: there is no cancellation to decide on %s", ErrValidation, statusPhrase(before.Status))
 	}
+	// Installments can return to approved after money has left. Cancellation
+	// must never hide that paid obligation or its recoverable balance.
+	if accept && before.PaidAmount > 0 {
+		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	}
+
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?`+holdSQL+`, updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status='cancellation_requested' AND manager_id=?`, to, note, id, actor.ID)
 	if err != nil {
@@ -1498,6 +1529,12 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 	if !canTransition(before.Status, "cancelled") {
 		return fmt.Errorf("%w: %s cannot be cancelled", ErrValidation, statusPhrase(before.Status))
 	}
+	// Installments can return to approved after money has left. Cancellation
+	// must never hide that paid obligation or its recoverable balance.
+	if before.PaidAmount > 0 {
+		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	}
+
 	// A cancelled request is dead, so nothing may still be "on hold" on it: the
 	// hold tab would keep listing it and offering "Read reply" on a request no
 	// reply can change.
@@ -1816,8 +1853,8 @@ func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEnt
 // requestBuckets back the `.segmented` tabs. "needs-me" is scope-dependent and
 // handled separately in requestWhere.
 var requestBuckets = map[string][]string{
-	"open":   {"pending", "returned", "approved", "cancellation_requested"},
-	"closed": {"rejected", "withdrawn", "cancelled"},
+	"open":   {"pending", "returned", "approved", "cancellation_requested", "processing", "partial_review"},
+	"closed": {"rejected", "withdrawn", "cancelled", "completed", "completed_partial"},
 }
 
 // requestWhere fails closed on the scope: only ScopeAll is unrestricted, and an
@@ -1885,6 +1922,10 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 	if opts.Treatment != "" {
 		where = append(where, `r.treatment=?`)
 		args = append(args, opts.Treatment)
+	}
+	if opts.VendorID > 0 {
+		where = append(where, `r.vendor_id=?`)
+		args = append(args, opts.VendorID)
 	}
 	if opts.ProjectID > 0 {
 		where = append(where, `r.project_id=?`)

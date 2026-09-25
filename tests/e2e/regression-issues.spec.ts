@@ -145,9 +145,9 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-002 keeps month-close counts independent of grid filters', async ({ adminPage }) => {
     await adminPage.goto('/grid?month=2026-07');
-    const baseline = await adminPage.getByText(/heads are unpaid.*over budget/i).textContent();
+    const baseline = await adminPage.getByText(/Full month: \d+ budgeted heads? (?:is|are) unpaid.*over budget/i).textContent();
     await adminPage.goto('/grid?month=2026-07&q=does-not-exist');
-    await expect(adminPage.getByText(/heads are unpaid.*over budget/i)).toHaveText(baseline ?? '');
+    await expect(adminPage.getByText(/Full month: \d+ budgeted heads? (?:is|are) unpaid.*over budget/i)).toHaveText(baseline ?? '');
   });
 
   test('ISS-003 labels spend without a budget as unbudgeted', async ({ adminPage, runId }) => {
@@ -315,6 +315,8 @@ test.describe('documented issue regression guards', () => {
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const sheet = adminPage.locator('.overlay .sheet');
     await expect(sheet).toBeVisible();
+    await expect(sheet.locator('input[name="settlement"]:checked')).toHaveCount(0);
+    await sheet.locator('input[name="settlement"][value="settled"]').check();
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
 
     await expect(adminPage.getByRole('alert')).toContainText(/more than the approved/i);

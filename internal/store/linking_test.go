@@ -111,7 +111,7 @@ func TestMigrationV4AddsLinkingColumnsAndIndex(t *testing.T) {
 	_ = ctx
 }
 
-func TestPaymentRequestIndexRejectsDuplicateLinkButAllowsNullHistoricals(t *testing.T) {
+func TestPaymentRequestIndexAllowsInstallmentsAndNullHistoricals(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
@@ -123,8 +123,8 @@ func TestPaymentRequestIndexRejectsDuplicateLinkButAllowsNullHistoricals(t *test
 	if err := linked("2026-06-15"); err != nil {
 		t.Fatalf("first link insert: %v", err)
 	}
-	if err := linked("2026-06-16"); err == nil {
-		t.Fatal("second payment linked to the same request was allowed (S9 broken)")
+	if err := linked("2026-06-16"); err != nil {
+		t.Fatalf("installment insert: %v", err)
 	}
 	for _, d := range []string{"2026-06-17", "2026-06-18"} {
 		if _, err := s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,entered_by) VALUES(?,?,?,?)`, headID, d, 2000, acc.ID); err != nil {
@@ -407,7 +407,7 @@ func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 400000, VendorPayee: "Acme Landlord"}, "settled", "", nil)
+	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 400000, VendorPayee: "Acme Landlord"}, "settled", "Agreed deduction documented", nil)
 	if err != nil {
 		t.Fatalf("record settled: %v", err)
 	}
@@ -772,7 +772,8 @@ func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 	onHold := seedApprovedRequest(t, s, ctx, 6, req.ID, mgrID, headID, 25000, 25000)
 	inReview := seedApprovedRequest(t, s, ctx, 7, req.ID, mgrID, headID, 95000, 95000)
 	paidClean := seedApprovedRequest(t, s, ctx, 8, req.ID, mgrID, headID, 41300, 41300)
-	paidPartial := seedApprovedRequest(t, s, ctx, 9, req.ID, mgrID, headID, 60000, 60000)
+	// An accepted shortfall needs a real unpaid balance.
+	paidPartial := seedApprovedRequest(t, s, ctx, 9, req.ID, mgrID, headID, 70000, 70000)
 
 	for _, id := range []int64{mine, stale, inReview, paidClean, paidPartial} {
 		if err := s.ReserveRequest(ctx, acc, id); err != nil {

@@ -108,60 +108,14 @@
 <main class="doc">
 <div class="wrap">
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Paying</p>
-<header class="page-head"><h1>The recoverables register</h1><p class="lede">Tracking money that is expected back, by category and by counterparty.</p></header>
-<p>Some money that leaves the organisation is not spent. A security deposit, an advance to a member of staff, a payment against something that will be returned — the cash has gone, but it is expected back. A requester marks a request that way when they raise it, and every one of them lands here.</p>
-<p>The register is the sidebar item <strong>Recoverables</strong>. Its whole reason for existing is stated in the banner across the top of it: a deposit is not an expense, so none of this appears in the variance grid or in project spend.</p>
-<h2 id="the-summary">The summary</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/recoverables.png" aria-label="Enlarge: The register. Four tiles, a rollup by category, a rollup by counterparty, and a plain statement of what this version does not do.">
-    <img src="../assets/shots/accounts/recoverables.png" alt="Money expected back, summarised by category and by counterparty." loading="lazy" width="1440">
-  </button>
-  <figcaption>The register. Four tiles, a rollup by category, a rollup by counterparty, and a plain statement of what this version does not do. </figcaption>
-</figure>
-<div class="table-wrap"><table><thead><tr><th scope="col">Tile</th><th scope="col">What it counts</th></tr></thead><tbody>
-<tr><td><strong>Outstanding</strong></td><td>Everything still expected back, and how many payments that is</td></tr>
-<tr><td><strong>Past expected return</strong></td><td>The part of it that is already overdue</td></tr>
-<tr><td><strong>Due in 30 days</strong></td><td>What falls due within the month ahead</td></tr>
-<tr><td><strong>Paid out this month</strong></td><td>Recoverable money that left this month</td></tr>
-</tbody></table></div>
-<p>Under the tiles, two rollups of the same set. <strong>By category</strong> groups by the recoverable category the requester chose, with a count, the outstanding total, the overdue part and the oldest item; a category name is a link into the full list already filtered. <strong>By counterparty</strong> groups by whoever holds the money, with the categories involved and the date it is expected back.</p>
-<aside class="callout callout-note"><p>The categories are a list an administrator maintains — see <a href="../admin/recoverable-categories.html">recoverable categories</a>. A row that says <code>Not recorded</code> under Counterparty is a request that named none.</p></aside>
-<aside class="callout callout-tip"><p><strong>Export CSV</strong> at the top right downloads the full list, not only what is on screen.</p></aside>
-<h2 id="the-full-list">The full list</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/recoverables-list.png" aria-label="Enlarge: Every live recoverable, aged against its expected return date.">
-    <img src="../assets/shots/accounts/recoverables-list.png" alt="Every recoverable item, with its counterparty and due date." loading="lazy" width="1440">
-  </button>
-  <figcaption>Every live recoverable, aged against its expected return date. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
-</figure>
-<p><strong>Full list →</strong> beside the category rollup opens this. It is one row per recoverable, and it includes items that are approved but not yet paid — those show <code>Not yet paid</code> where a date would be.</p>
-<div class="table-wrap"><table><thead><tr><th scope="col">Filter</th><th scope="col">What it does</th></tr></thead><tbody>
-<tr><td><strong>Search</strong></td><td>Matches the request number, the counterparty, the project and the requester</td></tr>
-<tr><td><strong>Category</strong></td><td>One recoverable category, or all of them</td></tr>
-<tr><td><strong>Ageing</strong></td><td><code>Overdue</code>, <code>Due in 30 days</code>, <code>Due later</code>, <code>Not yet paid</code>, or all</td></tr>
-</tbody></table></div>
-<p>The two status columns answer different questions and are worth reading together. <strong>Ageing</strong> is about the money — whether it is overdue, how long there is to go, or whether it has even been paid out. <strong>Status</strong> is the request’s own, so a recoverable can be overdue-flagged and still be awaiting approval.</p>
-<h2 id="one-recoverable">One recoverable</h2>
-<figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/recoverable-detail.png" aria-label="Enlarge: A single recoverable. This one is approved but not yet paid, so the payment section says so rather than showing figures.">
-    <img src="../assets/shots/accounts/recoverable-detail.png" alt="A single item of money expected back, and what has been recovered so far." loading="lazy" width="1440">
-  </button>
-  <figcaption>A single recoverable. This one is approved but not yet paid, so the payment section says so rather than showing figures. </figcaption>
-</figure>
-<h3 id="recoverable-details">Recoverable details</h3>
-<p>The amount, the category, the counterparty, the related project, the expected return date, the ageing and the refund terms the requester wrote. The card carries a <strong>Not in budget actuals</strong> badge, which is the same point the banner on the summary makes.</p>
-<h3 id="payment">Payment</h3>
-<p>Once the money has gone, this shows the date, the amount, the mode, the reference, who recorded it and the payee. Until then it says the money has not left, so nothing is outstanding against a counterparty yet.</p>
-<h3 id="history-and-conversation">History and conversation</h3>
-<p>The same stream the request itself carries, and the same comment box. The placeholder here is pointed: record what you heard from the counterparty. That conversation is the only record of a chase, because the product does not track one.</p>
-<p>At the foot, <strong>Back to list</strong> and <strong>Export this record</strong>.</p>
-<h2 id="what-this-version-does-not-do">What this version does not do</h2>
-<p>The banner at the bottom of the summary is explicit, and it is worth taking at face value. A recoverable closes when its payment is made. Repayments, forfeitures and turning a lost deposit into an expense are deliberately out of scope — they need an accounting adjustment process, not an edit to a completed payment.</p>
-<p>In practice that means the register is a watch list. It tells you what is outstanding, against whom and how late; recovering it happens outside the product, and what you did about it is recorded in the conversation.</p>
-<dl class="faq"><dt>Why does none of this show up in the variance grid?</dt><dd><p>Because it is not spend. A recoverable request carries no budget head at all, and the grid and the monthly report both work through heads, so these payments never reach either. <a href="../requester/budget-and-recoverable.html">Budget spend or money you expect back</a> is the same distinction from the requester’s side.</p></dd>
-<dt>An item is overdue. What does the product do about it?</dt><dd><p>It flags it — red in the list, counted in <strong>Past expected return</strong>, and a banner on the item itself. Chasing the money and recording its return happen outside this version, and the screen says so.</p></dd>
-<dt>A recoverable shows no expected return date.</dt><dd><p>The requester did not give one. The row reads <code>No fixed date</code> and the item is never counted as overdue.</p></dd>
-<dt>My colleague’s register shows more rows than mine.</dt><dd><p>The register obeys the same data scope your role has for requests, and so does the CSV behind it. <a href="../reference/permissions-matrix.html">The permission matrix</a> has the scopes as the running system holds them.</p></dd></dl>
+<header class="page-head"><h1>The recoverables register</h1><p class="lede">Track money paid out, record returns or reconciliations, and retain the history.</p></header>
+<p>Recoverables are money expected back, such as employee advances and deposits. They do not count as budget actuals. The payout request's approval/payment status is separate from whether the money has been recovered.</p>
+<h2 id="the-summary">Read the balances</h2><p><strong>Outstanding</strong> is active recoverable payouts less recorded returns and reconciliations. Unpaid requests do not add to outstanding or overdue money. <strong>Past expected return</strong> and <strong>Due in 30 days</strong> apply to money still outstanding; paid-out-this-month describes outgoing recoverable payments.</p><p>Rollups group this balance by category and counterparty. Employee advances identify the employee even when no separate counterparty was entered. The register obeys your request data scope.</p>
+<h2 id="the-full-list">Filter the register</h2><p>Use Search, Category and Ageing on desktop or open <strong>Filters</strong> on mobile, choose the options, then <strong>Apply filters</strong>. <strong>Reset</strong> clears them. The Reconciled ageing option includes items whose paid balance has been cleared; their history is retained.</p>
+<h2 id="one-recoverable">One recoverable</h2><p>The detail shows <strong>Total paid out</strong>, <strong>Returned or reconciled</strong> and <strong>Outstanding balance</strong>, followed by the payment and <strong>Recovery history</strong>. Conversation notes remain useful for chasing a counterparty, but they do not change the financial balance.</p>
+<h2 id="record-recovery">Record a return or reconciliation</h2><ol><li>Open the recoverable and select the recovery form. You need recoverable report access, payment creation permission and access to that request.</li><li>Choose <strong>Recovery type</strong>: Money returned, Expense reconciled or Balance adjustment.</li><li>Enter <strong>Amount received or reconciled (₹)</strong> and <strong>Recovery date</strong>.</li><li>Provide the <strong>Bank / accounting reference</strong> and <strong>Evidence and explanation</strong>. All fields are required; retain the underlying bank advice or accounting evidence outside this form and describe it.</li><li>Check and confirm the permanent entry.</li></ol>
+<p>The amount must be positive and within both the current and historical balance at that date. A recovery cannot precede the first payout or be future-dated. Each entry reduces outstanding; the last one marks the balance Reconciled while retaining the history.</p>
+<h2 id="what-this-version-does-not-do">Accounting and corrections</h2><p>Expense reconciliation and balance adjustment record a referenced accounting decision; they do not automatically post an expense to the budget. Recovery entries are immutable and have no edit/delete reversal flow. Check the evidence before confirming and use your organisation's accounting correction process for mistakes.</p><p>Recovery does not change the payout request's status, and saving an outgoing payment does not mean its recoverable has been returned.</p>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/correcting-a-payment.html"><span>Previous</span>Correcting or voiding a payment</a></nav>
 </div>
 </main>
