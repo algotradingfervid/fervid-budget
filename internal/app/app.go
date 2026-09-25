@@ -219,6 +219,10 @@ type PageData struct {
 	NotifSettings []store.NotificationSetting
 	MailCfg       store.MailSettings
 	NotifFields   []string
+	// NotifDraft is a rule the rules screen refused, with what the admin typed;
+	// its sheet comes back open with NotifDraftError inside it (ux-2).
+	NotifDraft      *store.NotificationSetting
+	NotifDraftError string
 }
 
 type ReportSummary struct {

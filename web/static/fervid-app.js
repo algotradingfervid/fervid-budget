@@ -601,6 +601,19 @@
     initMoneyFields(document);
     initDifferenceBanner(document);
     initRoleMatrix(document);
+    reopenRefusedSheets(document);
+  }
+
+  /* A sheet whose form the server refused comes back with data-reopen and the
+     admin's own input, and opens again through openDialog so focus and Escape
+     behave as if they had opened it. The attribute is spent on first use, so a
+     later htmx swap never reopens a sheet the user has closed. */
+  function reopenRefusedSheets(root) {
+    var sheets = root.querySelectorAll ? root.querySelectorAll(".overlay[data-reopen]") : [];
+    Array.prototype.forEach.call(sheets, function (el) {
+      el.removeAttribute("data-reopen");
+      openDialog(el, null);
+    });
   }
 
   document.addEventListener("htmx:afterSwap", function () { init(); });

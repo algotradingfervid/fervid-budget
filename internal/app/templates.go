@@ -3597,9 +3597,8 @@ const templates = `
   </div>
 </section>
 
-{{if .Error}}<div class="banner warn"><span class="b-ico" aria-hidden="true">⚠</span><div><b>That did not save</b><p>{{.Error}}</p></div></div>{{end}}
-{{if .Notice}}<div class="banner brand"><span class="b-ico" aria-hidden="true">✓</span><div><b>Done</b><p>{{.Notice}}</p></div></div>{{end}}
-
+{{/* No callout here: .Error and .Notice are the layout's one flash (ux-2). A
+     refused rule reports inside its own reopened sheet instead. */}}
 <fieldset>
   <legend>Email delivery</legend>
   <form method="post" action="/admin/notifications/smtp">
@@ -3651,7 +3650,11 @@ const templates = `
      attribute, so restoring it is the whole fix and needs no CSS. */}}
 {{if .Perms.Can "notification" "edit"}}
 {{range .NotifSettings}}
-<div class="overlay" id="ev-{{.Event}}" hidden>
+{{/* $d is what the sheet's fields show: the stored rule, or — for the one rule
+     just refused — what the admin typed, so a typo costs them nothing (ux-2).
+     data-reopen asks fervid-app.js to open that one sheet on load. */}}
+{{$d := .}}{{$refused := and $.NotifDraft (eq $.NotifDraft.Event .Event)}}{{if $refused}}{{$d = $.NotifDraft}}{{end}}
+<div class="overlay" id="ev-{{.Event}}" hidden{{if $refused}} data-reopen{{end}}>
   <form class="sheet" method="post" action="/admin/notifications/events/{{.Event}}">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <div class="sh-head">
@@ -3659,16 +3662,17 @@ const templates = `
       <button class="sh-close" type="button" data-close="ev-{{.Event}}" aria-label="Close">✕</button>
     </div>
     <div class="sh-body stack-12">
-      <label class="checkline"><input type="checkbox" name="email_enabled" {{check .EmailEnabled}}> Also send an email for this event</label>
+      {{if $refused}}<div class="banner warn" role="alert"><span class="b-ico" aria-hidden="true">⚠</span><div><b>That did not save</b><p>{{$.NotifDraftError}}</p></div></div>{{end}}
+      <label class="checkline"><input type="checkbox" name="email_enabled" {{check $d.EmailEnabled}}> Also send an email for this event</label>
       <div class="field"><span class="flabel">Who it goes to</span>
-        <label class="checkline"><input type="checkbox" name="include_requester" {{check .IncludeRequester}}> The requester</label>
-        <label class="checkline"><input type="checkbox" name="include_manager" {{check .IncludeManager}}> The approver</label>
-        <label class="checkline"><input type="checkbox" name="include_accounts" {{check .IncludeAccounts}}> The Accounts group</label>
+        <label class="checkline"><input type="checkbox" name="include_requester" {{check $d.IncludeRequester}}> The requester</label>
+        <label class="checkline"><input type="checkbox" name="include_manager" {{check $d.IncludeManager}}> The approver</label>
+        <label class="checkline"><input type="checkbox" name="include_accounts" {{check $d.IncludeAccounts}}> The Accounts group</label>
       </div>
-      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{.ToRecipients}}" placeholder="one@example.com, two@example.com"></div>
-      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{.CcRecipients}}"></div>
-      <div class="field"><label for="sub-{{.Event}}" class="flabel">Subject</label><input id="sub-{{.Event}}" name="subject_template" value="{{.SubjectTemplate}}"></div>
-      <div class="field"><label for="body-{{.Event}}" class="flabel">Message</label><textarea id="body-{{.Event}}" name="body_template" rows="6">{{.BodyTemplate}}</textarea></div>
+      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{$d.ToRecipients}}" placeholder="one@example.com, two@example.com"></div>
+      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{$d.CcRecipients}}"></div>
+      <div class="field"><label for="sub-{{.Event}}" class="flabel">Subject</label><input id="sub-{{.Event}}" name="subject_template" value="{{$d.SubjectTemplate}}"></div>
+      <div class="field"><label for="body-{{.Event}}" class="flabel">Message</label><textarea id="body-{{.Event}}" name="body_template" rows="6">{{$d.BodyTemplate}}</textarea></div>
       <p class="hint">Available fields: {{range $i, $f := $.NotifFields}}{{if $i}}, {{end}}&#123;&#123;{{$f}}&#125;&#125;{{end}}. Anything else is rejected when you save, so a typo cannot reach an inbox.</p>
     </div>
     <div class="sh-foot">

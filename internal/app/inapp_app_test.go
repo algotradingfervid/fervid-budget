@@ -275,6 +275,57 @@ func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D
 	}
 }
 
+// ux-2: every result on the rules screen used to show twice — the layout's
+// flash and the page's own callout (a pink "Done", or "That did not save" even
+// for a failed test email) — and a rule refused for a bad field closed its
+// sheet and threw away what the admin had typed.
+func TestAdminNotificationsShowsEachResultOnceAndKeepsARefusedRule(t *testing.T) { // N2, N8
+	s := newAppTestServer(t)
+	s.login(s.cfg.AdminEmail, testAdminPassword)
+
+	// No SMTP host is configured, so the test send fails: one error, no
+	// "did not save" heading for something that was never a save.
+	resp := s.postForm("/admin/notifications/test", url.Values{"test_to": {"x@example.test"}})
+	body := responseBody(t, resp)
+	if n := strings.Count(body, "The test email could not be sent"); n != 1 {
+		t.Fatalf("the test-email failure is shown %d times, want once", n)
+	}
+	if strings.Contains(body, "That did not save") {
+		t.Fatal("a failed test email is reported as a failed save")
+	}
+
+	// A refused rule: one message, inside the sheet, which comes back open with
+	// the admin's own text in it; the stored rule and the other sheets are
+	// untouched.
+	resp = s.postForm("/admin/notifications/events/request_approved", url.Values{
+		"email_enabled": {"on"}, "to_recipients": {"ops@example.test"},
+		"subject_template": {"Hello {{numbr}}"}, "body_template": {"typed body {{number}}"},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body = responseBody(t, resp)
+	if n := strings.Count(body, "unknown template field(s): numbr"); n != 1 {
+		t.Fatalf("the refused-rule error is shown %d times, want once", n)
+	}
+	if !strings.Contains(body, `<div class="overlay" id="ev-request_approved" hidden data-reopen>`) {
+		t.Fatal("the refused rule's sheet is not marked to reopen")
+	}
+	if !strings.Contains(body, `<div class="overlay" id="ev-request_submitted" hidden>`) {
+		t.Fatal("another event's sheet was reopened too")
+	}
+	for _, want := range []string{`value="Hello {{numbr}}"`, `typed body {{number}}</textarea>`, `value="ops@example.test"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the reopened sheet lost what the admin typed: missing %s", want)
+		}
+	}
+	stored, err := s.st.NotificationSetting(s.ctx, "request_approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored.SubjectTemplate, "numbr") || stored.ToRecipients == "ops@example.test" {
+		t.Fatalf("a refused rule was stored: %#v", stored)
+	}
+}
+
 func TestAdminNotificationsBlocksUnprivileged(t *testing.T) {
 	s := newAppTestServer(t)
 	hash, err := auth.HashPassword("EntryPassword123")

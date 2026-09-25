@@ -55,7 +55,13 @@ func (a *App) adminNotifications(w http.ResponseWriter, r *http.Request) {
 	a.renderAdminNotifications(w, r, http.StatusOK, "", "")
 }
 
+// renderAdminNotifications draws the rules screen. errMsg and notice reach the
+// layout's one flash; the page has no second callout repeating them (ux-2).
 func (a *App) renderAdminNotifications(w http.ResponseWriter, r *http.Request, status int, errMsg, notice string) {
+	a.renderAdminNotificationsPage(w, r, status, PageData{Error: errMsg, Notice: notice})
+}
+
+func (a *App) renderAdminNotificationsPage(w http.ResponseWriter, r *http.Request, status int, pd PageData) {
 	settings, err := a.st.AllNotificationSettings(r.Context())
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -66,10 +72,9 @@ func (a *App) renderAdminNotifications(w http.ResponseWriter, r *http.Request, s
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.renderStatus(w, r, status, "admin_notifications", PageData{
-		Title: "Notification rules", NotifSettings: settings, MailCfg: mail,
-		NotifFields: notify.NotifyFieldNames(), Error: errMsg, Notice: notice,
-	})
+	pd.Title, pd.NotifSettings, pd.MailCfg = "Notification rules", settings, mail
+	pd.NotifFields = notify.NotifyFieldNames()
+	a.renderStatus(w, r, status, "admin_notifications", pd)
 }
 
 func (a *App) adminNotificationsSMTP(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +113,11 @@ func (a *App) adminNotificationEventSave(w http.ResponseWriter, r *http.Request)
 	}
 	for _, tmpl := range []string{in.SubjectTemplate, in.BodyTemplate} {
 		if err := notify.ValidateTemplate(tmpl); err != nil {
-			a.renderAdminNotifications(w, r, http.StatusBadRequest, err.Error(), "")
+			// The sheet comes back open with what the admin typed and the
+			// reason beside it. Re-rendering from the stored rule closed it and
+			// threw their edit away, and the flash behind the scrim said so
+			// where they could not see it (ux-2).
+			a.renderAdminNotificationsPage(w, r, http.StatusBadRequest, PageData{NotifDraft: &in, NotifDraftError: err.Error()})
 			return
 		}
 	}
