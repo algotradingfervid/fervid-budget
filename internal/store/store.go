@@ -644,6 +644,20 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		} else if err != sql.ErrNoRows {
 			return err
 		}
+		// Saving the form re-submits every head on it. A budget whose amount did
+		// not move is not a mutation: writing it anyway put an "update" row in
+		// the audit log for every head on every save, which buried the real
+		// changes and pushed history out of the audit view (audit-2).
+		if before != nil && before.Amount == input.Amount {
+			continue
+		}
+		var label string
+		if err := tx.QueryRowContext(ctx, `SELECT p.name || ' / ' || h.name FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, input.HeadID).Scan(&label); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("%w: valid head and non-negative amount are required", ErrValidation)
+			}
+			return err
+		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO budgets(head_id,month,amount) VALUES(?,?,?) ON CONFLICT(head_id,month) DO UPDATE SET amount=excluded.amount, updated_at=CURRENT_TIMESTAMP`, input.HeadID, month, input.Amount)
 		if err != nil {
 			return classify(err)
@@ -653,13 +667,17 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 			return err
 		}
 		after := Budget{ID: id, HeadID: input.HeadID, Month: month, Amount: input.Amount}
+		// The summary names what changed — head, month and both amounts — because
+		// it is the only column the audit screen shows without expanding the row.
 		action := "create"
+		summary := label + " " + month + ": set to " + money.FormatPaise(input.Amount)
 		if before != nil {
 			action, after.ID = "update", before.ID
+			summary = label + " " + month + ": " + money.FormatPaise(before.Amount) + " → " + money.FormatPaise(input.Amount)
 		}
 		beforeJSON, _ := json.Marshal(before)
 		afterJSON, _ := json.Marshal(after)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID, "Saved budget "+money.FormatPaise(input.Amount), nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID, summary, nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
 			return err
 		}
 	}
@@ -971,14 +989,16 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 // Payment reads one ledger row. The heads/projects joins are LEFT joins with
 // COALESCE because a payment settling a recoverable request has head_id NULL
 // (v8): its detail screen must still resolve, with an empty project and head.
+// The request's treatment rides along so that screen can say "Recoverable"
+// where a budget payment names its project and head.
 func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.id=?`, id)
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.id=?`, id)
 	var p Payment
-	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
+	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
 	if err == sql.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -991,10 +1011,10 @@ func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment
 	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by WHERE py.request_id=?`, requestID)
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.request_id=?`, requestID)
 	var p Payment
-	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason)
+	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
 	if err == sql.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -1661,8 +1681,8 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	q := `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by`
+		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id`
 	var where []string
 	var args []any
 	// F-A-04 / F-G-003: the payment data scope. "own" narrows the ledger to
@@ -1679,6 +1699,11 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	if validMonth(opts.Month) {
 		where = append(where, `substr(py.paid_on,1,7)=?`)
 		args = append(args, opts.Month)
+	}
+	// The same COALESCE Grid uses, so a historical payment (no request at all)
+	// stays in, exactly as it still counts as an actual there.
+	if opts.ExcludeRecoverable {
+		where = append(where, `COALESCE(pr.treatment,'') <> 'recoverable'`)
 	}
 	switch opts.Status {
 	case "voided":
@@ -1711,7 +1736,7 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 		// linked payment from a historical one: the linked one is immutable
 		// (S12), and a screen that cannot see the difference offers an Edit
 		// button the store would refuse.
-		if err := rows.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason); err != nil {
+		if err := rows.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

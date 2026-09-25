@@ -426,7 +426,9 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 	}
 	switch opts.Ageing {
 	case "overdue":
-		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?`
+		// Paid rows only, as recoverableAgeing and RecoverableMetrics decide it:
+		// the tile links here, so the filter must list what the tile counts.
+		q += ` AND COALESCE(py.paid_on,'') <> '' AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?`
 		args = append(args, today)
 	case "due30":
 		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date >= ?
@@ -545,11 +547,14 @@ func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Tim
 	default:
 		return nil, fmt.Errorf("%w: unknown recoverable rollup dimension %q", ErrValidation, by)
 	}
+	// The overdue column carries the same `paid <> ''` guard as the tile
+	// (F-E-05): the category and counterparty rows sit above a Total row that
+	// reads RecoverableMetrics, and must add up to it (recoverables-1).
 	scopeClause, scopeArgs := recoverableScope(viewer)
 	args := append([]any{today}, scopeArgs...)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+label+` AS grp, `+detail+`,
 		COUNT(*), COALESCE(SUM(`+recoverableAmount+`),0),
-		COALESCE(SUM(CASE WHEN COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?
+		COALESCE(SUM(CASE WHEN COALESCE(py.paid_on,'') <> '' AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?
 			THEN `+recoverableAmount+` ELSE 0 END),0),
 		COALESCE(MIN(NULLIF(COALESCE(py.paid_on,''),'')),''),
 		COALESCE(MIN(NULLIF(COALESCE(pr.expected_return_date,''),'')),'')
