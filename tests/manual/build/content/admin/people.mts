@@ -104,7 +104,7 @@ export default page({
        that the default is the only choice a requester gets.`),
 
     faq([
-      { q: `Somebody has forgotten their password.`, a: `Open their **Edit** panel, type a new one in **Reset password**, and select **Save user**. It takes effect immediately. There is no reset email.` },
+      { q: `Somebody has forgotten their password.`, a: `If email is set up, they can reset it themselves with **Can't sign in?** on the sign-in page. Otherwise open their **Edit** panel, type a new one in **Reset password**, and select **Save user**; it takes effect immediately.` },
       { q: `Why can I not pick a person as their own approver?`, a: `Self-approval is blocked throughout the product. The select leaves them out of their own list, and the save refuses it a second time with \`a user cannot be their own default approver\`.` },
       { q: `I want to remove an account entirely.`, a: `You cannot, and that is deliberate. Deactivate it instead — the history has to keep the name attached to it.` },
       { q: `Somebody holds two roles and I only meant to give them one.`, a: `Open **Edit**, untick the role you did not mean to give, and save. The change applies on their next request; there is nothing to restart.` },
