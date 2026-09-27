@@ -1139,7 +1139,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 			locked+" is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.", nil)
 		return
 	}
-	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
+	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note")); err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			a.refuseRequestApproval(w, r, friendly(err))
 			return
@@ -1401,7 +1401,7 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 	}
 	id := pathID(r)
 	accept := r.FormValue("decision") == "accept"
-	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note")); err != nil {
+	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -1421,7 +1421,7 @@ func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := pathID(r)
-	if err := a.st.CancelRequest(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
+	if err := a.st.CancelRequest(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
