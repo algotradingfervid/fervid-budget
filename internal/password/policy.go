@@ -2,6 +2,8 @@ package password
 
 import "fmt"
 
+// Validate reports why a new password is not acceptable, or nil when it is:
+// it must be 12 characters to 72 bytes long and contain a letter and a digit.
 func Validate(password string) error {
 	if len(password) > 72 {
 		return fmt.Errorf("password must be at most 72 bytes; use fewer characters if it contains symbols or non-English letters")
