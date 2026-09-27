@@ -23,7 +23,6 @@
  *    needs to change (a head's active flag, a setting) it creates or restores
  *    itself.
  */
-import { Buffer } from 'node:buffer';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 import {
   admin,
@@ -31,8 +30,9 @@ import {
   createApprovedRequest,
   expect,
   login,
-  settlePayment,
-  test
+  pdfUpload,
+  test,
+  today
 } from './fixtures';
 import {
   asRole,
@@ -41,6 +41,7 @@ import {
   probeAnonymous,
   probeGet,
   probePost,
+  requestRevision,
   type Probe,
   type Subject
 } from './audit-support';
@@ -327,12 +328,8 @@ async function swapSettled(page: Page, select: string, value: string) {
   await expect(page.locator('.htmx-request, .htmx-settling, .htmx-swapping')).toHaveCount(0);
 }
 
-/** A tiny PDF, so nothing on disk has to exist for an upload test. */
-const samplePdf = {
-  name: 'audit-proof.pdf',
-  mimeType: 'application/pdf',
-  buffer: Buffer.from('%PDF-1.4 audit-b evidence')
-};
+/** A small valid PDF (uploads are checked to be real PDFs), so nothing on disk has to exist. */
+const samplePdf = pdfUpload('audit-proof.pdf');
 
 // ===========================================================================
 // A — every type × treatment, raised through the real form
@@ -737,10 +734,17 @@ it.describe('B · the required, forced and optional matrix', () => {
     expect(amount.match(/₹/g)?.length, 'FormatPaise already carries the symbol').toBe(1);
   });
 
-  it('TC-B-017 — a very large amount that fits int64 paise round-trips exactly', async ({ world }) => {
-    const id = await raiseOk(world.requester.page, validBody(world, 'vendor_invoice', { amount: '99999999999' }));
+  // One entry may be at most 100 crore rupees. The largest allowed amount is
+  // stored and shown exactly; one paisa more is refused.
+  it('TC-B-017 — the largest allowed amount (100 crore) round-trips exactly, and one paisa more is refused', async ({
+    world
+  }) => {
+    const id = await raiseOk(world.requester.page, validBody(world, 'vendor_invoice', { amount: '1000000000' }));
     await world.requester.page.goto(`/requests/${id}`);
-    await expect(world.requester.page.locator('.rh-amt')).toHaveText('₹99,99,99,99,999.00');
+    await expect(world.requester.page.locator('.rh-amt')).toHaveText('₹1,00,00,00,000.00');
+
+    const over = await raise(world.requester.page, validBody(world, 'vendor_invoice', { amount: '1000000000.01' }));
+    expectRefused(over, 'enter the amount you are requesting', 'more than 100 crore');
   });
 
   // Regression guard for F-B-01. Go's float-to-int64 conversion saturates rather
@@ -1708,8 +1712,11 @@ it.describe('F · one POST creates, numbers and submits', () => {
 
   it('TC-B-067 — a pending request cannot be submitted a second time', async ({ world }) => {
     const id = await raiseOk(world.requester.page, validBody(world, 'reimbursement'));
+    // The edit form carries the request's current revision; without it the save
+    // is refused before the resubmit rule is ever reached.
     const resubmit = await probePost(world.requester.page, `/requests/${id}/edit`, {
       ...validBody(world, 'reimbursement'),
+      revision: await requestRevision(world.requester.page, Number(id)),
       submit_action: 'resubmit'
     });
     expect(
@@ -1737,7 +1744,9 @@ async function decide(
       : verb === 'return'
         ? { comment: 'Attach the receipts.', ...extra }
         : { reason: 'Not budgeted this quarter.', ...extra };
-  const probe = await probePost(world.manager.page, `/requests/${id}/${verb}`, form);
+  // Every decision names the revision the manager reviewed, read just before the POST.
+  const revision = await requestRevision(world.manager.page, Number(id));
+  const probe = await probePost(world.manager.page, `/requests/${id}/${verb}`, { ...form, revision });
   expect(probe.status, `the fixture's ${verb} failed: ${probe.outcome} ${message(probe)}`).toBeLessThan(400);
 }
 
@@ -1964,21 +1973,9 @@ it.describe('G · what the requester may still do', () => {
     expect(message(ask)).toContain('cannot be sent for cancellation');
   });
 
-  // REWRITTEN for the F-G-002 fix. Four of these probes used to require 403 and
-  // now require 404, and the split between the two is the fix, not an accident.
-  //
-  // Everything routed through `loadViewableRequest`
-  // (internal/app/requests.go:325-348) answers **404** for a row outside the
-  // caller's data scope — deliberately the same answer an id that does not exist
-  // gets, so the status code stops being an existence oracle a requester could
-  // walk the id space with (TC-B-088 pins the indistinguishability itself).
-  //
-  // The three POSTs that go straight to the store still answer **403**:
-  // `WithdrawRequest` (internal/store/requests.go:986), `ReraiseRequest` (:1199)
-  // and `RequestCancellation` (:1262) each compare `requester_id` to the actor
-  // and return ErrForbidden. That is not an inconsistency — a caller who names
-  // an id in a write already knows it exists, and hiding that would cost the
-  // clearer refusal for nothing.
+  // A request the caller may not see answers 404 on every route, reads and
+  // writes alike — the same answer an id that does not exist gets, so the status
+  // code never tells a stranger which ids are real (TC-B-088 pins that).
   it('TC-B-077 — a stranger cannot edit, withdraw, re-raise or ask to cancel another request', async ({
     world
   }) => {
@@ -1993,11 +1990,11 @@ it.describe('G · what the requester may still do', () => {
       [404],
       'saving somebody else edit'
     );
-    expectOutcome(await probePost(stranger, `/requests/${id}/withdraw`, {}), [403], 'withdrawing');
-    expectOutcome(await probePost(stranger, `/requests/${id}/reraise`, {}), [403], 're-raising');
+    expectOutcome(await probePost(stranger, `/requests/${id}/withdraw`, {}), [404], 'withdrawing');
+    expectOutcome(await probePost(stranger, `/requests/${id}/reraise`, {}), [404], 're-raising');
     expectOutcome(
       await probePost(stranger, `/requests/${id}/cancel-request`, { reason: 'no' }),
-      [403],
+      [404],
       'asking for cancellation'
     );
 
@@ -2271,11 +2268,11 @@ it.describe('I · documents', () => {
           csrf: await csrfToken(accounts.context),
           request_id: String(id),
           amount: '5000',
-          paid_on: '2026-07-20',
+          paid_on: today(),
           payment_mode: 'bank_transfer',
           reference_no: `UTR-B85-${runId}`,
           settlement: 'settled',
-          attachment: { name: 'bank-advice.pdf', mimeType: 'application/pdf', buffer: samplePdf.buffer }
+          attachment: pdfUpload('bank-advice.pdf')
         },
         maxRedirects: 0,
         failOnStatusCode: false
@@ -2292,15 +2289,9 @@ it.describe('I · documents', () => {
           .getAttribute('href')) ?? '';
       expect(download, 'the payment carries a downloadable proof').toMatch(/^\/attachments\/\d+$/);
 
-      // The Requester cannot see the request behind it…
-      //
-      // 404 on the request and 403 on the payment, and the two are read from
-      // different code: `loadViewableRequest` (internal/app/requests.go:335-347)
-      // withholds the row's existence as well as its contents (F-G-002), while
-      // `paymentDetail` (internal/app/app.go:911-915) still names the reason —
-      // "You cannot see the request behind this payment." Both are refusals,
-      // which is what this case turns on; the difference is recorded here rather
-      // than smoothed over so a later reader can see it was measured.
+      // The Requester cannot see the request behind it (404, as a missing record
+      // would answer), and holds no payment:view at all, so the payment screen
+      // is refused by permission (403) before any row is read.
       expectOutcome(
         await probeGet(world.requester.page, `/requests/${id}`),
         [404],
