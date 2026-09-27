@@ -100,58 +100,46 @@ func waitingOn(req store.Request, viewerID int64) Waiting {
 	}
 }
 
-// pillClass maps a stored status onto the Phase 0 `.pill` modifier. Phase 0
-// owns the CSS; this owns nothing but the mapping.
-func pillClass(status string) string {
-	switch status {
-	case "pending":
-		return "awaiting"
-	case "cancellation_requested":
-		return "cancelreq"
-	case "withdrawn":
-		return "cancelled"
-	// The Phase-3 statuses whose enum name is not the design system's class
-	// name. Everything else already matches, and a status with no rule of its
-	// own would render an invisible pill.
-	case "partial_review":
-		return "partial"
-	case "completed_partial":
-		return "completed-partial"
-	default:
-		return status
-	}
+// pillClasses are the `.pill` CSS classes whose name differs from the status.
+// Every other status is its own class name.
+var pillClasses = map[string]string{
+	"pending":                "awaiting",
+	"cancellation_requested": "cancelreq",
+	"withdrawn":              "cancelled",
+	"partial_review":         "partial",
+	"completed_partial":      "completed-partial",
 }
 
-// requestStatusText is the sentence a person reads, not the enum value. It is
-// deliberately not called statusText: that name already belongs to the variance
-// grid's budget status, and one word meaning two things is how they drift.
-func requestStatusText(status string) string {
-	switch status {
-	case "pending":
-		return "Awaiting approval"
-	case "returned":
-		return "Returned for correction"
-	case "approved":
-		return "Approved — awaiting payment"
-	case "rejected":
-		return "Rejected — final"
-	case "withdrawn":
-		return "Withdrawn"
-	case "cancellation_requested":
-		return "Cancellation requested"
-	case "cancelled":
-		return "Cancelled"
-	case "processing":
-		return "With Accounts"
-	case "partial_review":
-		return "Partial — manager review"
-	case "completed":
-		return "Completed"
-	case "completed_partial":
-		return "Completed — partial accepted"
-	default:
-		return status
+// pillClass is the `.pill` CSS class for a request status.
+func pillClass(status string) string {
+	if class, ok := pillClasses[status]; ok {
+		return class
 	}
+	return status
+}
+
+// requestStatusTexts are the words a person reads for each request status.
+var requestStatusTexts = map[string]string{
+	"pending":                "Awaiting approval",
+	"returned":               "Returned for correction",
+	"approved":               "Approved — awaiting payment",
+	"rejected":               "Rejected — final",
+	"withdrawn":              "Withdrawn",
+	"cancellation_requested": "Cancellation requested",
+	"cancelled":              "Cancelled",
+	"processing":             "With Accounts",
+	"partial_review":         "Partial — manager review",
+	"completed":              "Completed",
+	"completed_partial":      "Completed — partial accepted",
+}
+
+// requestStatusText is the status as a person reads it; an unknown status is
+// shown as stored. (statusText is a different helper, for the budget grid.)
+func requestStatusText(status string) string {
+	if text, ok := requestStatusTexts[status]; ok {
+		return text
+	}
+	return status
 }
 
 // Pill is the status pill as a reader sees it: the `.pill` modifier and the
@@ -311,15 +299,17 @@ func threadValue(field, raw string) string {
 // threadField names a changed column for a reader. The audit records column
 // names, which are the right key and the wrong words.
 func threadField(column string) string {
-	if label, ok := map[string]string{
-		"amount": "Amount", "approved_amount": "Approved amount", "needed_by": "Needed by",
-		"invoice_no": "Invoice number", "invoice_date": "Invoice date", "expense_date": "Expense date",
-		"manager_id": "Approver", "short_title": "Short title", "purpose": "Purpose",
-		"urgent": "Urgency",
-	}[column]; ok {
+	if label, ok := threadFieldLabels[column]; ok {
 		return label
 	}
 	return strings.ReplaceAll(column, "_", " ")
+}
+
+var threadFieldLabels = map[string]string{
+	"amount": "Amount", "approved_amount": "Approved amount", "needed_by": "Needed by",
+	"invoice_no": "Invoice number", "invoice_date": "Invoice date", "expense_date": "Expense date",
+	"manager_id": "Approver", "short_title": "Short title", "purpose": "Purpose",
+	"urgent": "Urgency",
 }
 
 // fileKind is the three-or-four letter tag the `.f-ico` square shows.
@@ -426,114 +416,62 @@ func trailAction(e store.AuditEntry) string {
 	}
 }
 
-// auditTone and auditGlyph decorate one `.tl-dot` of a trail built from audit
-// rows. They are deliberately not threadDot/threadGlyph: those two take a
-// store.ThreadEntry and belong to the request conversation, and one name meaning
-// two things is how they drift.
-func auditTone(action string) string {
-	switch action {
-	// "unhold" sits with the reservation movements: lifting a hold puts the
-	// request back in the takeable queue, which is the same kind of event.
-	case "submit", "reraise", "process", "reassign", "approval_reassign", "unhold":
-		return "brand"
-	case "approve", "settle", "accept_partial", "record_payment":
-		return "ok"
-	case "hold", "mark_partial", "release", "concern", "return":
-		return "warn"
-	case "reject", "cancel", "withdraw", "void":
-		return "bad"
-	default:
-		return ""
-	}
+// auditStyle is how one audit action is drawn on a history trail: the colour
+// class of its dot, the symbol inside the dot, and the verb phrase printed after
+// the actor's name ("Priya Nair reserved it for processing"). These trails are
+// built from audit rows; the request conversation uses threadDot/threadGlyph
+// instead, which differ for a few actions.
+type auditStyle struct{ Tone, Glyph, Phrase string }
+
+// auditStyles has one line per audit action. An empty field falls back: no
+// tone, the "·" glyph, or the generic label from actionText. The attach glyph
+// is a text symbol rather than an emoji, so the CSS can tint it like the rest.
+var auditStyles = map[string]auditStyle{
+	"submit":            {"brand", "＋", "submitted the request"},
+	"reraise":           {"brand", "＋", "raised the request again"},
+	"process":           {"brand", "◷", "reserved it for processing"},
+	"reassign":          {"brand", "◷", "reassigned the reservation"},
+	"approval_reassign": {"brand", "✎", "reassigned the approval"},
+	"unhold":            {"brand", "◷", "took the request off hold"}, // back in the takeable queue
+	"approve":           {"ok", "✓", "approved the request"},
+	"settle":            {"ok", "✓", "settled the request"},
+	"accept_partial":    {"ok", "✓", "accepted the partial payment"},
+	"record_payment":    {"ok", "₹", "recorded a payment"},
+	"hold":              {"warn", "⏸", "put the request on hold"},
+	"mark_partial":      {"warn", "₹", "marked it a partial payment"},
+	"release":           {"warn", "↩", "released the reservation"},
+	"concern":           {"warn", "₹", "raised a concern"},
+	"return":            {"warn", "↩", "returned the request for correction"},
+	"reject":            {"bad", "✕", "rejected the request"},
+	"cancel":            {"bad", "✕", "cancelled the request"},
+	"withdraw":          {"bad", "✕", "withdrew the request"},
+	"void":              {"bad", "✕", "voided the payment"},
+	"create":            {"", "＋", ""},
+	"update":            {"", "✎", "edited the request"},
+	"amend_payment":     {"", "✎", "corrected the payment"},
+	"attach":            {"", "⇪", "attached a document"},
+	"attach_payment":    {"", "⇪", "attached proof of payment"},
+	"comment":           {"", "", "commented"},
+	"cancel_request":    {"", "", "asked for the request to be cancelled"},
 }
 
+// auditTone is the colour class of an audit action's dot ("" for none).
+func auditTone(action string) string { return auditStyles[action].Tone }
+
+// auditGlyph is the symbol in an audit action's dot.
 func auditGlyph(action string) string {
-	switch action {
-	case "submit", "reraise", "create":
-		return "＋"
-	case "approve", "settle", "accept_partial":
-		return "✓"
-	case "process", "reassign", "unhold":
-		return "◷"
-	case "hold":
-		return "⏸"
-	case "mark_partial", "concern", "record_payment":
-		return "₹"
-	case "release", "return":
-		return "↩"
-	case "reject", "cancel", "withdraw", "void":
-		return "✕"
-	case "update", "amend_payment", "approval_reassign":
-		return "✎"
-	case "attach", "attach_payment":
-		// The thread's own upload glyph. Every dot in a `.thread` is a
-		// monochrome text symbol the CSS tints with `color:`; an emoji ignores
-		// that and lands as a colour sticker in a column of grey marks.
-		return "⇪"
-	default:
-		return "·"
+	if glyph := auditStyles[action].Glyph; glyph != "" {
+		return glyph
 	}
+	return "·"
 }
 
-// auditPhrase is the trail's headline, written to follow the actor's name:
-// "Priya Nair reserved it for processing". The audit summary underneath carries
-// the figures; this line carries the verb, so a reader skimming the left column
-// of the thread gets the story without reading a single amount.
+// auditPhrase is the verb phrase that follows the actor's name on a trail.
 func auditPhrase(action string) string {
-	switch action {
-	case "submit":
-		return "submitted the request"
-	case "update":
-		return "edited the request"
-	case "attach":
-		return "attached a document"
-	case "comment":
-		return "commented"
-	case "approve":
-		return "approved the request"
-	case "return":
-		return "returned the request for correction"
-	case "reject":
-		return "rejected the request"
-	case "withdraw":
-		return "withdrew the request"
-	case "reraise":
-		return "raised the request again"
-	case "cancel_request":
-		return "asked for the request to be cancelled"
-	case "cancel":
-		return "cancelled the request"
-	case "process":
-		return "reserved it for processing"
-	case "release":
-		return "released the reservation"
-	case "reassign":
-		return "reassigned the reservation"
-	case "approval_reassign":
-		return "reassigned the approval"
-	case "hold":
-		return "put the request on hold"
-	case "unhold":
-		return "took the request off hold"
-	case "concern":
-		return "raised a concern"
-	case "settle":
-		return "settled the request"
-	case "mark_partial":
-		return "marked it a partial payment"
-	case "accept_partial":
-		return "accepted the partial payment"
-	case "record_payment":
-		return "recorded a payment"
-	case "amend_payment":
-		return "corrected the payment"
-	case "attach_payment":
-		return "attached proof of payment"
-	case "void":
-		return "voided the payment"
-	default:
-		return actionText(action)
+	if phrase := auditStyles[action].Phrase; phrase != "" {
+		return phrase
 	}
+	return actionText(action)
 }
 
 // trailBody is the audit summary as the trail prints it, under a head that has
