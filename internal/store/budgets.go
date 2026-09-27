@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fervidbudget/internal/money"
 	"fmt"
 	"strings"
@@ -28,13 +29,6 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		}
 		seen[input.HeadID] = struct{}{}
 	}
-	locked, err := isLocked(ctx, s.db, month)
-	if err != nil {
-		return err
-	}
-	if locked {
-		return ErrLockedMonth
-	}
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
@@ -58,33 +52,29 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		err := tx.QueryRowContext(ctx, `SELECT id,head_id,month,amount,created_at,updated_at FROM budgets WHERE head_id=? AND month=?`, input.HeadID, month).Scan(&b.ID, &b.HeadID, &b.Month, &b.Amount, &b.CreatedAt, &b.UpdatedAt)
 		if err == nil {
 			before = &b
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		// The head lookup comes before the skip below, so an unknown head still
 		// fails the whole batch even when it arrives at ₹0 with no budget behind
-		// it; the label it yields names the head in the audit summary.
+		// it. The label names the head in the audit summary; detailed counts the
+		// budget lines behind this month's budget.
 		var label string
-		if err := tx.QueryRowContext(ctx, `SELECT p.name || ' / ' || h.name FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, input.HeadID).Scan(&label); err != nil {
-			if err == sql.ErrNoRows {
+		var detailed int
+		if err := tx.QueryRowContext(ctx, `SELECT p.name || ' / ' || h.name,
+			(SELECT COUNT(*) FROM budget_lines l JOIN budgets b ON b.id=l.budget_id WHERE b.head_id=h.id AND b.month=?)
+			FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, month, input.HeadID).Scan(&label, &detailed); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("%w: unknown budget head", ErrValidation)
 			}
 			return err
 		}
 		// Saving the form re-submits every head on it. A budget whose amount did
-		// not move is not a mutation: writing it anyway put an "update" row in
-		// the audit log for every head on every save, which buried the real
-		// changes and pushed history out of the audit view (audit-2).
-		// The same holds for a head with no budget submitted at ₹0: an absent
-		// budget already reads as ₹0 on every screen (the grid COALESCEs it), so
-		// the first save of a month used to log "set to ₹0.00" for every head the
-		// user never touched.
+		// not move is not a change and gets no audit row, or every save would
+		// bury the real changes. The same holds for a head with no budget
+		// submitted at ₹0: an absent budget already reads as ₹0 on every screen.
 		if (before != nil && before.Amount == input.Amount) || (before == nil && input.Amount == 0) {
 			continue
-		}
-		var detailed int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM budget_lines l JOIN budgets b ON b.id=l.budget_id WHERE b.head_id=? AND b.month=?`, input.HeadID, month).Scan(&detailed); err != nil {
-			return err
 		}
 		if detailed > 0 {
 			return fmt.Errorf("%w: %s has detailed budget lines; use Edit budget lines to change its amount", ErrValidation, label)
@@ -117,7 +107,7 @@ func (s *Store) Budget(ctx context.Context, headID int64, month string) (Budget,
 	var b Budget
 	err := s.db.QueryRowContext(ctx, `SELECT id,head_id,month,amount,created_at,updated_at FROM budgets WHERE head_id=? AND month=?`, headID, month).
 		Scan(&b.ID, &b.HeadID, &b.Month, &b.Amount, &b.CreatedAt, &b.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return b, ErrNotFound
 	}
 	return b, err
@@ -132,14 +122,6 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 	if sourceMonth != "" && !validMonth(sourceMonth) {
 		return fmt.Errorf("%w: source month is invalid", ErrValidation)
 	}
-	locked, err := isLocked(ctx, s.db, targetMonth)
-	if err != nil {
-		return err
-	}
-	if locked {
-		return ErrLockedMonth
-	}
-
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
@@ -360,7 +342,7 @@ func (s *Store) MonthLock(ctx context.Context, month string) (MonthLock, error) 
 	err := s.db.QueryRowContext(ctx, `SELECT ml.month,ml.locked_by,COALESCE(u.name,''),ml.locked_at,COALESCE(ml.reason,'')
 		FROM month_locks ml LEFT JOIN users u ON u.id=ml.locked_by WHERE ml.month=?`, month).
 		Scan(&lock.Month, &lock.LockedBy, &lock.ActorName, &lock.LockedAt, &lock.Reason)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return lock, ErrNotFound
 	}
 	return lock, err

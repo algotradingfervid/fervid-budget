@@ -53,15 +53,8 @@ func (s *Store) Seed(ctx context.Context, opts SeedOptions) (SeedResult, error) 
 		return result, nil
 	}
 
-	projects, heads, budgets, err := s.createSampleBudgetData(ctx, admin, opts.Month)
-	if err != nil {
-		return result, err
-	}
-	result.SampleCreated = true
-	result.Projects = projects
-	result.Heads = heads
-	result.Budgets = budgets
-	return result, nil
+	err = s.createSampleBudgetData(ctx, admin, opts.Month, &result)
+	return result, err
 }
 
 func normalizeSeedOptions(opts SeedOptions) SeedOptions {
@@ -118,32 +111,30 @@ func (s *Store) sampleDataEmpty(ctx context.Context) (bool, error) {
 	return count == 0, nil
 }
 
-func (s *Store) createSampleBudgetData(ctx context.Context, actor User, month string) (int, int, int, error) {
+func (s *Store) createSampleBudgetData(ctx context.Context, actor User, month string, result *SeedResult) error {
 	if actor.ID == 0 {
-		return 0, 0, 0, fmt.Errorf("%w: seed actor is required", ErrValidation)
+		return fmt.Errorf("%w: seed actor is required", ErrValidation)
 	}
-	projectCount := 0
-	headCount := 0
-	budgetCount := 0
 	for i, project := range sampleProjects {
 		projectID, err := s.UpsertProject(ctx, 0, project.Name, true, i+1)
 		if err != nil {
-			return projectCount, headCount, budgetCount, err
+			return err
 		}
-		projectCount++
+		result.Projects++
 		for j, head := range project.Heads {
 			headID, err := s.UpsertHead(ctx, 0, projectID, head.Name, head.DueDay, true, j+1)
 			if err != nil {
-				return projectCount, headCount, budgetCount, err
+				return err
 			}
-			headCount++
+			result.Heads++
 			if err := s.SetBudget(ctx, actor, headID, month, head.Budget); err != nil {
-				return projectCount, headCount, budgetCount, err
+				return err
 			}
-			budgetCount++
+			result.Budgets++
 		}
 	}
-	return projectCount, headCount, budgetCount, nil
+	result.SampleCreated = true
+	return nil
 }
 
 type sampleProject struct {

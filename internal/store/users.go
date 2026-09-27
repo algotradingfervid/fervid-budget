@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -58,15 +59,8 @@ func (s *Store) createUserWithRoles(ctx context.Context, actorID int64, email, n
 		}
 	}
 	if actorID != 0 {
-		role = "data_entry"
-		for _, rid := range roleIDs {
-			var isAdmin bool
-			if err := tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, rid).Scan(&isAdmin); err != nil {
-				return 0, err
-			}
-			if isAdmin {
-				role = "admin"
-			}
+		if role, err = legacyRoleTx(ctx, tx, roleIDs); err != nil {
+			return 0, err
 		}
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO users(email,name,password_hash,role,active) VALUES(?,?,?,?,?)`,
@@ -78,18 +72,7 @@ func (s *Store) createUserWithRoles(ctx context.Context, actorID int64, email, n
 	if err != nil {
 		return 0, err
 	}
-	wanted := make([]int64, 0, len(roleIDs))
-	seen := map[int64]struct{}{}
-	for _, rid := range roleIDs {
-		if rid == 0 {
-			continue
-		}
-		if _, dup := seen[rid]; dup {
-			continue
-		}
-		seen[rid] = struct{}{}
-		wanted = append(wanted, rid)
-	}
+	wanted := dedupeIDs(roleIDs, true)
 	if len(wanted) == 0 {
 		if err := assignDefaultRoleTx(ctx, tx, id, role); err != nil {
 			return 0, err
@@ -115,7 +98,7 @@ func (s *Store) EnsureUser(ctx context.Context, email, name, hash, role string) 
 	if err == nil {
 		return nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	_, err = s.CreateUser(ctx, email, name, hash, role, true)
@@ -193,17 +176,9 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, name, role string, act
 			return err
 		}
 	}
-	if passwordHash != "" {
-		_, err = tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-			name, role, boolInt(active), passwordHash, id)
-		if err != nil {
-			return classify(err)
-		}
-		return tx.Commit()
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		name, role, boolInt(active), id)
-	if err != nil {
+	// An empty passwordHash keeps the current password.
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=COALESCE(NULLIF(?,''),password_hash), updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		name, role, boolInt(active), passwordHash, id); err != nil {
 		return classify(err)
 	}
 	return tx.Commit()
@@ -246,15 +221,8 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 	if in.DefaultApproverID != 0 && in.DefaultApproverID == in.ID {
 		return fmt.Errorf("%w: a user cannot be their own default approver", ErrValidation)
 	}
-	roleIDs := make([]int64, 0, len(in.RoleIDs))
-	seen := map[int64]struct{}{}
-	for _, id := range in.RoleIDs {
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		seen[id] = struct{}{}
-		roleIDs = append(roleIDs, id)
-	}
+	// Zero stays in, so the role check below rejects it as an unknown role.
+	roleIDs := dedupeIDs(in.RoleIDs, false)
 
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -264,15 +232,8 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 	if err := protectUserChange(ctx, tx, actor.ID, in.ID, roleIDs, in.Active); err != nil {
 		return err
 	}
-	in.Role = "data_entry"
-	for _, rid := range roleIDs {
-		var admin bool
-		if err := tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, rid).Scan(&admin); err != nil {
-			return err
-		}
-		if admin {
-			in.Role = "admin"
-		}
+	if in.Role, err = legacyRoleTx(ctx, tx, roleIDs); err != nil {
+		return err
 	}
 
 	// The last-active-administrator guard, re-asked inside the transaction. The
@@ -283,19 +244,10 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 	var currentActive int
 	if err := tx.QueryRowContext(ctx, `SELECT role,active,name FROM users WHERE id=?`, in.ID).
 		Scan(&currentRole, &currentActive, &currentName); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
-	}
-	for _, id := range roleIDs {
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM roles WHERE id=?`, id).Scan(&exists); err != nil {
-			return err
-		}
-		if exists == 0 {
-			return fmt.Errorf("%w: role %d does not exist", ErrValidation, id)
-		}
 	}
 	var approver any
 	if err := requireDefaultApproverTx(ctx, tx, in.ID, in.DefaultApproverID); err != nil {
@@ -305,13 +257,9 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 		approver = in.DefaultApproverID
 	}
 
-	if in.PasswordHash != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=?, default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-			name, in.Role, boolInt(in.Active), in.PasswordHash, approver, in.ID); err != nil {
-			return classify(err)
-		}
-	} else if _, err := tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		name, in.Role, boolInt(in.Active), approver, in.ID); err != nil {
+	// An empty PasswordHash keeps the current password.
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET name=?, role=?, active=?, password_hash=COALESCE(NULLIF(?,''),password_hash), default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		name, in.Role, boolInt(in.Active), in.PasswordHash, approver, in.ID); err != nil {
 		return classify(err)
 	}
 	// Administrator password changes and deactivation supersede email reset
@@ -348,7 +296,7 @@ func (s *Store) RequireAnotherActiveAdmin(ctx context.Context, userID int64, nex
 	var currentRole string
 	var currentActive int
 	if err := s.db.QueryRowContext(ctx, `SELECT role,active FROM users WHERE id=?`, userID).Scan(&currentRole, &currentActive); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -370,7 +318,7 @@ func (s *Store) RequireAnotherActiveAdmin(ctx context.Context, userID int64, nex
 func (s *Store) LoginLocked(ctx context.Context, email string) (bool, time.Time, error) {
 	var locked sql.NullTime
 	err := s.db.QueryRowContext(ctx, `SELECT locked FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email))).Scan(&locked)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, time.Time{}, ErrNotFound
 	}
 	if err != nil {
@@ -395,7 +343,7 @@ func (s *Store) RecordFailedLogin(ctx context.Context, email string) (time.Time,
 	var attempts int
 	var previousLock sql.NullTime
 	if err := tx.QueryRowContext(ctx, `SELECT attempt_count,locked FROM users WHERE email=?`, email).Scan(&attempts, &previousLock); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return time.Time{}, nil
 		}
 		return time.Time{}, err
@@ -431,7 +379,7 @@ func scanUser(scanner interface{ Scan(...any) error }) (User, error) {
 	var active int
 	var approver sql.NullInt64
 	err := scanner.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &active, &u.CreatedAt, &u.UpdatedAt, &approver, &u.SessionVersion)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrNotFound
 	}
 	u.Active = active == 1
@@ -447,4 +395,36 @@ func validateUserFields(email, name, role string) error {
 		return fmt.Errorf("%w: invalid user role", ErrValidation)
 	}
 	return nil
+}
+
+// dedupeIDs returns ids without repeats, keeping first-seen order. With
+// dropZero it also leaves out 0 (an unticked or empty form value).
+func dedupeIDs(ids []int64, dropZero bool) []int64 {
+	out := make([]int64, 0, len(ids))
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		if (dropZero && id == 0) || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// legacyRoleTx returns the users.role value these roles imply: "admin" when
+// any of them is the system Admin role, otherwise "data_entry". The column is
+// kept in step with the roles so it never contradicts them.
+func legacyRoleTx(ctx context.Context, tx *sql.Tx, roleIDs []int64) (string, error) {
+	role := "data_entry"
+	for _, id := range roleIDs {
+		var admin bool
+		if err := tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, id).Scan(&admin); err != nil {
+			return "", err
+		}
+		if admin {
+			role = "admin"
+		}
+	}
+	return role, nil
 }

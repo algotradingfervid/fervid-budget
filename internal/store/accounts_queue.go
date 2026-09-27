@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fervidbudget/internal/money"
 	"fmt"
 	"strings"
@@ -55,7 +56,7 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 		var processingBy sql.NullInt64
 		var onHold int
 		if err := tx.QueryRowContext(ctx, `SELECT status, processing_by, on_hold FROM payment_requests WHERE id=?`, id).Scan(&status, &processingBy, &onHold); err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
@@ -103,7 +104,7 @@ func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason
 	var status string
 	var processingBy sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT status, processing_by FROM payment_requests WHERE id=?`, id).Scan(&status, &processingBy); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -144,7 +145,7 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 	var status string
 	var processingBy sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT status, processing_by FROM payment_requests WHERE id=?`, id).Scan(&status, &processingBy); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -158,7 +159,7 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 	var toName string
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT name, active FROM users WHERE id=?`, toUserID).Scan(&toName, &active); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -244,7 +245,7 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 		r.treatment, r.head_id, r.vendor_id, COALESCE(NULLIF(v.name,''), r.vendor_payee, ''), COALESCE(r.invoice_no,'')
 		FROM payment_requests r LEFT JOIN vendors v ON v.id=r.vendor_id
 		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &vendorID, &displayPayee, &invoiceNo); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotFound
 		}
 		return 0, err
@@ -258,7 +259,7 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 		if err == nil {
 			return 0, fmt.Errorf("%w: this payment confirmation was already recorded", ErrValidation)
 		}
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return 0, err
 		}
 	}
@@ -605,8 +606,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		// money.ParsePaise already strips ₹, commas and whitespace, so it is the
 		// right normaliser and the two cannot drift.
 		amountClause := ` OR CAST(r.amount AS TEXT) LIKE ? ESCAPE '\'`
-		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
-		needle := "%" + esc + "%"
+		needle := "%" + escapeLike(search) + "%"
 		extra := []any{needle, needle, needle, needle, needle, needle}
 		if paise, err := money.ParsePaise(search); err == nil {
 			amountClause += ` OR r.amount = ?`

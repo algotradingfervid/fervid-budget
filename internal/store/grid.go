@@ -41,8 +41,7 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 		g.Locked = true
 		g.Lock = lock
 	}
-	projectMap := map[int64]*ProjectTotal{}
-	groupMap := map[int64]*GridGroup{}
+	groupAt := map[int64]int{} // project id -> index in g.Groups
 	q = strings.ToLower(strings.TrimSpace(q))
 	for rows.Next() {
 		var r GridRow
@@ -75,41 +74,22 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 		case "no-activity":
 			g.NoActivity++
 		}
-		pt := projectMap[r.ProjectID]
-		if pt == nil {
-			pt = &ProjectTotal{ProjectID: r.ProjectID, Project: r.Project}
-			projectMap[r.ProjectID] = pt
-			g.Projects = append(g.Projects, *pt)
+		i, ok := groupAt[r.ProjectID]
+		if !ok {
+			i = len(g.Groups)
+			groupAt[r.ProjectID] = i
+			g.Groups = append(g.Groups, GridGroup{ProjectID: r.ProjectID, Project: r.Project, Total: ProjectTotal{ProjectID: r.ProjectID, Project: r.Project}})
 		}
-		grp := groupMap[r.ProjectID]
-		if grp == nil {
-			grp = &GridGroup{ProjectID: r.ProjectID, Project: r.Project, Total: ProjectTotal{ProjectID: r.ProjectID, Project: r.Project}}
-			groupMap[r.ProjectID] = grp
-			g.Groups = append(g.Groups, *grp)
-		}
-		grp.Rows = append(grp.Rows, r)
-		pt.Budget += r.Budget
-		pt.Actual += r.Actual
-		grp.Total.Budget += r.Budget
-		grp.Total.Actual += r.Actual
-		g.Total.Budget += r.Budget
-		g.Total.Actual += r.Actual
+		g.Groups[i].Rows = append(g.Groups[i].Rows, r)
+		g.Groups[i].Total.add(r.Budget, r.Actual)
+		g.Total.add(r.Budget, r.Actual)
 	}
-	for i := range g.Projects {
-		pt := projectMap[g.Projects[i].ProjectID]
-		pt.Variance = pt.Budget - pt.Actual
-		pt.VariancePercent = money.Percent(pt.Variance, pt.Budget)
-		g.Projects[i] = *pt
-	}
-	for i := range g.Groups {
-		grp := groupMap[g.Groups[i].ProjectID]
-		grp.Total.Variance = grp.Total.Budget - grp.Total.Actual
-		grp.Total.VariancePercent = money.Percent(grp.Total.Variance, grp.Total.Budget)
-		g.Groups[i] = *grp
+	// Projects lists each group's total, in the same order, for the report.
+	for _, grp := range g.Groups {
+		g.Projects = append(g.Projects, grp.Total)
 	}
 	g.Total.Project = g.ScopeLabel
-	g.Total.Variance = g.Total.Budget - g.Total.Actual
-	g.Total.VariancePercent = money.Percent(g.Total.Variance, g.Total.Budget)
+	g.Total.add(0, 0) // fills Variance for an empty grid too
 	return g, rows.Err()
 }
 
@@ -166,6 +146,15 @@ func monthRange(from, to string) ([]string, error) {
 		months = append(months, cur.Format("2006-01"))
 	}
 	return months, nil
+}
+
+// add counts one more row's budget and actual into the total and keeps the
+// variance in step.
+func (t *ProjectTotal) add(budget, actual int64) {
+	t.Budget += budget
+	t.Actual += actual
+	t.Variance = t.Budget - t.Actual
+	t.VariancePercent = money.Percent(t.Variance, t.Budget)
 }
 
 func statusFor(budget, actual int64) string {
