@@ -60,6 +60,17 @@ func TestLoginLimiterUsesConfiguredLimits(t *testing.T) {
 		}
 	}
 
+	// One noisy client must not use up the shared allowance: its refused
+	// attempts are stopped by its own limit before they count globally.
+	shared := &App{cfg: config.Config{LoginLimitPerIP: 3, LoginLimitGlobal: 10}}
+	h = shared.securityBoundary(ok)
+	for i := 0; i < 50; i++ {
+		post(h, "192.0.2.200")
+	}
+	if code := post(h, "192.0.2.201"); code != 204 {
+		t.Fatalf("a different client after one client flooded = %d, want 204", code)
+	}
+
 	// A Config built without the limits keeps the production defaults.
 	if perIP, global := (&App{}).loginLimits(); perIP != 30 || global != 300 {
 		t.Fatalf("default limits = %d/%d, want 30/300", perIP, global)

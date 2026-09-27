@@ -152,7 +152,10 @@ func (a *App) securityBoundary(next http.Handler) http.Handler {
 			if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/") {
 				now := time.Now()
 				perIP, global := a.loginLimits()
-				if !a.authLimits.allow("global", global, now) || !a.authLimits.allow("ip:"+a.clientIP(r), perIP, now) {
+				// Per-client first: a client over its own limit is refused before its
+				// attempts count against the shared allowance, so one noisy client
+				// cannot lock everyone else out.
+				if !a.authLimits.allow("ip:"+a.clientIP(r), perIP, now) || !a.authLimits.allow("global", global, now) {
 					h.Set("Retry-After", "60")
 					http.Error(w, "Too many attempts. Try again later.", http.StatusTooManyRequests)
 					return

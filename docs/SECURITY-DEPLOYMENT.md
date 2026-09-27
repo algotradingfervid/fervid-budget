@@ -43,6 +43,7 @@ The detailed local issue-by-issue report is generated under `output/security-rem
 
 ## Known issues
 
-Found while re-verifying the 2026-09-27 security review; not yet fixed.
-
-1. **Anyone can block every login (Medium).** `internal/app/security.go:130` counts a request against the shared 300-per-minute login limit before it checks the 30-per-minute limit for that source's IP address. One source sending 300 requests a minute therefore uses up the shared limit, and everyone else, admin included, gets "Too many attempts" for the rest of that minute. It can repeat this every minute. The fix is to check the per-IP limit first.
+None open. The last one found while re-verifying the 2026-09-27 security review
+(one client could use up the shared login allowance and block everyone) is fixed:
+the per-client limit is now checked first, so a client's refused attempts never
+count against the shared limit.
