@@ -345,29 +345,51 @@ func (a *App) requestSubmitted(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "request_submitted", PageData{Title: "Request submitted", Request2: req, Reminders: thresholds})
 }
 
-// loadViewableRequest resolves the {id} in the path and refuses it to anybody
-// whose data scope does not reach it — holding request:view somewhere is not
-// the same as being allowed to read this one (Q5/R6).
+// canSeeRequest reports whether the signed-in user's request data scope reaches
+// req. It is the row half of the access rule, shared with every store read
+// through store.RequestInScope, so a list, a queue, a notification and a detail
+// page can never disagree about who may see a request.
 //
-// The refusal is 404, not 403. A row that exists but is out of scope used to
-// answer 403 while a row that does not exist answered 404, so the status code
-// was an existence oracle: a requester could walk the id space and learn exactly
-// which request ids exist, and by extension how many requests the company raises
-// (F-G-002). The existence of a row is information about that row, so the two
-// cases have to be indistinguishable. The attempt is still logged.
-func (a *App) loadViewableRequest(w http.ResponseWriter, r *http.Request) (store.Request, bool) {
+// It deliberately checks the scope alone and not the request:view grant. Which
+// verb a screen needs depends on the screen — request:view for /requests,
+// payment:view for a linked payment, recoverable_report:view for the register —
+// and every route already demands its own verb before a handler runs. Adding
+// request:view here would refuse an accountant with payment:view but no
+// request:view the payment they are allowed to open, without hiding anything
+// the routes do not already hide. Notification recipients, which have no route
+// in front of them, use store.CanViewRequest, which does require the grant.
+func (a *App) canSeeRequest(r *http.Request, req store.Request) bool {
 	u := auth.CurrentUser(r)
-	req, err := a.st.Request(r.Context(), pathID(r))
+	return store.RequestInScope(a.auth.Scope(u, "request"), u.ID, req)
+}
+
+// loadRequestByID reads request id and refuses it to anybody whose data scope
+// does not reach it — holding request:view somewhere is not the same as being
+// allowed to read this one.
+//
+// The refusal is 404, not 403, and the same sentence a missing row gets. If a
+// row that exists but is out of scope answered 403 while a missing row answered
+// 404, the status code would tell a requester exactly which request ids exist,
+// and from that how many requests the company raises. The existence of a row is
+// information about that row, so the two cases are indistinguishable. The
+// attempt is still logged.
+func (a *App) loadRequestByID(w http.ResponseWriter, r *http.Request, id int64) (store.Request, bool) {
+	req, err := a.st.Request(r.Context(), id)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return store.Request{}, false
 	}
-	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+	if !a.canSeeRequest(r, req) {
 		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
 			fmt.Errorf("request %d is outside the caller's data scope", req.ID))
 		return store.Request{}, false
 	}
 	return req, true
+}
+
+// loadViewableRequest is loadRequestByID for the {id} in the URL path.
+func (a *App) loadViewableRequest(w http.ResponseWriter, r *http.Request) (store.Request, bool) {
+	return a.loadRequestByID(w, r, pathID(r))
 }
 
 // requestDuplicateCheck renders the advisory duplicate warning. It is a read:
@@ -399,7 +421,7 @@ func (a *App) requestDuplicateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := similar[:0]
 	for _, match := range similar {
-		if canViewRequest(a.auth.Scope(u, "request"), u, match) {
+		if a.canSeeRequest(r, match) {
 			visible = append(visible, match)
 		}
 	}
@@ -465,26 +487,11 @@ func requestInput(r *http.Request) (store.RequestInput, error) {
 	return in, nil
 }
 
-// canViewRequest answers the URL-typing question: this caller holds request:view
-// somewhere, but may they see *this* row? Q5/R6.
-func canViewRequest(scope string, u store.User, req store.Request) bool {
-	switch scope {
-	case "all":
-		return true
-	case "assigned":
-		return req.ManagerID == u.ID || req.RequesterID == u.ID
-	case "own":
-		return req.RequesterID == u.ID
-	default:
-		return false
-	}
-}
-
 // effectiveScope lets a URL narrow the caller's scope and never widen it, so
 // "?scope=own" is a filter an admin may use and "?scope=all" is not a way in.
 func (a *App) effectiveScope(u store.User, requested string) string {
 	scope := a.auth.Scope(u, "request")
-	rank := map[string]int{"own": 1, "assigned": 2, "all": 3}
+	rank := map[string]int{store.ScopeOwn: 1, store.ScopeAssigned: 2, store.ScopeAll: 3}
 	if rank[requested] > 0 && rank[requested] < rank[scope] {
 		return requested
 	}
@@ -1449,9 +1456,12 @@ var approvalTabs = []approvalTab{
 	{"decided", "Decided", []string{"approved", "rejected", "cancelled"}},
 }
 
-// approvals is the manager queue. Scope is always "assigned": holding
-// approval:approve says you may decide, and the manager_id on the row says
-// which requests are yours to decide. There is no bulk approval by design (A6).
+// approvals is the manager queue: the requests routed to this person as
+// approver (RoutedToViewer), within whatever request data scope they hold.
+// Holding approval:approve says you may decide, and the manager_id on the row
+// says which requests are yours to decide; the person's own raised requests are
+// never in this queue, whatever their scope. There is no bulk approval by
+// design (A6).
 func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	query := r.URL.Query().Get("q")
@@ -1462,8 +1472,8 @@ func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
 	counts := map[string]int{}
 	var list []store.Request
 	for _, tab := range approvalTabs {
-		opts := store.RequestListOptions{Scope: "assigned", ViewerID: u.ID,
-			Statuses: tab.Statuses, Query: query}
+		opts := store.RequestListOptions{Scope: a.auth.Scope(u, "request"), ViewerID: u.ID,
+			RoutedToViewer: true, Statuses: tab.Statuses, Query: query}
 		n, err := a.st.CountRequests(r.Context(), opts)
 		if err != nil {
 			a.respondStoreError(w, r, err)

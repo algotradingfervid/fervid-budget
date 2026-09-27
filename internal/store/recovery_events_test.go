@@ -156,10 +156,11 @@ func TestRecoveryAuthorizationEnforcedAtStoreAndHistory(t *testing.T) {
 	if _, err = s.DB().Exec(`INSERT INTO user_roles(user_id,role_id) VALUES(?,?)`, outsider.ID, roleID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.RecordRecovery(ctx, outsider, id, recoveryInput("outside-scope-event-token", 100000)); !errors.Is(err, ErrForbidden) {
+	// A request outside the actor's scope is answered as if it did not exist.
+	if _, err = s.RecordRecovery(ctx, outsider, id, recoveryInput("outside-scope-event-token", 100000)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("outside write %v", err)
 	}
-	if _, err = s.RecoveryEvents(ctx, outsider, id); !errors.Is(err, ErrForbidden) {
+	if _, err = s.RecoveryEvents(ctx, outsider, id); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("outside history %v", err)
 	}
 	if _, err = s.DB().Exec(`DELETE FROM role_permissions WHERE role_id=? AND resource='payment'`, roleID); err != nil {

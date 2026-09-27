@@ -59,20 +59,24 @@ func upRecoveryEvents(tx *sql.Tx) error {
 	return err
 }
 
-// recoveryAccessTx rechecks grants, activity and row scope within the same write
-// transaction as the balance guard, so revoked privileges cannot race a record.
+// recoveryAccessTx re-checks, inside the same transaction as the balance guard,
+// that the actor may read (and, when write is set, add to) the recovery history
+// of a recoverable request, so revoked privileges cannot race a record.
+//
+// The answer is ErrNotFound when the request is missing, outside the actor's
+// request data scope, or not a recoverable at all: the register only knows
+// recoverable requests, and a hidden row must look exactly like a missing one.
+// It is ErrForbidden only when the actor can see the request but lacks the
+// recoverable_report:view grant, or payment:create for a write.
 func recoveryAccessTx(ctx context.Context, tx *sql.Tx, actorID, requestID int64, write bool) error {
-	var allowed int
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_requests pr JOIN users u ON u.id=? AND u.active=1
- WHERE pr.id=? AND pr.treatment='recoverable'
- AND EXISTS(SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id WHERE ur.user_id=u.id AND rp.resource='recoverable_report' AND rp.action='view')
- AND (?=0 OR EXISTS(SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id WHERE ur.user_id=u.id AND rp.resource='payment' AND rp.action='create'))
- AND EXISTS(SELECT 1 FROM user_roles ur JOIN role_data_scope ds ON ds.role_id=ur.role_id WHERE ur.user_id=u.id AND ds.resource='request'
- AND (ds.scope='all' OR (ds.scope='own' AND pr.requester_id=u.id) OR (ds.scope='assigned' AND (pr.manager_id=u.id OR pr.requester_id=u.id))))`, actorID, requestID, boolInt(write)).Scan(&allowed)
+	req, ps, err := requestVisibleTx(ctx, tx, actorID, requestID)
 	if err != nil {
 		return err
 	}
-	if allowed == 0 {
+	if req.Treatment != "recoverable" {
+		return ErrNotFound
+	}
+	if !ps.Can("recoverable_report", "view") || (write && !ps.Can("payment", "create")) {
 		return ErrForbidden
 	}
 	return nil

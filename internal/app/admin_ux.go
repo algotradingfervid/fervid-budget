@@ -66,30 +66,27 @@ func (a *App) authorizedLoginNext(r *http.Request, u store.User, raw string) str
 			}
 			if resource == "recoverable_report" {
 				req, err := a.st.Request(r.Context(), id)
-				if err != nil || req.Treatment != "recoverable" || !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+				if err != nil || req.Treatment != "recoverable" || !a.canSeeRequest(r, req) {
 					return "/"
 				}
 			}
 			if resource == "request" {
 				req, err := a.st.Request(r.Context(), id)
-				if err != nil || !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+				if err != nil || !a.canSeeRequest(r, req) {
 					return "/"
 				}
 			}
 			if resource == "payment" {
+				// The redirect may land only where the payment page itself would
+				// open, so it asks the page's own rule. A payment linked to a
+				// request is readable when the request data scope reaches that
+				// request (payment:view was already required above); a payment
+				// with no request is readable when the payment data scope reaches
+				// it — "own" and "assigned" mean payments this person entered,
+				// "all" means every payment, and no scope means none.
 				pay, err := a.st.Payment(r.Context(), id)
-				if err != nil {
+				if err != nil || !a.canReadPayment(r, pay) {
 					return "/"
-				}
-				scope := a.auth.Scope(u, "payment")
-				if scope != "all" && (scope == "" || pay.EnteredBy != u.ID) {
-					return "/"
-				}
-				if pay.RequestID != nil {
-					req, err := a.st.Request(r.Context(), *pay.RequestID)
-					if err != nil || !canViewRequest(a.auth.Scope(u, "request"), u, req) {
-						return "/"
-					}
 				}
 			}
 		}

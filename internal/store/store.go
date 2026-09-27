@@ -1801,18 +1801,11 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	staleCutoff := now.UTC().Add(-StaleReservation).Format("2006-01-02 15:04:05")
 	var out LinkableSet
 
-	// The same fail-closed rule as requestWhere: only "all" is unrestricted, and
-	// an empty or unrecognised scope reads nothing (fixwave rbac-2).
-	scopeSQL, scopeArgs := "", []any(nil)
-	switch opts.Scope {
-	case ScopeAll:
-	case "own":
-		scopeSQL, scopeArgs = ` AND r.requester_id=?`, []any{opts.ViewerID}
-	case "assigned":
-		scopeSQL, scopeArgs = ` AND r.manager_id=?`, []any{opts.ViewerID}
-	default:
-		scopeSQL = ` AND 0`
-	}
+	// The queue shows the caller exactly the requests their request data scope
+	// lets them open, and nothing else. An empty or unrecognised scope reads
+	// nothing.
+	scopePredicate, scopeArgs := requestScopeSQL("r", opts.Scope, opts.ViewerID)
+	scopeSQL := ` AND ` + scopePredicate
 
 	// Counts first: one aggregate pass over the scope, independent of the tab,
 	// the search and the limit. Stale reservations are counted here too, because

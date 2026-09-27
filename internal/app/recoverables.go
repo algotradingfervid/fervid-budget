@@ -111,7 +111,7 @@ func (a *App) recoverableListOptions(r *http.Request) store.RecoverableReportOpt
 // R3 requires a data scope per resource and R6 requires it enforced server-side.
 //
 // This replaced a handler-side filter that re-read each row's request to ask
-// `canViewRequest`. The predicate now lives in the SQL (`recoverableScope`), for
+// whether the caller could see it. The predicate now lives in the SQL (`recoverableScope`), for
 // two reasons beyond the N+1: the aggregates on the summary screen cannot be
 // filtered row-by-row after the fact at all, and a filter applied after the query
 // silently breaks any LIMIT the query grows later.
@@ -206,20 +206,13 @@ func (a *App) recordRecovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) renderRecoverableDetail(w http.ResponseWriter, r *http.Request, input store.RecoveryInput, recoveryError string, status int) {
-	id := parseID(r.PathValue("id"))
-	req, err := a.st.Request(r.Context(), id)
-	if err != nil {
-		a.respondStoreError(w, r, err)
+	// The same row scope /requests/{id} applies, answered the same way — 404 —
+	// so the register is not an existence oracle either.
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
 		return
 	}
-	// The same row scope /requests/{id} applies, answered the same way it answers
-	// it — 404, so the register is not an existence oracle either (F-G-016/F-G-002).
 	u := auth.CurrentUser(r)
-	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
-		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
-			fmt.Errorf("recoverable %d is outside the caller's data scope", req.ID))
-		return
-	}
 	// This screen is the recoverables register, not a general request viewer.
 	if req.Treatment != "recoverable" {
 		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)

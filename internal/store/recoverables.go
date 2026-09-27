@@ -336,28 +336,15 @@ const recoverableJoins = ` LEFT JOIN (SELECT request_id,MIN(id) AS id,SUM(amount
 const recoverableCounterparty = `CASE WHEN pr.type='employee_advance' AND pr.recoverable_category='employee_advance' THEN COALESCE(NULLIF(u.name,''),'Employee') ELSE COALESCE(NULLIF(pr.counterparty,''),NULLIF(pr.vendor_payee,''),'Not recorded') END`
 
 // recoverableScope is the row-visibility half of recoverableBaseWhere: the same
-// predicate the app's canViewRequest applies, expressed for the `pr` alias so
-// every recoverable read enforces it in SQL rather than after the fact.
-//
-// It mirrors canViewRequest and NOT requestWhere, deliberately. The two already
-// differ — requestWhere's "assigned" is `manager_id` alone, while canViewRequest
-// admits `manager_id OR requester_id` — and canViewRequest is the authority on
-// whether a caller may see a given row, because it is what /requests/{id} answers
-// with. A register that showed a row whose detail page 404s, or hid one whose
-// detail page opens, would be the same class of disagreement F-G-016 was.
-//
-// An unrecognised or empty scope returns `AND 0`: no rows. See RecoverableViewer.
+// request data scope the detail page applies, expressed in SQL for the `pr`
+// alias so every recoverable read enforces it in the query rather than after
+// the fact. The register is a second view over payment_requests, and a row it
+// shows whose detail page answers 404, or one it hides whose detail page opens,
+// would be a disagreement about who may see what. An unrecognised or empty
+// scope reads no rows. See RecoverableViewer.
 func recoverableScope(v RecoverableViewer) (string, []any) {
-	switch v.Scope {
-	case ScopeAll:
-		return "", nil
-	case "assigned":
-		return ` AND (pr.manager_id=? OR pr.requester_id=?)`, []any{v.ViewerID, v.ViewerID}
-	case "own":
-		return ` AND pr.requester_id=?`, []any{v.ViewerID}
-	default:
-		return ` AND 0`, nil
-	}
+	predicate, args := requestScopeSQL("pr", v.Scope, v.ViewerID)
+	return ` AND ` + predicate, args
 }
 
 // recoverableAgeing turns a row's payment state and its distance from the

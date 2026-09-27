@@ -84,14 +84,19 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The work queues below are filters inside the caller's real request data
+	// scope, never a scope of their own: "awaiting your approval" is the requests
+	// routed to this person as approver, and "concerns to answer" the ones they
+	// hold for payment. Each area lists exactly what the queue it links to lists.
+	scope := a.auth.Scope(u, "request")
 	if a.auth.Can(u, "approval", "approve") {
 		if err := area("approvals", "✓", "Awaiting your approval", "Open the approvals queue →", "/approvals",
-			store.RequestListOptions{Scope: "assigned", Statuses: []string{"pending"}}); err != nil {
+			store.RequestListOptions{Scope: scope, RoutedToViewer: true, Statuses: []string{"pending"}}); err != nil {
 			a.respondStoreError(w, r, err)
 			return
 		}
 		if err := area("decisions", "⏸", "Decisions only you can make", "Review all →", "/approvals?bucket=cancellations",
-			store.RequestListOptions{Scope: "assigned", Statuses: []string{"cancellation_requested"}}); err != nil {
+			store.RequestListOptions{Scope: scope, RoutedToViewer: true, Statuses: []string{"cancellation_requested"}}); err != nil {
 			a.respondStoreError(w, r, err)
 			return
 		}
@@ -102,7 +107,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	// (settlement-3). Gated on the verb the decision routes are.
 	if a.auth.Can(u, "approval", "accept_partial") {
 		if err := area("partials", "₹", "Partial payments to review", "Open the partial reviews →", "/approvals?bucket=partial-review",
-			store.RequestListOptions{Scope: "assigned", Statuses: []string{"partial_review"}}); err != nil {
+			store.RequestListOptions{Scope: scope, RoutedToViewer: true, Statuses: []string{"partial_review"}}); err != nil {
 			a.respondStoreError(w, r, err)
 			return
 		}
@@ -113,7 +118,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	// status, the flag.
 	if a.auth.Can(u, "payment", "process") {
 		if err := area("concerns", "?", "Concerns to answer", "Open the partial review tab →", "/accounts-queue?tab=partial_review",
-			store.RequestListOptions{Scope: "held", Statuses: []string{"partial_review"}, ConcernOpen: true}); err != nil {
+			store.RequestListOptions{Scope: scope, HeldByViewer: true, Statuses: []string{"partial_review"}, ConcernOpen: true}); err != nil {
 			a.respondStoreError(w, r, err)
 			return
 		}

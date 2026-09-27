@@ -192,20 +192,16 @@ func paymentWriteAccess(ctx context.Context, tx *sql.Tx, actorID int64, p Paymen
 	return ErrNotFound
 }
 
-// CanViewRequest is shared by HTTP, notification recipients and inbox reads.
+// CanViewRequest answers whether a person may read request r on a screen that
+// exists to show requests: they need the request:view grant and their request
+// data scope has to reach the row (RequestInScope). Notification recipients and
+// inbox reads use it. HTTP handlers check the grant through the route and the
+// scope through the same predicate.
 func CanViewRequest(ps PermissionSet, uid int64, r Request) bool {
 	if ps == nil || !ps.Can("request", "view") {
 		return false
 	}
-	switch ps.Scope("request") {
-	case ScopeAll:
-		return true
-	case "own":
-		return r.RequesterID == uid
-	case "assigned":
-		return r.RequesterID == uid || r.ManagerID == uid
-	}
-	return false
+	return RequestInScope(ps.Scope("request"), uid, r)
 }
 
 func (s *Store) UserCanViewRequest(ctx context.Context, id int64, r Request) bool {

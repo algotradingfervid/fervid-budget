@@ -140,10 +140,15 @@ func notificationScopeWhere(scope string) string {
 // alone and fails in a full run purely because the shared admin has crossed the
 // cap by the time it looks. Silence was the defect; the cap is fine.
 func (s *Store) ListNotificationsPage(ctx context.Context, f NotificationFilter) (NotificationPage, error) {
-	where := ` WHERE user_id=?` + notificationVisibility + notificationScopeWhere(f.Scope)
+	visible, visibleArgs, err := s.notificationVisibility(ctx, f.UserID)
+	if err != nil {
+		return NotificationPage{}, err
+	}
+	where := ` WHERE user_id=?` + visible + notificationScopeWhere(f.Scope)
+	args := append([]any{f.UserID}, visibleArgs...)
 
 	var page NotificationPage
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications`+where, f.UserID).Scan(&page.Total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications`+where, args...).Scan(&page.Total); err != nil {
 		return NotificationPage{}, err
 	}
 
@@ -155,7 +160,7 @@ func (s *Store) ListNotificationsPage(ctx context.Context, f NotificationFilter)
 
 	// CURRENT_TIMESTAMP is second-resolution, so a burst written in one request
 	// shares a timestamp; id is the tie-break that keeps the order stable.
-	rows, err := s.db.QueryContext(ctx, notificationSelect+where+` ORDER BY created_at DESC, id DESC LIMIT ?`, f.UserID, limit)
+	rows, err := s.db.QueryContext(ctx, notificationSelect+where+` ORDER BY created_at DESC, id DESC LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return NotificationPage{}, err
 	}
@@ -190,7 +195,11 @@ func (s *Store) ListNotifications(ctx context.Context, f NotificationFilter) ([]
 // ErrNotFound rather than the row, so the caller cannot leak it by guessing.
 func (s *Store) Notification(ctx context.Context, userID, id int64) (Notification, error) {
 	var n Notification
-	err := s.db.QueryRowContext(ctx, notificationSelect+` WHERE id=? AND user_id=?`+notificationVisibility, id, userID).
+	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
+	if err != nil {
+		return n, err
+	}
+	err = s.db.QueryRowContext(ctx, notificationSelect+` WHERE id=? AND user_id=?`+visible, append([]any{id, userID}, visibleArgs...)...).
 		Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt)
 	if err == sql.ErrNoRows {
 		return n, ErrNotFound
@@ -200,26 +209,38 @@ func (s *Store) Notification(ctx context.Context, userID, id int64) (Notificatio
 
 func (s *Store) NotificationCounts(ctx context.Context, userID int64) (NotificationCounts, error) {
 	var c NotificationCounts
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
+	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
+	if err != nil {
+		return c, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),
 		COALESCE(SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN kind='reminder' THEN 1 ELSE 0 END),0)
-		FROM notifications WHERE user_id=?`+notificationVisibility, userID).
+		FROM notifications WHERE user_id=?`+visible, append([]any{userID}, visibleArgs...)...).
 		Scan(&c.All, &c.Unread, &c.Mentions, &c.Reminders)
 	return c, err
 }
 
 func (s *Store) UnreadNotificationCount(ctx context.Context, userID int64) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL`+notificationVisibility, userID).Scan(&n)
+	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL`+visible, append([]any{userID}, visibleArgs...)...).Scan(&n)
 	return n, err
 }
 
 // MarkNotificationRead is scoped by user_id, so another user's row matches
 // nothing and returns ErrNotFound rather than being marked by a guessed id.
 func (s *Store) MarkNotificationRead(ctx context.Context, userID, id int64, now time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND read_at IS NULL`+notificationVisibility,
-		now.UTC(), id, userID)
+	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND read_at IS NULL`+visible,
+		append([]any{now.UTC(), id, userID}, visibleArgs...)...)
 	if err != nil {
 		return classify(err)
 	}
@@ -231,7 +252,7 @@ func (s *Store) MarkNotificationRead(ctx context.Context, userID, id int64, now 
 		// Either it is not yours, it does not exist, or it was already read.
 		// Distinguish the last case so a double click is not an error.
 		var exists int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE id=? AND user_id=?`+notificationVisibility, id, userID).Scan(&exists); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE id=? AND user_id=?`+visible, append([]any{id, userID}, visibleArgs...)...).Scan(&exists); err != nil {
 			return err
 		}
 		if exists == 0 {
@@ -242,14 +263,33 @@ func (s *Store) MarkNotificationRead(ctx context.Context, userID, id int64, now 
 }
 
 func (s *Store) MarkAllNotificationsRead(ctx context.Context, userID int64, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL`+notificationVisibility, now.UTC(), userID)
+	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL`+visible, append([]any{now.UTC(), userID}, visibleArgs...)...)
 	return classify(err)
 }
 
-// Re-evaluate current membership for old notifications after reassignment or revocation.
-const notificationVisibility = ` AND (request_id IS NULL OR EXISTS (
- SELECT 1 FROM payment_requests nr JOIN users nu ON nu.id=notifications.user_id AND nu.active=1
- WHERE nr.id=notifications.request_id
- AND EXISTS (SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id WHERE ur.user_id=nu.id AND rp.resource='request' AND rp.action='view')
- AND EXISTS (SELECT 1 FROM user_roles ur JOIN role_data_scope ds ON ds.role_id=ur.role_id WHERE ur.user_id=nu.id AND ds.resource='request' AND
- (ds.scope='all' OR (ds.scope='own' AND nr.requester_id=nu.id) OR (ds.scope='assigned' AND (nr.requester_id=nu.id OR nr.manager_id=nu.id))))))`
+// notificationVisibility is the WHERE fragment, with its arguments, that hides
+// a notification about a request its owner may no longer see. A notification
+// was addressed to the person when the event happened; a reassignment, a role
+// change or a deactivation since then must not leave them reading about a
+// request whose page now answers 404. Notifications that name no request are
+// always visible to their owner.
+//
+// The owner's current permissions are read once here and the row rule is the
+// same requestScopeSQL every list uses, so the inbox can never disagree with
+// the request screens about who may see what. An inactive owner holds no
+// permissions at all, so they see only their request-less notifications.
+func (s *Store) notificationVisibility(ctx context.Context, userID int64) (string, []any, error) {
+	ps, err := effectivePermissionsQ(ctx, s.db, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	if !ps.Can("request", "view") {
+		return ` AND request_id IS NULL`, nil, nil
+	}
+	scopeSQL, args := requestScopeSQL("nr", ps.Scope("request"), userID)
+	return ` AND (request_id IS NULL OR EXISTS (SELECT 1 FROM payment_requests nr WHERE nr.id=notifications.request_id AND ` + scopeSQL + `))`, args, nil
+}
