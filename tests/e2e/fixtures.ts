@@ -301,16 +301,25 @@ export async function approveInFull(
   try {
     const approverPage = await context.newPage();
     await login(approverPage, approver.email, approver.password);
-    await approverPage.goto(`/requests/${id}`);
-    await approverPage.getByRole('button', { name: /^Approve / }).click();
-    const sheet = approverPage.locator('#approve-sheet');
-    await expect(sheet).toBeVisible();
-    await sheet.getByLabel('Amount approved').fill(amount);
-    await sheet.getByRole('button', { name: 'Approve request' }).click();
-    await expect(approverPage).toHaveURL(/\/approvals$/);
+    await approveOnSheet(approverPage, id, amount);
   } finally {
     await context.close();
   }
+}
+
+/**
+ * As the request's approver, already signed in on `approverPage`: opens
+ * request `id`, approves `amount` through the approve sheet and lands back on
+ * /approvals.
+ */
+export async function approveOnSheet(approverPage: Page, id: number, amount: string) {
+  await approverPage.goto(`/requests/${id}`);
+  await approverPage.getByRole('button', { name: /^Approve / }).click();
+  const sheet = approverPage.locator('#approve-sheet');
+  await expect(sheet).toBeVisible();
+  await sheet.getByLabel('Amount approved').fill(amount);
+  await sheet.getByRole('button', { name: 'Approve request' }).click();
+  await expect(approverPage).toHaveURL(/\/approvals$/);
 }
 
 /**

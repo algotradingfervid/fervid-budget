@@ -10,7 +10,7 @@
  * socket) are listed as NOT RUN in the test-case document, not faked here.
  */
 import { expect, test as base, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { admin, login, settlePayment, today } from './fixtures';
+import { admin, approveOnSheet, ensureVendor, login, settlePayment, today } from './fixtures';
 import {
   asRole,
   signIn,
@@ -35,14 +35,6 @@ const test = base;
 // gap in the app shows up as a failed step instead of being worked around by
 // an admin page.
 // ---------------------------------------------------------------------------
-
-async function createVendor(adminPage: Page, name: string) {
-  await adminPage.goto('/vendors/new');
-  await adminPage.getByLabel('Vendor name').fill(name);
-  await adminPage.getByLabel('Type').selectOption('company');
-  await adminPage.getByRole('button', { name: 'Save vendor' }).click();
-  await adminPage.waitForURL(url => !url.pathname.endsWith('/vendors/new'));
-}
 
 interface RaisedRequest {
   id: number;
@@ -86,16 +78,6 @@ async function raiseRequest(
   const id = Number(new URL(requesterPage.url()).pathname.split('/')[2]);
   const number = (await requesterPage.locator('.rh-no').first().innerText()).trim();
   return { id, number };
-}
-
-async function approveAsManager(managerPage: Page, requestId: number, approvedAmount: string) {
-  await managerPage.goto(`/requests/${requestId}`);
-  await managerPage.getByRole('button', { name: /^Approve / }).click();
-  const sheet = managerPage.locator('#approve-sheet');
-  await expect(sheet).toBeVisible();
-  await sheet.getByLabel('Amount approved').fill(approvedAmount);
-  await sheet.getByRole('button', { name: 'Approve request' }).click();
-  await expect(managerPage).toHaveURL(/\/approvals$/);
 }
 
 async function returnRequest(managerPage: Page, requestId: number, comment: string) {
@@ -187,7 +169,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     await login(adminPage, admin.email, admin.password);
 
     vendorName = `Notif Vendor ${RUN}`;
-    await createVendor(adminPage, vendorName);
+    await ensureVendor(adminPage, vendorName);
 
     req = await asRole(adminPage, browser, RUN, ['Requester'], 'freq');
     mgr = await asRole(adminPage, browser, RUN, ['Manager'], 'fmgr');
@@ -265,7 +247,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       title: `Chain D ${RUN}`, amount: '7500.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
     });
-    await approveAsManager(mgr.page, requestD.id, '7500.00');
+    await approveOnSheet(mgr.page, requestD.id, '7500.00');
 
     const reqTitles = await notificationTitles(req.page);
     const accATitles = await notificationTitles(accA.page);
@@ -292,7 +274,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       title: `Chain E ${RUN}`, amount: '3000.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
     });
-    await approveAsManager(mgr.page, requestE.id, '3000.00');
+    await approveOnSheet(mgr.page, requestE.id, '3000.00');
     const mentionsBefore = (await notificationTitles(req.page, 'mentions')).length;
     await holdRequest(accA.page, requestE.id, 'Please confirm the GST number on the invoice.');
     const mentions = await notificationTitles(req.page, 'mentions');
@@ -308,7 +290,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       title: `Chain F ${RUN}`, amount: '4200.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
     });
-    await approveAsManager(mgr.page, requestF.id, '4200.00');
+    await approveOnSheet(mgr.page, requestF.id, '4200.00');
     await settlePayment(accA.page, requestF.id, { amount: '4200.00', paidOn: today() });
 
     const reqTitles = await notificationTitles(req.page);
@@ -326,7 +308,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       title: `Chain G ${RUN}`, amount: '6000.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
     });
-    await approveAsManager(mgr.page, requestG.id, '6000.00');
+    await approveOnSheet(mgr.page, requestG.id, '6000.00');
     const reqCountBefore = (await notificationTitles(req.page)).length;
 
     await settlePayment(accA.page, requestG.id, {
@@ -351,7 +333,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       title: `Chain H ${RUN}`, amount: '2200.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
     });
-    await approveAsManager(mgr.page, requestH.id, '2200.00');
+    await approveOnSheet(mgr.page, requestH.id, '2200.00');
     const reqCountBefore = (await notificationTitles(req.page)).length;
 
     await askCancel(req.page, requestH.id, 'The project was cancelled internally.');
@@ -578,7 +560,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       title: `Chain I ${RUN}`, amount: '1500.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
     });
-    await approveAsManager(mgr.page, requestI.id, '1500.00');
+    await approveOnSheet(mgr.page, requestI.id, '1500.00');
     await holdRequest(accA.page, requestI.id, 'Confirm the delivery address.');
 
     const before = await segmentedCounts(req.page);
@@ -887,7 +869,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
   });
 
   test('TC-F-042 — approving the urgent request then notifies Accounts, completing the two-send-point design', async () => {
-    await approveAsManager(mgr.page, requestK.id, '9000.00');
+    await approveOnSheet(mgr.page, requestK.id, '9000.00');
     const accBTitles = await notificationTitles(accB.page);
     expect(accBTitles.some(t => t.startsWith('URGENT:') && t.includes(requestK.number)), 'Accounts must be told once the urgent request is approved').toBe(true);
   });
@@ -917,7 +899,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       title: `Chain U ${RUN}`, amount: '1800.00', vendorName, approverName: mgr.subject.name,
       invoiceNo: nextInvoice()
     });
-    await approveAsManager(mgr.page, requestU.id, '1800.00');
+    await approveOnSheet(mgr.page, requestU.id, '1800.00');
     await reserveOnly(accA.page, requestU.id);
 
     await accA.page.goto(`/requests/${requestU.id}/reservation/stale`);
