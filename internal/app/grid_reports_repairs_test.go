@@ -201,11 +201,7 @@ func TestAddUserValidationKeepsTheDrawerAndTheInput(t *testing.T) {
 	if drawer == "" || strings.HasPrefix(strings.TrimSpace(strings.SplitN(drawer, ">", 2)[0]), `id="user-new" hidden`) || strings.Contains(strings.SplitN(drawer, ">", 2)[0], "hidden") {
 		t.Fatalf("the Add user drawer is not open on the validation answer: %s", strings.SplitN(drawer, ">", 2)[0])
 	}
-	for _, want := range []string{"Choose at least one role for the new user.", `value="nora@example.test"`, `value="Nora Test"`} {
-		if !strings.Contains(drawer, want) {
-			t.Fatalf("the reopened drawer lacks %q", want)
-		}
-	}
+	mustContain(t, "the reopened drawer", drawer, "Choose at least one role for the new user.", `value="nora@example.test"`, `value="Nora Test"`)
 	if strings.Contains(body, "NoraPassword123") {
 		t.Fatal("the password was echoed back into the page")
 	}

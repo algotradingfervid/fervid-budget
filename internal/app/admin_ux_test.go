@@ -271,22 +271,14 @@ func TestRoleAuditHTMLShowsPermissionScopeDeltasAndAuthorizedRoleLink(t *testing
 	requireStatus(t, saved, 303)
 	saved.Body.Close()
 	body := responseBody(t, s.request("GET", fmt.Sprintf("/audit?entity=role&id=%d", id), nil, ""))
-	for _, want := range []string{"Payment requests · View: Not granted → Granted", "Payment requests · Record access: None → Own", fmt.Sprintf(`href="/roles?role=%d"`, id), "UX Audit Role", "Test Admin"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("role audit HTML missing %q", want)
-		}
-	}
+	mustContain(t, "role audit HTML", body, "Payment requests · View: Not granted → Granted", "Payment requests · Record access: None → Own", fmt.Sprintf(`href="/roles?role=%d"`, id), "UX Audit Role", "Test Admin")
 	form.Del("perm")
 	form.Del("scope_request")
 	saved = s.postForm("/roles", form)
 	requireStatus(t, saved, 303)
 	saved.Body.Close()
 	body = responseBody(t, s.request("GET", fmt.Sprintf("/audit?entity=role&id=%d", id), nil, ""))
-	for _, want := range []string{"Payment requests · View: Granted → Not granted", "Payment requests · Record access: Own → None"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("revocation audit missing %q", want)
-		}
-	}
+	mustContain(t, "revocation audit", body, "Payment requests · View: Granted → Not granted", "Payment requests · Record access: Own → None")
 	roles, err := s.st.AllRoles(s.ctx)
 	if err != nil {
 		t.Fatal(err)

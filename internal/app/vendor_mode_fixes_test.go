@@ -23,11 +23,7 @@ func TestNEFTIdentitySurvivesConfiguredEntryPreviewSaveAndReceipt(t *testing.T) 
 	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	entry := responseBody(t, s.request("GET", fmt.Sprintf("/payments/new?request=%d", reqID), nil, ""))
-	for _, want := range []string{`value="neft" selected>NEFT`, `value="rtgs" >RTGS`, `value="bank_transfer" >Bank transfer`, `value="dd" >DD`} {
-		if !strings.Contains(entry, want) {
-			t.Fatalf("entry missing %q", want)
-		}
-	}
+	mustContain(t, "entry", entry, `value="neft" selected>NEFT`, `value="rtgs" >RTGS`, `value="bank_transfer" >Bank transfer`, `value="dd" >DD`)
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(head)}, "amount": {"123.45"}, "paid_on": {"2026-09-26"}, "payment_mode": {"neft"}, "reference_no": {"NEFT-IDENTITY-123"}, "settlement": {"settled"}}
 	preview := responseBody(t, s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form))
 	if !strings.Contains(preview, ">NEFT<") || !strings.Contains(preview, `value="neft"`) {

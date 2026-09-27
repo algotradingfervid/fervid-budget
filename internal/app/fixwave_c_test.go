@@ -34,15 +34,11 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 	// Step 2: its form fixes the recoverable treatment, offers every category
 	// except Employee advance, and asks who is paid.
 	form := s.get("/requests/new?type=recoverable")
-	for _, want := range []string{
+	mustContain(t, "the deposit form", form,
 		`<input type="hidden" name="treatment" value="recoverable">`,
 		`id="rcategory"`, `value="emd"`, `value="icd"`, `value="security_deposit"`,
 		`name="vendor_payee"`, "Who is paid",
-	} {
-		if !strings.Contains(form, want) {
-			t.Fatalf("the deposit form is missing %q: %s", want, firstLines(form))
-		}
-	}
+	)
 	if strings.Contains(form, `value="employee_advance"`) {
 		t.Fatal("the deposit form offers the Employee advance category, which would make the payee the requester")
 	}
@@ -488,18 +484,14 @@ func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
 	s.login("rhea@example.test", "RheaPass12345")
 
 	returned := s.get(fmt.Sprintf("/requests/%d", id))
-	for _, want := range []string{
+	mustContain(t, "the returned screen", returned,
 		"Recorded before deposits and guarantees were their own request type",
 		"ICD — inter-corporate deposit",
 		"Meridian Holdings Pvt Ltd",
 		`href="/requests/new?type=recoverable"`,
 		">Resubmit as an Employee advance<",
 		">Save as an Employee advance<",
-	} {
-		if !strings.Contains(returned, want) {
-			t.Fatalf("the returned screen is missing %q: %s", want, firstLines(returned))
-		}
-	}
+	)
 	if strings.Contains(returned, "since been retired") {
 		t.Fatal("the returned screen titles the legacy notice with a retirement it does not have")
 	}

@@ -91,11 +91,7 @@ func TestDataEntryHasRestrictedNavigationAndRoutes(t *testing.T) {
 	}
 	// …and still offers everything the Accounts role does allow. The labels are
 	// the Phase 0 shell's, which this task does not change.
-	for _, shown := range []string{"Payments ledger", "Variance grid", "Reports"} {
-		if !strings.Contains(body, shown) {
-			t.Fatalf("data entry navigation is missing %q", shown)
-		}
-	}
+	mustContain(t, "data entry navigation", body, "Payments ledger", "Variance grid", "Reports")
 	for _, path := range []string{"/projects", "/heads", "/users", "/audit", "/budgets", "/months", "/roles"} {
 		resp := s.request(http.MethodGet, path, nil, "")
 		requireStatus(t, resp, http.StatusForbidden)
@@ -522,18 +518,10 @@ func TestShellIsBuiltFromPermissionsAndSkippedForHTMXFragments(t *testing.T) {
 	// Six badges, not three: the store's three badgeSpecs plus the unread bell
 	// count and the two work-queue counts navSpec has always declared and nothing
 	// populated (F-G-013).
-	for _, want := range []string{"chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=6", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log", "item=Notifications"} {
-		if !strings.Contains(adminShell, want) {
-			t.Fatalf("admin shell missing %q: %s", want, adminShell)
-		}
-	}
+	mustContain(t, "admin shell", adminShell, "chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=6", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log", "item=Notifications")
 
 	entryShell := renderAs(t, handler, manager, entry, "/payments", nil)
-	for _, want := range []string{"chrome=app", "active=payments", "fab=Pay", "item=Payments ledger", "item=Variance grid"} {
-		if !strings.Contains(entryShell, want) {
-			t.Fatalf("data_entry shell missing %q: %s", want, entryShell)
-		}
-	}
+	mustContain(t, "data_entry shell", entryShell, "chrome=app", "active=payments", "fab=Pay", "item=Payments ledger", "item=Variance grid")
 	for _, forbidden := range []string{"item=Users", "item=Audit log", "item=Budgets", "item=Monthly plans"} {
 		if strings.Contains(entryShell, forbidden) {
 			t.Fatalf("data_entry shell leaks %q: %s", forbidden, entryShell)
@@ -823,40 +811,24 @@ func TestRolesAdminScreenRendersApprovedMatrix(t *testing.T) {
 
 	// The approved chrome: segmented switcher, role card, both matrices, the
 	// scope pill group and the sticky action bar.
-	for _, want := range []string{
+	mustContain(t, "/roles approved markup", body,
 		`class="segmented"`, `class="card"`, `class="card-head"`, `class="pill good"`,
 		`class="form-grid"`, `class="field span-4 m-half"`,
 		`class="table-wrap d-only"`, `class="perm-table"`,
 		`class="perm-acc m-only"`, `class="pa-head"`, `class="chev"`, `class="pa-body"`,
 		`class="perm-scope"`, `class="action-bar"`, `class="ab-note d-only"`,
 		`class="btn primary"`, `class="btn outline"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles is missing the approved markup %q", want)
-		}
-	}
+	)
 	// Every seeded role is a segment; custom roles are badged.
-	for _, want := range []string{"Requester", "Manager", "Accounts", "Admin"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles page missing role %q", want)
-		}
-	}
+	mustContain(t, "/roles page role", body, "Requester", "Manager", "Accounts", "Admin")
 	// All nine rows, by their design labels.
-	for _, want := range []string{
+	mustContain(t, "/roles matrix row", body,
 		"Payment requests", "Payments", "Reservations", "Recoverables", "Vendors",
 		"Vendor bank details", "Budgets &amp; variance grid", "Reports", "Administration",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles matrix missing row %q", want)
-		}
-	}
+	)
 	// Cells, the Advanced disclosure, and an em dash where a row has no
 	// canonical action for a column (Reservations has no View).
-	for _, want := range []string{`name="cell"`, `name="perm"`, "Advanced", "—"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles matrix missing %q", want)
-		}
-	}
+	mustContain(t, "/roles matrix", body, `name="cell"`, `name="perm"`, "Advanced", "—")
 	// Only one of the two renderings may post: the mobile inputs ship disabled.
 	if !strings.Contains(body, `name="cell" disabled`) {
 		t.Fatal("mobile accordion inputs must be rendered disabled so only one matrix submits")
@@ -1015,17 +987,13 @@ func TestUsersScreenAssignsMultipleRoles(t *testing.T) {
 	// The users page is the approved t-cards table with a role chip per role and
 	// an editing sheet holding the role checklines.
 	body := s.get("/users")
-	for _, want := range []string{
+	mustContain(t, "users page approved markup", body,
 		`class="t-cards"`, `class="t-lead" data-label="Name"`, `data-label="Email"`,
 		`data-label="Roles"`, `data-label="Default approver"`, `data-label="Status"`,
 		`class="pill neutral no-dot"`, `class="overlay"`, `class="sheet"`,
 		`class="sh-head"`, `class="sh-body`, `class="sh-foot"`, `class="checkline"`,
 		"role_ids", "default_approver_id", "Requester", "Manager",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("users page missing the approved markup %q", want)
-		}
-	}
+	)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("/users still renders the retired .badge class")
 	}
@@ -1147,7 +1115,7 @@ func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
 	requireStatus(t, resp, http.StatusOK)
 	body := responseBody(t, resp)
 
-	for _, want := range []string{
+	mustContain(t, "/vendors approved markup", body,
 		`class="page-banner"`, `class="pb-actions"`,
 		`class="banner warn"`, `class="b-ico"`, `class="b-actions"`,
 		`class="toolbar vendor-filters"`, `name="type"`, `name="category"`, `name="status"`,
@@ -1161,11 +1129,7 @@ func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
 		"Materials · Switchgear",
 		// A vendor with no GSTIN says so rather than rendering an empty cell.
 		`class="pill warn no-dot"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/vendors is missing the approved markup %q", want)
-		}
-	}
+	)
 	// One vendor has no GSTIN, so the warning banner counts exactly one.
 	if !strings.Contains(body, "1 vendor has no GSTIN") {
 		t.Fatalf("/vendors did not report the missing-GSTIN gap: %s", body)
@@ -1297,11 +1261,7 @@ func TestVendorCreateAndUpdateThroughTheScreens(t *testing.T) {
 	s.loginAdmin()
 
 	blank := s.get("/vendors/new")
-	for _, want := range []string{`class="form-grid"`, `name="name"`, `name="vendor_type"`, "Save vendor"} {
-		if !strings.Contains(blank, want) {
-			t.Fatalf("/vendors/new is missing %q", want)
-		}
-	}
+	mustContain(t, "/vendors/new", blank, `class="form-grid"`, `name="name"`, `name="vendor_type"`, "Save vendor")
 
 	form := url.Values{
 		"name": {"Meridian Facility Services"}, "display_name": {"Meridian"},
@@ -1389,17 +1349,13 @@ func TestVendorSearchFragmentFeedsTheCombobox(t *testing.T) {
 	resp := s.htmxGet("/vendors/search?q=sund")
 	requireStatus(t, resp, http.StatusOK)
 	body := responseBody(t, resp)
-	for _, want := range []string{
+	mustContain(t, "the combobox fragment", body,
 		`class="combo-list"`, `class="co"`, `class="co-main"`,
 		"Sundaram Electricals Pvt Ltd", "Sundaram Switchgear LLP",
 		"29AABCS1429B1ZQ", "Bengaluru",
 		// vendor:create is held by the admin, so the add row is offered.
 		`class="co co-add"`, "Add a new vendor",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("the combobox fragment is missing %q: %s", want, body)
-		}
-	}
+	)
 	if strings.Contains(body, "Meridian Facility Services") {
 		t.Fatal("the combobox fragment ignored the query")
 	}

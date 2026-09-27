@@ -60,7 +60,7 @@ func TestReservationConflictRendersScreenNotErrorPage(t *testing.T) {
 	if strings.Contains(body, `class="error-state"`) || strings.Contains(body, "Request ID:") {
 		t.Fatalf("conflict rendered the generic error page: %s", body)
 	}
-	for _, want := range []string{
+	mustContain(t, "conflict screen", body,
 		`class="banner bad"`,               // names the winner, says nothing was saved
 		"Test Admin took this request",     // who won
 		"Nothing you typed has been saved", // and that no payment was created
@@ -74,11 +74,7 @@ func TestReservationConflictRendersScreenNotErrorPage(t *testing.T) {
 		`class="action-bar"`,
 		"PR-2026-000001",
 		"33,500.00",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("conflict screen missing %q:\n%s", want, body)
-		}
-	}
+	)
 	// The reservation is untouched by the loser.
 	if got := requestStatusApp(t, s, reqID); got != "processing" {
 		t.Fatalf("status = %q, want processing", got)
@@ -104,7 +100,7 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 	s.loginAdmin()
 
 	body := s.get("/accounts-queue")
-	for _, want := range []string{
+	mustContain(t, "queue", body,
 		`class="metric-strip"`,
 		"Approved, unclaimed",
 		"Reserved by you",
@@ -121,11 +117,7 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 		`data-label="Payee"`,
 		"Take for processing",
 		"PR-2026-000001",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("queue missing %q:\n%s", want, body)
-		}
-	}
+	)
 	// A reserved-by-you row offers Resume, never a second Take.
 	if strings.Count(body, "Take for processing") != 1 {
 		t.Fatalf("Take offered for a non-takeable row:\n%s", body)
@@ -225,7 +217,7 @@ func TestPaymentPickerRendersComboAndTakenRows(t *testing.T) {
 	s.loginAdmin()
 
 	body := s.get("/payments/new")
-	for _, want := range []string{
+	mustContain(t, "picker", body,
 		`class="banner info"`,
 		"Free payment entry has been removed",
 		`class="combo"`,
@@ -237,11 +229,7 @@ func TestPaymentPickerRendersComboAndTakenRows(t *testing.T) {
 		`class="co is-taken"`,
 		"Reserved by Deepak Menon",
 		"Recently paid by you",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("picker missing %q:\n%s", want, body)
-		}
-	}
+	)
 	// The picker promises no control this phase does not build: the mockup's
 	// "an administrator can re-enable direct entry in Configuration" is absent.
 	if strings.Contains(body, "re-enable direct entry") {
@@ -316,7 +304,7 @@ func TestPaymentEntryScreenShowsReservationApprovalAndRule(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
 	body := s.get(fmt.Sprintf("/payments/new?request=%d", reqID))
-	for _, want := range []string{
+	mustContain(t, "payment entry", body,
 		`class="reserve-bar"`,
 		"Reserved by you",
 		`class="rb-actions"`,
@@ -333,11 +321,7 @@ func TestPaymentEntryScreenShowsReservationApprovalAndRule(t *testing.T) {
 		"1,00,000.00",
 		// S14: the request's own figures arrive prefilled.
 		"Acme Landlord",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("payment entry missing %q:\n%s", want, body)
-		}
-	}
+	)
 	// A <details> is not an acceptable settlement control (design system rule).
 	if strings.Contains(body, "<details") {
 		t.Fatalf("payment entry still uses a <details> disclosure:\n%s", body)
@@ -376,11 +360,7 @@ func TestHistoricalPaymentEditFormStillRenders(t *testing.T) {
 	}
 	s.loginAdmin()
 	body := s.get(fmt.Sprintf("/payments/%d/edit", payID))
-	for _, want := range []string{"Legacy Vendor", `name="head_id"`, "Save Payment"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("historical payment edit form missing %q:\n%s", want, body)
-		}
-	}
+	mustContain(t, "historical payment edit form", body, "Legacy Vendor", `name="head_id"`, "Save Payment")
 }
 
 func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
@@ -425,7 +405,7 @@ func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
 	resp := s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form)
 	requireStatus(t, resp, http.StatusOK)
 	body := responseBody(t, resp)
-	for _, want := range []string{
+	mustContain(t, "settlement sheet", body,
 		`class="overlay"`, `class="sheet"`, `class="sh-head"`, `class="sh-body`, `class="sh-foot"`,
 		`class="compare"`, `class="cmp-row"`, `class="cmp-row diff"`,
 		"1,00,000.00", "98,000.00", "2,000.00",
@@ -435,11 +415,7 @@ func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
 		`name="partial_reason"`, `value="installment"`,
 		`class="banner info"`, "cannot be edited or cancelled",
 		`value="settled"`, `value="partial"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("settlement sheet missing %q:\n%s", want, body)
-		}
-	}
+	)
 	// D8/G16: nothing was persisted, and the request is still merely reserved.
 	var payments int
 	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&payments); err != nil {
@@ -479,11 +455,7 @@ func TestSettlementPreviewMatchesRowAndNoJSFullPage(t *testing.T) {
 		t.Fatalf("the no-JS path must render the full page:\n%s", page)
 	}
 	// The no-JS confirmation carries every field forward so the confirm posts once.
-	for _, want := range []string{`name="amount"`, `name="paid_on"`, `name="payment_mode"`, `name="reference_no"`, `name="request_id"`, `enctype="multipart/form-data"`} {
-		if !strings.Contains(page, want) {
-			t.Fatalf("no-JS confirmation missing %q:\n%s", want, page)
-		}
-	}
+	mustContain(t, "no-JS confirmation", page, `name="amount"`, `name="paid_on"`, `name="payment_mode"`, `name="reference_no"`, `name="request_id"`, `enctype="multipart/form-data"`)
 
 	// htmx: the fragment only.
 	frag := responseBody(t, s.postFormHX(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form))
@@ -537,7 +509,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 	}
 
 	body := s.get(loc)
-	for _, want := range []string{
+	mustContain(t, "payment detail", body,
 		`class="banner good"`, "The request is completed",
 		`class="req-head"`, "from PR-2026-000001",
 		`class="pill completed"`, `class="waiting done"`,
@@ -547,11 +519,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 		`<ol class="thread">`, `class="tl-dot`, "reserved it for processing", "recorded a payment",
 		"Full trail, request to payment",
 		`class="action-bar"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("payment detail missing %q:\n%s", want, body)
-		}
-	}
+	)
 	// S12: no edit or void control on a linked payment, and the route refuses too.
 	if strings.Contains(body, "/edit") || strings.Contains(body, "/void") {
 		t.Fatalf("linked payment offers a mutation control:\n%s", body)
@@ -716,11 +684,7 @@ func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
 
 	s.login("ravi@example.test", "RequesterPass123")
 	body := s.get(fmt.Sprintf("/requests/%d", reqID))
-	for _, want := range []string{"Payment outcome", `class="compare"`, "98,000.00", "confirmed settled by Accounts"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("the requester's own request is missing %q:\n%s", want, body)
-		}
-	}
+	mustContain(t, "the requester's own request", body, "Payment outcome", `class="compare"`, "98,000.00", "confirmed settled by Accounts")
 	if strings.Contains(body, `href="/payments/`) {
 		t.Fatalf("the requester is offered a payment link the route answers 403 to:\n%s", body)
 	}
@@ -825,7 +789,7 @@ func TestPaymentDetailHeadTrailAndProofReadLikeTheMockup(t *testing.T) {
 	}
 
 	body := s.get(fmt.Sprintf("/payments/%d", payID))
-	for _, want := range []string{
+	mustContain(t, "payment detail", body,
 		// The waiting line is waitingOn's, so it says "you" to the manager it
 		// is waiting on rather than reading them their own name.
 		`class="pill partial"`, "Partial — manager review", `class="waiting you"`, "Waiting on you",
@@ -833,11 +797,7 @@ func TestPaymentDetailHeadTrailAndProofReadLikeTheMockup(t *testing.T) {
 		`<div class="tl-body">Approved request PR-2026-000001`,
 		// The mockup's second proof row: the request's own invoice.
 		"SE-26-27-1184.pdf", "Invoice from the request",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("payment detail missing %q:\n%s", want, body)
-		}
-	}
+	)
 	if strings.Contains(body, `<div class="tl-body">`+admin.Name+" approved") {
 		t.Fatalf("the trail prints the actor's name twice:\n%s", body)
 	}
@@ -856,7 +816,7 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
 
 	body := s.get(fmt.Sprintf("/requests/%d/partial-review", reqID))
-	for _, want := range []string{
+	mustContain(t, "partial review", body,
 		`class="req-head"`, `class="pill partial"`, `class="waiting you"`,
 		// "payee", as every other screen says: the request may be a
 		// reimbursement owed to an employee (partial-1).
@@ -867,11 +827,7 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 		`id="close-sheet"`, "Accept and close", "Completed — partial accepted",
 		`id="concern-sheet"`, "Raise a concern", "This does not reverse anything",
 		`class="overlay"`, `class="sheet"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("partial review missing %q:\n%s", want, body)
-		}
-	}
+	)
 	if strings.Contains(body, "<details") {
 		t.Fatalf("partial review uses a <details> instead of a sheet:\n%s", body)
 	}
@@ -1002,18 +958,14 @@ func TestReservationScreenReleaseAndReassign(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
 	body := s.get(fmt.Sprintf("/requests/%d/reservation", reqID))
-	for _, want := range []string{
+	mustContain(t, "reservation screen", body,
 		`class="reserve-bar"`, "Reserved by you",
 		`class="banner bad"`, "Confirm no payment has been started",
 		`class="choice"`, `value="release"`, `value="reassign"`,
 		`data-when="action:reassign"`, "Deepak Menon",
 		`name="reason"`, `class="checkline"`,
 		`class="action-bar"`, `<ol class="thread">`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("reservation screen missing %q:\n%s", want, body)
-		}
-	}
+	)
 
 	// G12: release without a reason is refused and the reservation survives.
 	resp := s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{"action": {"release"}, "confirm": {"on"}})
@@ -1318,11 +1270,7 @@ func TestHoldAndUnholdMoveTheRequestThroughTheQueue(t *testing.T) {
 	}
 	// The request screen explains the hold and offers the Accounts-only release.
 	detail := s.get(fmt.Sprintf("/requests/%d", reqID))
-	for _, want := range []string{`class="pill hold"`, `class="banner warn"`, "Which site is this for?", "Release hold", `class="comment-box"`} {
-		if !strings.Contains(detail, want) {
-			t.Fatalf("on-hold request detail missing %q:\n%s", want, detail)
-		}
-	}
+	mustContain(t, "on-hold request detail", detail, `class="pill hold"`, `class="banner warn"`, "Which site is this for?", "Release hold", `class="comment-box"`)
 	// Unhold restores it.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", reqID), url.Values{}), http.StatusSeeOther)
 	body = s.get("/accounts-queue")
@@ -1341,16 +1289,12 @@ func TestStaleReservationScreenOffersTheFourChoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := s.get(fmt.Sprintf("/requests/%d/reservation/stale", reqID))
-	for _, want := range []string{
+	mustContain(t, "stale reservation screen", body,
 		`class="banner warn"`, "reserved by you for", "26 h",
 		`class="req-head"`, `class="pill processing"`, `class="waiting"`,
 		`class="a-list"`, "Carry on and record the payment", "Release it", "Hand it to a colleague", "Put it on hold",
 		"Who has been told", `<ol class="thread">`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("stale reservation screen missing %q:\n%s", want, body)
-		}
-	}
+	)
 }
 
 // A hold describes an approved request that Accounts has paused. Every writer
@@ -1414,11 +1358,7 @@ func TestAskingForCancellationOnAHeldRequestClearsTheHold(t *testing.T) {
 	if strings.Contains(detail, `class="pill hold"`) {
 		t.Fatalf("pill still says On hold while a cancellation is pending:\n%s", detail)
 	}
-	for _, want := range []string{"Cancellation requested", `class="waiting you"`} {
-		if !strings.Contains(detail, want) {
-			t.Fatalf("pending cancellation missing %q:\n%s", want, detail)
-		}
-	}
+	mustContain(t, "pending cancellation", detail, "Cancellation requested", `class="waiting you"`)
 }
 
 // The on-hold state carries exactly one banner in

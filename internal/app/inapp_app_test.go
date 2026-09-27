@@ -57,15 +57,11 @@ func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
 	s.loginAdmin()
 
 	body := s.get("/notifications")
-	for _, want := range []string{
+	mustContain(t, "notification centre", body,
 		"Kavita Rao returned PR-2026-000131", "PR-2026-000134 has waited 3 days",
 		`class="segmented"`, `class="notif-list"`, `class="notif unread"`, `class="n-ico"`, `class="n-main"`,
 		"All", "Unread", "Mentions", "Reminders",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("notification centre missing %q", want)
-		}
-	}
+	)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
@@ -175,25 +171,17 @@ func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D
 	if strings.Contains(body, `type="password"`) {
 		t.Fatal("the rules screen must not render a password input")
 	}
-	for _, event := range []string{
+	mustContain(t, "rules screen event", body,
 		"request_submitted", "request_edited", "request_returned", "request_rejected",
 		"request_approved", "request_urgent", "request_on_hold", "request_cancellation_requested",
 		"payment_settled", "payment_partial_review", "reminder_pending", "reminder_stale_reservation",
-	} {
-		if !strings.Contains(body, event) {
-			t.Fatalf("rules screen missing event %q", event)
-		}
-	}
-	for _, want := range []string{
+	)
+	mustContain(t, "rules screen design-system markup", body,
 		`class="t-cards"`, `class="pill good no-dot"`, `data-label="In-app"`, `data-label="Goes to"`,
 		`data-label="Fixed To / CC"`, `class="overlay"`, `class="sheet"`, `class="sh-head"`,
 		`class="sh-body stack-12"`, `class="sh-foot"`, `class="checkline"`, `class="hint"`,
 		"Send a test email",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("rules screen missing design-system markup %q", want)
-		}
-	}
+	)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}

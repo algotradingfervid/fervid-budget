@@ -116,11 +116,7 @@ func TestRejectedRequestAttachmentRetainsInputWithoutSavingChanges(t *testing.T)
 			resp := s.request(http.MethodPost, path, body, ct)
 			requireStatus(t, resp, http.StatusBadRequest)
 			page := responseBody(t, resp)
-			for _, want := range []string{"Retained attachment correction", "Keep this typed purpose", `value="234.56"`, "Choose the attachment again"} {
-				if !strings.Contains(page, want) {
-					t.Fatalf("rejection lost %q", want)
-				}
-			}
+			mustContain(t, "rejection", page, "Retained attachment correction", "Keep this typed purpose", `value="234.56"`, "Choose the attachment again")
 			current, err := s.st.Request(s.ctx, id)
 			if err != nil {
 				t.Fatal(err)

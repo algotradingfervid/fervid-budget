@@ -45,7 +45,7 @@ func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) { // G18
 	s.loginAdmin()
 
 	body := s.get("/recoverables")
-	for _, want := range []string{
+	mustContain(t, "recoverables dashboard", body,
 		"Recoverable payments",
 		"Kept out of budget actuals on purpose", // .banner.brand explainer
 		"Track each return and reconciliation",  // .banner.locked
@@ -53,16 +53,8 @@ func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) { // G18
 		"By category", "By counterparty",
 		"Beacon Infra Ltd", "Ridge Metro tender authority",
 		"ICD", "EMD", // the category names, which only render if the id link resolves
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables dashboard missing %q", want)
-		}
-	}
-	for _, want := range []string{`class="metric-strip"`, `class="metric warn"`, `class="banner brand"`, `class="banner locked"`, `class="t-cards"`, "<tfoot>"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables dashboard missing design-system markup %q", want)
-		}
-	}
+	)
+	mustContain(t, "recoverables dashboard design-system markup", body, `class="metric-strip"`, `class="metric warn"`, `class="banner brand"`, `class="banner locked"`, `class="t-cards"`, "<tfoot>")
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
@@ -77,16 +69,8 @@ func TestRecoverablesListScreenAndExport(t *testing.T) {
 	s.loginAdmin()
 
 	body := s.get("/recoverables/list")
-	for _, want := range []string{"All recoverables", "Beacon Infra Ltd", "PR-2026-000101", "Ridge Metro tender authority"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables list missing %q", want)
-		}
-	}
-	for _, want := range []string{`class="t-cards"`, `class="m-only recovery-filters"`, `class="pill recoverable"`, "<tfoot>", `name="ageing"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables list missing design-system markup %q", want)
-		}
-	}
+	mustContain(t, "recoverables list", body, "All recoverables", "Beacon Infra Ltd", "PR-2026-000101", "Ridge Metro tender authority")
+	mustContain(t, "recoverables list design-system markup", body, `class="t-cards"`, `class="m-only recovery-filters"`, `class="pill recoverable"`, "<tfoot>", `name="ageing"`)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
@@ -137,20 +121,12 @@ func TestRecoverableDetailScreen(t *testing.T) { // G17
 	s.loginAdmin()
 
 	body := s.get(fmt.Sprintf("/recoverables/%d", reqID))
-	for _, want := range []string{
+	mustContain(t, "recoverable detail", body,
 		"PR-2026-000097", "Coastal Power Utilities Ltd", "EMD",
 		"Past its expected return date", // the overdue banner copy
 		"Recoverable details", "Latest payment", "History and conversation",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverable detail missing %q", want)
-		}
-	}
-	for _, want := range []string{`class="req-head"`, `class="banner warn"`, `class="dl"`, `class="thread"`, `class="comment-box"`, `class="action-bar"`, `class="pill recoverable"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverable detail missing design-system markup %q", want)
-		}
-	}
+	)
+	mustContain(t, "recoverable detail design-system markup", body, `class="req-head"`, `class="banner warn"`, `class="dl"`, `class="thread"`, `class="comment-box"`, `class="action-bar"`, `class="pill recoverable"`)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
@@ -207,11 +183,7 @@ func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) { // D6, V4
 	s.loginAdmin()
 
 	body := s.get("/configuration")
-	for _, want := range []string{"Recoverable categories", "EMD", "ICD", "Related project", "Counterparty company", "Nothing extra"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("configuration screen missing %q", want)
-		}
-	}
+	mustContain(t, "configuration screen", body, "Recoverable categories", "EMD", "ICD", "Related project", "Counterparty company", "Nothing extra")
 	// One descriptive Requires column, never the raw flags.
 	for _, forbidden := range []string{`name="requires_project"`, `name="requires_counterparty"`} {
 		if strings.Contains(body, forbidden) {
@@ -339,11 +311,7 @@ func TestConfigurationRemindersFieldsetPersistsThresholds(t *testing.T) {
 	s.loginAdmin()
 
 	body := s.get("/configuration")
-	for _, want := range []string{"Reminders and ageing", `name="reminder_pending_days"`, `name="reminder_repeat_days"`, `name="reminder_stale_days"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("configuration screen missing %q", want)
-		}
-	}
+	mustContain(t, "configuration screen", body, "Reminders and ageing", `name="reminder_pending_days"`, `name="reminder_repeat_days"`, `name="reminder_stale_days"`)
 
 	form := url.Values{
 		"reminder_pending_days": {"5"}, "reminder_repeat_days": {"2"}, "reminder_stale_days": {"4"},

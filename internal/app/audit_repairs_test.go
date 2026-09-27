@@ -1218,11 +1218,7 @@ func TestRecoverableCategoryDeleteHasADoorAndNamesItsRefusal(t *testing.T) {
 	if strings.Contains(refused, "do not have permission") {
 		t.Fatalf("the refusal reports a permission problem to the holder of every grant: %s", firstLines(refused))
 	}
-	for _, want := range []string{"used by 1 request", "deactivate it instead", `data-label="In use"`} {
-		if !strings.Contains(refused, want) {
-			t.Fatalf("the refusal is missing %q: %s", want, firstLines(refused))
-		}
-	}
+	mustContain(t, "the refusal", refused, "used by 1 request", "deactivate it instead", `data-label="In use"`)
 	if recoverableCategoryID(t, s, "ICD") != icdID {
 		t.Fatal("a refused delete removed the category anyway")
 	}
@@ -1298,11 +1294,7 @@ func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
 	if n := strings.Count(rest, `<a class="notif`); n != 5 {
 		t.Fatalf("the second page drew %d rows, want 5", n)
 	}
-	for _, want := range []string{"Showing 101–105 of 105", "Notice 001", "Notice 005", "Newer"} {
-		if !strings.Contains(rest, want) {
-			t.Fatalf("the second page is missing %q: %s", want, firstLines(rest))
-		}
-	}
+	mustContain(t, "the second page", rest, "Showing 101–105 of 105", "Notice 001", "Notice 005", "Newer")
 	if strings.Contains(rest, "Older") {
 		t.Fatal("the last page offers an older page")
 	}

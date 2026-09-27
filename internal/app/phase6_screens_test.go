@@ -49,11 +49,7 @@ func TestVarianceGridHasAMobileAccordion(t *testing.T) {
 	s.seedHead("Phase6Grid")
 	s.loginAdmin()
 	body := s.get("/grid")
-	for _, want := range []string{`class="acc m-only"`, "acc-item", "acc-head", "acc-body", "ah-main", "ah-amt", "hr-figs"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("variance grid missing mobile accordion markup %q", want)
-		}
-	}
+	mustContain(t, "variance grid mobile accordion markup", body, `class="acc m-only"`, "acc-item", "acc-head", "acc-body", "ah-main", "ah-amt", "hr-figs")
 	// One markup, both devices: the matrix is desktop-only, the accordion mobile-only.
 	if !strings.Contains(body, "m-only") || !strings.Contains(body, "d-only") {
 		t.Fatal("the grid must carry both the desktop matrix and the mobile accordion")

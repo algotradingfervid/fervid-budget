@@ -215,18 +215,14 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	if strings.Contains(form, `<select id="rtype"`) || strings.Contains(form, `<select name="type"`) {
 		t.Fatal("the form rendered a type selector; the type is a route parameter")
 	}
-	for _, want := range []string{
+	mustContain(t, "the form", form,
 		`<input type="hidden" name="type" value="vendor_invoice">`,
 		`money-field"`, `class="money-wrap"`, `class="in-words"`, `class="combo"`,
 		`class="uploader"`, `class="action-bar"`, `name="short_title"`, `name="urgency_reason"`,
 		`name="invoice_no"`, `name="invoice_date"`, `hx-get="/requests/new/fields"`,
 		`data-when="treatment:budget"`, `data-when="urgent:on"`, "<h1>",
 		`action="/requests"`, "Submit request",
-	} {
-		if !strings.Contains(form, want) {
-			t.Fatalf("the form is missing %q", want)
-		}
-	}
+	)
 	// The recoverable treatment is only offered where the store accepts it.
 	// store.validateRequestInput refuses it for a vendor invoice, a vendor
 	// advance and a reimbursement, so presenting the choice on those types means
@@ -524,11 +520,7 @@ func TestDuplicateCheckWarnsAndNeverBlocks(t *testing.T) {
 
 	// The form carries the wiring that asks for the check, and somewhere to put it.
 	form := s.get("/requests/new?type=vendor_invoice")
-	for _, want := range []string{`hx-post="/requests/duplicate-check"`, `id="dup-check"`} {
-		if !strings.Contains(form, want) {
-			t.Fatalf("the form is missing the duplicate-check wiring %q", want)
-		}
-	}
+	mustContain(t, "the form duplicate-check wiring", form, `hx-post="/requests/duplicate-check"`, `id="dup-check"`)
 }
 
 // A reimbursement carries no vendor row, so its payee is the person raising it.
@@ -629,16 +621,12 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 
 	s.login("lister@example.test", "RequesterPass123")
 	body := s.get("/requests")
-	for _, want := range []string{
+	mustContain(t, "the requests list", body,
 		`class="req-list"`, `class="req-card`, `class="rc-no"`, `class="rc-amt"`,
 		`class="rc-title"`, `class="rc-meta"`, `class="rc-foot"`,
 		`class="segmented"`, `class="m-filters"`, `id="filter-sheet"`, `class="overlay"`,
 		"Still waiting", "Sent back to me", "<h1>",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("the requests list is missing %q", want)
-		}
-	}
+	)
 	// D5: the design system removed .badge entirely.
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("the list still renders .badge; the design system uses .pill")
@@ -765,18 +753,14 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 	// --- The approver sees the decision controls. ---
 	s.login("kavita@example.test", "ApproverPass123")
 	body := s.get("/requests/" + strconvFormat(id))
-	for _, want := range []string{
+	mustContain(t, "approver detail view", body,
 		`class="req-head"`, `class="rh-no"`, `class="rh-amt"`, `class="rh-status"`,
 		`class="pill awaiting"`, `class="waiting you"`, `class="dl"`, `class="thread"`,
 		`class="comment-box"`, `class="action-bar"`,
 		`data-open="approve-sheet"`, `data-open="return-sheet"`, `data-open="reject-sheet"`,
 		`id="approve-sheet"`, `class="overlay"`, `class="sheet"`,
 		"MFS/26-27/0912", "Meridian Facility Services", "<h1>",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("approver detail view is missing %q", want)
-		}
-	}
+	)
 	// A19: one merged stream, not two lists.
 	if strings.Count(body, `class="thread"`) != 1 {
 		t.Fatal("the detail page renders more than one thread")
@@ -818,11 +802,7 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 	if strings.Contains(body, `href="/requests/`+strconvFormat(id)+`/edit"`) {
 		t.Fatal("an approved request still offers an edit link")
 	}
-	for _, want := range []string{`class="banner locked"`, `href="/requests/` + strconvFormat(id) + `/cancel"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("approved detail view is missing %q", want)
-		}
-	}
+	mustContain(t, "approved detail view", body, `class="banner locked"`, `href="/requests/`+strconvFormat(id)+`/cancel"`)
 
 	// --- The three shipped screens that already link here now resolve. ---
 	for _, path := range []string{"/requests/" + strconvFormat(id), "/requests/" + strconvFormat(id) + "/submitted"} {
@@ -1016,15 +996,11 @@ func TestReturnedRequestScreenCorrectsAndResubmits(t *testing.T) {
 
 	s.login("ret@example.test", "RequesterPass123")
 	body := s.get("/requests/" + strconvFormat(id))
-	for _, want := range []string{
+	mustContain(t, "returned screen", body,
 		`class="pill returned"`, `class="banner warn"`, "The invoice attached is the June one.",
-		`class="thread"`, `action="/requests/` + strconvFormat(id) + `/edit"`,
+		`class="thread"`, `action="/requests/`+strconvFormat(id)+`/edit"`,
 		"Resubmit for approval", before.Number, "<h1>",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("returned screen is missing %q", want)
-		}
-	}
+	)
 	// One sticky action bar, not one per form: two would be two competing
 	// primary actions at the bottom of a phone screen.
 	if n := strings.Count(body, `class="action-bar"`); n != 1 {
@@ -1186,17 +1162,13 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 
 	s.loginAdmin()
 	body := s.get("/configuration")
-	for _, want := range []string{
+	mustContain(t, "configuration screen", body,
 		"<legend>Request numbering</legend>", "<legend>Attachments</legend>",
 		"<legend>Urgency</legend>", "<legend>Approvals</legend>", "<legend>Payments</legend>",
 		`name="number_prefix"`, `name="require_attachments"`, `name="urgency_mode"`,
 		`name="allow_approver_choice"`, `class="action-bar"`,
 		"<h1>",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("configuration screen is missing %q", want)
-		}
-	}
+	)
 	// No "allow direct payments" toggle (recoverables-10): nothing read the
 	// key, paymentCreate refuses a request-less payment regardless (X5), and its
 	// hint promised a reason and an audit flag that did not exist.
@@ -1311,14 +1283,10 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 	// --- Requester. ---
 	s.login("dashreq@example.test", "RequesterPass123")
 	body := s.get("/dashboard")
-	for _, want := range []string{
+	mustContain(t, "requester dashboard", body,
 		`class="work-areas"`, `class="area"`, `class="a-head"`, `class="a-list"`, `class="a-foot"`,
 		`class="metric-strip"`, "Needs your action", "Cab receipts", `class="pill returned"`, "<h1>",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("requester dashboard is missing %q", want)
-		}
-	}
+	)
 	if strings.Contains(body, "Administration") {
 		t.Fatal("requester dashboard must not show Administration")
 	}
@@ -1333,20 +1301,12 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 	// --- Approver sees their own areas. ---
 	s.login("kavita@example.test", "ApproverPass123")
 	body = s.get("/dashboard")
-	for _, want := range []string{"Awaiting your approval", "Team lunch", `href="/approvals"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("approver dashboard is missing %q", want)
-		}
-	}
+	mustContain(t, "approver dashboard", body, "Awaiting your approval", "Team lunch", `href="/approvals"`)
 
 	// --- Admin sees the administration area. ---
 	s.loginAdmin()
 	body = s.get("/dashboard")
-	for _, want := range []string{"Configuration", `href="/configuration"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("admin dashboard is missing %q", want)
-		}
-	}
+	mustContain(t, "admin dashboard", body, "Configuration", `href="/configuration"`)
 
 	// --- Somebody with nothing waiting is told so, not shown an empty page. ---
 	s.seedRequester("idle@example.test", "Idle Hands", "OtherPass1234")

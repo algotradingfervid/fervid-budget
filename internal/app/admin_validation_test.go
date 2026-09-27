@@ -38,11 +38,7 @@ func TestAdminDefaultApproversFilterAndRejectIneligibleWithLegacyGuidance(t *tes
 	}
 	s.login(requester.Email, "DefaultEmployee123")
 	body = responseBody(t, s.request("GET", "/requests/new?type=reimbursement", nil, ""))
-	for _, want := range []string{"Your default approver is unavailable.", "Ask an administrator", `type="submit" disabled>Submit request`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("legacy routing lacks %q", want)
-		}
-	}
+	mustContain(t, "legacy routing", body, "Your default approver is unavailable.", "Ask an administrator", `type="submit" disabled>Submit request`)
 	if err := s.st.SetUserDefaultApprover(s.ctx, admin, requester.ID, manager.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +57,7 @@ func TestDuplicateUserEmailIsSpecificAndRetainsCreateForm(t *testing.T) {
 	res := s.postForm("/users", form)
 	requireStatus(t, res, http.StatusBadRequest)
 	body := responseBody(t, res)
-	for _, want := range []string{"A user with this email address already exists.", "Different Person", `id="user-new" data-open-on-load`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("duplicate email response missing %q", want)
-		}
-	}
+	mustContain(t, "duplicate email response", body, "A user with this email address already exists.", "Different Person", `id="user-new" data-open-on-load`)
 	if strings.Contains(body, "A record with this name already exists.") || strings.Contains(body, "DuplicatePassword123") {
 		t.Fatal("wrong duplicate message or echoed password")
 	}
@@ -84,11 +76,7 @@ func TestInvalidNotificationRecipientsKeepDrawerAndInput(t *testing.T) {
 		res := s.postForm("/admin/notifications/events/request_submitted", form)
 		requireStatus(t, res, http.StatusBadRequest)
 		body := responseBody(t, res)
-		for _, want := range []string{tc.label + " contains an invalid email address", tc.value, "Retain my edited subject", `id="ev-request_submitted" hidden data-reopen`} {
-			if !strings.Contains(body, want) {
-				t.Fatalf("invalid recipients response missing %q", want)
-			}
-		}
+		mustContain(t, "invalid recipients response", body, tc.label+" contains an invalid email address", tc.value, "Retain my edited subject", `id="ev-request_submitted" hidden data-reopen`)
 		after, _ := s.st.NotificationSetting(s.ctx, "request_submitted")
 		if after.SubjectTemplate != before.SubjectTemplate || after.ToRecipients != before.ToRecipients || after.CcRecipients != before.CcRecipients {
 			t.Fatal("invalid notification save changed row")

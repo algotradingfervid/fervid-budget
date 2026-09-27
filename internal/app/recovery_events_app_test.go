@@ -26,21 +26,13 @@ func TestRecoveryHTTPWorkflowAndRefusedInputPreserved(t *testing.T) {
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	body = s.get(path)
-	for _, want := range []string{"₹5,000", "₹2,000", "UTR-2000", "2026-02-02", "Bank statement February row 42"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("detail missing %q", want)
-		}
-	}
+	mustContain(t, "detail", body, "₹5,000", "₹2,000", "UTR-2000", "2026-02-02", "Bank statement February row 42")
 	fields.Set("token", "recovery-http-overage-token")
 	fields.Set("amount", "6000")
 	resp = s.postForm(path+"/events", fields)
 	requireStatus(t, resp, http.StatusUnprocessableEntity)
 	body = responseBody(t, resp)
-	for _, want := range []string{"Recovery was not saved", "outstanding balance", `value="6000"`, `value="UTR-2000"`, "Bank statement February row 42"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("refused form missing %q", want)
-		}
-	}
+	mustContain(t, "refused form", body, "Recovery was not saved", "outstanding balance", `value="6000"`, `value="UTR-2000"`, "Bank statement February row 42")
 	csv := s.get("/recoverables/list.csv")
 	if !strings.Contains(csv, "5000.00,7000.00,2000.00") {
 		t.Fatalf("CSV balance columns %s", csv)
@@ -120,9 +112,5 @@ func TestRecoverableMobileFiltersExposeApplyResetAndSelectedState(t *testing.T) 
 	if end := strings.Index(chunk, "</details>"); end >= 0 {
 		chunk = chunk[:end]
 	}
-	for _, want := range []string{`name="category"`, `name="ageing"`, `value="overdue" selected`, "Apply filters", `href="/recoverables/list">Reset`} {
-		if !strings.Contains(chunk, want) {
-			t.Fatalf("mobile filters missing %q", want)
-		}
-	}
+	mustContain(t, "mobile filters", chunk, `name="category"`, `name="ageing"`, `value="overdue" selected`, "Apply filters", `href="/recoverables/list">Reset`)
 }
