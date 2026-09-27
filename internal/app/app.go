@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/config"
@@ -310,6 +311,27 @@ type PageData struct {
 	NotifDraftError string
 }
 
+// Initials renders the signed-in user's avatar text. Two letters at most, so
+// the round avatar in the sidebar never overflows.
+func (d PageData) Initials() string {
+	initials := make([]rune, 0, 2)
+	for _, word := range strings.Fields(d.User.Name) {
+		for _, letter := range word {
+			if unicode.IsLetter(letter) || unicode.IsDigit(letter) {
+				initials = append(initials, unicode.ToUpper(letter))
+			}
+			break
+		}
+		if len(initials) == 2 {
+			break
+		}
+	}
+	if len(initials) == 0 {
+		return "FB"
+	}
+	return string(initials)
+}
+
 type ReportSummary struct {
 	Budget          int64
 	Actual          int64
@@ -352,7 +374,7 @@ func build(cfg config.Config, st *store.Store) (*App, *http.Server, error) {
 	am.SetErrorHandler(func(w http.ResponseWriter, r *http.Request, status int, message string) {
 		a.respondError(w, r, status, message, nil)
 	})
-	a.tpl = template.Must(template.New("base").Funcs(templateFuncs()).Parse(templates + budgetPlannerTemplate))
+	a.tpl = parseTemplates()
 
 	ctx := contextWithTimeout()
 	defer ctx.cancel()

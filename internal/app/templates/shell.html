@@ -1,0 +1,91 @@
+{{define "top"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} - Fervid Budget</title>
+  <link rel="stylesheet" href="/static/fervid-ds.css">
+  <link rel="stylesheet" href="/static/budget-ux.css">
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'>
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/fervid-app.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
+{{if eq .Shell.Chrome "app"}}<div class="appshell">
+{{template "shell_sidebar" .}}
+{{template "shell_topbar" .}}
+{{end}}
+<main class="page" id="main-content" tabindex="-1">
+<div class="page-inner">
+{{if .ContextBackHref}}<p class="context-back"><a href="{{.ContextBackHref}}">← {{.ContextBackLabel}}</a></p>{{end}}
+{{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive"{{if .UrgencyReasonError}} data-server-error-for="urgency_reason"{{end}}>{{.Error}}</div>{{end}}
+{{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
+{{end}}
+
+{{define "bottom"}}</div></main>
+{{if eq .Shell.Chrome "app"}}{{template "shell_tabbar" .}}
+{{template "shell_more" .}}
+</div>{{end}}
+</body></html>{{end}}
+
+{{/* Soon items are announcements, not links, so they carry no href at all.
+     Badges are counts the caller is entitled to see; a zero count renders
+     nothing rather than a bare "0". */}}
+{{define "shell_sidebar"}}<aside class="sidebar">
+  <div class="side-brand"><span class="sq">F</span><span><b>Fervid Budget</b><small>Smart Solutions</small></span></div>
+  {{range .Shell.Groups}}{{if .Title}}<div class="sgroup">{{.Title}}</div>{{end}}
+  <nav class="side-nav" aria-label="{{if .Title}}{{.Title}}{{else}}Primary{{end}}">{{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a class="{{if eq $.Shell.Active .Key}}active{{end}}" href="{{.Href}}"{{if eq $.Shell.Active .Key}} aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}</nav>
+  {{end}}
+  <div class="side-user"><span class="avatar">{{.Initials}}</span><span><strong>{{.User.Name}}</strong><small>{{.Shell.RoleNames}}</small></span></div>
+  {{/* "Log out" here and in the More sheet: one action, one name on every device. */}}
+  <form class="side-logout" method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Log out</button></form>
+</aside>{{end}}
+
+{{define "shell_topbar"}}<header class="m-topbar">
+  <a class="m-back" href="{{if .Shell.BackHref}}{{.Shell.BackHref}}{{else}}/{{end}}" aria-label="{{if .Shell.BackHref}}Back{{else}}Home{{end}}">{{if .Shell.BackHref}}‹{{else}}⌂{{end}}</a>
+  <div class="m-title"><b>{{if .Shell.Title}}{{.Shell.Title}}{{else}}Fervid Budget{{end}}</b>{{if .Shell.Sub}}<small>{{.Shell.Sub}}</small>{{end}}</div>
+  <div class="m-actions">{{if and .Shell.ActionLabel .Shell.ActionHref}}<a class="m-cta" href="{{.Shell.ActionHref}}">{{.Shell.ActionLabel}}</a>{{end}}<a class="m-icon" href="/notifications" aria-label="Notifications">✉{{if .Shell.Unread}}<span class="dot">{{.Shell.Unread}}</span>{{end}}</a></div>
+</header>{{end}}
+
+{{define "shell_tabbar"}}<nav class="tabbar" aria-label="Primary">
+  {{$shell := .Shell}}{{range .Shell.Tabs.Left}}<a href="{{.Href}}" class="{{if eq $shell.Active .Key}}active{{end}}"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{end}}
+  <a class="fab-wrap" href="{{.Shell.Tabs.Fab.Href}}"><span class="fab">{{.Shell.Tabs.Fab.Icon}}</span>{{.Shell.Tabs.Fab.Label}}</a>
+  {{range .Shell.Tabs.Right}}{{if eq .Key "more"}}<a href="{{.Href}}" class="js-more" aria-haspopup="dialog" aria-controls="more-navigation" aria-expanded="false"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{else}}<a href="{{.Href}}" class="{{if eq $shell.Active .Key}}active{{end}}"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{end}}{{end}}
+</nav>{{end}}
+
+{{define "shell_more"}}<div class="more-sheet" id="more-navigation" role="dialog" aria-modal="true" aria-label="More navigation" hidden>
+  <div class="ms-head"><b>{{.User.Name}}</b><button type="button" class="ms-close" aria-label="Close">✕</button></div>
+  {{range .Shell.Groups}}<div class="ms-group">{{if .Title}}{{.Title}}{{else}}Overview{{end}}</div>
+  <div class="ms-list">{{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a href="{{.Href}}"{{if eq $.Shell.Active .Key}} class="active" aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}</div>
+  {{end}}
+  <div class="ms-group">Session</div>
+  <div class="ms-list"><form class="ms-logout" method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit"><span class="ico">⏻</span>Log out</button></form></div>
+</div>{{end}}
+
+{{define "error_page"}}
+{{template "top" .}}
+<section class="error-state" role="alert" aria-live="assertive">
+  <div class="error-code">{{.ErrorCode}}</div>
+  <div>
+    <div class="eyebrow">Request could not be completed</div>
+    <h1>{{.Title}}</h1>
+    <p>{{.Error}}</p>
+    <p class="request-id">Request ID: <code>{{.RequestID}}</code></p>
+    <div class="cluster"><a class="btn primary" href="/">Return to dashboard</a><a class="btn outline" href="javascript:history.back()">Go back</a></div>
+  </div>
+</section>
+{{template "bottom" .}}
+{{end}}
+
+{{define "page_header"}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">{{.Kicker}}</div>
+    <h1>{{.Heading}}</h1>
+    <p class="sub muted">{{.Sub}}</p>
+  </div>
+  {{.Action}}
+</section>
+{{end}}

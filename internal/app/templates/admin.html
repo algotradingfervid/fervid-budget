@@ -1,0 +1,298 @@
+{{/* The Configuration screen — mockups/screens/admin-configuration.html.
+
+     One form of fieldsets closed by one action bar. The screen is a rendering
+     of configSections, so a later phase adds a section by appending to that
+     table and touches nothing here.
+
+     Two controls are deliberately not settings. "Block self-approval" renders
+     checked and disabled because G8 is structural, not configurable, and
+     "Second approval above a threshold" renders disabled as a stated non-goal.
+     Neither carries a name, so neither can be written. */}}
+{{define "configuration"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Administration</div>
+    <h1>Configuration</h1>
+    <p class="sub">The rules the request module runs on. Everything here is data — no code change needed.</p>
+  </div>
+</section>
+
+<form method="post" action="/configuration">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{range configSections}}
+  <fieldset>
+    <legend>{{.Title}}</legend>
+    <div class="form-grid">
+      {{range .Fields}}
+      <div class="field span-{{.Span}}{{if lt .Span 12}} m-half{{end}}">
+        {{if eq .Kind "toggle"}}
+          <label class="checkline"><input type="checkbox" name="{{.Key}}" {{if eq (index $.Config .Key) "1"}}checked{{end}}> {{.Label}}</label>
+        {{else if eq .Kind "select"}}
+          <label for="cf-{{.Key}}">{{.Label}}</label>
+          {{$current := index $.Config .Key}}
+          <select id="cf-{{.Key}}" name="{{.Key}}">
+            {{range .Options}}<option value="{{.Value}}" {{select $current .Value}}>{{.Label}}</option>{{end}}
+          </select>
+        {{else}}
+          <label for="cf-{{.Key}}">{{.Label}}</label>
+          <input id="cf-{{.Key}}" name="{{.Key}}" {{if eq .Kind "number"}}type="number" inputmode="numeric"{{end}} {{if .Min}}min="{{.Min}}" required{{end}} {{if .Max}}max="{{.Max}}"{{end}} value="{{index $.Config .Key}}">
+        {{end}}
+        {{if .Hint}}<span class="hint">{{.Hint}}</span>{{end}}
+      </div>
+      {{end}}
+      {{if eq .Title "Approvals"}}
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" checked disabled> Block self-approval</label>
+        <span class="hint">Always on. A person can never approve a request they raised, whatever roles they hold.</span>
+      </div>
+      <div class="field span-12">
+        <label class="checkline"><input type="checkbox" disabled> Second approval above a threshold</label>
+        <span class="hint">Reserved for a future version. The status model already has room for it.</span>
+      </div>
+      {{end}}
+    </div>
+    {{if .Note}}<p class="hint" style="margin:10px 0 0">{{.Note}}</p>{{end}}
+  </fieldset>
+  {{end}}
+
+  <div class="action-bar">
+    <span class="ab-note d-only">Every change here is written to the audit log.</span>
+    <span class="row-end"></span>
+    <a class="btn outline" href="/dashboard">Discard</a>
+    <button class="btn primary" type="submit">Save configuration</button>
+  </div>
+</form>
+
+{{/* Recoverable categories (Phase 4, D6). This fieldset sits OUTSIDE the
+     settings form on purpose: its rows each need their own POST, and a <form>
+     nested inside another <form> is invalid HTML that the parser silently
+     drops — the row toggles would post nothing at all. A bare fieldset outside
+     a form is valid, and it reads as one more section of the same screen.
+
+     "Requires" is one derived descriptive column, never the two raw flags: an
+     admin should be told what a category asks for, not asked to reason about
+     two booleans.
+
+     Each row is editable in place (recoverables-5). The name and the rule used
+     to travel as hidden inputs, so the only way to change an in-use category's
+     rule was delete-and-recreate — which the store refuses while any request
+     names it. The name input and the requires select sit in their own cells
+     and belong to the row's form through the form= attribute, the same shape
+     the heads screen uses; Save is the row's submit, and the Active checkbox
+     still saves on change, carrying the row's current name and rule with it.
+     The code is not editable: it is the stable identity every request stores. */}}
+<fieldset>
+  <legend>Recoverable categories</legend>
+  <div class="table-wrap" style="margin-bottom:10px"><table class="t-cards">
+    <thead><tr><th>Category</th><th>Requires</th><th class="c">Active</th><th class="c">In use</th>{{if or (.Perms.Can "recoverable_category" "edit") (.Perms.Can "recoverable_category" "delete")}}<th>Actions</th>{{end}}</tr></thead>
+    <tbody>{{range .CategoryUsage}}<tr>
+      <td class="t-lead" data-label="Category">{{if $.Perms.Can "recoverable_category" "edit"}}<input form="rc-{{.ID}}" name="name" aria-label="Name for {{.Name}}" value="{{.Name}}" required>{{else}}{{.Name}}{{end}}</td>
+      <td data-label="Requires">{{if $.Perms.Can "recoverable_category" "edit"}}{{$key := requiresKey .RecoverableCategory}}<select form="rc-{{.ID}}" name="requires" aria-label="Requires for {{.Name}}">
+        <option value="none" {{select $key "none"}}>Nothing extra</option>
+        <option value="project" {{select $key "project"}}>Related project</option>
+        <option value="counterparty" {{select $key "counterparty"}}>Counterparty company</option>
+        <option value="both" {{select $key "both"}}>Related project and counterparty company</option>
+      </select>{{else}}{{.Requires}}{{end}}</td>
+      <td class="c" data-label="Active">{{if $.Perms.Can "recoverable_category" "edit"}}
+        <form id="rc-{{.ID}}" method="post" action="/configuration/recoverable-categories">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <input type="hidden" name="sort_order" value="{{.SortOrder}}">
+          <label class="checkline"><input type="checkbox" name="active" {{check .Active}} data-auto-submit> <span class="sr-only">Active</span></label>
+        </form>
+      {{else}}{{if .Active}}<span class="pill good no-dot">On</span>{{else}}<span class="pill neutral no-dot">Off</span>{{end}}{{end}}</td>
+      <td class="c" data-label="In use">{{.InUse}}</td>
+      {{/* F-E-06's control. Its own form, a sibling of the Active toggle's and
+           never nested inside it: the parser drops a nested form silently, which
+           is the same reason this whole fieldset sits outside the settings form.
+
+           No confirm() dialog — the guard is the server's. store.DeleteRecoverableCategory
+           counts the requests pointing at the category inside the DELETE's own
+           transaction and refuses with that count, so the "In use" figure beside
+           this button is a forecast of the answer, never the gate. The button is
+           offered on every row for that reason: a reader who presses it on a
+           category in use is told how many and that deactivating is the way to
+           retire it, which is worth more than a control that quietly is not
+           there. */}}
+      {{if or ($.Perms.Can "recoverable_category" "edit") ($.Perms.Can "recoverable_category" "delete")}}
+      <td class="actions-cell" data-label="Actions">
+        {{if $.Perms.Can "recoverable_category" "edit"}}<button form="rc-{{.ID}}" class="btn small outline" type="submit">Save<span class="sr-only"> {{.Name}}</span></button>{{end}}
+        {{if $.Perms.Can "recoverable_category" "delete"}}
+        <form method="post" action="/configuration/recoverable-categories/{{.ID}}/delete">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button class="btn small danger" type="submit">Delete<span class="sr-only"> {{.Name}}</span></button>
+        </form>
+        {{end}}
+      </td>
+      {{end}}
+    </tr>{{else}}<tr><td colspan="{{if or (.Perms.Can "recoverable_category" "edit") (.Perms.Can "recoverable_category" "delete")}}5{{else}}4{{end}}" class="empty" data-label="">No recoverable categories yet.</td></tr>{{end}}</tbody>
+  </table></div>
+  {{if .Perms.Can "recoverable_category" "edit"}}
+  <form method="post" action="/configuration/recoverable-categories">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="active" value="on">
+    <div class="form-grid">
+      <div class="field span-5"><label for="nc-name">New category</label><input id="nc-name" name="name" placeholder="e.g. Retention deposit" required></div>
+      <div class="field span-4 m-half"><label for="nc-req">Must also capture</label><select id="nc-req" name="requires">
+        <option value="none">Nothing extra</option>
+        <option value="project">Related project</option>
+        <option value="counterparty">Counterparty company</option>
+        <option value="both">Related project and counterparty company</option>
+      </select></div>
+      <div class="field span-3 m-half" style="align-self:end"><button class="btn" type="submit">Add category</button></div>
+    </div>
+  </form>
+  {{end}}
+  {{/* The payee, not the counterparty (F-E-07). forcesRequesterPayee fills
+       vendor_payee — what /requests/{id} shows as "Paid to «name»" — for every
+       employee-advance request whatever its treatment. The Counterparty field, the
+       one RequiresCounterparty governs and the one this hint stands beside, is left
+       exactly as the form left it and reads "Not recorded" for the seeded Employee
+       advance category, which requires neither project nor counterparty. */}}
+  <p class="hint" style="margin:10px 0 0">All recoverables always capture the reason, an expected return date and the refund terms. These rules only add what the category needs on top. An employee advance fills the <b>payee</b> in from the requester automatically — that is a request-type rule, not a category setting, and it does not fill in the counterparty.</p>
+</fieldset>
+{{template "bottom" .}}
+{{end}}
+
+{{define "audit"}}
+{{template "top" .}}
+<section class="page-banner"><div><div class="eyebrow">Evidence</div><h1>Audit Log</h1><p class="sub muted">Review who changed financial records, when, and why.</p></div></section>
+{{/* Both option lists come from auditEntities/auditActions, which are built from
+     the strings the store actually writes. The hand-maintained literals they
+     replace had drifted so far that payment_request — the entity every request,
+     approval, reservation and settlement is filed under — could not be asked for
+     at all, and the entire Phase-2/Phase-3 action vocabulary was missing, so the
+     screen whose stated purpose is reviewing who changed financial records could
+     not be pointed at the workflow (F-G-004/F-C-06). */}}
+<form class="toolbar" method="get"><label>Entity<select name="entity"><option value="">All</option>{{range auditEntities}}<option value="{{.Value}}" {{select $.AuditEntity .Value}}>{{.Label}}</option>{{end}}</select></label><label>Action<select name="action"><option value="">All</option>{{range auditActions}}<option value="{{.Value}}" {{select $.AuditAction .Value}}>{{.Label}}</option>{{end}}</select></label><label>Actor<input name="actor" value="{{.AuditActor}}" placeholder="Name"></label><label>From<input type="date" name="from" value="{{.AuditFrom}}"></label><label>To<input type="date" name="to" value="{{.AuditTo}}"></label><button>Filter</button><a class="btn outline" href="/audit">Reset</a></form>
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>When</th><th>Actor</th><th>Entity</th><th>Action</th><th>Summary</th></tr></thead><tbody>{{range .Audit}}<tr><td class="t-lead" data-label="When">{{date .CreatedAt}}</td><td data-label="Actor">{{.ActorName}}</td><td data-label="Entity">{{entityText .EntityType}}</td><td data-label="Action"><span class="pill {{actionClass .Action}}">{{actionText .Action}}</span></td><td data-label="Summary"><span>{{.Summary}}{{if eq .EntityType "role"}}<ul class="audit-changes">{{range roleAuditChanges .}}<li>{{.}}</li>{{end}}</ul>{{if and .EntityID ($.Perms.Can "role" "view")}}<a href="/roles?role={{.EntityID}}">Open affected role</a>{{end}}{{else}}{{if or (hasText .BeforeJSON) (hasText .AfterJSON)}}<details><summary>Before / after</summary>{{if hasText .BeforeJSON}}<pre>{{jsonPretty .BeforeJSON}}</pre>{{end}}{{if hasText .AfterJSON}}<pre>{{jsonPretty .AfterJSON}}</pre>{{end}}</details>{{end}}{{end}}</span></td></tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No audit entries match these filters.</td></tr>{{end}}</tbody></table></div>
+{{/* The log is paged, never silently cut (audit-1). The links repeat every
+     filter, so a page boundary never widens the set. */}}
+{{if or .AuditPage.Truncated .AuditPage.Offset}}
+<div class="cluster" style="margin-top:14px">
+  <span class="muted small">Showing {{if .Audit}}{{add .AuditPage.Offset 1}}–{{add .AuditPage.Offset (len .Audit)}}{{else}}0{{end}} of {{.AuditPage.Total}}</span>
+  <span class="row-end"></span>
+  {{if .AuditPage.Offset}}<a class="btn outline" href="/audit?entity={{.AuditEntity}}&amp;id={{.AuditID}}&amp;action={{.AuditAction}}&amp;actor={{.AuditActor}}&amp;from={{.AuditFrom}}&amp;to={{.AuditTo}}&amp;offset={{sub0 .AuditPage.Offset .AuditPage.Limit}}">← Newer</a>{{end}}
+  {{if .AuditPage.Truncated}}<a class="btn outline" href="/audit?entity={{.AuditEntity}}&amp;id={{.AuditID}}&amp;action={{.AuditAction}}&amp;actor={{.AuditActor}}&amp;from={{.AuditFrom}}&amp;to={{.AuditTo}}&amp;offset={{add .AuditPage.Offset (len .Audit)}}">Older →</a>{{end}}
+</div>
+{{end}}
+{{template "bottom" .}}
+{{end}}
+
+{{define "backups"}}
+{{template "top" .}}
+<section class="page-banner"><div><div class="eyebrow">Operations</div><h1>Backups</h1><p class="sub muted">Database and payment/request attachments. Creating a backup does not verify a restore.</p></div>{{if .Perms.Can "backup" "create"}}<form method="post" action="/backups"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="primary">Create Backup</button></form>{{end}}</section>
+<p>Stored on the application server: <code>{{.BackupLocation}}</code>. Operator: {{.RecoveryName}}{{if .RecoveryContact}} · <a href="mailto:{{.RecoveryContact}}">{{.RecoveryContact}}</a>{{end}}.</p>
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>Created</th><th>Backup folder</th><th>Readiness</th><th>Recovery</th></tr></thead><tbody>{{range .BackupRows}}<tr><td data-label="Created">{{.CreatedAt}}</td><td data-label="Backup folder">{{.Name}}</td><td data-label="Readiness">{{.Status}}</td><td data-label="Recovery"><details><summary>Operator restore command</summary><p>Run from the Fervid Budget project directory on the server, with the application stopped. Follow the checks below first.</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{.RestoreCommand}}</pre></details></td></tr>{{else}}<tr><td colspan="4" data-label="">No backups created yet. An operator with Create Backup permission can create one.</td></tr>{{end}}</tbody></table></div>
+<section id="recovery-instructions"><h2>Restore safely with your operator</h2><ol><li>Agree the recovery point and expected data loss. Newer changes will be replaced.</li><li>Copy the selected backup folder to protected storage. Verify it contains <code>fervid.db</code>, <code>attachments/</code> and <code>manifest.json</code>.</li><li>Test the restore into a separate database and attachment directory. Compare expected records, totals and attachment downloads before touching production.</li><li>Stop the application and its schedulers. Preserve the current database, SQLite sidecar files and attachment directory together as a rollback copy.</li><li>Run the selected command on the server. The command targets database <code>{{.BackupDBPath}}</code> and attachments <code>{{.BackupAttachmentPath}}</code>. For an installed binary, replace <code>go run ./cmd/server</code> with that binary.</li><li>Restart with the same configuration. Sign in and verify totals, requests and attachments. If validation fails, stop and have the operator restore the preserved rollback copy.</li></ol><p>Configuration and external secrets are managed separately. Record the last successful restore test in your operations log; “files present” is not evidence of recoverability.</p></section>
+{{template "bottom" .}}{{end}}
+
+{{/* Admin notification rules — mockups/screens/admin-notifications.html.
+
+     In-app delivery is a static "On" pill, not a control: it always fires, and
+     a switch that did nothing would be a lie. Email is the only inline toggle.
+     Everything else — the include flags, fixed To/CC, subject and message —
+     lives in a per-row .overlay > .sheet editor.
+
+     There is no password field anywhere on this screen by design; the SMTP
+     password comes from the environment and is never stored. */}}
+{{define "admin_notifications"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Administration</div>
+    <h1>Notification rules</h1>
+    <p class="sub">Who is told what, and how. In-app notifications always fire; email is opt-in per event.</p>
+  </div>
+</section>
+
+{{/* No callout here: .Error and .Notice are the layout's one flash (ux-2). A
+     refused rule reports inside its own reopened sheet instead. */}}
+<fieldset>
+  <legend>Email delivery</legend>
+  <form method="post" action="/admin/notifications/smtp">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="form-grid">
+      <div class="field span-6"><label for="smtp_host">SMTP host</label><input id="smtp_host" name="smtp_host" value="{{.MailCfg.SMTPHost}}" placeholder="smtp.example.com"></div>
+      <div class="field span-2 m-half"><label for="smtp_port">Port</label><input id="smtp_port" name="smtp_port" type="number" inputmode="numeric" value="{{.MailCfg.SMTPPort}}"></div>
+      <div class="field span-4 m-half"><label for="smtp_username">Username</label><input id="smtp_username" name="smtp_username" value="{{.MailCfg.SMTPUsername}}"></div>
+      <div class="field span-4 m-half"><label for="smtp_from_name">From name</label><input id="smtp_from_name" name="smtp_from_name" value="{{.MailCfg.SMTPFromName}}"></div>
+      <div class="field span-4 m-half"><label for="smtp_from_addr">From address</label><input id="smtp_from_addr" name="smtp_from_addr" value="{{.MailCfg.SMTPFromAddr}}"></div>
+      <div class="field span-4 m-half"><label for="base_url">Base URL for links</label><input id="base_url" name="base_url" value="{{.MailCfg.BaseURL}}" placeholder="https://budget.example.com"></div>
+      <div class="field span-12"><label for="management_recipients">Management copy list</label><input id="management_recipients" name="management_recipients" value="{{.MailCfg.ManagementRecipients}}" placeholder="one@example.com, two@example.com">
+        <span class="hint">Copied on approvals and on urgent requests once they are approved.</span></div>
+    </div>
+    <p class="hint" style="margin:10px 0 0">The SMTP password is read from the <b>FERVID_SMTP_PASSWORD</b> environment variable and is never stored in the database. There is deliberately no field for it here.</p>
+    <div class="row-end"></div>
+    <div class="stack-8" style="margin-top:10px"><button class="btn primary" type="submit">Save email settings</button></div>
+  </form>
+  <form method="post" action="/admin/notifications/test" style="margin-top:10px">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="form-grid">
+      <div class="field span-8"><label for="test_to">Send a test email to</label><input id="test_to" name="test_to" value="{{.User.Email}}"></div>
+      <div class="field span-4 m-half" style="align-self:end"><button class="btn outline" type="submit">Send a test email</button></div>
+    </div>
+  </form>
+</fieldset>
+
+<div class="table-wrap"><table class="t-cards">
+  <thead><tr><th>Event</th><th class="c">In-app</th><th class="c">Email</th><th>Goes to</th><th>Fixed To / CC</th><th class="c">Edit</th></tr></thead>
+  <tbody>{{range .NotifSettings}}<tr>
+    <td class="t-lead" data-label="Event">{{.Label}}<span class="t-sub">{{.Event}}</span></td>
+    <td class="c" data-label="In-app"><span class="pill good no-dot">On</span></td>
+    <td class="c" data-label="Email">{{if .EmailEnabled}}<span class="pill good no-dot">On</span>{{else}}<span class="pill neutral no-dot">Off</span>{{end}}</td>
+    <td data-label="Goes to">{{.Audience}}</td>
+    <td data-label="Fixed To / CC">{{if or .ToRecipients .CcRecipients}}{{if .ToRecipients}}{{.ToRecipients}}{{end}}{{if .CcRecipients}} / {{.CcRecipients}}{{end}}{{else}}—{{end}}</td>
+    <td class="c" data-label="Edit">{{if $.Perms.Can "notification" "edit"}}<button class="btn small outline" data-open="ev-{{.Event}}">Edit</button>{{else}}—{{end}}</td>
+  </tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No notification events are configured.</td></tr>{{end}}</tbody>
+</table></div>
+
+{{/* The hidden attribute, like every other .overlay in the product (approve-sheet,
+     return-sheet, reject-sheet, hold-sheet). .overlay is
+     position:fixed;inset:0;z-index:50;display:grid and there is no
+     .overlay[hidden] rule — author-stylesheet origin beats the user agent's
+     [hidden]{display:none} whatever the specificity — so without the attribute all
+     twenty-one sheets laid out full-viewport at once, later siblings painted over
+     earlier ones at equal z-index, and only the last one was reachable by a
+     pointer. Every other event's Edit button and the SMTP form's own Save button
+     sat underneath the stack (F-F-01). openDialog/closeDialog already toggle the
+     attribute, so restoring it is the whole fix and needs no CSS. */}}
+{{if .Perms.Can "notification" "edit"}}
+{{range .NotifSettings}}
+{{/* $d is what the sheet's fields show: the stored rule, or — for the one rule
+     just refused — what the admin typed, so a typo costs them nothing (ux-2).
+     data-reopen asks fervid-app.js to open that one sheet on load. */}}
+{{$d := .}}{{$refused := and $.NotifDraft (eq $.NotifDraft.Event .Event)}}{{if $refused}}{{$d = $.NotifDraft}}{{end}}
+<div class="overlay" id="ev-{{.Event}}" hidden{{if $refused}} data-reopen{{end}}>
+  <form class="sheet" method="post" action="/admin/notifications/events/{{.Event}}">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="sh-head">
+      <div><b>{{.Label}}</b><span class="sh-sub">{{.Audience}}</span></div>
+      <button class="sh-close" type="button" data-close="ev-{{.Event}}" aria-label="Close">✕</button>
+    </div>
+    <div class="sh-body stack-12">
+      {{if $refused}}<div class="banner warn" role="alert"><span class="b-ico" aria-hidden="true">⚠</span><div><b>That did not save</b><p>{{$.NotifDraftError}}</p></div></div>{{end}}
+      <label class="checkline"><input type="checkbox" name="email_enabled" {{check $d.EmailEnabled}}> Also send an email for this event</label>
+      <div class="field"><span class="flabel">Who it goes to</span>
+        <label class="checkline"><input type="checkbox" name="include_requester" {{check $d.IncludeRequester}}> The requester</label>
+        <label class="checkline"><input type="checkbox" name="include_manager" {{check $d.IncludeManager}}> The approver</label>
+        <label class="checkline"><input type="checkbox" name="include_accounts" {{check $d.IncludeAccounts}}> The Accounts group</label>
+      </div>
+      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{$d.ToRecipients}}" placeholder="one@example.com, two@example.com"><span class="hint">Email addresses separated by commas; no display names.</span></div>
+      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{$d.CcRecipients}}"><span class="hint">Email addresses separated by commas; no display names.</span></div>
+      <div class="field"><label for="sub-{{.Event}}" class="flabel">Subject</label><input id="sub-{{.Event}}" name="subject_template" value="{{$d.SubjectTemplate}}"></div>
+      <div class="field"><label for="body-{{.Event}}" class="flabel">Message</label><textarea id="body-{{.Event}}" name="body_template" rows="6">{{$d.BodyTemplate}}</textarea></div>
+      <p class="hint">Available fields: {{range $i, $f := $.NotifFields}}{{if $i}}, {{end}}&#123;&#123;{{$f}}&#125;&#125;{{end}}. Anything else is rejected when you save, so a typo cannot reach an inbox.</p>
+    </div>
+    <div class="sh-foot">
+      <span class="row-end"></span>
+      <button class="btn outline" type="button" data-close="ev-{{.Event}}">Cancel</button>
+      <button class="btn primary" type="submit">Save rule</button>
+    </div>
+  </form>
+</div>
+{{end}}
+{{end}}
+{{template "bottom" .}}
+{{end}}

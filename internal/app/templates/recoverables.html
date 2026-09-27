@@ -1,0 +1,270 @@
+{{/* Recoverables dashboard — mockups/screens/recoverables-dashboard.html.
+
+     The mockup's by-counterparty "Type" column ("Government body", "Client", …)
+     has no field behind it anywhere in the schema, so it is replaced by the
+     distinct categories that counterparty holds — real data that answers the
+     same question. The page-banner is not d-only: that would leave a phone with
+     no visible h1 and fail the UX sweep. */}}
+{{define "recoverables_dashboard"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Money we expect back</div>
+    <h1>Recoverable payments</h1>
+    <p class="sub">{{money .RecMetrics.OutstandingAmount}} outstanding across {{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "recoverable" "recoverables"}} · none of it counts as budget spend</p>
+  </div>
+  <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?ageing=outstanding">⤓ Export CSV</a>{{end}}</div>
+</section>
+
+<div class="banner brand">
+  <span class="b-ico" aria-hidden="true">↩</span>
+  <div>
+    <b>Kept out of budget actuals on purpose</b>
+    <p>A deposit is not an expense. These payments never appear in the variance grid or in project spend — they live here until the money comes back.</p>
+  </div>
+</div>
+
+<div class="metric-strip">
+  <a class="metric" href="/recoverables/list?ageing=outstanding"><span class="metric-label">Outstanding</span><span class="metric-value">{{short .RecMetrics.OutstandingAmount}}</span><span class="metric-foot">{{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "recoverable" "recoverables"}}</span></a>
+  <a class="metric warn" href="/recoverables/list?ageing=overdue"><span class="metric-label">Past expected return</span><span class="metric-value">{{short .RecMetrics.OverdueAmount}}</span><span class="metric-foot">{{.RecMetrics.OverdueCount}} overdue</span></a>
+  <a class="metric" href="/recoverables/list?ageing=due30"><span class="metric-label">Due in 30 days</span><span class="metric-value">{{short .RecMetrics.DueIn30Amount}}</span><span class="metric-foot">{{.RecMetrics.DueIn30Count}} {{plural .RecMetrics.DueIn30Count "recoverable" "recoverables"}}</span></a>
+  <div class="metric"><span class="metric-label">Paid out this month</span><span class="metric-value">{{short .RecMetrics.PaidThisMonthAmount}}</span><span class="metric-foot">{{.RecMetrics.PaidThisMonthCount}} {{plural .RecMetrics.PaidThisMonthCount "payment" "payments"}}</span></div>
+</div>
+
+<div class="section-head"><h2>By category</h2><a class="more-link" href="/recoverables/list">Full list →</a></div>
+<div class="table-wrap"><table class="t-cards">
+  <thead><tr><th>Category</th><th class="c">Count</th><th class="num">Outstanding</th><th class="num">Overdue</th><th>Oldest</th></tr></thead>
+  <tbody>{{range .ByCategory}}<tr>
+    {{/* ?category={id}, which the list honours, not ?q={label}, which searches
+         number, counterparty, project and requester — none of which ever contain a
+         category name, so the row that said 1 landed on a different number
+         (F-G-012). A row with no category ("Uncategorised") maps to no id and is
+         correctly not a link. */}}
+    <td class="t-lead" data-label="Category">{{$id := index $.CategoryIDs .Label}}{{if $id}}<a href="/recoverables/list?category={{$id}}&amp;ageing=outstanding">{{.Label}}</a>{{else}}{{.Label}}{{end}}</td>
+    <td class="c" data-label="Count">{{.Count}}</td>
+    <td class="num" data-label="Outstanding">{{money .Outstanding}}</td>
+    <td class="num{{if .Overdue}} bad-num{{end}}" data-label="Overdue">{{if .Overdue}}{{money .Overdue}}{{else}}—{{end}}</td>
+    <td data-label="Oldest">{{if .Oldest}}{{.Oldest}}{{else}}Not yet paid{{end}}</td>
+  </tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No outstanding paid balances. Unpaid and reconciled requests remain in the full list.</td></tr>{{end}}</tbody>
+  <tfoot><tr>
+    <td data-label="">Total</td>
+    <td class="c" data-label="Count">{{.RecMetrics.OutstandingCount}}</td>
+    <td class="num" data-label="Outstanding">{{money .RecMetrics.OutstandingAmount}}</td>
+    <td class="num" data-label="Overdue">{{money .RecMetrics.OverdueAmount}}</td>
+    <td data-label="">—</td>
+  </tr></tfoot>
+</table></div>
+
+<div class="section-head"><h2>By counterparty</h2></div>
+<div class="table-wrap"><table class="t-cards">
+  <thead><tr><th>Counterparty</th><th>Categories</th><th class="c">Items</th><th class="num">Outstanding</th><th>Expected back</th></tr></thead>
+  <tbody>{{range .ByCounterparty}}<tr>
+    <td class="t-lead" data-label="Counterparty"><a href="/recoverables/list?counterparty={{urlquery .Label}}&amp;ageing=outstanding">{{.Label}}</a></td>
+    <td data-label="Categories">{{if .Detail}}{{.Detail}}{{else}}—{{end}}</td>
+    <td class="c" data-label="Items">{{.Count}}</td>
+    <td class="num" data-label="Outstanding">{{money .Outstanding}}</td>
+    <td data-label="Expected back">{{if .ExpectedBack}}{{.ExpectedBack}}{{else}}No fixed date{{end}}</td>
+  </tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No outstanding counterparty balances.</td></tr>{{end}}</tbody>
+</table></div>
+
+<div class="banner locked">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>Track each return and reconciliation</b>
+    <p>Open a recoverable to record money returned, an expense reconciliation, or a documented balance adjustment. Payout completion and recovery completion are separate. Entries preserve the original payment and retain a dated audit trail.</p>
+  </div>
+</div>
+{{template "bottom" .}}
+{{end}}
+
+{{/* Recoverables list — mockups/screens/recoverables-list.html.
+
+     The desktop .toolbar and the mobile .m-filters are both plain GET forms, so
+     filtering works with no JavaScript and the phone is not left with a subset
+     of the filters. */}}
+{{define "recoverables_list"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Recoverable payments</div>
+    <h1>{{if eq .Ageing "outstanding"}}Outstanding recoverables{{else}}All recoverables{{end}}</h1>
+    <p class="sub">Aged against the expected return date · overdue shown in red{{if .RecoveryCounterparty}} · Counterparty: {{.RecoveryCounterparty}}{{end}}</p>
+  </div>
+  <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?category={{.CategoryID}}&amp;ageing={{.Ageing}}&amp;q={{urlquery .Query}}&amp;counterparty={{urlquery .RecoveryCounterparty}}&amp;from={{.From}}&amp;to={{.To}}&amp;order={{.RecoveryOrder}}">⤓ Export CSV</a>{{end}}</div>
+</section>
+
+<form class="toolbar d-only" method="get" action="/recoverables/list">
+ <input type="hidden" name="counterparty" value="{{.RecoveryCounterparty}}"><input type="hidden" name="from" value="{{.From}}"><input type="hidden" name="to" value="{{.To}}"><input type="hidden" name="order" value="{{.RecoveryOrder}}">
+  <div class="field search"><label for="q">Search</label><input id="q" name="q" value="{{.Query}}" placeholder="Counterparty, project, request number…"></div>
+  <div class="field"><label for="cat">Category</label><select id="cat" name="category">
+    <option value="0">All categories</option>
+    {{range .Categories}}<option value="{{.ID}}" {{if eq $.CategoryID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="age">Ageing</label><select id="age" name="ageing">
+    <option value="">All</option><option value="outstanding" {{select .Ageing "outstanding"}}>Outstanding</option>
+    <option value="overdue" {{select .Ageing "overdue"}}>Overdue</option>
+    <option value="due30" {{select .Ageing "due30"}}>Due in 30 days</option>
+    <option value="later" {{select .Ageing "later"}}>Due later</option>
+    <option value="unpaid" {{select .Ageing "unpaid"}}>Not yet paid</option>
+    <option value="recovered" {{select .Ageing "recovered"}}>Reconciled</option>
+  </select></div>
+  <span class="row-end"></span><button class="btn">Apply</button><a class="btn outline" href="/recoverables/list">Reset</a>
+</form>
+
+<details class="m-only recovery-filters" {{if or .CategoryID .Ageing}}open{{end}}>
+ <summary class="btn outline">Filters</summary>
+ <form class="stack-12" method="get" action="/recoverables/list">
+ <input type="hidden" name="counterparty" value="{{.RecoveryCounterparty}}"><input type="hidden" name="from" value="{{.From}}"><input type="hidden" name="to" value="{{.To}}"><input type="hidden" name="order" value="{{.RecoveryOrder}}">
+  <label for="rec-mobile-q">Search</label><input id="rec-mobile-q" name="q" value="{{.Query}}" placeholder="Search recoverables…">
+  <label for="rec-mobile-category">Category</label><select id="rec-mobile-category" name="category"><option value="0">All categories</option>{{range .Categories}}<option value="{{.ID}}" {{if eq $.CategoryID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <label for="rec-mobile-ageing">Ageing</label><select id="rec-mobile-ageing" name="ageing"><option value="">All</option><option value="outstanding" {{select .Ageing "outstanding"}}>Outstanding</option><option value="overdue" {{select .Ageing "overdue"}}>Overdue</option><option value="due30" {{select .Ageing "due30"}}>Due in 30 days</option><option value="later" {{select .Ageing "later"}}>Due later</option><option value="unpaid" {{select .Ageing "unpaid"}}>Not yet paid</option><option value="recovered" {{select .Ageing "recovered"}}>Reconciled</option></select>
+  <div class="cluster"><button class="btn primary" type="submit">Apply filters</button><a class="btn outline" href="/recoverables/list">Reset</a></div>
+ </form>
+</details>
+
+<div class="table-wrap"><table class="t-cards">
+  {{/* Status, Requester and Repayment notes are here because the CSV beside this
+       table has always carried them and the screen did not, so anybody who had only
+       ever looked at the register had no way to know the download said more
+       (F-E-04). The table scrolls inside its own .table-wrap, so eleven columns cost
+       the page no horizontal scroll. */}}
+  <thead><tr><th>Request</th><th>Category</th><th>Counterparty</th><th>Project</th><th class="num">Outstanding</th><th class="num">Paid out</th><th class="num">Returned / reconciled</th><th>Paid on</th><th>Expected back</th><th>Ageing</th><th>Status</th><th>Requester</th><th>Repayment notes</th></tr></thead>
+  <tbody>{{range .Recoverables}}<tr>
+    <td class="t-lead" data-label="Request"><a href="/recoverables/{{.RequestID}}">{{.Number}}</a></td>
+    <td data-label="Category"><span class="pill recoverable">{{.Category}}</span></td>
+    <td data-label="Counterparty">{{if .Counterparty}}{{.Counterparty}}{{else}}Not recorded{{end}}</td>
+    <td data-label="Project">{{if .Project}}{{.Project}}{{else}}Not project linked{{end}}</td>
+    <td class="num" data-label="Outstanding">{{money .Amount}}</td><td class="num" data-label="Paid out">{{money .PaidAmount}}</td><td class="num" data-label="Returned / reconciled">{{money .RecoveredAmount}}</td>
+    <td data-label="Paid on">{{if .PaidOn}}{{.PaidOn}}{{else}}Not yet paid{{end}}</td>
+    <td data-label="Expected back">{{if .HasReturnDate}}{{.ExpectedReturnDate}}{{else}}No fixed date{{end}}</td>
+    <td data-label="Ageing"><span class="pill {{.AgeingTone}}">{{.AgeingLabel}}</span></td>
+    <td data-label="Status">{{$p := rowPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span></td>
+    <td data-label="Requester">{{.Requester}}</td>
+    <td data-label="Repayment notes">{{if .RepaymentNotes}}{{.RepaymentNotes}}{{else}}Not recorded{{end}}</td>
+  </tr>{{else}}<tr><td colspan="13" class="empty" data-label="">No recoverable payments match these filters.</td></tr>{{end}}</tbody>
+  <tfoot><tr>
+    {{/* The spacers only hold the Amount under its column on a desktop. Below
+         860px the tfoot restacks into a card and each empty cell became a
+         blank stripe, so they are .d-only (recoverables-6). */}}
+    <td data-label="">{{len .Recoverables}} shown</td>
+    <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
+    <td class="num" data-label="Outstanding">{{money .RecoverableTotal}}</td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
+    <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
+    <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
+  </tr></tfoot>
+</table></div>
+{{template "bottom" .}}
+{{end}}
+
+{{/* Recoverable detail — mockups/screens/recoverable-detail.html.
+
+     The history is Phase 2's merged RequestThread, not a second rendering of
+     the same events: a recoverable is a payment request, and its story should
+     read identically wherever it is opened. The comment box posts to Phase 2's
+     existing route rather than introducing a parallel conversation. */}}
+{{define "recoverable_detail"}}
+{{template "top" .}}
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">{{.Request2.Number}}</span><span class="rh-amt">{{money .Recoverable.Amount}}</span></div>
+  <h1>{{.Request2.Purpose}}</h1>
+  <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Recoverable.PaidOn}} · first paid {{.Recoverable.PaidOn}}{{end}} · <span class="pill recoverable">Recoverable · {{.Recoverable.Category}}</span></p>
+  <p class="rh-meta">Outstanding balance · {{money .Recoverable.Amount}}</p>
+  <div class="rh-status"><span>Payout:</span> {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span><span>Recovery:</span> <span class="pill {{.Recoverable.AgeingTone}}">{{.Recoverable.AgeingLabel}}</span></div>
+</div>
+
+{{if .Recoverable.Overdue}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">◷</span>
+  <div>
+    <b>Past its expected return date</b>
+    <p>Expected {{.Recoverable.ExpectedReturnDate}}. Record each return below; the remaining balance stays outstanding until it is fully returned or reconciled.</p>
+  </div>
+</div>
+{{end}}
+
+<div class="card">
+  <div class="card-head"><h2>Recoverable details</h2><span class="pill recoverable no-dot">Not in budget actuals</span></div>
+  <dl class="dl">
+    <div><dt>Outstanding balance</dt><dd class="big">{{money .Recoverable.Amount}}</dd></div>
+    <div><dt>Total paid out</dt><dd>{{money .Recoverable.PaidAmount}}</dd></div>
+    <div><dt>Returned or reconciled</dt><dd>{{money .Recoverable.RecoveredAmount}}</dd></div>
+    <div><dt>Category</dt><dd>{{.Recoverable.Category}}</dd></div>
+    <div><dt>Counterparty</dt><dd>{{.Recoverable.Counterparty}}</dd></div>
+    <div><dt>Related project</dt><dd>{{if .Request2.Project}}{{.Request2.Project}}{{else}}Not project linked{{end}}</dd></div>
+    <div><dt>Expected return</dt><dd>{{if .Recoverable.HasReturnDate}}{{.Recoverable.ExpectedReturnDate}}{{else}}No fixed date{{end}}</dd></div>
+    <div><dt>Ageing</dt><dd>{{.Recoverable.AgeingLabel}}</dd></div>
+    <div style="grid-column:1/-1"><dt>Refund terms</dt><dd>{{if .Request2.RepaymentNotes}}{{.Request2.RepaymentNotes}}{{else}}Not recorded{{end}}</dd></div>
+  </dl>
+</div>
+
+<div class="section-head"><h2>Latest payment</h2><a href="/requests/{{.Request2.ID}}">All payments and request →</a></div>
+<div class="card">
+{{if .HasPayment}}
+  <dl class="dl">
+    <div><dt>Paid on</dt><dd>{{.RecPayment.PaidOn}}</dd></div>
+    <div><dt>Amount paid</dt><dd class="big">{{money .RecPayment.Amount}}</dd></div>
+    <div><dt>Mode</dt><dd>{{if .RecPayment.PaymentMode}}{{paymentMode .RecPayment.PaymentMode}}{{else}}Not recorded{{end}}</dd></div>
+    <div><dt>Reference</dt><dd class="num">{{if .RecPayment.ReferenceNo}}{{.RecPayment.ReferenceNo}}{{else}}Not recorded{{end}}</dd></div>
+    <div><dt>Recorded by</dt><dd>{{.RecPayment.EnteredByName}}</dd></div>
+    <div><dt>Payee</dt><dd>{{.RecPayment.VendorPayee}}</dd></div>
+  </dl>
+{{else}}
+  <p class="empty">{{if eq .Request2.Status "pending"}}Awaiting approval. No payment has been recorded.{{else if eq .Request2.Status "returned"}}Returned for correction. No payment has been recorded.{{else if eq .Request2.Status "rejected"}}This request was rejected. No payment was recorded.{{else if eq .Request2.Status "cancelled"}}This request was cancelled. No payment was recorded.{{else if eq .Request2.Status "withdrawn"}}This request was withdrawn. No payment was recorded.{{else if eq .Request2.Status "approved"}}Approved but not yet paid.{{else if eq .Request2.Status "processing"}}With Accounts for payment. No payment has been recorded.{{else if eq .Request2.Status "cancellation_requested"}}Cancellation requested. No payment has been recorded.{{else}}No payment has been recorded for this request.{{end}} There is no recorded payout to recover.</p>
+{{end}}
+</div>
+
+<section id="recovery-history">
+ <div class="section-head"><h2>Recovery history</h2></div>
+ <p class="hint">Every entry reduces the outstanding balance. Original payouts remain unchanged. Expense reconciliations and adjustments record an approved accounting entry; they do not automatically charge a budget head. Reference the bank receipt, expense report, or authorised journal.</p>
+ <ol class="thread">{{range .RecoveryEvents}}<li><span class="tl-dot" aria-hidden="true">↩</span><div class="tl-head"><b>{{.Label}} · {{money .Amount}}</b><time>{{.OccurredOn}}</time></div><div class="tl-body"><p><b>Reference:</b> {{.Reference}}</p><p>{{.Note}}</p><small>Recorded by {{.ActorName}} · {{date .CreatedAt}}</small></div></li>{{else}}<li><p class="empty">No returns or reconciliations recorded yet.</p></li>{{end}}</ol>
+</section>
+{{if .CanRecordRecovery}}
+<section class="card" id="record-recovery">
+ <div class="card-head"><h2>Record recovery</h2></div>
+ {{if .RecoveryError}}<div id="recovery-error" class="banner warn error-summary" role="alert" tabindex="-1"><div><h2>Recovery was not saved</h2><p>{{.RecoveryError}}</p><a href="#recovery-amount">Review the recovery details</a></div></div>{{end}}
+ <form method="post" action="/recoverables/{{.Request2.ID}}/events" class="stack-12" data-confirm="Record this recovery permanently? Check the amount, date, and evidence before continuing.">
+  <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="token" value="{{.RecoveryInput.Token}}">
+  <div class="form-grid">
+   <div class="field span-6"><label for="recovery-kind">Recovery type</label><select id="recovery-kind" name="kind" required><option value="">Choose a type</option><option value="return" {{select .RecoveryInput.Kind "return"}}>Money returned</option><option value="expense" {{select .RecoveryInput.Kind "expense"}}>Expense reconciled</option><option value="adjustment" {{select .RecoveryInput.Kind "adjustment"}}>Balance adjustment</option></select></div>
+   <div class="field span-6"><label for="recovery-amount">Amount received or reconciled (₹)</label><input id="recovery-amount" name="amount" data-money inputmode="decimal" value="{{.RecoveryInput.AmountText}}" required aria-describedby="recovery-amount-help{{if .RecoveryError}} recovery-error{{end}}"><span id="recovery-amount-help" class="hint">Up to {{money .Recoverable.Amount}} outstanding. Each entry is permanent.</span></div>
+   <div class="field span-6"><label for="recovery-date">Recovery date</label><input id="recovery-date" type="date" name="occurred_on" value="{{.RecoveryInput.OccurredOn}}" required></div>
+   <div class="field span-6"><label for="recovery-ref">Bank / accounting reference</label><input id="recovery-ref" name="reference" value="{{.RecoveryInput.Reference}}" maxlength="240" required></div>
+   <div class="field span-12"><label for="recovery-note">Evidence and explanation</label><textarea id="recovery-note" name="note" rows="3" maxlength="4000" required aria-describedby="recovery-note-help">{{.RecoveryInput.Note}}</textarea><span id="recovery-note-help" class="hint">State what happened and where the receipt or approved expense/journal is kept. For an adjustment, include who authorised it and why.</span></div>
+  </div>
+  <button class="btn primary" type="submit">Record recovery</button>
+ </form>
+</section>
+{{else if .HasPayment}}<p class="hint">{{if eq .Recoverable.Amount 0}}Fully reconciled. All recovery entries remain available above.{{else}}Accounts can record a return or reconciliation for this balance.{{end}}</p>{{end}}
+
+<div class="section-head"><h2>History and conversation</h2></div>
+<ol class="thread">
+  {{range .Thread}}
+  <li{{if eq .Kind "comment"}} class="is-comment{{if eq .ActorID $.User.ID}} is-me{{end}}"{{end}}>
+    <span class="tl-dot {{threadDot .}}" aria-hidden="true">{{threadGlyph .}}</span>
+    <div class="tl-head"><b>{{if eq .Kind "comment"}}{{.ActorName}}{{else}}{{.Title}}{{end}}</b><time>{{date .CreatedAt}}</time></div>
+    <div class="tl-body">
+      {{with .Body}}<p>{{.}}</p>{{end}}
+      {{if eq .Kind "attachment"}}<span class="tl-file">📎 {{.FileName}} · {{fileSize .FileSize}}</span>{{end}}
+      {{if .Changes}}<div class="tl-change">{{range .Changes}}{{threadField .Field}} <span class="was">{{threadValue .Field .Was}}</span> → <span class="now">{{threadValue .Field .Now}}</span><br>{{end}}</div>{{end}}
+    </div>
+  </li>
+  {{else}}<li><span class="tl-dot" aria-hidden="true">·</span><div class="tl-body muted">Nothing has happened yet.</div></li>{{end}}
+</ol>
+
+{{if .Perms.Can "request" "comment"}}
+<form class="comment-box" method="post" action="/requests/{{.Request2.ID}}/comment">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label for="cmt" class="flabel">Add a comment</label>
+  <textarea id="cmt" name="body" placeholder="Record what you heard from the counterparty." required></textarea>
+  <div class="cb-actions"><span class="row-end"></span><button class="btn primary small" type="submit">Post comment</button></div>
+</form>
+{{end}}
+
+<div class="action-bar">
+  <span class="ab-note d-only">Payouts and recovery entries retain their own history.</span>
+  <span class="row-end"></span>
+  <a class="btn outline" href="/recoverables/list">Back to list</a>
+  {{if .Perms.Can "recoverable_report" "export"}}<a class="btn" href="/recoverables/list.csv?q={{urlquery .Request2.Number}}">⤓ Export this record</a>{{end}}
+</div>
+{{template "bottom" .}}
+{{end}}

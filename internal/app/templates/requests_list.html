@@ -1,0 +1,188 @@
+{{/* One request as a card. Shared by the list, the approvals queue and the
+     duplicate warning, so the three describe a request the same way.
+
+     It is called through the "card" function rather than with a bare dot: a
+     {{template}} inside a {{range}} rebinds dot to the request, and the viewer
+     id the "waiting on" line needs lives on the page. */}}
+{{define "request_card"}}
+{{$r := .Req}}{{$w := waitingOn $r .ViewerID}}
+<a class="req-card{{if $r.Urgent}} is-urgent{{end}}{{if eq $r.RequesterID .ViewerID}} is-mine{{end}}" href="/requests/{{$r.ID}}">
+  <span class="rc-top"><span class="rc-no">{{$r.Number}}</span><span class="rc-amt">{{money $r.Amount}}</span></span>
+  <span class="rc-title">{{$r.ShortTitle}}</span>
+  <span class="rc-meta">
+    {{if $r.Urgent}}<span class="pill urgent">Urgent</span> {{end}}
+    {{if eq $r.Treatment "recoverable"}}<span class="pill recoverable">Recoverable{{if $r.RecoverableCategory}} · {{recoverable $r.RecoverableCategory}}{{end}}</span> {{end}}
+    {{typeLabel $r.Type}}{{if $r.Project}} · {{$r.Project}}{{if $r.Head}} / {{$r.Head}}{{end}}{{end}}{{if $r.InvoiceNo}} · invoice {{$r.InvoiceNo}}{{end}}
+  </span>
+  <span class="rc-foot">
+    {{$p := statusPill $r .ViewerID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
+    <span class="waiting {{$w.Class}}">{{$w.Text}}</span>
+  </span>
+</a>
+{{end}}
+
+{{/* The mobile filter sheet. It is a plain GET form, so the filters a phone
+     applies produce the same URL a desktop toolbar would — one shareable
+     address per view, and no state hiding in a drawer. */}}
+{{define "request_filter_sheet"}}
+<div class="overlay" id="filter-sheet" hidden>
+  <form class="sheet" method="get" action="/requests">
+    <div class="sh-head">
+      <div><h2>Filters</h2><p class="sh-sub">Narrow the list</p></div>
+      <button class="sh-close" type="button" data-close="filter-sheet" aria-label="Close">✕</button>
+    </div>
+    <div class="sh-body stack-12">
+      <input type="hidden" name="vendor_id" value="{{.RequestVendorID}}"><input type="hidden" name="scope" value="{{.Scope}}">
+      <input type="hidden" name="bucket" value="{{.Bucket}}">
+      <div class="field"><label for="fs-ty">Type</label><select id="fs-ty" name="type">
+        <option value="">Any type</option>
+        {{range requestTypes}}<option value="{{.Key}}" {{select $.TypeFilter .Key}}>{{.Label}}</option>{{end}}
+      </select></div>
+      <div class="field"><label for="fs-tr">Treatment</label><select id="fs-tr" name="treatment">
+        <option value="">Any</option>
+        <option value="budget" {{select .Treatment "budget"}}>Budget expense</option>
+        <option value="recoverable" {{select .Treatment "recoverable"}}>Recoverable</option>
+      </select></div>
+      <div class="field"><label for="fs-pr">Project</label><select id="fs-pr" name="project_id">
+        <option value="">All projects</option>
+        {{range .Projects}}<option value="{{.ID}}" {{if eq $.RequestProjectID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select></div>
+      <div class="field"><label for="fs-q">Search</label><input id="fs-q" name="q" value="{{.Query}}"></div>
+    </div>
+    <div class="sh-foot">
+      <a class="btn outline" href="{{.RequestClearHref}}">Clear filters</a>
+      <span class="row-end"></span>
+      <button class="btn primary" type="submit">Show requests</button>
+    </div>
+  </form>
+</div>
+{{end}}
+
+{{/* The requests list — mockups/screens/requests-list.html.
+
+     Sorted by who has been kept waiting longest, urgent first, and every card
+     ends with the plain sentence naming whoever owes the next action. The
+     .segmented tabs are links, not client-side tabs: each is its own URL, so a
+     view can be bookmarked and sent to somebody.
+
+     The desktop toolbar and the mobile .m-filters are both plain GET forms
+     over the same parameters; the stylesheet hides whichever does not belong
+     on the device. */}}
+{{define "requests"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Requests</div>
+    <h1>{{if eq .Scope "own"}}My requests{{else}}All requests{{end}}</h1>
+    {{/* The sub-line names both numbers. The row query was capped at 200 while the
+         tab count beside it had none, so the All tab promised 214 and the list drew
+         200 with nothing anywhere admitting it (F-B-16). */}}
+    <p class="sub">{{if .Page.Truncated}}{{len .Requests}} of {{.Page.Total}} shown{{else}}{{len .Requests}} shown{{end}} · sorted by who is holding them up</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="/requests/export.csv?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;type={{.TypeFilter}}&amp;project_id={{.RequestProjectID}}&amp;vendor_id={{.RequestVendorID}}&amp;treatment={{.Treatment}}&amp;status={{.Status}}&amp;q={{.Query}}">⤓ Export CSV</a>
+    {{if .Perms.Can "request" "create"}}<a class="btn primary" href="/requests/new">＋ New request</a>{{end}}
+  </div>
+</section>
+
+<form class="toolbar" method="get" action="/requests">
+  <input type="hidden" name="vendor_id" value="{{.RequestVendorID}}"><input type="hidden" name="project_id" value="{{.RequestProjectID}}"><input type="hidden" name="scope" value="{{.Scope}}">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <div class="field search"><label for="q">Search</label><input id="q" name="q" value="{{.Query}}" placeholder="Number, payee, invoice, purpose…"></div>
+  <div class="field"><label for="ty">Type</label><select id="ty" name="type">
+    <option value="">Any type</option>
+    {{range requestTypes}}<option value="{{.Key}}" {{select $.TypeFilter .Key}}>{{.Label}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="tr">Treatment</label><select id="tr" name="treatment">
+    <option value="">Any</option>
+    <option value="budget" {{select .Treatment "budget"}}>Budget expense</option>
+    <option value="recoverable" {{select .Treatment "recoverable"}}>Recoverable</option>
+  </select></div>
+  <span class="row-end"></span>
+  <button class="btn">Apply</button>
+</form>
+
+<form class="m-filters" method="get" action="/requests">
+  <input type="hidden" name="vendor_id" value="{{.RequestVendorID}}"><input type="hidden" name="project_id" value="{{.RequestProjectID}}"><input type="hidden" name="scope" value="{{.Scope}}">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <input type="hidden" name="type" value="{{.TypeFilter}}"><input type="hidden" name="treatment" value="{{.Treatment}}"><span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search requests…" aria-label="Search requests"></span>
+  <button class="btn filter-btn" type="button" data-open="filter-sheet">Filters</button>
+</form>
+
+<p class="filter-reset"><a class="btn outline" href="{{.RequestClearHref}}">Clear filters</a> <span class="hint">Open includes payment in progress. Closed includes completed, rejected, withdrawn and cancelled requests.</span></p>
+<div class="segmented" style="margin-bottom:12px">
+  {{range requestTabs}}<a class="{{if eq $.Bucket .Key}}is-active{{end}}"
+    {{if eq $.Bucket .Key}}aria-current="page"{{end}}
+    href="/requests?scope={{$.Scope}}&amp;bucket={{.Key}}&amp;type={{$.TypeFilter}}&amp;project_id={{$.RequestProjectID}}&amp;vendor_id={{$.RequestVendorID}}&amp;treatment={{$.Treatment}}&amp;q={{$.Query}}">{{.Label}} <span class="n">{{index $.Counts .Key}}</span></a>{{end}}
+</div>
+
+<div class="req-list">
+  {{range .Requests}}{{template "request_card" (card . $.User.ID)}}{{else}}<p class="empty">No requests match. <a href="{{.RequestClearHref}}">Clear filters</a> or choose another tab.</p>{{end}}
+</div>
+
+{{/* Paging, so nothing is merely unreachable. The cap is real — a screen does not
+     render ten thousand cards — but it now says so and offers the rest, and the
+     export carries every row (F-B-16). Both links repeat every filter, so a page
+     boundary never silently widens the set. */}}
+{{if or .Page.Truncated .Page.Offset}}
+<div class="cluster" style="margin-top:14px">
+  <span class="muted small">Showing {{if .Requests}}{{add .Page.Offset 1}}–{{add .Page.Offset (len .Requests)}}{{else}}0{{end}} of {{.Page.Total}}</span>
+  <span class="row-end"></span>
+  {{if .Page.Offset}}<a class="btn outline" href="/requests?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;status={{.Status}}&amp;type={{.TypeFilter}}&amp;project_id={{.RequestProjectID}}&amp;vendor_id={{.RequestVendorID}}&amp;treatment={{.Treatment}}&amp;q={{urlquery .Query}}&amp;offset={{sub0 .Page.Offset .Page.Limit}}">← Newer</a>{{end}}
+  {{if .Page.Truncated}}<a class="btn outline" href="/requests?scope={{.Scope}}&amp;bucket={{.Bucket}}&amp;status={{.Status}}&amp;type={{.TypeFilter}}&amp;project_id={{.RequestProjectID}}&amp;vendor_id={{.RequestVendorID}}&amp;treatment={{.Treatment}}&amp;q={{urlquery .Query}}&amp;offset={{add .Page.Offset (len .Requests)}}">Older →</a>{{end}}
+</div>
+{{end}}
+
+{{template "request_filter_sheet" .}}
+{{template "bottom" .}}
+{{end}}
+
+{{/* The manager queue — mockups/screens/approvals-list.html.
+
+     Its own route, because it answers a different question from the requests
+     list: not "where are my requests" but "what is mine to decide". The tabs
+     are statuses, and Cancellations is one of them because a frozen payment is
+     a decision only this person can make (G1).
+
+     There is no checkbox column and no "approve selected" button. Every
+     approval is a decision made after opening the request (A6). */}}
+{{define "approvals"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Manager queue</div>
+    <h1>Waiting on you</h1>
+    <p class="sub">{{index .Counts "to-approve"}} to approve · {{index .Counts "cancellations"}} {{plural (index .Counts "cancellations") "cancellation" "cancellations"}} to decide · {{index .Counts "partial-review"}} {{plural (index .Counts "partial-review") "partial payment" "partial payments"}} to review</p>
+  </div>
+  <div class="pb-actions">
+    <a class="btn outline" href="/requests/export.csv?scope=assigned&amp;q={{.Query}}">⤓ Export CSV</a>
+  </div>
+</section>
+
+<form class="toolbar" method="get" action="/approvals">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <div class="field search"><label for="aq">Search</label><input id="aq" name="q" value="{{.Query}}" placeholder="Number, payee, invoice, requester…"></div>
+  <span class="row-end"></span>
+  <button class="btn">Apply</button>
+</form>
+
+<form class="m-filters" method="get" action="/approvals">
+  <input type="hidden" name="bucket" value="{{.Bucket}}">
+  <span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search approvals…" aria-label="Search approvals"></span>
+  <button class="btn filter-btn" type="submit">Search</button>
+</form>
+
+<div class="segmented" style="margin-bottom:12px">
+  {{range approvalTabs}}<a class="{{if eq $.Bucket .Key}}is-active{{end}}"
+    {{if eq $.Bucket .Key}}aria-current="page"{{end}}
+    href="/approvals?bucket={{.Key}}&amp;q={{$.Query}}">{{.Label}} <span class="n">{{index $.Counts .Key}}</span></a>{{end}}
+</div>
+
+<div class="req-list">
+  {{range .Requests}}{{template "request_card" (card . $.User.ID)}}{{else}}<p class="empty">Nothing is waiting on you here.</p>{{end}}
+</div>
+
+<p class="hint">Every approval is a decision made after opening the request. There is no bulk
+  approval, by design.</p>
+{{template "bottom" .}}
+{{end}}

@@ -1,0 +1,58 @@
+{{/* The user's notification centre — mockups/screens/notifications.html.
+
+     Every row here is already addressed to the signed-in user, so the screen
+     carries no permission gate. Each .notif is a real POST that marks the row
+     read and then redirects to where it points, so the centre works with no
+     JavaScript and a click can never lose the read state. */}}
+{{define "notifications"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Your activity</div>
+    <h1>Notifications</h1>
+    {{/* The sub-line names both numbers when they differ. The row query stopped
+         at 100 while the "All" count beside it had no cap, so a user past the cap
+         read a number the list below could not account for (F-G-037). */}}
+    <p class="sub">{{if or .NotifPage.Truncated .NotifOffset}}{{len .Notifs}} of {{.NotifPage.Total}} shown · {{end}}{{if .NotifCounts.Unread}}{{.NotifCounts.Unread}} unread of {{.NotifCounts.All}}{{else}}Everything here is read{{end}}</p>
+  </div>
+  <div class="pb-actions">{{if .NotifCounts.Unread}}
+    <form method="post" action="/notifications/read"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn outline" type="submit">Mark all read</button></form>
+  {{end}}</div>
+</section>
+
+<div class="segmented">
+  <a class="{{if eq .NotifScope "all"}}is-active{{end}}" href="/notifications?scope=all">All <span class="n">{{.NotifCounts.All}}</span></a>
+  <a class="{{if eq .NotifScope "unread"}}is-active{{end}}" href="/notifications?scope=unread">Unread <span class="n">{{.NotifCounts.Unread}}</span></a>
+  <a class="{{if eq .NotifScope "mentions"}}is-active{{end}}" href="/notifications?scope=mentions">Mentions <span class="n">{{.NotifCounts.Mentions}}</span></a>
+  <a class="{{if eq .NotifScope "reminders"}}is-active{{end}}" href="/notifications?scope=reminders">Reminders <span class="n">{{.NotifCounts.Reminders}}</span></a>
+</div>
+
+<div class="notif-list">
+  {{range .Notifs}}
+  <a class="notif{{if not .ReadAt}} unread{{end}}" href="/notifications/{{.ID}}/open">
+    <span class="n-ico" aria-hidden="true">{{notifGlyph .Kind}}</span>
+    <span class="n-main"><b>{{.Title}}</b>{{if .Body}}<p>{{notifBody .Body .Href}}</p>{{end}}</span>
+    <time>{{date .CreatedAt}}</time>
+  </a>
+  {{else}}
+  <div class="notif">
+    <span class="n-ico" aria-hidden="true">·</span>
+    <span class="n-main"><b>Nothing here yet</b><p>You will be told when something needs you.</p></span>
+  </div>
+  {{end}}
+</div>
+
+{{/* Paging, the same shape /requests uses: the cap is real, and it now says so
+     and offers the rest rather than dropping rows in silence (F-G-037). Both
+     links carry the scope, so crossing a page boundary never widens the filter
+     the reader is standing in. */}}
+{{if or .NotifPage.Truncated .NotifOffset}}
+<div class="cluster" style="margin-top:14px">
+  <span class="muted small">Showing {{if .Notifs}}{{add .NotifOffset 1}}–{{add .NotifOffset (len .Notifs)}}{{else}}0{{end}} of {{.NotifPage.Total}}</span>
+  <span class="row-end"></span>
+  {{if .NotifOffset}}<a class="btn outline" href="/notifications?scope={{.NotifScope}}&amp;offset={{sub0 .NotifOffset .NotifPage.Limit}}">← Newer</a>{{end}}
+  {{if .NotifPage.Truncated}}<a class="btn outline" href="/notifications?scope={{.NotifScope}}&amp;offset={{add .NotifOffset (len .Notifs)}}">Older →</a>{{end}}
+</div>
+{{end}}
+{{template "bottom" .}}
+{{end}}
