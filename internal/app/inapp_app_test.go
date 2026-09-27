@@ -344,7 +344,7 @@ func TestApprovingARequestNotifiesTheRequester(t *testing.T) {
 	}
 
 	s.loginAdmin()
-	resp := s.postForm(fmt.Sprintf("/requests/%d/approve", reqID), url.Values{
+	resp := s.submitScreen(fmt.Sprintf("/requests/%d/approve", reqID), url.Values{
 		"approved_amount": {"500.00"}, "note": {"ok"},
 	})
 	requireStatus(t, resp, http.StatusSeeOther)

@@ -52,7 +52,7 @@ func TestUrgencyReasonAlertIsTiedToItsFieldBySentinel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp = s.postForm(fmt.Sprintf("/requests/%d/edit", id), fields)
+	resp = s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), fields)
 	requireStatus(t, resp, http.StatusBadRequest)
 	if body := responseBody(t, resp); !strings.Contains(body, urgencyAlert) {
 		t.Fatalf("edit refusal lost the field-bound alert:\n%s", body)

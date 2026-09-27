@@ -30,7 +30,7 @@ func TestWorkflowActionsThatUsedToNotifyNobodyNowFire(t *testing.T) {
 	// Re-raise: fired for the NEW request, which is the one that needs deciding.
 	rejected := s.seedPendingRequest(902, requester.ID, admin.ID, headID, 130000)
 	s.loginAdmin()
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reject", rejected),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/reject", rejected),
 		url.Values{"reason": {"Wrong head"}}), http.StatusSeeOther)
 	s.login("firer@example.test", "FirePass12345")
 	resp := s.postForm(fmt.Sprintf("/requests/%d/reraise", rejected), url.Values{})
@@ -114,7 +114,7 @@ func TestPartialAndCancellationDecisionsFire(t *testing.T) {
 		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel-request", id),
 			url.Values{"reason": {"Order withdrawn"}}), http.StatusSeeOther)
 		s.loginAdmin()
-		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancellation", id),
+		requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/cancellation", id),
 			url.Values{"decision": {tc.decision}, "note": {"Decided"}}), http.StatusSeeOther)
 		if !hasEvent(notificationTitles(t, s, requester.ID), tc.event) {
 			t.Errorf("a %sd cancellation does not fire %s", tc.decision, tc.event)
@@ -133,7 +133,7 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	id := s.seedPendingRequest(921, requester.ID, admin.ID, headID, 180000)
 
 	s.loginAdmin()
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", id),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/return", id),
 		url.Values{"comment": {"Add the GST breakup"}}), http.StatusSeeOther)
 
 	edit := url.Values{"type": {"reimbursement"}, "treatment": {"budget"},
@@ -145,7 +145,7 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	s.login("saver@example.test", "SavePass12345")
 	saveOnly := edit
 	saveOnly.Set("submit_action", "save")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), saveOnly), http.StatusSeeOther)
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), saveOnly), http.StatusSeeOther)
 	if hasEvent(notificationTitles(t, s, admin.ID), notify.EventRequestEdited) {
 		t.Fatal("Save corrections told the approver the request was re-sent for approval")
 	}
@@ -153,7 +153,7 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	// The resubmit path still fires, because there the claim is true.
 	resubmit := edit
 	resubmit.Set("submit_action", "resubmit")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), resubmit), http.StatusSeeOther)
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), resubmit), http.StatusSeeOther)
 	if !hasEvent(notificationTitles(t, s, admin.ID), notify.EventRequestEdited) {
 		t.Fatal("Resubmit for approval no longer tells the approver at all")
 	}
@@ -173,7 +173,7 @@ func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 	id := s.seedPendingRequest(923, requester.ID, approver.ID, headID, 180000)
 
 	s.login("fullapprover@example.test", "FullAppr12345")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", id),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/return", id),
 		url.Values{"comment": {"Add GST split"}}), http.StatusSeeOther)
 
 	s.login("fulledit@example.test", "FullEdit12345")
@@ -185,7 +185,7 @@ func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 		t.Fatalf("the full edit form's button does not resubmit; want %s", button)
 	}
 	// Post exactly what that form sends: its fields plus the button's value.
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"},
 		"short_title": {"Site visit"}, "project_id": {strconvFormat(projectOf(t, s, headID))},
 		"head_id": {strconvFormat(headID)}, "amount": {"1,800.00"},
@@ -230,7 +230,7 @@ func TestEditingAPendingRequestReNotifiesTheApprover(t *testing.T) {
 	}
 
 	s.login("pendingeditor@example.test", "PendingEdit12345")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"},
 		"short_title": {"Site visit"}, "project_id": {strconvFormat(projectOf(t, s, headID))},
 		"head_id": {strconvFormat(headID)}, "amount": {"2,400.00"},
@@ -266,7 +266,7 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	}
 
 	s.loginAdmin()
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", pending),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/return", pending),
 		url.Values{"comment": {"Add the invoice"}}), http.StatusSeeOther)
 	reserved := s.seedApprovedRequest(992, requester.ID, admin.ID, headID, 100000)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reserved), url.Values{}), http.StatusSeeOther)
@@ -342,9 +342,9 @@ func TestReassignmentAndOutrightCancellationNotifyTheirSubject(t *testing.T) {
 	// so the request is approved first — this is the manager killing money they
 	// had already agreed to, which is exactly why the requester needs telling.
 	cancelled := s.seedPendingRequest(932, requester.ID, admin.ID, headID, 150000)
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/approve", cancelled),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/approve", cancelled),
 		url.Values{"approved_amount": {"1500.00"}}), http.StatusSeeOther)
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel", cancelled), url.Values{
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/cancel", cancelled), url.Values{
 		"reason": {"Duplicate of PR-2026-000931"},
 	}), http.StatusSeeOther)
 
@@ -373,7 +373,7 @@ func TestPaymentReceiptDoesNotInventNotificationRecipients(t *testing.T) {
 	reqID := s.seedApprovedRequest(1, requester.ID, manager.ID, headID, 550000)
 	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	resp := s.postForm("/payments", url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"}, "amount": {"4000.13"}, "settlement": {"partial"}, "partial_reason": {"Agreed retention"}, "reference_no": {"AUDIENCE-13"}, "payment_mode": {"bank_transfer"}})
+	resp := s.postPayment(url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"}, "amount": {"4000.13"}, "settlement": {"partial"}, "partial_reason": {"Agreed retention"}, "reference_no": {"AUDIENCE-13"}, "payment_mode": {"bank_transfer"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	body := s.get(resp.Header.Get("Location"))
 	mustContain(t, "partial receipt", body, "Payment saved. The request is with the manager", "The payment is recorded against this request.")

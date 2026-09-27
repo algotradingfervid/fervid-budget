@@ -27,7 +27,7 @@ func TestDashboardAreasAgreeWithTheQueuesTheyLinkTo(t *testing.T) {
 	pending := s.seedPendingRequest(1301, requester.ID, admin.ID, headID, 100000)
 	returned := s.seedPendingRequest(1302, requester.ID, admin.ID, headID, 110000)
 	s.loginAdmin()
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", returned),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/return", returned),
 		url.Values{"comment": {"Add the invoice"}}), http.StatusSeeOther)
 	_ = pending
 

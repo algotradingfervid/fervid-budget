@@ -79,7 +79,7 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 	endpoint := "/requests/" + strconvFormat(id) + "/approve"
 	note := "Retain <approval> & explanation"
 	for _, amount := range []string{"8403.98", "0", "-1.00", "not money", ""} {
-		resp := s.postForm(endpoint, url.Values{"approved_amount": {amount}, "note": {note}})
+		resp := s.submitScreen(endpoint, url.Values{"approved_amount": {amount}, "note": {note}})
 		requireStatus(t, resp, http.StatusBadRequest)
 		body := responseBody(t, resp)
 		for _, want := range []string{
@@ -108,14 +108,14 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 	}
 	// An unassigned approver cannot use validation to expose an actionable dialog.
 	s.loginAdmin()
-	resp := s.postForm(endpoint, url.Values{"approved_amount": {"not money"}, "note": {note}})
+	resp := s.submitScreen(endpoint, url.Values{"approved_amount": {"not money"}, "note": {note}})
 	requireStatus(t, resp, http.StatusNotFound)
 	if strings.Contains(responseBody(t, resp), `id="approve-sheet"`) {
 		t.Fatal("unassigned approver received approval editor")
 	}
 
 	s.login("kavita@example.test", "ApproverPass123")
-	resp = s.postForm(endpoint, url.Values{"approved_amount": {"8403.97"}, "note": {note}})
+	resp = s.submitScreen(endpoint, url.Values{"approved_amount": {"8403.97"}, "note": {note}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	got, err := s.st.Request(s.ctx, id)

@@ -54,7 +54,7 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 		"request_id": {strconvFormat(reqID)}, "paid_on": {month + "-03"}, "amount": {"250000.00"},
 		"vendor_payee": {"Ridge Metro"}, "settlement": {"settled"}, "reference_no": {"UTR123"},
 	}
-	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(t, s.postPayment(form), http.StatusSeeOther)
 	var recPay int64
 	if err := s.st.DB().QueryRow(`SELECT id FROM payments WHERE request_id=?`, reqID).Scan(&recPay); err != nil {
 		t.Fatal(err)

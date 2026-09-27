@@ -24,7 +24,7 @@ func TestARequestCannotBeApprovedIntoALockedMonth(t *testing.T) {
 	}
 
 	s.loginAdmin()
-	resp := s.postForm(fmt.Sprintf("/requests/%d/approve", id), url.Values{"approved_amount": {"1,000.00"}})
+	resp := s.submitScreen(fmt.Sprintf("/requests/%d/approve", id), url.Values{"approved_amount": {"1,000.00"}})
 	requireStatus(t, resp, http.StatusConflict)
 	if body := responseBody(t, resp); !strings.Contains(body, "2027-11 is locked") {
 		t.Fatalf("the refusal does not name the locked month: %s", firstLines(body))
@@ -42,7 +42,7 @@ func TestARequestCannotBeApprovedIntoALockedMonth(t *testing.T) {
 	if err := s.st.UnlockMonth(s.ctx, admin, "2027-11", "Reopened"); err != nil {
 		t.Fatal(err)
 	}
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/approve", id),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/approve", id),
 		url.Values{"approved_amount": {"1,000.00"}}), http.StatusSeeOther)
 }
 

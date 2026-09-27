@@ -30,13 +30,13 @@ func TestInstallmentHTTPFlowExplicitChoiceAndRemainingBalance(t *testing.T) {
 	if !strings.Contains(preview, "Installment — pay the balance later") {
 		t.Fatal("missing continuation option")
 	}
-	requireStatus(t, s.postForm("/payments", form), http.StatusBadRequest)
+	requireStatus(t, s.postPayment(form), http.StatusBadRequest)
 	form.Set("settlement", "installment")
-	first := s.postForm("/payments", form)
+	first := s.postPayment(form)
 	requireStatus(t, first, http.StatusSeeOther)
 	firstLocation := first.Header.Get("Location")
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
-	retry := s.postForm("/payments", form)
+	retry := s.postPayment(form)
 	requireStatus(t, retry, http.StatusSeeOther)
 	if retry.Header.Get("Location") != firstLocation {
 		t.Fatal("retry did not resolve original payment")
@@ -49,14 +49,14 @@ func TestInstallmentHTTPFlowExplicitChoiceAndRemainingBalance(t *testing.T) {
 	form.Set("submission_key", token[1])
 	form.Set("amount", "6000")
 	form.Set("settlement", "settled")
-	overResponse := s.postForm("/payments", form)
+	overResponse := s.postPayment(form)
 	requireStatus(t, overResponse, http.StatusBadRequest)
 	overBody := responseBody(t, overResponse)
 	if !strings.Contains(overBody, "remaining approved balance") || !strings.Contains(overBody, "separately approved request") || strings.Contains(overBody, "cancel this request") {
 		t.Fatal("overremaining refusal suggests unavailable cancellation or omits recovery")
 	}
 	form.Set("amount", "5000")
-	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(t, s.postPayment(form), http.StatusSeeOther)
 	body := s.get(fmt.Sprintf("/requests/%d", id))
 	for _, want := range []string{"2 linked payments", "Total paid to date", "12,000.00", "7,000.00", "5,000.00"} {
 		if !strings.Contains(body, want) {
@@ -85,7 +85,7 @@ func TestPaymentOutcomeFollowsLifecycleWithoutRewritingHistory(t *testing.T) {
 			form.Set(name, field[1])
 		}
 		issuedForm = form
-		resp := s.postForm("/payments", form)
+		resp := s.postPayment(form)
 		requireStatus(t, resp, http.StatusSeeOther)
 		return resp.Header.Get("Location")
 	}
@@ -113,7 +113,7 @@ func TestPaymentOutcomeFollowsLifecycleWithoutRewritingHistory(t *testing.T) {
 	// A stale confirm must replay the same issued token, preserve the ledger,
 	// and describe the recorded installment without claiming the request ended.
 	issuedForm.Set("amount", "1000")
-	replayed := s.postForm("/payments", issuedForm)
+	replayed := s.postPayment(issuedForm)
 	requireStatus(t, replayed, http.StatusSeeOther)
 	if replayed.Header.Get("Location") != first {
 		t.Fatal("issued-token replay did not resolve the original payment")
@@ -212,7 +212,7 @@ func TestRejectedShortSettlementReturnsTypedEntryValues(t *testing.T) {
 	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"request_id": {strconvFormat(id)}, "amount": {"7000.00"}, "paid_on": {"2026-06-15"}, "payment_mode": {"upi"}, "reference_no": {"UXR-PAY-7000"}, "remarks": {"Retain this processing note"}, "settlement": {"settled"}}
-	failure := s.postForm("/payments", form)
+	failure := s.postPayment(form)
 	requireStatus(t, failure, http.StatusBadRequest)
 	body := responseBody(t, failure)
 	if !strings.Contains(body, `formaction="/payments/new?request=`) {

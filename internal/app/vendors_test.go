@@ -31,7 +31,7 @@ func TestNEFTIdentitySurvivesConfiguredEntryPreviewSaveAndReceipt(t *testing.T) 
 	if !strings.Contains(preview, ">NEFT<") || !strings.Contains(preview, `value="neft"`) {
 		t.Fatal("preview lost NEFT identity")
 	}
-	saved := s.postForm("/payments", form)
+	saved := s.postPayment(form)
 	requireStatus(t, saved, http.StatusSeeOther)
 	location := saved.Header.Get("Location")
 	saved.Body.Close()
@@ -141,7 +141,7 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 		"paid_on": {time.Now().Format("2006-01-02")}, "amount": {"9100.00"},
 		"settlement": {"settled"}, "reference_no": {"VENDOR-TOTALS-REF"},
 	}
-	resp := s.postForm("/payments", settle)
+	resp := s.postPayment(settle)
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 

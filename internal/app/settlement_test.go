@@ -22,7 +22,7 @@ func (s *appTestServer) recordPartial(reqID, headID, paid int64) {
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"},
 		"amount": {money2(paid)}, "vendor_payee": {"Acme Landlord"}, "settlement": {"partial"},
 		"partial_reason": {"Retention held back by agreement."}, "reference_no": {"UTR-PART"}, "payment_mode": {"bank_transfer"}}
-	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(s.t, s.postPayment(form), http.StatusSeeOther)
 }
 
 // settlement-2: opening the entry screen for an approved request nobody holds
@@ -182,7 +182,7 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"submission_key": {"saved-banner-fixture"}, "request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"},
 		"amount": {"5500.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"UTR-1"}, "payment_mode": {"bank_transfer"}}
-	resp := s.postForm("/payments", form)
+	resp := s.postPayment(form)
 	requireStatus(t, resp, http.StatusSeeOther)
 	// The landing URL is the payment's own — the outcome rides on a one-shot
 	// cookie, so a bookmark or a refresh can never replay the confirmation.
@@ -200,7 +200,7 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 
 	// A second confirm with a different figure writes nothing and says so.
 	form.Set("amount", "5000.00")
-	resp = s.postForm("/payments", form)
+	resp = s.postPayment(form)
 	requireStatus(t, resp, http.StatusSeeOther)
 	if got := resp.Header.Get("Location"); got != loc {
 		t.Fatalf("refused repeat landed on %q, want the existing payment %q", got, loc)
@@ -441,7 +441,7 @@ func TestStaleSettlementConfirmationShowsCurrentHolderAndCannotResubmit(t *testi
 			requireStatus(t, resp, http.StatusConflict)
 			body = responseBody(t, resp)
 		} else {
-			resp := s.postForm("/payments", form)
+			resp := s.postPayment(form)
 			requireStatus(t, resp, http.StatusConflict)
 			body = responseBody(t, resp)
 			mustContain(t, "retained fields", body, "STALE-REF-123", "Keep this processing note")
@@ -464,7 +464,7 @@ func TestStaleSettlementConfirmationShowsCurrentHolderAndCannotResubmit(t *testi
 		t.Fatalf("reservation changed: %+v", req)
 	}
 	s.login(next.Email, "NextPass1234")
-	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(t, s.postPayment(form), http.StatusSeeOther)
 	if err := s.st.DB().QueryRow(`SELECT count(*) FROM payments WHERE request_id=? AND amount=12345`, id).Scan(&count); err != nil {
 		t.Fatal(err)
 	}

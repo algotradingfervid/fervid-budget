@@ -144,42 +144,76 @@ func (s *appTestServer) csrf() string {
 	return ""
 }
 
+// postForm posts form to path with the session's CSRF token. It sends exactly
+// the fields given and does nothing else. The caller's form is copied, not
+// changed.
 func (s *appTestServer) postForm(path string, form url.Values) *http.Response {
 	s.t.Helper()
-	if form == nil {
-		form = url.Values{}
+	form = cloneForm(form)
+	form.Set("csrf", s.csrf())
+	return s.request(http.MethodPost, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+}
+
+// submitScreen posts a change to a request the way a person who has just
+// opened its screen would: when the form carries no revision, it first opens
+// the screen that owns path (the edit form, the request, or the cancellation
+// screen) and copies that screen's hidden revision into the form. Tests that
+// are about the revision itself set it and use postForm.
+func (s *appTestServer) submitScreen(path string, form url.Values) *http.Response {
+	s.t.Helper()
+	form = cloneForm(form)
+	if screen, ok := requestScreenOf(path); ok && !form.Has("revision") {
+		page := s.get(screen)
+		if m := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page); len(m) == 2 {
+			form.Set("revision", m[1])
+		}
 	}
-	// Existing form helpers represent a freshly opened correction screen. Clone
-	// first so repeated calls do not accidentally retain a prior screen revision.
-	copyForm := url.Values{}
-	for key, values := range form {
-		copyForm[key] = append([]string(nil), values...)
+	return s.postForm(path, form)
+}
+
+// requestScreenOf names the screen a request change is posted from:
+// /requests/{id}/edit from the edit form, approve, return and reject from the
+// request page, and both cancellation decisions (cancel, cancellation) from
+// the cancellation screen. ok is false for any other path.
+func requestScreenOf(path string) (screen string, ok bool) {
+	if !strings.HasPrefix(path, "/requests/") {
+		return "", false
 	}
-	form = copyForm
-	if path == "/payments" && form.Get("request_id") != "" && len(form.Get("paid_on")) == 10 {
+	base := path[:strings.LastIndex(path, "/")]
+	switch path[strings.LastIndex(path, "/"):] {
+	case "/edit":
+		return path, true
+	case "/approve", "/return", "/reject":
+		return base, true
+	case "/cancel", "/cancellation":
+		return base + "/cancellation", true
+	}
+	return "", false
+}
+
+// postPayment posts the payment entry form. When the form settles a request on
+// a full date (request_id and a YYYY-MM-DD paid_on), it first moves that
+// request's approval back to the start of that day, because the store refuses
+// a payment dated before the approval and fixtures pay on fixed past dates.
+// Tests of that refusal call the store directly.
+func (s *appTestServer) postPayment(form url.Values) *http.Response {
+	s.t.Helper()
+	if form.Get("request_id") != "" && len(form.Get("paid_on")) == 10 {
 		if err := backdateApproval(s.ctx, s.st.DB(), form.Get("request_id"), form.Get("paid_on")); err != nil {
 			s.t.Fatal(err)
 		}
 	}
+	return s.postForm("/payments", form)
+}
 
-	if strings.HasPrefix(path, "/requests/") && (strings.HasSuffix(path, "/edit") || strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/return") || strings.HasSuffix(path, "/reject") || strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation")) && !form.Has("revision") {
-		pagePath := path
-		if !strings.HasSuffix(path, "/edit") {
-			pagePath = path[:strings.LastIndex(path, "/")]
-		}
-		// Both cancellation decisions are posted from the approver's
-		// cancellation screen.
-		if strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation") {
-			pagePath += "/cancellation"
-		}
-		page := responseBody(s.t, s.request(http.MethodGet, pagePath, nil, ""))
-		matches := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)
-		if len(matches) == 2 {
-			form.Set("revision", matches[1])
-		}
+// cloneForm copies a form so a helper can add fields without changing the
+// caller's values (a form reused across posts must not keep a stale revision).
+func cloneForm(form url.Values) url.Values {
+	out := url.Values{}
+	for key, values := range form {
+		out[key] = append([]string(nil), values...)
 	}
-	form.Set("csrf", s.csrf())
-	return s.request(http.MethodPost, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+	return out
 }
 
 // postFormHX is postForm with the header htmx sets on every request it makes,

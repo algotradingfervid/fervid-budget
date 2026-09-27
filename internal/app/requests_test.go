@@ -855,7 +855,7 @@ func TestRequestDecisionsThroughTheDetailScreen(t *testing.T) {
 
 	s.login("kavita@example.test", "ApproverPass123")
 	// An adjusted approval is the point of the amount field in the sheet.
-	resp = s.postForm("/requests/"+strconvFormat(approve)+"/approve",
+	resp = s.submitScreen("/requests/"+strconvFormat(approve)+"/approve",
 		url.Values{"approved_amount": {"4,000.00"}, "note": {"Cut the cab fare"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
@@ -864,16 +864,16 @@ func TestRequestDecisionsThroughTheDetailScreen(t *testing.T) {
 		t.Fatalf("approval = %q / %v, want approved at 400000", got.Status, got.ApprovedAmount)
 	}
 	// Return and reject both demand words, and refuse without them.
-	if resp := s.postForm("/requests/"+strconvFormat(returned)+"/return", url.Values{"comment": {""}}); resp.StatusCode == http.StatusSeeOther {
+	if resp := s.submitScreen("/requests/"+strconvFormat(returned)+"/return", url.Values{"comment": {""}}); resp.StatusCode == http.StatusSeeOther {
 		t.Fatal("a return with no comment was accepted")
 	}
-	resp = s.postForm("/requests/"+strconvFormat(returned)+"/return", url.Values{"comment": {"Attach the receipt"}})
+	resp = s.submitScreen("/requests/"+strconvFormat(returned)+"/return", url.Values{"comment": {"Attach the receipt"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
-	if resp := s.postForm("/requests/"+strconvFormat(rejected)+"/reject", url.Values{"reason": {""}}); resp.StatusCode == http.StatusSeeOther {
+	if resp := s.submitScreen("/requests/"+strconvFormat(rejected)+"/reject", url.Values{"reason": {""}}); resp.StatusCode == http.StatusSeeOther {
 		t.Fatal("a rejection with no reason was accepted")
 	}
-	resp = s.postForm("/requests/"+strconvFormat(rejected)+"/reject", url.Values{"reason": {"Not budgeted"}})
+	resp = s.submitScreen("/requests/"+strconvFormat(rejected)+"/reject", url.Values{"reason": {"Not budgeted"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	if got, _ := s.st.Request(s.ctx, rejected); got.Status != "rejected" {
@@ -929,7 +929,7 @@ func TestRequestEditScreenAndReroute(t *testing.T) {
 	requireStatus(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/edit", nil, ""), http.StatusForbidden)
 
 	s.login("arun@example.test", "RequesterPass123")
-	resp := s.postForm("/requests/"+strconvFormat(id)+"/edit", url.Values{
+	resp := s.submitScreen("/requests/"+strconvFormat(id)+"/edit", url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Hyderabad site visit"},
 		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"18,400.00"},
 		"purpose": {"flight, hotel and cabs"}, "expense_date": {"2026-07-17"},
@@ -957,7 +957,7 @@ func TestRequestEditScreenAndReroute(t *testing.T) {
 	}
 
 	// A rejected edit puts back what was typed rather than what is stored.
-	resp = s.postForm("/requests/"+strconvFormat(id)+"/edit", url.Values{
+	resp = s.submitScreen("/requests/"+strconvFormat(id)+"/edit", url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Renamed in the browser"},
 		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"19,000.00"},
 		"purpose": {""}, "expense_date": {"2026-07-17"}, "manager_id": {strconvFormat(other)},
@@ -1018,7 +1018,7 @@ func TestReturnedRequestScreenCorrectsAndResubmits(t *testing.T) {
 	// Correct and resubmit in one press: the number survives and the status
 	// goes back to pending.
 	s.login("ret@example.test", "RequesterPass123")
-	resp := s.postForm("/requests/"+strconvFormat(id)+"/edit", url.Values{
+	resp := s.submitScreen("/requests/"+strconvFormat(id)+"/edit", url.Values{
 		"type": {"vendor_invoice"}, "treatment": {"budget"}, "short_title": {"July freight"},
 		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"64,500.00"},
 		"purpose": {"freight"}, "vendor_id": {strconvFormat(vendorID)},
@@ -1107,10 +1107,10 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 		}
 	}
 	// Declining requires a reason and unfreezes.
-	if resp := s.postForm("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"decline"}, "note": {""}}); resp.StatusCode == http.StatusSeeOther {
+	if resp := s.submitScreen("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"decline"}, "note": {""}}); resp.StatusCode == http.StatusSeeOther {
 		t.Fatal("a decline with no reason was accepted")
 	}
-	resp = s.postForm("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"decline"}, "note": {"Vendor already dispatched"}})
+	resp = s.submitScreen("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"decline"}, "note": {"Vendor already dispatched"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	if got, _ := s.st.Request(s.ctx, id); got.Status != "approved" {
@@ -1120,7 +1120,7 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 	if err := s.st.RequestCancellation(s.ctx, requester, id, "Order withdrawn"); err != nil {
 		t.Fatal(err)
 	}
-	resp = s.postForm("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"accept"}, "note": {"Agreed"}})
+	resp = s.submitScreen("/requests/"+strconvFormat(id)+"/cancellation", url.Values{"decision": {"accept"}, "note": {"Agreed"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	if got, _ := s.st.Request(s.ctx, id); got.Status != "cancelled" {
@@ -1133,10 +1133,10 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 	if !strings.Contains(outright, `data-open="outright-sheet"`) {
 		t.Fatal("an approved request offers no outright cancellation to its approver")
 	}
-	if resp := s.postForm("/requests/"+strconvFormat(other)+"/cancel", url.Values{"reason": {""}}); resp.StatusCode == http.StatusSeeOther {
+	if resp := s.submitScreen("/requests/"+strconvFormat(other)+"/cancel", url.Values{"reason": {""}}); resp.StatusCode == http.StatusSeeOther {
 		t.Fatal("an outright cancellation with no reason was accepted")
 	}
-	resp = s.postForm("/requests/"+strconvFormat(other)+"/cancel", url.Values{"reason": {"Budget pulled for the quarter"}})
+	resp = s.submitScreen("/requests/"+strconvFormat(other)+"/cancel", url.Values{"reason": {"Budget pulled for the quarter"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	if got, _ := s.st.Request(s.ctx, other); got.Status != "cancelled" || got.CancelReason == "" {

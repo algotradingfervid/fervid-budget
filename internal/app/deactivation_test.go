@@ -127,7 +127,7 @@ func TestRequestsExportCarriesTheApprovedAmount(t *testing.T) {
 	approved := s.seedPendingRequest(971, requester.ID, admin.ID, headID, 120000)
 	s.seedPendingRequest(972, requester.ID, admin.ID, headID, 50000)
 	s.loginAdmin()
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/approve", approved),
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/approve", approved),
 		url.Values{"approved_amount": {"1000.00"}, "reason": {"Capped at the policy rate"}}), http.StatusSeeOther)
 
 	body := s.get("/requests/export.csv?bucket=all")
@@ -223,7 +223,7 @@ func TestEditFormOffersARetiredProjectBackAndSaysWhy(t *testing.T) {
 	}
 
 	// Saving with the historical ids is refused for the retirement, in words.
-	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+	resp := s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Legacy plant visit"},
 		"amount": {"1,200"}, "purpose": {"Corrected purpose"}, "expense_date": {"2026-07-01"},
 		"project_id": {strconvFormat(projectID)}, "head_id": {strconvFormat(headID)}, "manager_id": {strconvFormat(approver)},

@@ -77,7 +77,7 @@ func TestOutOfScopeRequestAnswersNotFoundOnReadsAndWrites(t *testing.T) {
 			"/requests/%d/record-payment": {},
 			"/recoverables/%d/events":     recovery,
 		} {
-			resp := s.postForm(fmt.Sprintf(path, target), form)
+			resp := s.submitScreen(fmt.Sprintf(path, target), form)
 			requireStatus(t, resp, http.StatusNotFound)
 			_ = responseBody(t, resp)
 		}
@@ -192,7 +192,7 @@ func TestPaymentReservationDoesNotSurviveRevokedRequestScope(t *testing.T) {
 	preview := s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", id), form)
 	requireStatus(t, preview, http.StatusNotFound)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusNotFound)
-	resp := s.postForm("/payments", form)
+	resp := s.postPayment(form)
 	_ = responseBody(t, resp)
 	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusForbidden {
 		t.Errorf("payout after scope revocation status=%d, want403/404", resp.StatusCode)
@@ -209,6 +209,6 @@ func TestPaymentReservationDoesNotSurviveRevokedRequestScope(t *testing.T) {
 	if err := s.st.UpdateRolePermissions(s.ctx, admin, roles[0].ID, grants, []store.ScopeGrant{{Resource: "request", Scope: "all"}, {Resource: "payment", Scope: "all"}}); err != nil {
 		t.Fatal(err)
 	}
-	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(t, s.postPayment(form), http.StatusSeeOther)
 
 }

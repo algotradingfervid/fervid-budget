@@ -446,7 +446,7 @@ func (s *appTestServer) settleOneRequest(seq int, headID, amount int64, paid, se
 	if settlement == "partial" {
 		form.Set("partial_reason", "balance next month")
 	}
-	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(s.t, s.postPayment(form), http.StatusSeeOther)
 	var payID int64
 	if err := s.st.DB().QueryRow(`SELECT id FROM payments WHERE request_id=?`, reqID).Scan(&payID); err != nil {
 		s.t.Fatal(err)
@@ -463,7 +463,7 @@ func (s *appTestServer) seedPartialReview(reqID, headID int64, reason string) {
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
 		"paid_on": {"2026-07-23"}, "amount": {"60000.00"}, "vendor_payee": {"Nova Print Works"},
 		"settlement": {"partial"}, "partial_reason": {reason}, "reference_no": {"N9912"}}
-	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(s.t, s.postPayment(form), http.StatusSeeOther)
 }
 
 // seedAttachmentFile writes a small text file into the attachment directory and

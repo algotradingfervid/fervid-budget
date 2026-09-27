@@ -141,7 +141,7 @@ func TestPaymentErrorRetainsInputAndUsesHumanModes(t *testing.T) {
 		"remarks":      {"retain this note"},
 		"settlement":   {"settled"},
 	}
-	resp := s.postForm("/payments", form)
+	resp := s.postPayment(form)
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
 	if !strings.Contains(body, "invalid amount") {
@@ -1667,7 +1667,7 @@ func TestSettlementWriteNeedsSettleAndPartialNeedsMarkPartial(t *testing.T) {
 		"paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme Landlord"},
 		"settlement": {"settled"}, "reference_no": {"SETTLE-GATE-REF"},
 	}
-	resp := s.postForm("/payments", form)
+	resp := s.postPayment(form)
 	requireStatus(t, resp, http.StatusForbidden)
 	_ = responseBody(t, resp)
 	var payments int
@@ -1688,12 +1688,12 @@ func TestSettlementWriteNeedsSettleAndPartialNeedsMarkPartial(t *testing.T) {
 	partial.Set("settlement", "partial")
 	partial.Set("amount", "3000.00")
 	partial.Set("partial_reason", "balance next month")
-	resp = s.postForm("/payments", partial)
+	resp = s.postPayment(partial)
 	requireStatus(t, resp, http.StatusForbidden)
 	if body := responseBody(t, resp); !strings.Contains(body, "partial payment") {
 		t.Fatalf("the refusal does not name the decision it refused: %s", body)
 	}
-	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(t, s.postPayment(form), http.StatusSeeOther)
 }
 
 // F-G-033 — the heads screen lists every head and must offer every project, or a

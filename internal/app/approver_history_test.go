@@ -59,7 +59,7 @@ func TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval(t *testing
 		t.Fatalf("a refused reassignment moved the approver to %d", got)
 	}
 	// And so he still cannot decide it.
-	resp = s.postForm(fmt.Sprintf("/requests/%d/approve", reqID), url.Values{"approved_amount": {"900.00"}})
+	resp = s.submitScreen(fmt.Sprintf("/requests/%d/approve", reqID), url.Values{"approved_amount": {"900.00"}})
 	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
 
@@ -114,7 +114,7 @@ func TestReassignmentRescuesEveryStatusTheDeactivationWarningLists(t *testing.T)
 
 	returnedID := s.seedPendingRequest(973, requester.ID, leaver.ID, headID, 90000)
 	s.login("leaver@example.test", "LeaverPass12345")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", returnedID), url.Values{"comment": {"Attach the bill"}}), http.StatusSeeOther)
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/return", returnedID), url.Values{"comment": {"Attach the bill"}}), http.StatusSeeOther)
 
 	// The warning names all three, and the administrator confirms anyway.
 	s.loginAdmin()
@@ -157,7 +157,7 @@ func TestReassignmentRescuesEveryStatusTheDeactivationWarningLists(t *testing.T)
 
 	// And the rescuer can actually decide what the leaver was holding.
 	s.login("rescuer@example.test", "RescuerPass12345")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancellation", cancelID), url.Values{"decision": {"accept"}}), http.StatusSeeOther)
+	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/cancellation", cancelID), url.Values{"decision": {"accept"}}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", partialID), url.Values{"note": {"Fine"}}), http.StatusSeeOther)
 	for id, want := range map[int64]string{cancelID: "cancelled", partialID: "completed_partial"} {
 		req, err := s.st.Request(s.ctx, id)
@@ -230,7 +230,7 @@ func TestDetailThreadNamesTheActorForAccountsEvents(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", settledID), url.Values{"reason": {"Checking GST"}}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", settledID), url.Values{}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", settledID), url.Values{}), http.StatusSeeOther)
-	requireStatus(t, s.postForm("/payments", url.Values{"request_id": {strconvFormat(settledID)}, "head_id": {strconvFormat(headID)},
+	requireStatus(t, s.postPayment(url.Values{"request_id": {strconvFormat(settledID)}, "head_id": {strconvFormat(headID)},
 		"paid_on": {"2026-07-23"}, "amount": {"1000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"ACTOR-PAYMENT-REF"}}), http.StatusSeeOther)
 	s.seedPartialReview(partialID, headID, "Vendor short-shipped")
 	s.loginAdmin()
@@ -279,7 +279,7 @@ func TestIllegalTransitionRefusalsReadAsSentences(t *testing.T) {
 
 	refusal := func(path string, form url.Values) string {
 		t.Helper()
-		resp := s.postForm(path, form)
+		resp := s.submitScreen(path, form)
 		requireStatus(t, resp, http.StatusBadRequest)
 		return responseBody(t, resp)
 	}

@@ -97,7 +97,7 @@ func TestARefusedResubmitLeavesNothingWritten(t *testing.T) {
 	id := s.seedPendingRequest(931, requester.ID, admin.ID, headID, 200000)
 
 	s.login("atomic@example.test", "AtomicPass1234")
-	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+	resp := s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Site visit"},
 		"project_id": {strconvFormat(projectOf(t, s, headID))}, "head_id": {strconvFormat(headID)},
 		"amount": {"31,000.00"}, "purpose": {"flights and cabs"},

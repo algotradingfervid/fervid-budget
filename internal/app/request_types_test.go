@@ -129,7 +129,7 @@ func TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen(t *testing.T) {
 	if !strings.Contains(edit, `name="vendor_payee" value="Ridge Metro Rail Corporation"`) {
 		t.Fatalf("the edit form does not carry the deposit's payee: %s", firstLines(edit))
 	}
-	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+	resp := s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"recoverable"}, "treatment": {"recoverable"}, "recoverable_category": {"emd"},
 		"short_title": {"Ridge Metro EMD"}, "amount": {"2,50,000"}, "purpose": {"tender, corrected"},
 		"project_id": {strconvFormat(projectID)}, "vendor_payee": {"Ridge Metro Rail Corporation Ltd"},
@@ -251,7 +251,7 @@ func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
 		refused[k] = v
 	}
 	refused.Set("amount", "0")
-	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), refused)
+	resp := s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), refused)
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
 	if !strings.Contains(body, "Recorded before deposits and guarantees were their own request type") || !strings.Contains(body, ">Resubmit as an Employee advance<") {
@@ -267,7 +267,7 @@ func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
 
 	// The stated consequence, when the requester takes it.
 	base.Set("amount", "10,00,000")
-	resp = s.postForm(fmt.Sprintf("/requests/%d/edit", id), base)
+	resp = s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), base)
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	after, err = s.st.Request(s.ctx, id)

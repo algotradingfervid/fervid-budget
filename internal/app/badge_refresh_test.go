@@ -20,7 +20,7 @@ func TestPaymentReceiptImmediatelyRefreshesLedgerBadge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp := s.postForm("/payments", url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"}, "amount": {"1.01"}, "settlement": {"settled"}, "reference_no": {"BADGE-101"}, "payment_mode": {"cash"}})
+	resp := s.postPayment(url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"}, "amount": {"1.01"}, "settlement": {"settled"}, "reference_no": {"BADGE-101"}, "payment_mode": {"cash"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	body := s.get(resp.Header.Get("Location"))
 	mustContain(t, "fresh receipt ledger badge", body, `Payments ledger<span class="n">`+strconvFormat(int64(before["my_payments"]+1))+`</span>`)
