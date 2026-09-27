@@ -6,7 +6,7 @@ The delivered library is `output/playwright/workflow-videos-2026-09-26/index.htm
 
 ## Credentials
 
-The root `.env` is ignored by Git and restricted to the current user. Copy `.env.example` if setting up a new checkout, then fill `OPENROUTER_API_KEY` locally. Never put credentials in a capture script, browser session, storyboard, or published archive. Narration generation reads the key only in `tts.mjs` and sends tutorial text to the OpenRouter speech endpoint. It uses the selected `google/gemini-3.8-flash-tts` model and `Kore` voice. The provider accepts PCM, converted locally to 24 kHz mono WAV.
+The root `.env` is ignored by Git and restricted to the current user. Copy `.env.example` if setting up a new checkout, then fill `OPENROUTER_API_KEY` locally. Never put credentials in a capture script, browser session, storyboard, or published archive. Narration generation reads the key only in `tts.mjs` and sends tutorial text to the OpenRouter speech endpoint. It uses the selected `google/gemini-3.8-flash-lite-tts` model and `Kore` voice. The provider accepts PCM, converted locally to 24 kHz mono WAV.
 
 ## Dependencies
 

@@ -7,7 +7,7 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 process.loadEnvFile(path.join(root,'.env'));
 const key=process.env.OPENROUTER_API_KEY;
 if(!key) throw new Error('Set OPENROUTER_API_KEY in the private root .env.');
-const model=process.env.OPENROUTER_TTS_MODEL||'google/gemini-3.8-flash-tts';
+const model=process.env.OPENROUTER_TTS_MODEL||'google/gemini-3.8-flash-lite-tts';
 const voice=process.env.OPENROUTER_TTS_VOICE||'Kore';
 const format=process.env.OPENROUTER_TTS_FORMAT||'pcm';
 if(!['mp3','pcm','wav'].includes(format)) throw new Error('Unsupported speech format');

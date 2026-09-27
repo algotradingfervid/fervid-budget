@@ -1,0 +1,21 @@
+(version 1)
+(allow default)
+; No network initiated by the app, including SMTP and local production/admin APIs.
+(deny network*)
+(allow network-inbound (local tcp (param "LISTEN")))
+; The app can mutate only its private data, logs and temporary files.
+(deny file-write*)
+(allow file-write*
+    (subpath (param "DATA"))
+    (subpath (param "LOGS"))
+    (subpath (param "TMP"))
+    (literal "/dev/null"))
+; Other copies, credentials and immutable source snapshots stay unreadable.
+(deny file-read* (subpath (param "PRIVATE")))
+; SQLite canonicalizes parent paths before opening its own DB and sidecars.
+(allow file-read-metadata (subpath (param "PRIVATE")))
+(allow file-read*
+    (subpath (param "DATA"))
+    (subpath (param "RELEASE"))
+    (subpath (param "LOGS"))
+    (subpath (param "TMP")))

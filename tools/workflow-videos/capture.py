@@ -38,10 +38,26 @@ def click(role,name,nth=0,exact=True):return call('click',ref(role,name,nth,exac
 def fill(name,text,nth=0):return call('fill',ref('textbox',name,nth),text)
 def select(name,value,nth=0):return call('select',ref('combobox',name,nth),value)
 def check(role,name):return call('check',ref(role,name))
-def goto(path):return call('goto',BASE+path)
+def goto(path):
+    try:
+        return call('goto',BASE+path)
+    except Exception as e:
+        if 'not open' in str(e):
+            call('open',BASE+path)
+            return call('snapshot')
+        raise
+
 def text():return json.dumps(call('snapshot'),ensure_ascii=False)
-def require(s):
- if s not in text():raise RuntimeError('Expected visible outcome not present: '+s)
+def require(s, timeout=6.0):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            if s in text():
+                return
+        except Exception:
+            pass
+        time.sleep(0.3)
+    raise RuntimeError('Expected visible outcome not present: ' + s)
 def login(email='admin@fervid.local',password='admin123'):
  goto('/login');fill('Email',email);fill('Password',password);click('button','Login')
  if any(x.get('role')=='button' and x.get('name')=='Login' for x in snapshot()):raise RuntimeError('Login failed')

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fervid UI Review"
+  short_description: "Review and fix UI issues with verified evidence"
+  default_prompt: "Use $fervid-ui-review to thoroughly audit Fervid Budget and, if requested, fix confirmed issues with before/after evidence."
