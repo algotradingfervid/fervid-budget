@@ -9,14 +9,15 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// The vendor master's screens (adoption-spec D3 / gap G5).
+// Vendor screens: the vendor list, the add/edit form, the search box used by
+// the request form, and a vendor's related requests, payments and history.
 //
-// Every read here hands the caller's PermissionSet to the store, which is what
-// decides whether the bank block comes back at all. The templates gate on
-// .Perms too, but that is presentation: by the time a template runs, a caller
-// without vendor_bank:view is holding a Vendor whose Bank is nil, so there is
-// nothing for a mistaken {{...}} to print.
+// Every read passes the reader's permissions to the store, which leaves out
+// the bank details (Vendor.Bank is nil) unless they hold vendor_bank:view. The
+// templates also check permissions, but the data is already absent.
 
+// vendorsList shows the vendor list with its filters, stats and the totals of
+// paid-this-year and open requests over the listed vendors.
 func (a *App) vendorsList(w http.ResponseWriter, r *http.Request) {
 	perms := a.auth.Permissions(auth.CurrentUser(r))
 	query := r.URL.Query()
@@ -63,10 +64,9 @@ func (a *App) vendorsList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// vendorNew is the blank form. The empty bank block is handed to a caller who
-// holds vendor_bank:view because "this vendor has no bank details yet" is
-// something they are entitled to be told; a caller without the permission gets
-// nil and the locked banner, exactly as on an existing vendor.
+// vendorNew shows the blank vendor form. A reader with vendor_bank:view gets
+// an empty bank section; one without it sees the "locked" banner instead, as
+// on an existing vendor.
 func (a *App) vendorNew(w http.ResponseWriter, r *http.Request) {
 	perms := a.auth.Permissions(auth.CurrentUser(r))
 	v := store.Vendor{VendorType: "company", Status: "active"}
@@ -76,11 +76,8 @@ func (a *App) vendorNew(w http.ResponseWriter, r *http.Request) {
 	a.renderVendorForm(w, r, http.StatusOK, v, true, "")
 }
 
-// vendorSearch is the request form's combobox, served as HTML rather than
-// JSON: htmx swaps the markup straight into .combo-list, so there is no client
-// renderer to keep in step with the server's idea of a vendor. It renders no
-// shell — Phase 0's HX-Request handling skips shell construction, and this
-// template starts at .combo-list rather than at "top".
+// vendorSearch returns the vendor options for the request form's search box as
+// an HTML fragment, which htmx puts straight into the list (no page shell).
 func (a *App) vendorSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	vendors, err := a.st.SearchVendors(r.Context(), q, 0)
@@ -91,6 +88,7 @@ func (a *App) vendorSearch(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "vendor_combo_options", PageData{Title: "Vendors", Vendors: vendors, Query: q})
 }
 
+// vendorDetail shows one vendor's form, editable for readers with vendor:edit.
 func (a *App) vendorDetail(w http.ResponseWriter, r *http.Request) {
 	perms := a.auth.Permissions(auth.CurrentUser(r))
 	v, err := a.st.Vendor(r.Context(), pathID(r), perms)
@@ -101,12 +99,14 @@ func (a *App) vendorDetail(w http.ResponseWriter, r *http.Request) {
 	a.renderVendorForm(w, r, http.StatusOK, v, perms.Can("vendor", "edit"), "")
 }
 
+// vendorCreate saves a new vendor and opens it. A refusal the user can fix
+// shows the form again with the message and what was typed.
 func (a *App) vendorCreate(w http.ResponseWriter, r *http.Request) {
 	perms := a.auth.Permissions(auth.CurrentUser(r))
 	in := vendorInputFromForm(r, perms)
 	id, err := a.st.CreateVendor(r.Context(), auth.CurrentUser(r), in)
 	if err != nil {
-		if status := storeErrorStatus(err); status < http.StatusInternalServerError {
+		if status, ok := userError(err); ok {
 			a.renderVendorForm(w, r, status, vendorFromInput(0, in), true, friendly(err))
 			return
 		}
@@ -116,12 +116,15 @@ func (a *App) vendorCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/vendors/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
 
+// vendorUpdate saves changes to a vendor, like vendorCreate. The store applies
+// the bank-details permission again on its own.
 func (a *App) vendorUpdate(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	perms := a.auth.Permissions(auth.CurrentUser(r))
 	in := vendorInputFromForm(r, perms)
 	if err := a.st.UpdateVendor(r.Context(), auth.CurrentUser(r), id, in, perms); err != nil {
-		if status := storeErrorStatus(err); status < http.StatusInternalServerError && status != http.StatusNotFound {
+		// A vendor that no longer exists gets the not-found page, not the form.
+		if status, ok := userError(err); ok && status != http.StatusNotFound {
 			a.renderVendorForm(w, r, status, vendorFromInput(id, in), true, friendly(err))
 			return
 		}
@@ -131,6 +134,9 @@ func (a *App) vendorUpdate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/vendors/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
 
+// renderVendorForm draws the vendor form with status. The payment-mode choices
+// come from settings (keeping the vendor's current mode), and an error message
+// mentioning GSTIN is also shown next to the GSTIN field.
 func (a *App) renderVendorForm(w http.ResponseWriter, r *http.Request, status int, v store.Vendor, editable bool, errMsg string) {
 	title := "Add vendor"
 	if v.ID != 0 {
@@ -158,10 +164,9 @@ func (a *App) renderVendorForm(w http.ResponseWriter, r *http.Request, status in
 	})
 }
 
-// vendorInputFromForm reads the submitted record. The bank block is read at
-// all only for a caller holding vendor_bank:edit — CreateVendor takes no
-// permission set, so this is where a create is gated. UpdateVendor applies the
-// same rule again on its own; neither relies on the other.
+// vendorInputFromForm reads the posted vendor. The bank details are read only
+// when the reader holds vendor_bank:edit; this is the only check for a create,
+// since CreateVendor takes no permissions. UpdateVendor checks again itself.
 func vendorInputFromForm(r *http.Request, perms store.PermissionSet) store.VendorInput {
 	in := store.VendorInput{
 		Name:          r.FormValue("name"),
@@ -199,9 +204,9 @@ func vendorInputFromForm(r *http.Request, perms store.PermissionSet) store.Vendo
 	return in
 }
 
-// vendorFromInput re-renders a rejected submission without losing what was
-// typed. Bank rides along only when the submitter was allowed to send it, so a
-// failed save cannot echo a block back to someone who may not see it.
+// vendorFromInput turns a rejected submission back into a Vendor so the form
+// shows what was typed. Bank is set only if the submitter was allowed to send
+// it, so a failed save never shows bank details to someone who may not see them.
 func vendorFromInput(id int64, in store.VendorInput) store.Vendor {
 	return store.Vendor{
 		ID: id, Name: in.Name, DisplayName: in.DisplayName,
@@ -214,8 +219,10 @@ func vendorFromInput(id int64, in store.VendorInput) store.Vendor {
 	}
 }
 
-// vendorRelated keeps the supplier context while applying the reader's ordinary
-// request/payment scope. Vendor access alone never grants access to its records.
+// vendorRelated shows one tab of a vendor's related records: requests,
+// payments or history, 50 per page. Each tab needs the matching view
+// permission and applies the reader's normal data scope; access to the vendor
+// does not grant access to its records.
 func (a *App) vendorRelated(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	perms := a.auth.Permissions(u)
@@ -263,25 +270,3 @@ func (a *App) vendorRelated(w http.ResponseWriter, r *http.Request) {
 	}
 	a.render(w, r, "vendor_related", data)
 }
-
-func vendorPaymentModes(settings map[string]string, current string) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, value := range strings.Split(settings["payment_modes"], ",") {
-		value = strings.TrimSpace(value)
-		if value != "" && !seen[value] {
-			out = append(out, value)
-			seen[value] = true
-		}
-	}
-	// Preserve an older/custom value on unrelated edits, even if configuration
-	// no longer offers it for new vendors.
-	if current != "" && !seen[current] {
-		out = append(out, current)
-	}
-	return out
-}
-
-type PaymentModeChoice struct{ Value, Label string }
-
-func canonicalPaymentMode(value string) string { return store.CanonicalPaymentMode(value) }
