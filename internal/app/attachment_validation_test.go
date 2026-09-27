@@ -178,9 +178,9 @@ func TestAttachmentLimitConfigurationRejectsUnsupportedValues(t *testing.T) {
 	}
 }
 
-// form-6 (T10) — with attachments compulsory, a submit with no document and no
-// reason is refused, and a written reason unblocks it. The cited render-only
-// test proves the form asks; this proves the store enforces it on the real POST.
+// With attachments compulsory, a submit with no document and no reason is
+// refused, and a written reason unblocks it. This proves the rule is enforced on
+// the real POST, not only that the form asks.
 func TestCompulsoryAttachmentsAreEnforcedOnSubmit(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Att")

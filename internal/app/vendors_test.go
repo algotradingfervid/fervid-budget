@@ -101,14 +101,13 @@ func tableCell(t *testing.T, body, rowKey, label string) string {
 	return ""
 }
 
-// F-G-009 / F-G-010 — the vendor list has carried a "Paid this year" column that
-// joined payments to vendors by payee TEXT, and an "Open requests" column that
-// no query ever filled in, so it rendered Go's zero for every vendor and for the
-// footer total. Migration v10's payments.vendor_id and the open-request
-// sub-select are the store halves; this is the screen end to end.
+// The vendor list's "Paid this year" and "Open requests" columns and their
+// footer totals count real work: payments join to vendors by payments.vendor_id,
+// not by payee text, and open requests are counted by the store. This drives the
+// screen end to end.
 //
-// The rename is the decisive step: it is what used to zero the figure, because
-// the only link between a payment and its vendor was a copy of the name.
+// The rename is the decisive step: a join on the payee's name would lose the
+// money as soon as the vendor is renamed.
 func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("VendorTotals")
@@ -161,8 +160,7 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 		t.Fatalf("footer Open = %q, want 1", got)
 	}
 
-	// F-G-009 itself: rename the vendor, touch no payment, and the money stays
-	// with it. Under the old payee-text join this cell became ₹0.00.
+	// Rename the vendor, touch no payment, and the money stays with it.
 	const renamed = "Sundaram Electricals and Controls Pvt Ltd"
 	resp = s.postForm("/vendors/"+strconvFormat(vendorID), url.Values{
 		"name": {renamed}, "vendor_type": {"company"}, "status": {"active"},

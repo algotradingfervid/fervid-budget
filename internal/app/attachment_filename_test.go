@@ -157,9 +157,8 @@ func TestConcurrentSameOriginalAttachmentNameGetsDistinctPrivateFiles(t *testing
 	}
 }
 
-// F-A-05 / F-B-09 — request documents were linked to /attachments/{id}, which
-// reads payment_attachments. The link 404ed, or served an unrelated payment's
-// file under the request document's name.
+// Request documents link to their own route, not to /attachments/{id}, which
+// reads payment_attachments and would 404 or serve an unrelated payment's file.
 func TestRequestDocumentsLinkToTheirOwnRoute(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Doc links")

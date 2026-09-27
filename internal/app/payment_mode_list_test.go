@@ -34,8 +34,8 @@ var (
 	settlementModeSelect = regexp.MustCompile(`(?s)<select id="payment_mode" name="payment_mode" required>.*?</select>`)
 )
 
-// The historical edit form used to type its own six modes while settlement
-// offered the configured list; both now come from one Go list.
+// The historical edit form and settlement offer payment modes from the same Go
+// list.
 func TestPaymentEditFormOffersTheSettlementModeList(t *testing.T) {
 	s := newAppTestServer(t)
 	actor, head := s.seedHead("Mode list")

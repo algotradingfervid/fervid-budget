@@ -38,7 +38,7 @@ func assertTCardsLabelled(t *testing.T, body string) {
 	}
 }
 
-func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) { // G18
+func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recoverable")
 	seedRecoverable(t, s, headID, "PR-2026-000101", "icd", "Beacon Infra Ltd", "2027-09-30", "2026-08-15", 900000)
@@ -115,7 +115,7 @@ func TestRecoverablesListViewableByAccountsRole(t *testing.T) {
 	}
 }
 
-func TestRecoverableDetailScreen(t *testing.T) { // G17
+func TestRecoverableDetailScreen(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recoverable")
 	reqID := seedRecoverable(t, s, headID, "PR-2026-000097", "emd", "Coastal Power Utilities Ltd", "2026-06-30", "2026-02-12", 200000)
@@ -131,7 +131,7 @@ func TestRecoverableDetailScreen(t *testing.T) { // G17
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
-	// The comment box posts to Phase 2's existing conversation route, not a new one.
+	// The comment box posts to the request's existing conversation route, not a new one.
 	if !strings.Contains(body, fmt.Sprintf(`action="/requests/%d/comment"`, reqID)) {
 		t.Fatal("comment box must post to the Phase-2 request comment route")
 	}
@@ -177,7 +177,8 @@ func TestRecoverableListCSVRouteBeatsDetailWildcard(t *testing.T) {
 	}
 }
 
-func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) { // D6, V4
+// Recoverable categories are managed on the Configuration screen.
+func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recoverable")
 	seedRecoverable(t, s, headID, "PR-2026-000701", "emd", "Ridge Metro tender authority", "2026-11-30", "", 200000)
@@ -222,7 +223,9 @@ func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) { // D6, V4
 	}
 }
 
-func TestStandaloneRecoverableCategoriesScreenIsGone(t *testing.T) { // D6 proof of absence
+// There is no standalone recoverable-categories screen; Configuration is the
+// only place they are managed.
+func TestStandaloneRecoverableCategoriesScreenIsGone(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
 	resp := s.request(http.MethodGet, "/recoverable-categories", nil, "")
@@ -252,7 +255,7 @@ func TestRecoverableCategorySaveRequiresPermission(t *testing.T) {
 	_ = responseBody(t, resp)
 }
 
-func TestNoRecoverableRepaymentTracking(t *testing.T) { // X2
+func TestNoRecoverableRepaymentTracking(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
 	// No repayment surface exists: plausible repayment routes must be unrouted (404).
@@ -274,7 +277,7 @@ func TestNoRecoverableRepaymentTracking(t *testing.T) { // X2
 	_ = responseBody(t, resp)
 }
 
-func TestNoForfeitureRoute(t *testing.T) { // X4
+func TestNoForfeitureRoute(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
 	// Forfeiture / write-off is out of scope: no route or store method converts a
@@ -291,9 +294,8 @@ func TestNoForfeitureRoute(t *testing.T) { // X4
 		t.Fatalf("forfeiture POST status = %d, want 404/405 (no forfeiture/write-off path exists); body: %s", resp.StatusCode, body)
 	}
 	_ = responseBody(t, resp)
-	// And no store method either — the half the coverage matrix claimed and the
-	// test never checked (recoverables-9). Same shape as TestNoRefundRoute: s.st
-	// is *store.Store, so reflect enumerates every pointer-receiver method.
+	// And no store method either. Same shape as TestNoRefundRoute: s.st is
+	// *store.Store, so reflect enumerates every pointer-receiver method.
 	st := reflect.TypeOf(s.st)
 	for i := 0; i < st.NumMethod(); i++ {
 		name := strings.ToLower(st.Method(i).Name)
@@ -305,7 +307,7 @@ func TestNoForfeitureRoute(t *testing.T) { // X4
 	}
 }
 
-// Phase 5, Task 6: the reminder thresholds are admin-set data on the
+// The reminder thresholds are admin-set data on the
 // Configuration screen, not constants in the scheduler.
 func TestConfigurationRemindersFieldsetPersistsThresholds(t *testing.T) {
 	s := newAppTestServer(t)
@@ -330,18 +332,18 @@ func TestConfigurationRemindersFieldsetPersistsThresholds(t *testing.T) {
 	}
 }
 
-// F-G-016 / F-E-03 — the recoverables register is a second view over
-// payment_requests and applied no data scope at all, so recoverable_report:view
-// handed over every counterparty, amount, requester and repayment note in the
-// company regardless of the caller's request scope.
+// The recoverables register is a second view over payment_requests, so it
+// applies the caller's request data scope; otherwise recoverable_report:view
+// would hand over every counterparty, amount, requester and repayment note in
+// the company.
 func TestRecoverablesRegisterAppliesTheRequestDataScope(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, _ := s.seedHead("Recoverable scope")
 	other := s.seedRequester("other-rec@example.test", "Other Requester", "OtherRecPass123")
 	id := s.seedRecoverableRequest(951, other.ID, admin.ID, "icd", "Kalyani Steels", 500000)
 
-	// A role that pairs the register with a narrower request scope — exactly the
-	// role R1 exists to let an administrator build.
+	// A role that pairs the register with a narrower request scope, as an
+	// administrator may build in the role editor.
 	s.seedProbeUser("narrow@example.test", "Narrow Reader", "NarrowPass1234", "Register reader",
 		[]store.Grant{
 			{Resource: "recoverable_report", Action: "view"},
@@ -373,9 +375,8 @@ func TestRecoverablesRegisterAppliesTheRequestDataScope(t *testing.T) {
 	}
 }
 
-// F-E-04 — the CSV carried Status, Requester and Repayment Notes and the screen
-// carried none of them, so nobody who had only ever read the register knew the
-// download said more.
+// The register shows every column its CSV exports, including Status, Requester
+// and Repayment Notes, so the download never says more than the screen.
 func TestRecoverablesRegisterShowsEveryColumnItsCSVExports(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, _ := s.seedHead("Column parity")

@@ -10,9 +10,8 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// The 2026-09-25 fix wave, cluster D (settlement). One test per defect, each
-// written to fail on the code as it was and to pin the behaviour the specs and
-// the owner decisions ask for.
+// Settlement screens: who holds a request, what each screen offers, and what a
+// confirmation may say.
 
 // recordPartial reserves the request as the signed-in accountant and records a
 // short payment against it, the way the entry screen does.
@@ -25,7 +24,7 @@ func (s *appTestServer) recordPartial(reqID, headID, paid int64) {
 	requireStatus(s.t, s.postPayment(form), http.StatusSeeOther)
 }
 
-// settlement-2: opening the entry screen for an approved request nobody holds
+// Opening the entry screen for an approved request nobody holds
 // is not a lost race. The screen says nobody holds it and offers to take it.
 func TestUnclaimedEntryScreenSaysNobodyHoldsItAndOffersToTake(t *testing.T) {
 	s := newAppTestServer(t)
@@ -50,16 +49,15 @@ func TestUnclaimedEntryScreenSaysNobodyHoldsItAndOffersToTake(t *testing.T) {
 	body = s.get(fmt.Sprintf("/payments/new?request=%d", reqID))
 	mustContain(t, "taken entry screen", body, "Deepak Menon took this request before you")
 	// …in the words every other screen uses for a held request, not a pill of
-	// its own (settlement-7 review: "Processing — {holder}").
+	// its own ("Processing — {holder}").
 	mustContain(t, "taken entry screen", body, `class="pill processing">With Accounts — taken by Deepak Menon</span>`)
 	mustNotContain(t, "taken entry screen", body, "Processing —")
 }
 
-// settlement-7/-8 review: a few lesser screens built their pill from the
-// status alone, so they could neither name the holder nor show "Partial —
-// under discussion". They all go through statusPill now: the recoverables
-// register and detail, the requester's cancel screen, the similar-request card
-// on the new-request form, the holder's own payment entry screen, and the
+// The lesser screens build their pill through statusPill too, so they can name
+// the holder and show "Partial — under discussion": the recoverables register
+// and detail, the requester's cancel screen, the similar-request card on the
+// new-request form, the holder's own payment entry screen, and the
 // just-submitted screen.
 func TestLesserScreensShareTheStatusPill(t *testing.T) {
 	s := newAppTestServer(t)
@@ -114,7 +112,7 @@ func TestLesserScreensShareTheStatusPill(t *testing.T) {
 	mustContain(t, "similar-request card", card, "PR-2026-000003", `class="pill processing">With Accounts — taken by Deepak Menon</span>`)
 }
 
-// settlement-3: a partial review waiting on the manager is listed where the
+// A partial review waiting on the manager is listed where the
 // manager looks — Home, the approvals queue and "Needs me" — not only behind a
 // notification link.
 func TestManagerHomeAndApprovalsQueueListPartialReviews(t *testing.T) {
@@ -140,8 +138,7 @@ func TestManagerHomeAndApprovalsQueueListPartialReviews(t *testing.T) {
 	mustContain(t, "needs-me", needs, "PR-2026-000001")
 }
 
-// settlement-4: phase-3 spec §6 — the request detail offers "Record payment"
-// to Accounts when the request is approved, unclaimed and not on hold.
+// The request detail offers "Record payment" to Accounts when the request is approved, unclaimed and not on hold.
 func TestRequestDetailOffersRecordPaymentToAccounts(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Detail")
@@ -170,7 +167,7 @@ func TestRequestDetailOffersRecordPaymentToAccounts(t *testing.T) {
 	mustNotContain(t, "requester detail", body, "record-payment")
 }
 
-// settlement-5: "Payment saved" is the confirmation of a
+// "Payment saved" is the confirmation of a
 // write, so it appears once, on the redirect from the confirming POST. A later
 // visit shows the payment; a refused repeat and a blocked edit say what really
 // happened.
@@ -222,7 +219,7 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 	mustNotContain(t, "the visit after the blocked edit", s.get(loc), "cannot be edited")
 }
 
-// settlement-6: on the htmx path the sheet sits inside the live entry form, so
+// On the htmx path the sheet sits inside the live entry form, so
 // its closers dismiss it in place and the typed values stay. On the no-JS page
 // the same anchors still navigate.
 func TestSettlementSheetClosersDismissInPlaceOnTheHtmxPath(t *testing.T) {
@@ -242,7 +239,7 @@ func TestSettlementSheetClosersDismissInPlaceOnTheHtmxPath(t *testing.T) {
 	mustNotContain(t, "no-JS page", page, `data-close="settle-sheet"`)
 }
 
-// settlement-7: a processing request names who holds it, on the pill and in
+// A processing request names who holds it, on the pill and in
 // the waiting line, for everybody but the holder — who reads "you".
 func TestProcessingRequestNamesTheHolderEverywhere(t *testing.T) {
 	s := newAppTestServer(t)
@@ -263,7 +260,7 @@ func TestProcessingRequestNamesTheHolderEverywhere(t *testing.T) {
 	mustContain(t, "holder's own view", mine, "With Accounts — taken by you", `class="waiting you">Waiting on you<`)
 }
 
-// settlement-8: a concern the manager raised is displayed as "Partial — under
+// A concern the manager raised is displayed as "Partial — under
 // discussion", waiting on the manager and Accounts, until the holder answers.
 // The status never changes.
 func TestConcernDisplaysAsUnderDiscussionUntilAccountsAnswers(t *testing.T) {
@@ -303,7 +300,7 @@ func TestConcernDisplaysAsUnderDiscussionUntilAccountsAnswers(t *testing.T) {
 	mustNotContain(t, "after the answer", after, "under discussion", "raised a concern")
 }
 
-// queue-1: a non-holding accountant on the stale-reservation screen is told
+// A non-holding accountant on the stale-reservation screen is told
 // they cannot act and who can, instead of an empty "Pick one" card under a
 // banner addressed to "you".
 func TestStaleScreenTellsANonHolderWhoCanAct(t *testing.T) {
@@ -329,7 +326,7 @@ func TestStaleScreenTellsANonHolderWhoCanAct(t *testing.T) {
 	mustContain(t, "holder's stale screen", body, "<h2>Pick one</h2>", "Carry on and record the payment", "only you or an authorised colleague")
 }
 
-// queue-2: a payer who may take a request but not settle a payment is not
+// A payer who may take a request but not settle a payment is not
 // offered "Payment settled →" — a button whose POST answers 403 in silence.
 func TestEntryScreenWithholdsSettleFromAPayerWithoutTheVerb(t *testing.T) {
 	s := newAppTestServer(t)
@@ -356,7 +353,7 @@ func TestEntryScreenWithholdsSettleFromAPayerWithoutTheVerb(t *testing.T) {
 	mustContain(t, "accounts entry screen", body, "Payment settled")
 }
 
-// partial-1: the partial screens name the payee, keep the manager's prompt for
+// The partial screens name the payee, keep the manager's prompt for
 // the manager, and stop calling a written-off balance "still owed".
 func TestPartialScreensNameThePayeeAndStopOwingAfterAcceptance(t *testing.T) {
 	s := newAppTestServer(t)
@@ -394,7 +391,7 @@ func TestPartialScreensNameThePayeeAndStopOwingAfterAcceptance(t *testing.T) {
 	mustNotContain(t, "closed payment", payment, "Still owed")
 }
 
-// PAY-D03: processing_by is retained as history after payment. It must not
+// processing_by is retained as history after payment. It must not
 // offer reservation mutation on either terminal status.
 func TestPaidQueueOffersViewAndOnlyActiveReservationsOfferReassign(t *testing.T) {
 	s := newAppTestServer(t)
@@ -418,8 +415,8 @@ func TestPaidQueueOffersViewAndOnlyActiveReservationsOfferReassign(t *testing.T)
 	mustContain(t, "processing queue", processing, fmt.Sprintf(`href="/requests/%d/reservation">Reassign</a>`, active))
 }
 
-// PAY-D04: recreate a stale confirmation across a real reassignment. The
-// rejected POST must show the current holder, retain the accountant's inputs,
+// A settlement confirmation that goes stale across a real reassignment is
+// rejected: the POST must show the current holder, retain the accountant's inputs,
 // remove the mutation affordance, and leave both money and ownership intact.
 func TestStaleSettlementConfirmationShowsCurrentHolderAndCannotResubmit(t *testing.T) {
 	s := newAppTestServer(t)

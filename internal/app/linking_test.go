@@ -12,7 +12,7 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// Phase 3 — payment linking, reservation and settlement, at the HTTP layer.
+// Payment linking, reservation and settlement, at the HTTP layer.
 //
 // Every test here drives the product the way an accountant does: take a request
 // out of the queue, record what left the bank, say whether that settles it. The
@@ -20,7 +20,7 @@ import (
 // them, and that the one endpoint which must not write, does not write.
 
 // ---------------------------------------------------------------------------
-// Task 11 — reservation entry point, permission verbs, conflict screen
+// Reservation entry point, permission verbs, conflict screen
 // ---------------------------------------------------------------------------
 
 func TestReservationEntryPointReservesAndRedirects(t *testing.T) {
@@ -40,7 +40,8 @@ func TestReservationEntryPointReservesAndRedirects(t *testing.T) {
 	}
 }
 
-// TestReservationConflictRendersScreenNotErrorPage is the G15 proof.
+// Losing a reservation race shows a conflict screen that names the winner and
+// says nothing was saved, not the generic error page.
 func TestReservationConflictRendersScreenNotErrorPage(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Taken")
@@ -82,7 +83,7 @@ func TestReservationConflictRendersScreenNotErrorPage(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 12 — the accounts queue
+// The accounts queue
 // ---------------------------------------------------------------------------
 
 func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
@@ -147,11 +148,10 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 	_ = open
 }
 
-// urgent-1: once approved, an urgent request is Accounts' to pay, and the design
-// says "Urgent requests surface here" — but the queue query never selected the
-// flag, so neither the queue nor the Accounts dashboard area could mark it, and
-// it sorted behind every older ordinary request.
-func TestAccountsQueueMarksAndSurfacesUrgentRequests(t *testing.T) { // N6
+// Once approved, an urgent request is Accounts' to pay: the queue, the Accounts
+// area of the dashboard and the payment picker mark it urgent and list it ahead
+// of older ordinary requests.
+func TestAccountsQueueMarksAndSurfacesUrgentRequests(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("UrgentQueue")
 	// Raised by someone else, so the only place the accountant's dashboard can
@@ -202,7 +202,7 @@ func TestAccountsQueueSearchNarrowsRows(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 13 — the request picker
+// The request picker
 // ---------------------------------------------------------------------------
 
 func TestPaymentPickerRendersComboAndTakenRows(t *testing.T) {
@@ -230,7 +230,7 @@ func TestPaymentPickerRendersComboAndTakenRows(t *testing.T) {
 		"Reserved by Deepak Menon",
 		"Recently paid by you",
 	)
-	// The picker promises no control this phase does not build: the mockup's
+	// The picker promises no control that does not exist: the mockup's
 	// "an administrator can re-enable direct entry in Configuration" is absent.
 	if strings.Contains(body, "re-enable direct entry") {
 		t.Fatalf("picker promises a Configuration toggle that does not exist:\n%s", body)
@@ -293,7 +293,7 @@ func TestPaymentPickerListsOnlyYourOwnRecentPayments(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 14 — the payment entry screen
+// The payment entry screen
 // ---------------------------------------------------------------------------
 
 func TestPaymentEntryScreenShowsReservationApprovalAndRule(t *testing.T) {
@@ -319,7 +319,7 @@ func TestPaymentEntryScreenShowsReservationApprovalAndRule(t *testing.T) {
 		"Nothing is saved until you confirm",
 		`name="request_id" value="`,
 		"1,00,000.00",
-		// S14: the request's own figures arrive prefilled.
+		// The request's own figures arrive prefilled.
 		"Acme Landlord",
 	)
 	// A <details> is not an acceptable settlement control (design system rule).
@@ -349,8 +349,8 @@ func TestPaymentEntryRefusesSomeoneElsesReservation(t *testing.T) {
 	}
 }
 
-// Historical, request-less payments stay editable (X6) — the linked entry
-// screen replaced the create form, not the ledger's edit screen.
+// Historical, request-less payments stay editable: the ledger's edit screen
+// still renders for them.
 func TestHistoricalPaymentEditFormStillRenders(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Historical")
@@ -390,8 +390,8 @@ func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 15 — the settlement preview. D8/G16: it renders the decision and writes
-// nothing. The only writer in the whole flow is POST /payments.
+// The settlement preview renders the decision and writes nothing. The only
+// writer in the whole flow is POST /payments.
 // ---------------------------------------------------------------------------
 
 func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
@@ -416,7 +416,7 @@ func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
 		`class="banner info"`, "cannot be edited or cancelled",
 		`value="settled"`, `value="partial"`,
 	)
-	// D8/G16: nothing was persisted, and the request is still merely reserved.
+	// Nothing was persisted, and the request is still merely reserved.
 	var payments int
 	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&payments); err != nil {
 		t.Fatal(err)
@@ -427,8 +427,7 @@ func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
 	if got := requestStatusApp(t, s, reqID); got != "processing" {
 		t.Fatalf("status after preview = %q, want processing", got)
 	}
-	// The plan names this table "attachments"; the schema calls it
-	// payment_attachments. Same assertion, real table.
+	// No attachment was stored either.
 	var atts int
 	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM payment_attachments`).Scan(&atts); err != nil {
 		t.Fatal(err)
@@ -484,9 +483,9 @@ func TestSettlementPreviewRefusesWhenTheReservationIsGone(t *testing.T) {
 	}
 }
 
-// Task 16 — the settlement lands on the payment, and the payment carries the
-// whole story: what was approved, what left the bank, who did each step, and
-// nothing that would let anybody change it afterwards (S10, S12, S13, Q4).
+// The settlement lands on the payment, and the payment carries the whole
+// story: what was approved, what left the bank, who did each step, and nothing
+// that would let anybody change it afterwards.
 
 func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 	s := newAppTestServer(t)
@@ -495,7 +494,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
-	// Settle for less than approved (S10).
+	// Settle for less than approved.
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "partial_reason": {"Agreed TDS deduction"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N221260725004417"}}
 	resp := s.postPayment(form)
 	requireStatus(t, resp, http.StatusSeeOther)
@@ -520,7 +519,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 		"Full trail, request to payment",
 		`class="action-bar"`,
 	)
-	// S12: no edit or void control on a linked payment, and the route refuses too.
+	// A linked payment has no edit or void control, and the route refuses too.
 	if strings.Contains(body, "/edit") || strings.Contains(body, "/void") {
 		t.Fatalf("linked payment offers a mutation control:\n%s", body)
 	}
@@ -532,7 +531,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 		t.Fatalf("linked payment void accepted: %d", resp.StatusCode)
 	}
 
-	// Q4: the request page shows the outcome and links to the payment.
+	// The request page shows the outcome and links to the payment.
 	reqBody := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(reqBody, `class="compare"`) || !strings.Contains(reqBody, "98,000.00") || !strings.Contains(reqBody, loc) {
 		t.Fatalf("request outcome missing the comparison or the payment link:\n%s", reqBody)
@@ -582,10 +581,9 @@ func TestPartialSettlementRoutesToReview(t *testing.T) {
 	}
 }
 
-// S12 again, from the other two directions the reviewer found open: the ledger
-// row and the edit URL. The detail screen already hides both controls because a
-// control the route would reject is a lie — but so is a form the store would
-// reject, and so is an Edit button three columns from it.
+// A payment linked to a request is immutable everywhere, not only on its detail
+// screen: the ledger row offers no Edit button and the edit URL is refused. A
+// control the store would reject is a lie wherever it appears.
 func TestLinkedPaymentIsImmutableInTheLedgerAndOnItsEditRoute(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Immutable")
@@ -593,7 +591,7 @@ func TestLinkedPaymentIsImmutableInTheLedgerAndOnItsEditRoute(t *testing.T) {
 	_, linkedID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
 
 	// A payment recorded before this module has no request behind it and stays
-	// editable (X6), so the ledger has to tell the two apart rather than lock
+	// editable, so the ledger has to tell the two apart rather than lock
 	// the whole screen.
 	histID, err := s.st.CreatePayment(s.ctx, admin, store.PaymentInput{HeadID: headID, PaidOn: "2026-07-10", Amount: 12345, VendorPayee: "Legacy Vendor", PaymentMode: "cash"})
 	if err != nil {
@@ -620,7 +618,7 @@ func TestLinkedPaymentIsImmutableInTheLedgerAndOnItsEditRoute(t *testing.T) {
 }
 
 // The seeded Accounts role is the only non-admin role designed to process a
-// payment. If it cannot reserve, nothing in this phase is reachable without
+// payment. If it cannot reserve, nothing in the payment flow is reachable without
 // being an administrator.
 func TestSeededAccountsRoleTakesARequestForProcessing(t *testing.T) {
 	s := newAppTestServer(t)
@@ -643,16 +641,15 @@ func TestSeededAccountsRoleTakesARequestForProcessing(t *testing.T) {
 	}
 }
 
-// The queue gates its take button on reservation:reserve; the picker offered
-// one to anybody who could open it, and the POST behind it answers 403.
+// Like the queue, the picker offers a Take button only to callers holding
+// reservation:reserve; anyone else would get a 403 from the POST behind it.
 func TestPickerOffersNoTakeControlWithoutTheReservationGrant(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("PickerGate")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
 	// A request scope of All: the picker reads the caller's request scope, and
-	// since fixwave rbac-2 an empty scope (the editor's "None") lists nothing
-	// rather than everything. The case under test is the missing reservation
-	// grant, not the missing scope.
+	// an empty scope (the editor's "None") lists nothing. The case under test
+	// is the missing reservation grant, not the missing scope.
 	s.seedProbeUser("ledger@example.test", "Ledger", "LedgerPassword123", "Ledger only", []store.Grant{
 		{Resource: "payment", Action: "view"}, {Resource: "payment", Action: "create"},
 	}, []store.ScopeGrant{{Resource: "request", Scope: store.ScopeAll}})
@@ -668,7 +665,7 @@ func TestPickerOffersNoTakeControlWithoutTheReservationGrant(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusForbidden)
 }
 
-// Q4 read by the audience it is for. The requester holds no payment grant at
+// The payment outcome, read by the audience it is for. The requester holds no payment grant at
 // all, so the outcome has to be on the request itself — and the link beside it
 // must not be offered to somebody the payment route would turn away.
 func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
@@ -694,12 +691,9 @@ func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
 // the same row scope /requests/{id} obeys, or payment:view becomes a way round
 // it.
 //
-// The refusal is 404 and not 403, which is the later half of the same rule: a
-// 403 here and a 404 for a missing id would let a caller walk payments.id and
-// learn which payments exist from the difference. That is exactly the oracle
-// F-G-002 closed on /requests/{id} and Wave 3 closed on both attachment routes;
-// this route was never in that finding's scope, so it kept the 403 until two
-// spec agents arrived at it independently.
+// The refusal is 404 and not 403: a 403 here and a 404 for a missing id would
+// let a caller walk payments.id and learn which payments exist from the
+// difference. /requests/{id} and the attachment routes follow the same rule.
 func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Scope")
@@ -710,8 +704,8 @@ func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Payment scope All and no request scope: the ledger is fully theirs, the
-	// request behind a linked row is not. (Since fixwave rbac-2 an empty
-	// payment scope reads no ledger row at all, so the scope is explicit.)
+	// request behind a linked row is not. (An empty payment scope reads no
+	// ledger row at all, so the scope is explicit.)
 	s.seedProbeUser("auditor@example.test", "Auditor", "AuditorPassword123", "Ledger reader", []store.Grant{
 		{Resource: "payment", Action: "view"},
 	}, []store.ScopeGrant{{Resource: "payment", Scope: store.ScopeAll}})
@@ -732,10 +726,9 @@ func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", histID), nil, ""), http.StatusOK)
 }
 
-// The trail's head already names the actor. Every payment_request audit summary
-// is written to start with the same name — the payment-side ones since the
-// detail thread started naming who held, reserved and settled (history-1) — so
-// the body would repeat it.
+// The trail's head already names the actor, and every payment_request audit
+// summary starts with that same name, so the body drops it rather than repeat
+// it.
 func TestTrailBodyDropsTheActorNameTheHeadAlreadyCarries(t *testing.T) {
 	for _, tc := range []struct{ name, actor, summary, want string }{
 		{"request side", "Priya Nair", "Priya Nair approved request PR-2026-000001 for ₹1,00,000.00", "Approved request PR-2026-000001 for ₹1,00,000.00"},
@@ -803,7 +796,7 @@ func TestPaymentDetailHeadTrailAndProofReadLikeTheMockup(t *testing.T) {
 	}
 }
 
-// The manager's side of a partial settlement (S11, G14). Two decisions, each in
+// The manager's side of a partial settlement. Two decisions, each in
 // its own .overlay > .sheet, and the accept lands in a terminal state that is
 // visibly not a clean "completed".
 func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
@@ -819,7 +812,7 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	mustContain(t, "partial review", body,
 		`class="req-head"`, `class="pill partial"`, `class="waiting you"`,
 		// "payee", as every other screen says: the request may be a
-		// reimbursement owed to an employee (partial-1).
+		// reimbursement owed to an employee.
 		`class="compare"`, "Still owed to the payee", "35,000.00",
 		`class="banner warn"`, "Vendor delivered 700 of the 1,000 copies.",
 		`class="pill neutral no-dot"`, "Cannot be edited",
@@ -840,7 +833,7 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	if got := requestStatusApp(t, s, reqID); got != "partial_review" {
 		t.Fatalf("status after concern = %q, want partial_review", got)
 	}
-	// Accepting closes it into the distinct terminal state (G14).
+	// Accepting closes it into the distinct terminal state.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", reqID), url.Values{"note": {"Balance invoiced separately."}}), http.StatusSeeOther)
 	if got := requestStatusApp(t, s, reqID); got != "completed_partial" {
 		t.Fatalf("status after accept = %q, want completed_partial (G14)", got)
@@ -942,7 +935,7 @@ func TestPartialReviewThreadIsOneChronologicalStream(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 18 — the release / reassign screen (S6, S7, G11, G12)
+// The release / reassign screen
 // ---------------------------------------------------------------------------
 
 func TestReservationScreenReleaseAndReassign(t *testing.T) {
@@ -967,13 +960,13 @@ func TestReservationScreenReleaseAndReassign(t *testing.T) {
 		`class="action-bar"`, `<ol class="thread">`,
 	)
 
-	// G12: release without a reason is refused and the reservation survives.
+	// Release without a reason is refused and the reservation survives.
 	resp := s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{"action": {"release"}, "confirm": {"on"}})
 	if resp.StatusCode < http.StatusBadRequest {
 		t.Fatalf("release without a reason accepted: %d", resp.StatusCode)
 	}
 	_ = responseBody(t, resp)
-	// S7: confirmation is still required.
+	// Confirmation is still required.
 	resp = s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{"action": {"release"}, "reason": {"Bank details unconfirmed"}})
 	if resp.StatusCode < http.StatusBadRequest {
 		t.Fatalf("release without confirmation accepted: %d", resp.StatusCode)
@@ -983,7 +976,7 @@ func TestReservationScreenReleaseAndReassign(t *testing.T) {
 		t.Fatalf("status after refused releases = %q, want processing", got)
 	}
 
-	// G11: reassign keeps it in processing and moves the holder.
+	// Reassign keeps it in processing and moves the holder.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{
 		"action": {"reassign"}, "to_user_id": {strconvFormat(deepakID)}, "reason": {"Going on leave"}, "confirm": {"on"},
 	}), http.StatusSeeOther)
@@ -1016,10 +1009,9 @@ func TestReassignRefusesWithoutATargetServerSide(t *testing.T) {
 	}
 }
 
-// S6 — the plan's tests prove every way a release is refused; this proves the
-// one way it is granted. A release that carries a reason and the confirmation
-// puts the request back in the open queue, drops the holder, and lands the
-// accountant on the queue rather than on a request they no longer hold.
+// A release that carries a reason and the confirmation puts the request back in
+// the open queue, drops the holder, and lands the accountant on the queue rather
+// than on a request they no longer hold.
 func TestReleaseReturnsTheRequestToTheQueue(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Released")
@@ -1064,9 +1056,8 @@ func reservationHolder(t *testing.T, s *appTestServer, reqID int64) int64 {
 }
 
 // The accounts queue and the reservation-conflict screen both link here behind
-// reservation:reassign alone, and reassign and release are two independent cells
-// of the permission matrix. A route gated on release answered 403 to exactly the
-// reader those two links were written for.
+// reservation:reassign alone, and reassign and release are independent
+// permissions, so the screen must open for a role that holds only reassign.
 func TestReservationScreenOpensForAReassignOnlyRole(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("ReassignOnly")
@@ -1106,8 +1097,8 @@ func TestReservationScreenOpensForAReassignOnlyRole(t *testing.T) {
 	}
 }
 
-// Holding a reservation verb somewhere is not permission to read this request
-// (Q5/R6). The screen and both of its POSTs answer to the same data scope the
+// Holding a reservation verb somewhere is not permission to read this request.
+// The screen and both of its POSTs answer to the same data scope the
 // request's own detail page does.
 func TestReservationScreenRefusesARequestTheCallerMayNotRead(t *testing.T) {
 	s := newAppTestServer(t)
@@ -1129,8 +1120,7 @@ func TestReservationScreenRefusesARequestTheCallerMayNotRead(t *testing.T) {
 
 	// All four answer 404 rather than 403: every one routes through
 	// loadViewableRequest, and an out-of-scope row has to be indistinguishable
-	// from a row that does not exist or the status code enumerates the id space
-	// (F-G-002).
+	// from a row that does not exist or the status code enumerates the id space.
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""), http.StatusNotFound)
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""), http.StatusNotFound)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{
@@ -1178,9 +1168,9 @@ func TestReassignOffersOnlyPeopleWhoCanWorkTheAccountsQueue(t *testing.T) {
 }
 
 // HTML makes the first submit button in tree order the form's default button,
-// and hidden — unlike disabled — does not exempt it. With Reassign first,
-// pressing Enter on the checked "Release it" radio posted to /reassign with no
-// target and lost the typed reason on a 400.
+// and hidden — unlike disabled — does not exempt it. Release must come first,
+// so pressing Enter on the checked "Release it" radio releases rather than
+// posting to /reassign with no target and losing the typed reason.
 func TestReleaseIsTheReservationFormsDefaultButton(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("DefaultButton")
@@ -1199,8 +1189,8 @@ func TestReleaseIsTheReservationFormsDefaultButton(t *testing.T) {
 	}
 }
 
-// The reserve bar localises its clock and the trail underneath it did not, so
-// one screen printed two times five and a half hours apart for one event.
+// The trail's timestamps are localised like the reserve bar's, so one screen
+// never prints two different times for one event.
 func TestTrailTimestampsAgreeWithTheReserveBar(t *testing.T) {
 	when := time.Date(2026, 7, 26, 16, 44, 0, 0, time.UTC)
 	if got, want := dateText(when), when.Local().Format("2006-01-02 15:04"); got != want {
@@ -1218,9 +1208,9 @@ func TestTrailTimestampsAgreeWithTheReserveBar(t *testing.T) {
 }
 
 // Approval reassignment (swapping the approver of a pending request) and
-// reservation reassignment (moving who is paying it) wrote the same audit action
-// on the same entity, so an approver swap would have read as "X reassigned the
-// reservation" in this screen's history.
+// reservation reassignment (moving who is paying it) write different audit
+// actions, so an approver swap never reads as "X reassigned the reservation" in
+// this screen's history.
 func TestApprovalReassignmentIsNotAReservationEvent(t *testing.T) {
 	kept := reservationTrail([]store.AuditEntry{
 		{Action: "process"}, {Action: "approve"}, {Action: "approval_reassign"},
@@ -1242,12 +1232,11 @@ func TestApprovalReassignmentIsNotAReservationEvent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 19 — hold, unhold and the stale reservation screen (L7, Q6)
+// Hold, unhold and the stale reservation screen
 // ---------------------------------------------------------------------------
 
-// The plan wrote these two against "/requests/to-pay". That route was never
-// built: the accounts queue shipped as GET /accounts-queue with ?tab=, so the
-// queue reads below are the same two assertions against the route that exists.
+// Holding an approved request moves it from the takeable tab of the accounts
+// queue to the hold tab, and unholding moves it back.
 func TestHoldAndUnholdMoveTheRequestThroughTheQueue(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Hold")
@@ -1258,7 +1247,7 @@ func TestHoldAndUnholdMoveTheRequestThroughTheQueue(t *testing.T) {
 	if !strings.Contains(body, "PR-2026-000001") {
 		t.Fatalf("approved request missing from the queue:\n%s", body)
 	}
-	// Hold takes it out of the takeable tab (L7) and onto the hold tab.
+	// Hold takes it out of the takeable tab and onto the hold tab.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
 	body = s.get("/accounts-queue")
 	if strings.Contains(body, "Take for processing") {
@@ -1362,8 +1351,8 @@ func TestAskingForCancellationOnAHeldRequestClearsTheHold(t *testing.T) {
 }
 
 // The on-hold state carries exactly one banner in
-// mockups/screens/request-on-hold.html. The approved lock stacked above it told
-// the requester that "payment freezes while your approver decides" when the
+// mockups/screens/request-on-hold.html. The approved-lock banner must not stack
+// above it: it would say "payment freezes while your approver decides" when the
 // approver is deciding nothing — Accounts is holding it.
 func TestTheHoldBannerIsTheOnlyBannerOnAHeldRequest(t *testing.T) {
 	s := newAppTestServer(t)
@@ -1391,7 +1380,7 @@ func TestTheHoldBannerIsTheOnlyBannerOnAHeldRequest(t *testing.T) {
 	}
 }
 
-// Q6 is only a screen if something links to it. The queue is the one place that
+// The stale-reservation screen is only reachable if something links to it. The queue is the one place that
 // knows which reservation has crossed the one-day mark, so the mockup's own
 // Resume on that row goes to the nudge, not back to the payment form.
 func TestTheQueueLinksAStaleReservationToTheNudgeScreen(t *testing.T) {
@@ -1521,9 +1510,9 @@ func TestTheVendorNameSurvivesTheWholeSettlementFlow(t *testing.T) {
 	}
 }
 
-// F-D-02 — ReserveRequest refuses for three reasons and the conflict screen
-// reported all three as "Someone else took this request before you", about a
-// request nobody held.
+// ReserveRequest refuses for three reasons, and the conflict screen names the
+// real one rather than always saying "Someone else took this request before
+// you".
 func TestTheConflictScreenNamesTheRealRefusal(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Conflict causes")

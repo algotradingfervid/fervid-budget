@@ -16,9 +16,9 @@ import (
 // sides of the separator.
 var danglingSlash = regexp.MustCompile(`(>\s*/\s*[^\s<])|(>\s*/\s*<)|([^\s>]\s/\s*(<|·))`)
 
-// recoverables-2 / grid-2. A recoverable is a deposit, not budget spend: the
-// grid's totals already left it out, but its Recent Payments panel listed it,
-// and every payment screen printed its missing project and head as a bare "/".
+// A recoverable is a deposit, not budget spend: it stays out of the grid's
+// totals and its Recent Payments panel, and payment screens name it rather than
+// printing its missing project and head as a bare "/".
 func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("RecGrid")
@@ -82,10 +82,9 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 	}
 }
 
-// grid-1 (F-G-032 wording). A grid:view caller without payment:view was told
-// "No payments in this month." beside a head the same page showed as paid. The
-// panel is not theirs, so it is not rendered at all (PE-03: "expect 200 without
-// `Recent Payments for`").
+// A grid:view caller without payment:view does not see the Recent Payments panel
+// at all, rather than being told "No payments in this month." beside a head the
+// same page shows as paid.
 func TestGridHidesThePaymentsPanelRatherThanClaimingItIsEmpty(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("GridPanel")
@@ -105,7 +104,7 @@ func TestGridHidesThePaymentsPanelRatherThanClaimingItIsEmpty(t *testing.T) {
 	}
 }
 
-// grid-htmx-1 (BV20, §6). The grid's filters swap the grid in over htmx and
+// The grid's filters swap the grid in over htmx and
 // push the filtered URL; the same form still submits as a plain GET without
 // JavaScript. An htmx request is answered without the app shell, so the swap
 // carries the grid and not a second sidebar.
@@ -160,7 +159,7 @@ func TestGridFiltersSwapOverHTMXAndStillWorkWithoutIt(t *testing.T) {
 	}
 }
 
-// ui-1 (a). Counts next to nouns are pluralised, so a one-head project reads
+// Counts next to nouns are pluralised, so a one-head project reads
 // "1 head" and a one-head month close reads "1 head is unpaid".
 func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 	s := newAppTestServer(t)

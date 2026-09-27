@@ -10,10 +10,8 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// F-E-02 / F-B-17 — the category picker was six literal options unconnected to
-// the table, so an admin-added category could never be selected and a
-// deactivated one was still offered and only refused after the form was filled
-// in. F-E-02's data-integrity half is here too: an unknown code is no longer
+// The category picker lists the live categories from the table: an admin-added
+// category is offered, a deactivated one is not, and an unknown code is never
 // silently rewritten to "emd".
 func TestRecoverableCategoryPickerRendersTheLiveCategories(t *testing.T) {
 	s := newAppTestServer(t)
@@ -40,7 +38,7 @@ func TestRecoverableCategoryPickerRendersTheLiveCategories(t *testing.T) {
 	}
 
 	s.loginAdmin()
-	// The picker lives on the deposit-or-guarantee form since form-1: an employee
+	// The picker lives on the deposit-or-guarantee form: an employee
 	// advance is always in the Employee advance category, so that form states
 	// its category rather than offering the list.
 	body := s.get("/requests/new?type=recoverable")
@@ -96,10 +94,9 @@ func TestNormalizeRecoverableCategoryNeverSubstitutesACode(t *testing.T) {
 	}
 }
 
-// F-E-06 — recoverable_category:delete has been grantable since Phase 4 with no
-// route, no control and no store function behind it. This is the door: the
-// control, the verb it is gated on, and the refusal that names the reason rather
-// than reporting a permission problem the caller does not have.
+// recoverable_category:delete is a grantable permission, so it has a door: a
+// delete control gated on that verb, and a refusal that names the real reason
+// rather than reporting a permission problem the caller does not have.
 func TestRecoverableCategoryDeleteHasADoorAndNamesItsRefusal(t *testing.T) {
 	s := newAppTestServer(t)
 	admin := s.admin()
@@ -184,10 +181,9 @@ func recoverableCategoryID(t *testing.T, s *appTestServer, name string) int64 {
 	return 0
 }
 
-// recoverables-7 (V8) — every recoverable category may link a project; only the
-// ones that require one insist on it. An ICD or a security deposit used to have
-// no project field at all, so it read "Not project linked" with no way to say
-// otherwise.
+// Every recoverable category may link a project; only the ones that require one
+// insist on it. An ICD or a security deposit can still say which project it
+// belongs to.
 func TestEveryRecoverableCategoryMayLinkAProject(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Link")
@@ -248,10 +244,10 @@ func TestEveryRecoverableCategoryMayLinkAProject(t *testing.T) {
 	}
 }
 
-// recoverables-5 (V4) — an existing category's name and rule are editable on the
-// Configuration screen, in the row, audited. They used to be hidden inputs, so
-// an in-use category's rule could only change by delete-and-recreate, which the
-// store refuses while any request names it.
+// An existing category's name and rule are editable in its row on the
+// Configuration screen, and audited, so an in-use category's rule can change
+// without delete-and-recreate (which the store refuses while any request names
+// it).
 func TestRecoverableCategoriesAreEditableInPlace(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
@@ -312,10 +308,10 @@ func TestRecoverableCategoriesAreEditableInPlace(t *testing.T) {
 	}
 }
 
-// form-1, review round 2 — retiring the Employee advance category made
-// requestEditData mistake every ordinary employee advance for a legacy deposit,
-// and tell its requester it "was recorded under the Employee advance category
-// before deposits and guarantees became their own request type".
+// Retiring the Employee advance category must not make requestEditData mistake
+// an ordinary employee advance for a legacy deposit and tell its requester it
+// "was recorded under the Employee advance category before deposits and
+// guarantees became their own request type".
 func TestRetiringTheEmployeeAdvanceCategoryIsNotMistakenForALegacyRow(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
