@@ -1,11 +1,11 @@
 package app
 
-// The backups screen and creating a backup.
+// The backups screen and the "Back up now" button.
 
 import (
 	"net/http"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,6 +13,9 @@ import (
 	"fervidbudget/internal/store"
 )
 
+// backups lists the backup folders (named "backup-…") in the backup
+// directory, newest first, with where the database and attachments live and
+// whom to contact for a restore.
 func (a *App) backups(w http.ResponseWriter, r *http.Request) {
 	entries, err := os.ReadDir(a.cfg.BackupDir)
 	if err != nil {
@@ -25,10 +28,14 @@ func (a *App) backups(w http.ResponseWriter, r *http.Request) {
 			names = append(names, entry.Name())
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	slices.Sort(names)
+	slices.Reverse(names)
 	a.render(w, r, "backups", PageData{Title: "Backups", Backups: names, BackupRows: a.backupRows(names), BackupLocation: a.cfg.BackupDir, BackupDBPath: a.cfg.DBPath, BackupAttachmentPath: a.cfg.AttachmentDir, RecoveryName: a.cfg.AdminName, RecoveryContact: a.cfg.AdminEmail})
 }
 
+// backupCreate makes a backup of the database and attachments, then deletes
+// backups older than the configured retention (a failed clean-up is only
+// logged). The backup is audited.
 func (a *App) backupCreate(w http.ResponseWriter, r *http.Request) {
 	info, err := store.Backup(r.Context(), a.cfg.DBPath, a.cfg.AttachmentDir, a.cfg.BackupDir)
 	if err != nil {

@@ -21,6 +21,10 @@ type Warning struct {
 	Body  string
 }
 
+// PageData is the one value every page template receives. A handler fills
+// the fields its screen uses and leaves the rest empty; renderStatus (or
+// renderPartial) then adds what every page shares: the signed-in User, Perms,
+// the CSRF token, the request id and the navigation Shell.
 type PageData struct {
 	AttachmentMaxMB    int64
 	PaymentModeChoices []PaymentModeChoice
@@ -29,10 +33,9 @@ type PageData struct {
 	Title              string
 	User               store.User
 	Shell              Shell
-	// Perms is how a template asks whether the signed-in user may do something.
-	// No template compares a role name: every gated control names the resource
-	// and action its route is guarded by, and the permission set answers. It is
-	// always non-nil, so a signed-out render simply gates everything off.
+	// Perms is how a template asks whether the signed-in user may do
+	// something: a gated control names the resource and action its route
+	// needs. It is never nil, so a signed-out page simply hides every control.
 	Perms    store.PermissionSet
 	CSRF     string
 	Error    string
@@ -43,9 +46,9 @@ type PageData struct {
 	Grid     store.GridData
 	Projects []store.Project
 	// AllProjects is every project, retired ones included. Projects is the
-	// active set a new record may choose from; AllProjects is what a row select
-	// on an existing record must offer, so a retired project still has an option
-	// to be selected and Save cannot silently move the record (F-G-033).
+	// active set a new record may choose from; AllProjects is what the select
+	// on an existing record offers, so a record under a retired project keeps
+	// its own project selected.
 	AllProjects          []store.Project
 	Heads                []store.Head
 	Users                []store.User
@@ -129,15 +132,13 @@ type PageData struct {
 	UserRoleIDs   map[int64]map[int64]bool
 	Approvers     []store.User
 	ApproverNames map[int64]string
-	// CanReassignApprover is whether the reader may hand this request's approval
-	// on: mayReassignApprover's answer, settled once so the button and the sheet
-	// cannot disagree with the route (rbac-8).
+	// CanReassignApprover is mayReassignApprover's answer for this request,
+	// worked out once so the button and the sheet agree with the route.
 	CanReassignApprover bool
 	NewUser             newUserForm
 
-	// Vendor master. Vendor.Bank is nil for a caller without vendor_bank:view
-	// — the store leaves the columns out of the query rather than the template
-	// leaving them out of the markup.
+	// Vendor master. Vendor.Bank is nil for a caller without vendor_bank:view:
+	// the store does not even read the bank columns for them.
 	Vendors          []store.Vendor
 	Vendor           store.Vendor
 	VendorStats      store.VendorStats
@@ -147,17 +148,16 @@ type PageData struct {
 	VendorType       string
 	VendorCategory   string
 	VendorGap        string
-	// VendorEditable is vendor:create on a new record and vendor:edit on an
-	// existing one — one question the template would otherwise have to ask two
-	// ways. It is derived from the same permission set .Perms is.
+	// VendorEditable is vendor:create on a new vendor and vendor:edit on an
+	// existing one, so the template asks one question.
 	VendorEditable bool
 
 	// Deactivation is the warning shown before retiring a head or a person that
-	// unfinished requests still depend on (F-G-024, F-G-025).
+	// unfinished requests still depend on.
 	Deactivation *DeactivationConfirm
 
-	// Payment requests (Phase 2). Request2 is the request a screen is about;
-	// the name keeps it clear of the *http.Request every handler already holds.
+	// Payment requests. Request2 is the request a screen is about (named so
+	// it is not confused with the *http.Request every handler holds).
 	Requests   []store.Request
 	Request2   store.Request
 	Similar    []store.Request
@@ -168,19 +168,15 @@ type PageData struct {
 	TypeFilter string
 	Treatment  string
 	Counts     map[string]int
-	// Page is what the requests list is *not* showing. The 200-row cap used to be
-	// silent while the tab count beside it had no cap at all, so a tab promised
-	// 214 and the list drew 200 (F-B-16). Total, Offset and Truncated are what
-	// let the screen say so and offer the next page.
+	// Page describes the part of the requests list on screen (total, offset,
+	// whether more rows exist), so the list can say what it is not showing and
+	// offer the next page.
 	Page store.RequestPage
-	// Reminders are the admin-configured thresholds, so the copy that explains
-	// the wait to a requester reads the live setting instead of a hardcoded
-	// "three days" (F-F-03).
+	// Reminders are the admin-configured reminder thresholds, which the text
+	// explaining the wait to a requester quotes.
 	Reminders store.ReminderThresholds
-	// RecCategory is the recoverable category the form is currently on, resolved
-	// from the active category rows. The conditional project/counterparty fields
-	// are revealed from its own Requires flags, so an admin-added category
-	// behaves like a seeded one (F-E-02/F-B-17).
+	// RecCategory is the recoverable category the form is on. Its Requires
+	// flags decide whether the project and counterparty fields are shown.
 	RecCategory store.RecoverableCategory
 	// Thread is the merged history-and-conversation stream the detail screens
 	// render as one `.thread`; RequestAtts is that request's own documents.
@@ -189,41 +185,35 @@ type PageData struct {
 	// Areas are the dashboard's work areas, in the order they are shown.
 	Areas []WorkArea
 
-	// Payment linking, reservation and settlement (Phase 3). Linkable is the
-	// queue and picker data; Tab is the queue's `.segmented` selection;
-	// Settlement is the view model the confirmation sheet renders and nothing
-	// persists; Holder names whoever holds a reservation the reader lost.
+	// Paying requests. Linkable is the queue and picker data; Tab is the
+	// queue's selected tab; Settlement is what the confirmation sheet shows
+	// (nothing is saved from it); Holder names whoever holds a reservation the
+	// reader does not.
 	Linkable    store.LinkableSet
 	Tab         string
 	RecentPaid  []PaidRequestRow
 	Settlement  SettlementPreview
 	ReserveMine bool
 	Holder      string
-	// ConflictCause is which of ReserveRequest's three refusals the conflict
-	// screen is reporting: "taken", "hold" or "not-approved" (F-D-02) — or
-	// "unclaimed", when nothing refused anything and the reader simply does
-	// not hold a request that is free to take (settlement-2).
+	// ConflictCause is why the reservation conflict screen is shown: "taken",
+	// "hold" or "not-approved" (the store's three refusals), or "unclaimed"
+	// when the request is free but the reader has not reserved it.
 	ConflictCause string
-	// Outcome is what the payment screen was reached by: "saved" straight after
-	// the confirming POST, "duplicate" after a repeat confirm the store refused,
-	// "immutable" after a blocked edit, "" on any later visit. It arrives as a
-	// one-shot cookie the redirect set and paymentDetail reads once; the
-	// "Payment saved … have been notified" banner is tied to it (settlement-5).
+	// Outcome is how the payment page was reached: "saved" straight after
+	// recording it, "duplicate" after a repeated confirm, "immutable" after a
+	// blocked edit, "" on any later visit. It comes from a one-time cookie (see
+	// redirectToPayment) and decides the banner at the top.
 	Outcome string
-	// Trail is the one screen whose history spans two entities. Thread is the
-	// request's merged stream and cannot carry the payment's audit rows, so the
-	// partial review merges the two-entity trail with the conversation itself
-	// and renders the result as a single chronological `.thread`.
+	// Trail is the partial-review screen's history: the request's and the
+	// payment's audit rows merged with the conversation, oldest first.
 	Trail []TrailLine
-	// Config is the Configuration screen's values. It is deliberately not
-	// Settings: Settings is what a *form* consults about the rules it must
-	// follow, Config is what the screen that edits those rules renders from.
+	// Config is the values the Configuration screen edits. (Settings, above,
+	// is the same kind of data read by a form that must follow those rules.)
 	Config map[string]string
 
-	// Recoverables (Phase 4). RecMetrics and the two rollups drive the
-	// dashboard; Recoverables is the register list; Recoverable is the single
-	// row the detail screen ages, read from the same query as the list so the
-	// two can never disagree.
+	// Recoverables. RecMetrics and the two rollups drive the dashboard;
+	// Recoverables is the register list; Recoverable is the one row the detail
+	// screen shows, read by the same query as the list so the two agree.
 	RecMetrics       store.RecoverableMetrics
 	ByCategory       []store.RecoverableRollup
 	ByCounterparty   []store.RecoverableRollup
@@ -232,10 +222,8 @@ type PageData struct {
 	Categories       []store.RecoverableCategory
 	CategoryUsage    []store.RecoverableCategoryUsage
 	CategoryID       int64
-	// CategoryIDs maps a rollup's category label to its id, so the dashboard's
-	// by-category row links to ?category={id} — the filter the list actually
-	// honours — instead of a free-text search that cannot reproduce the count
-	// it was clicked from (F-G-012). RecoverableRollup carries no id of its own.
+	// CategoryIDs maps a rollup's category label to its id, so a dashboard
+	// row can link to the list filtered by ?category={id}.
 	CategoryIDs          map[string]int64
 	Ageing               string
 	RecoveryCounterparty string
@@ -248,27 +236,21 @@ type PageData struct {
 	RecPayment           store.Payment
 	HasPayment           bool
 
-	// Notifications (Phase 5). Notifs is the user's own centre; NotifSettings
-	// and MailCfg are the admin rules screen.
+	// Notifications. Notifs is the user's own notification centre;
+	// NotifSettings and MailCfg are the admin rules screen.
 	Notifs      []store.Notification
 	NotifCounts store.NotificationCounts
 	NotifScope  string
-	// NotifPage is what the centre is not showing, and NotifOffset is where the
-	// window it *is* showing starts. The row query stopped at 100 while the count
-	// on the filter strip directly above it had no cap at all, so a user past the
-	// cap read "All 137" over 100 rows and nothing said which 37 were missing
-	// (F-G-037) — the same defect, and now the same treatment, as the requests
-	// list's Page.
+	// NotifPage describes the page of notifications on screen and
+	// NotifOffset where it starts, so the centre can offer older rows.
 	NotifPage     store.NotificationPage
 	NotifOffset   int
 	NotifSettings []store.NotificationSetting
 	MailCfg       store.MailSettings
 	NotifFields   []string
 
-	// Warnings are cautions above a form: act before saving. Each carries its
-	// own heading, because one form can need two at once (a legacy category and
-	// a retired project) and they are not about the same thing. Rendered by the
-	// page, not the shell.
+	// Warnings are cautions shown above a form, each with its own heading
+	// (one form can need two at once). The page draws them, not the shell.
 	Warnings []Warning
 	// LegacyCategory is the deposit category an employee advance was recorded
 	// under before deposits and guarantees were their own request type, or ""
@@ -276,7 +258,7 @@ type PageData struct {
 	// saving does on their buttons.
 	LegacyCategory string
 	// NotifDraft is a rule the rules screen refused, with what the admin typed;
-	// its sheet comes back open with NotifDraftError inside it (ux-2).
+	// its sheet comes back open with NotifDraftError inside it.
 	NotifDraft      *store.NotificationSetting
 	NotifDraftError string
 }
@@ -302,6 +284,8 @@ func (d PageData) Initials() string {
 	return string(initials)
 }
 
+// ReportSummary is the totals row of the reports screen: budget, actual and
+// variance over the shown rows, and how many rows have each grid status.
 type ReportSummary struct {
 	Budget          int64
 	Actual          int64
@@ -315,16 +299,15 @@ type ReportSummary struct {
 	NotPaid         int
 }
 
+// render renders a full page with status 200.
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data PageData) {
 	a.renderStatus(w, r, http.StatusOK, name, data)
 }
 
-// renderPartial executes one template without the shell. Every htmx fragment
-// that is a piece of a page — rather than a page in its own right — goes
-// through it: renderStatus already skips shell CONSTRUCTION when HX-Request is
-// present, and this is the rendering half of the same contract, for templates
-// that never call "top"/"bottom" at all. Permissions still apply, because a
-// fragment gates its controls exactly as the full page would.
+// renderPartial renders one template on its own, without the page shell, for
+// htmx requests that replace part of a page. It fills in the user,
+// permissions, CSRF token and request id like a full page, so the fragment's
+// controls are gated the same way.
 func (a *App) renderPartial(w http.ResponseWriter, r *http.Request, name string, data PageData) {
 	data.User = auth.CurrentUser(r)
 	data.Perms = a.auth.Permissions(data.User)

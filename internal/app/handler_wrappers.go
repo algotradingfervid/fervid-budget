@@ -12,13 +12,11 @@ import (
 	"fervidbudget/internal/auth"
 )
 
-// requireAnyOf is RequirePermission for a route one of whose actions depends on
-// the submitted form. It refuses a caller holding none of the named actions with
-// the same status and the same sentence auth.RequirePermission uses, so the
-// refusal is indistinguishable, and it runs where every other permission gate
-// runs: outside withCSRF, before anything is parsed. The handler behind it must
-// still demand the specific action the request turns out to need — this only
-// establishes that the caller has business here at all.
+// requireAnyOf is RequirePermission for a route whose action depends on the
+// submitted form (such as POST /users: create or edit). It lets through a
+// caller holding at least one of actions on resource and refuses everyone
+// else with the same 403 and sentence RequirePermission uses, before the form
+// is read. The handler must still check the exact action it needs.
 func (a *App) requireAnyOf(resource string, actions []string, next http.Handler) http.Handler {
 	return a.auth.RequireLogin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u := auth.CurrentUser(r)
@@ -32,10 +30,9 @@ func (a *App) requireAnyOf(resource string, actions []string, next http.Handler)
 	}))
 }
 
-// withBodyCap is the body limit half of withCSRF, on its own, for the one POST
-// that is deliberately outside the token check. An unauthenticated endpoint
-// that calls ParseForm on an unbounded body is a free memory sink; every other
-// POST refuses at maxRequestBodyBytes and so does this one (F-A-10).
+// withBodyCap caps the request body at requestBodyLimit, like withCSRF, but
+// checks no token. It is for POST /login, which has no session and so no
+// token, but must not read an unlimited body.
 func (a *App) withBodyCap(fn func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit(r))
@@ -43,6 +40,15 @@ func (a *App) withBodyCap(fn func(http.ResponseWriter, *http.Request)) func(http
 	}
 }
 
+// withCSRF wraps every form POST except sign-in itself. In order, it:
+//
+//  1. caps the body at requestBodyLimit;
+//  2. parses the form, multipart or urlencoded (413 when too large, 400 when
+//     unreadable);
+//  3. checks the CSRF token (403 "Your form session expired" when wrong);
+//  4. for a path under /requests/{id}, answers 404 unless the caller may see
+//     that request, so request handlers can rely on it being visible;
+//  5. calls fn, and afterwards deletes any uploaded temporary files.
 func (a *App) withCSRF(fn func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit(r))

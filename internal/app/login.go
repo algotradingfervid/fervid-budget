@@ -1,6 +1,8 @@
 package app
 
-// Sign-in and sign-out handlers.
+// Sign-in and sign-out. The sign-in rate limit is applied earlier, in
+// securityBoundary; the choice of page to land on after sign-in is in
+// login_redirect.go.
 
 import (
 	"errors"
@@ -11,10 +13,15 @@ import (
 	"fervidbudget/internal/store"
 )
 
+// loginForm shows the sign-in page, keeping a safe ?next= to return to.
 func (a *App) loginForm(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "login", PageData{Title: "Login", LoginNext: auth.SafeReturnPath(r.URL.Query().Get("next"))})
 }
 
+// loginPost signs a user in. A wrong email, wrong password or inactive
+// account all get the same "Invalid email or password", and every failure is
+// counted and audited. On success the user lands on ?next= when they may
+// open it; otherwise on Home with a note that the page was not available.
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		var maxErr *http.MaxBytesError
@@ -30,8 +37,9 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 		email = "invalid-address"
 	}
 	u, err := a.st.UserByEmail(r.Context(), email)
-	// Per-source throttles protect guessing without allowing an attacker on a
-	// different source to disable a victim's correct password globally.
+	// Always run a bcrypt comparison, against a dummy hash for an unknown or
+	// inactive user, so the response time does not reveal whether the email
+	// has an account.
 	hash := u.PasswordHash
 	if err != nil || !u.Active {
 		hash = dummyPasswordHash
@@ -57,14 +65,17 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	a.auth.Login(w, r, u)
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "login", EntityType: "user", EntityID: &u.ID, Summary: "Logged in", IP: r.RemoteAddr})
 	next := a.authorizedLoginNext(r, u, r.FormValue("next"))
-	// Explain a denied or unavailable internal destination without exposing it.
-	// Invalid external destinations are still discarded outright.
+	// A page inside the app that this user may not open lands on Home with a
+	// note (without naming the page). A "next" outside the app is dropped
+	// without a note.
 	if next == "/" && auth.SafeReturnPath(r.FormValue("next")) != "/" {
 		next = "/?login_fallback=1"
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
+// logoutPost signs the user out everywhere (all their sessions are revoked),
+// audits it and returns to the sign-in page.
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	if u.ID != 0 {

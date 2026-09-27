@@ -1,7 +1,12 @@
 package app
 
-// Payment and request attachments: upload, download, and saving an
-// uploaded file to the attachment directory.
+// Payment and request attachments: upload, download, and saving an uploaded
+// file into the attachment directory.
+//
+// Every refusal to hand over an attachment is the same 404 (see
+// notFoundAttachment). Attachment ids are small sequential numbers, so a
+// different answer for "exists but not yours" would let anyone probe which
+// files exist.
 
 import (
 	"errors"
@@ -16,24 +21,20 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// notFoundAttachment is the single refusal for every attachment the caller may
-// not have. It is a 404 and not a 403 on purpose: attachment ids are small
-// sequential integers, and a distinguishable refusal turns the route into an
-// enumeration oracle for the whole table.
+// notFoundAttachment logs why an attachment was refused and answers with the
+// one 404 every refusal gets.
 func (a *App) notFoundAttachment(w http.ResponseWriter, r *http.Request, reason string, id int64) {
 	a.log.WarnContext(r.Context(), "attachment refused",
 		"request_id", requestID(r), "attachment_id", id, "reason", reason)
 	a.respondError(w, r, http.StatusNotFound, "The requested attachment was not found.", nil)
 }
 
+// attachmentUpload adds a file to a payment. Only someone who may read the
+// payment may add to it, because a payment's attachments are the evidence
+// that it was made. (The store also refuses attachments on a payment linked
+// to a request.)
 func (a *App) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
-	// The write path needs the same ownership check the read path needs, in the
-	// other direction: the attachments on a payment *are* the evidence that it
-	// happened as recorded, and evidence any signed-in user can add to is not
-	// evidence (F-A-03). AddAttachment separately refuses a linked payment, which
-	// makes this unreachable today; the check stays so the hole does not reopen
-	// the day a free-standing payment becomes creatable again.
 	payment, err := a.st.Payment(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -65,8 +66,8 @@ func (a *App) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
 }
 
-// attachmentDownload serves a *payment* document — a bank advice, a proof of
-// payment — and only to somebody the payment's own request is visible to.
+// attachmentDownload serves a payment's document (a bank advice, a proof of
+// payment) to someone who may read that payment.
 func (a *App) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	att, payment, err := a.st.AttachmentWithPayment(r.Context(), id)
@@ -85,12 +86,11 @@ func (a *App) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 	a.serveAttachmentFile(w, r, att.ID, att.StoredPath, att.OriginalName, att.MimeType)
 }
 
-// requestAttachmentDownload serves a *request* document — the invoice or
-// quotation the request came in with. It reads request_attachments, checks the
-// document really belongs to the {id} in the path, and scopes it by that
-// request. Both halves matter: without the table split the two id sequences
-// collide (F-A-05), and without the scope check attachment:view would read
-// every request's documents (F-A-01).
+// requestAttachmentDownload serves a request's own document (the invoice or
+// quotation it came in with). Request documents are a separate table with
+// their own ids, so this route is separate from /attachments/{id}. The
+// document must belong to the request in the path, and that request must be
+// in the caller's request scope.
 func (a *App) requestAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	attachmentID := parseID(r.PathValue("attachmentID"))
 	att, err := a.st.RequestAttachmentByID(r.Context(), attachmentID)
@@ -102,9 +102,6 @@ func (a *App) requestAttachmentDownload(w http.ResponseWriter, r *http.Request) 
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// The document has to belong to the request in the URL. Otherwise the path's
-	// {id} is decoration and the route is /attachments/{id} again under a longer
-	// name.
 	if att.RequestID != pathID(r) {
 		a.notFoundAttachment(w, r, "attachment belongs to another request", attachmentID)
 		return
@@ -125,8 +122,11 @@ func (a *App) requestAttachmentDownload(w http.ResponseWriter, r *http.Request) 
 	a.serveAttachmentFile(w, r, att.ID, att.StoredPath, att.OriginalName, att.MimeType)
 }
 
-// serveAttachmentFile is the path-safety and streaming tail both download
-// routes share, so the two can never drift about what is inside AttachmentDir.
+// serveAttachmentFile streams a stored attachment as a download named
+// originalName. It is shared by both download routes. It refuses (404) any
+// stored path outside the attachment directory and anything that is not a
+// regular file, and opens the file through os.OpenRoot so the path cannot
+// escape that directory.
 func (a *App) serveAttachmentFile(w http.ResponseWriter, r *http.Request, id int64, storedPath, originalName, mimeType string) {
 	root, err := filepath.Abs(a.cfg.AttachmentDir)
 	if err != nil {
@@ -168,11 +168,22 @@ func (a *App) serveAttachmentFile(w http.ResponseWriter, r *http.Request, id int
 	http.ServeContent(w, r, originalName, info.ModTime(), file)
 }
 
+// stageUploadedAttachment saves the form's "attachment" file into the
+// attachment directory, before the database row that points at it is
+// written. It checks the size limit (the admin setting), the real file type
+// (from its content, not its name) and the storage quota.
+//
+// It returns the attachment's details and the path of the saved file. When
+// no file was sent it returns (nil, "", nil). If the caller's database write
+// then fails, it must delete the file with removeStagedAttachment.
+//
+// Uploads take turns (uploadMu) from the type check onwards, so two uploads
+// cannot both fit into the last of the quota.
 func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, string, error) {
 	file, header, err := r.FormFile("attachment")
 	if err != nil {
-		// No file, or no multipart body to hold one: either way the caller sent
-		// no attachment, which is not an error on any of the forms that offer one.
+		// No file, or no multipart body to hold one: either way no attachment
+		// was sent, which every form that offers one allows.
 		if errors.Is(err, http.ErrMissingFile) || errors.Is(err, http.ErrNotMultipart) {
 			return nil, "", nil
 		}
@@ -200,27 +211,7 @@ func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, 
 	if quota <= 0 {
 		quota = 1 << 30
 	}
-	var used int64
-	err = filepath.WalkDir(a.cfg.AttachmentDir, func(path string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, e := d.Info()
-		if e != nil {
-			return e
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("attachment directory contains a non-regular file")
-		}
-		if info.Size() > quota-used {
-			return fmt.Errorf("attachment storage quota reached")
-		}
-		used += info.Size()
-		return nil
-	})
+	used, err := attachmentDirUsage(a.cfg.AttachmentDir, quota)
 	if err != nil || header.Size > quota-used {
 		return nil, "", fmt.Errorf("%w: attachment storage quota reached; contact an administrator", store.ErrValidation)
 	}
@@ -228,10 +219,9 @@ func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, 
 		a.uploadQuotaWarned = true
 		a.log.WarnContext(r.Context(), "attachment storage above 80 percent", "used_bytes", used, "quota_bytes", quota)
 	}
-	// Keep the user's filename in metadata only. Prefixing it on disk can
-	// exceed the filesystem's component limit, even when the original filename
-	// is valid. CreateTemp also reserves a distinct 0600 file atomically for
-	// concurrent uploads with the same original name.
+	// The user's filename is kept in the database only. On disk the file gets
+	// a unique random name (created with mode 0600), which also avoids names
+	// too long for the filesystem.
 	out, err := os.CreateTemp(a.cfg.AttachmentDir, "attachment-*")
 	if err != nil {
 		return nil, "", fmt.Errorf("create attachment: %w", err)
@@ -262,4 +252,32 @@ func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, 
 		MimeType:     mimeType,
 		SizeBytes:    size,
 	}, stored, nil
+}
+
+// attachmentDirUsage adds up the size of every file under dir. It stops with
+// an error as soon as the total would pass quota, or when it finds anything
+// other than a regular file or directory.
+func attachmentDirUsage(dir string, quota int64) (int64, error) {
+	var used int64
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("attachment directory contains a non-regular file")
+		}
+		if info.Size() > quota-used {
+			return errors.New("attachment storage quota reached")
+		}
+		used += info.Size()
+		return nil
+	})
+	return used, err
 }

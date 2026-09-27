@@ -7,220 +7,209 @@ import (
 	"net/http"
 )
 
+// routes registers every URL on mux. Most routes use one of four helpers:
+//
+//   - read: a GET that needs one permission (resource, action).
+//   - write: a POST that needs one permission and then goes through withCSRF,
+//     which caps and parses the form, checks the CSRF token and, for
+//     /requests/{id}/…, answers 404 unless the caller may see that request.
+//   - signedIn / signedInForm: the same, for pages that only need a
+//     signed-in user because the handler checks the rest itself.
+//
+// The few routes with a different gate are written out in full. A literal
+// path segment beats a {id} wildcard in ServeMux, so /requests/new,
+// /vendors/new and /recoverables/list.csv never reach the {id} handlers.
 func (a *App) routes(mux *http.ServeMux) {
+	read := func(pattern, resource, action string, h http.HandlerFunc) {
+		mux.Handle(pattern, a.auth.RequirePermission(resource, action, h))
+	}
+	write := func(pattern, resource, action string, h http.HandlerFunc) {
+		mux.Handle(pattern, a.auth.RequirePermission(resource, action, http.HandlerFunc(a.withCSRF(h))))
+	}
+	signedIn := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, a.auth.RequireLogin(h))
+	}
+	signedInForm := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(h))))
+	}
+
+	// Public: static files, sign-in and password reset.
 	mux.Handle("GET /static/", http.StripPrefix("/static/", publicStatic(a.cfg.DevPages)))
 	mux.HandleFunc("GET /login", a.loginForm)
 	mux.HandleFunc("GET /login/help", a.loginHelp)
 	mux.HandleFunc("POST /login/help", a.withCSRF(a.passwordResetRequest))
 	mux.HandleFunc("GET /login/reset", a.passwordResetForm)
 	mux.HandleFunc("POST /login/reset", a.withCSRF(a.passwordResetPost))
-	// Login has no prior session; browser origin checks run before parsing.
+	// Signing in has no session yet, so there is no CSRF token to check; the
+	// body is still capped, and securityBoundary has already refused
+	// cross-site posts.
 	mux.HandleFunc("POST /login", a.withBodyCap(a.loginPost))
 	mux.HandleFunc("POST /logout", a.withCSRF(a.logoutPost))
-	// "GET /{$}" matches the root and nothing else. Registered as "GET /" it is
-	// a catch-all, so every URL the app does not serve — including nav items
-	// whose screens are not built yet — silently rendered the dashboard under
-	// the wrong address instead of saying the page does not exist.
-	// Home is the dashboard: the approved design's screen 01, "one home, four
-	// sets of work areas, permission controlled". The nav key for "/" has
-	// always been "dashboard" while the variance grid has its own /grid entry;
-	// both simply rendered the grid until the dashboard existed.
-	mux.Handle("GET /{$}", a.auth.RequireLogin(http.HandlerFunc(a.dashboard)))
-	mux.Handle("GET /", a.auth.RequireLogin(http.HandlerFunc(a.notFound)))
-	// The variance grid carries the whole budget-versus-actual matrix, so it is
-	// gated on the verb the nav item already declares and /export.csv already
-	// enforces (F-A-02/F-G-032). It used to ask only for a session, which served
-	// the company's plan to a caller holding no role at all.
-	mux.Handle("GET /grid", a.auth.RequirePermission("grid", "view", http.HandlerFunc(a.grid)))
-	// The work dashboard. It is ungated beyond being signed in, because every
-	// area inside it is gated on the queue it opens: a person with no areas is
-	// told nothing is waiting on them rather than refused the page.
-	mux.Handle("GET /dashboard", a.auth.RequireLogin(http.HandlerFunc(a.dashboard)))
-	mux.Handle("GET /months", a.auth.RequirePermission("month", "view", http.HandlerFunc(a.months)))
-	mux.Handle("POST /months", a.auth.RequirePermission("month", "create", http.HandlerFunc(a.withCSRF(a.monthCreate))))
-	mux.Handle("GET /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentForm)))
-	mux.Handle("POST /payments/new", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.withCSRF(a.paymentForm))))
-	mux.Handle("GET /payments/new/options", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentPickerOptions)))
-	mux.Handle("GET /payments/lock-status", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.paymentLockStatus)))
-	mux.Handle("GET /payments", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.payments)))
-	// The write that records a payment and closes a request is gated at least as
-	// tightly as its own read-only preview (F-D-10): the preview asks for
-	// payment:settle, so the writer asks for payment:create *and* payment:settle.
-	// payment:mark_partial cannot be a route gate, because it applies only when
-	// settlement=partial — paymentCreate checks it itself.
+
+	// Home is the dashboard. "GET /{$}" matches "/" only; "GET /" catches
+	// every other unknown URL and answers 404. The dashboard needs only a
+	// session: each work area inside it is shown only to people who may open
+	// its queue.
+	signedIn("GET /{$}", a.dashboard)
+	signedIn("GET /", a.notFound)
+	read("GET /grid", "grid", "view", a.grid)
+	signedIn("GET /dashboard", a.dashboard)
+
+	// Months and payments.
+	read("GET /months", "month", "view", a.months)
+	write("POST /months", "month", "create", a.monthCreate)
+	read("GET /payments/new", "payment", "create", a.paymentForm)
+	write("POST /payments/new", "payment", "create", a.paymentForm)
+	read("GET /payments/new/options", "payment", "create", a.paymentPickerOptions)
+	read("GET /payments/lock-status", "payment", "create", a.paymentLockStatus)
+	read("GET /payments", "payment", "view", a.payments)
+	// Recording a payment needs payment:create and payment:settle (the same
+	// permission as its preview). Recording a partial payment also needs
+	// payment:mark_partial, which paymentCreate checks because it depends on
+	// the form.
 	mux.Handle("POST /payments", a.auth.RequirePermission("payment", "create",
 		a.auth.RequirePermission("payment", "settle", http.HandlerFunc(a.withCSRF(a.paymentCreate)))))
-	mux.Handle("GET /payments/{id}", a.auth.RequirePermission("payment", "view", http.HandlerFunc(a.paymentDetail)))
-	mux.Handle("GET /payments/{id}/edit", a.auth.RequirePermission("payment", "edit", http.HandlerFunc(a.paymentEditForm)))
-	mux.Handle("POST /payments/{id}/edit", a.auth.RequirePermission("payment", "edit", http.HandlerFunc(a.withCSRF(a.paymentEdit))))
-	mux.Handle("POST /payments/{id}/void", a.auth.RequirePermission("payment", "void", http.HandlerFunc(a.withCSRF(a.paymentVoid))))
-	mux.Handle("POST /payments/{id}/attachments", a.auth.RequirePermission("attachment", "create", http.HandlerFunc(a.withCSRF(a.attachmentUpload))))
-	// Two tables, two routes. /attachments/{id} reads payment_attachments;
-	// request documents live in request_attachments with an unrelated id
-	// sequence, so serving them from the same URL handed one reader another
-	// reader's bank advice (F-A-05). Both routes re-check the request the
-	// attachment hangs off, because attachment:view is a Requester grant and
-	// the verb alone is not permission to read a particular file (F-A-01).
-	mux.Handle("GET /attachments/{id}", a.auth.RequirePermission("attachment", "view", http.HandlerFunc(a.attachmentDownload)))
-	mux.Handle("GET /requests/{id}/attachments/{attachmentID}", a.auth.RequirePermission("attachment", "view", http.HandlerFunc(a.requestAttachmentDownload)))
-	mux.Handle("GET /export.csv", a.auth.RequirePermission("grid", "export", http.HandlerFunc(a.exportGrid)))
-	mux.Handle("GET /reports/monthly", a.auth.RequirePermission("report", "view", http.HandlerFunc(a.report)))
-	mux.Handle("GET /reports/projects", a.auth.RequirePermission("report", "view", http.HandlerFunc(a.report)))
-	mux.Handle("GET /reports/heads", a.auth.RequirePermission("report", "view", http.HandlerFunc(a.report)))
-	mux.Handle("GET /reports/ytd.csv", a.auth.RequirePermission("report", "export", http.HandlerFunc(a.exportYTD)))
+	read("GET /payments/{id}", "payment", "view", a.paymentDetail)
+	read("GET /payments/{id}/edit", "payment", "edit", a.paymentEditForm)
+	write("POST /payments/{id}/edit", "payment", "edit", a.paymentEdit)
+	write("POST /payments/{id}/void", "payment", "void", a.paymentVoid)
+	write("POST /payments/{id}/attachments", "attachment", "create", a.attachmentUpload)
+	// Payment documents and request documents are separate tables with
+	// separate ids, so they have separate routes. Both handlers also check
+	// that the caller may see the payment or request the file belongs to.
+	read("GET /attachments/{id}", "attachment", "view", a.attachmentDownload)
+	read("GET /requests/{id}/attachments/{attachmentID}", "attachment", "view", a.requestAttachmentDownload)
 
-	// Recoverables (Phase 4). /recoverables/list.csv is a literal final segment
-	// and Go 1.22+ ServeMux gives it precedence over the {id} wildcard, so the
-	// export never reaches the detail handler.
-	mux.Handle("GET /recoverables", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverablesDashboard)))
-	mux.Handle("GET /recoverables/list", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverablesList)))
-	mux.Handle("GET /recoverables/list.csv", a.auth.RequirePermission("recoverable_report", "export", http.HandlerFunc(a.exportRecoverable)))
-	mux.Handle("GET /recoverables/{id}", a.auth.RequirePermission("recoverable_report", "view", http.HandlerFunc(a.recoverableDetail)))
-	mux.Handle("POST /recoverables/{id}/events", a.auth.RequirePermission("recoverable_report", "view", a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.withCSRF(a.recordRecovery)))))
+	// Reports and exports.
+	read("GET /export.csv", "grid", "export", a.exportGrid)
+	read("GET /reports/monthly", "report", "view", a.report)
+	read("GET /reports/projects", "report", "view", a.report)
+	read("GET /reports/heads", "report", "view", a.report)
+	read("GET /reports/ytd.csv", "report", "export", a.exportYTD)
 
-	// The user's own notification centre (Phase 5). Authenticated session only:
-	// every row is already scoped to the caller by the store, so a permission
-	// verb would add nothing.
-	mux.Handle("GET /notifications", a.auth.RequireLogin(http.HandlerFunc(a.notificationCentre)))
-	mux.Handle("POST /notifications/read", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.notificationsMarkAllRead))))
-	mux.Handle("GET /notifications/{id}/open", a.auth.RequireLogin(http.HandlerFunc(a.notificationOpen)))
+	// Recoverables. Recording money coming back also needs payment:create.
+	read("GET /recoverables", "recoverable_report", "view", a.recoverablesDashboard)
+	read("GET /recoverables/list", "recoverable_report", "view", a.recoverablesList)
+	read("GET /recoverables/list.csv", "recoverable_report", "export", a.exportRecoverable)
+	read("GET /recoverables/{id}", "recoverable_report", "view", a.recoverableDetail)
+	mux.Handle("POST /recoverables/{id}/events", a.auth.RequirePermission("recoverable_report", "view",
+		a.auth.RequirePermission("payment", "create", http.HandlerFunc(a.withCSRF(a.recordRecovery)))))
 
-	// The admin rule editor (D7). A different screen from the centre above, with
-	// a different audience, so it is the one behind a permission verb.
-	mux.Handle("GET /admin/notifications", a.auth.RequirePermission("notification", "view", http.HandlerFunc(a.adminNotifications)))
-	mux.Handle("POST /admin/notifications/smtp", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationsSMTP))))
-	mux.Handle("POST /admin/notifications/events/{event}", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationEventSave))))
-	mux.Handle("POST /admin/notifications/test", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationsTest))))
-	mux.Handle("GET /budgets/new", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.budgetPlannerNew)))
-	mux.Handle("GET /budgets/plan", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.budgetPlannerEdit)))
-	mux.Handle("GET /budgets/plan-data", a.auth.RequirePermission("budget", "view", http.HandlerFunc(a.budgetPlannerData)))
-	mux.Handle("POST /budgets/plan", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.withCSRF(a.budgetPlannerSave))))
-	mux.Handle("GET /budgets", a.auth.RequirePermission("budget", "view", http.HandlerFunc(a.budgets)))
-	mux.Handle("POST /budgets", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.withCSRF(a.budgetSave))))
-	mux.Handle("POST /months/{month}/lock", a.auth.RequirePermission("month", "lock", http.HandlerFunc(a.withCSRF(a.setMonthLock(a.st.LockMonth)))))
-	mux.Handle("POST /months/{month}/unlock", a.auth.RequirePermission("month", "lock", http.HandlerFunc(a.withCSRF(a.setMonthLock(a.st.UnlockMonth)))))
-	mux.Handle("GET /projects", a.auth.RequirePermission("project", "view", http.HandlerFunc(a.projects)))
-	mux.Handle("POST /projects", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.projectSave))))
-	mux.Handle("GET /heads", a.auth.RequirePermission("head", "view", http.HandlerFunc(a.heads)))
-	mux.Handle("POST /heads", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.headSave))))
-	// Literal segments beat the {id} wildcard in ServeMux's specificity rules,
-	// so /vendors/new is the form and never a vendor whose id parses to zero.
-	mux.Handle("GET /vendors", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorsList)))
-	mux.Handle("GET /vendors/new", a.auth.RequirePermission("vendor", "create", http.HandlerFunc(a.vendorNew)))
-	mux.Handle("GET /vendors/search", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorSearch)))
-	mux.Handle("GET /vendors/{id}/{tab}", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorRelated)))
-	mux.Handle("GET /vendors/{id}", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorDetail)))
-	mux.Handle("POST /vendors", a.auth.RequirePermission("vendor", "create", http.HandlerFunc(a.withCSRF(a.vendorCreate))))
-	mux.Handle("POST /vendors/{id}", a.auth.RequirePermission("vendor", "edit", http.HandlerFunc(a.withCSRF(a.vendorUpdate))))
-	// Payment requests (Phase 2). Literal segments beat the {id} wildcard, so
-	// /requests/new is always the form and never a request whose id parses to
-	// zero. There is no draft route and no second submit step: D1 makes create
-	// and submit one POST.
-	mux.Handle("GET /requests", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requests)))
-	mux.Handle("GET /requests/export.csv", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestsExport)))
-	mux.Handle("GET /requests/new", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.requestNew)))
-	mux.Handle("GET /requests/new/fields", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.requestFormFields)))
-	mux.Handle("POST /requests/duplicate-check", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestDuplicateCheck))))
-	mux.Handle("POST /requests", a.auth.RequirePermission("request", "create", http.HandlerFunc(a.withCSRF(a.requestCreate))))
-	mux.Handle("GET /requests/{id}/submitted", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestSubmitted)))
-	// Payment linking and settlement (Phase 3). Reservation has its own verbs
-	// (spec D2) precisely so "may take work" and "may take work off somebody
-	// else" stop being the same grant.
-	mux.Handle("POST /requests/{id}/record-payment", a.auth.RequirePermission("reservation", "reserve", http.HandlerFunc(a.withCSRF(a.requestRecordPayment))))
-	// The settlement preview is a POST because it carries the form, not because
-	// it changes anything: it is pure and writes nothing (D8).
-	mux.Handle("POST /requests/{id}/settlement-preview", a.auth.RequirePermission("payment", "settle", http.HandlerFunc(a.withCSRF(a.settlementPreview))))
-	// Giving a reservation up and taking one off somebody else are one screen
-	// and two verbs, and either one is a reason to open it: the holder arrives
-	// to release, an administrator arrives to reassign. release and reassign are
-	// independent cells of the permission matrix, so gating the route on one of
-	// them answered 403 to the reader the accounts queue and the conflict screen
-	// both link here. The route therefore asks only for a session, and
-	// reservationForm asks for the verb that matches the caller's standing —
-	// each POST still carries its own gate, so reading the page never confers
-	// the power to move somebody else's work.
-	mux.Handle("GET /requests/{id}/reservation", a.auth.RequireLogin(http.HandlerFunc(a.reservationForm)))
-	mux.Handle("POST /requests/{id}/release", a.auth.RequirePermission("reservation", "release", http.HandlerFunc(a.withCSRF(a.requestRelease))))
-	mux.Handle("POST /requests/{id}/reassign", a.auth.RequirePermission("reservation", "reassign", http.HandlerFunc(a.withCSRF(a.requestReassign))))
-	// The 26-hour nudge (Q6). Reading it needs payment:process — the grant that
-	// puts a person in front of reserved rows at all — and every choice it
-	// offers is gated again on the verb that choice actually needs.
-	mux.Handle("GET /requests/{id}/reservation/stale", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.requestStale)))
-	// L7: a hold is Accounts' pause button, not the approver's. payment:hold is
-	// one grant for both directions, because the person who can stop a payment
-	// is the person who must be able to start it again.
-	mux.Handle("POST /requests/{id}/hold", a.auth.RequirePermission("payment", "hold", http.HandlerFunc(a.withCSRF(a.requestHold))))
-	mux.Handle("POST /requests/{id}/unhold", a.auth.RequirePermission("payment", "hold", http.HandlerFunc(a.withCSRF(a.requestUnhold))))
-	mux.Handle("GET /accounts-queue", a.auth.RequirePermission("payment", "process", http.HandlerFunc(a.accountsQueue)))
-	// A partial settlement is the one outcome Accounts cannot close on its own,
-	// so the manager gets a screen of their own (S11). Reading it needs only
-	// request:view — everyone on the thread may follow what is happening — while
-	// both decisions are gated on approval:accept_partial, because accepting a
-	// shortfall and disputing it are two answers to the same question.
-	mux.Handle("GET /requests/{id}/partial-review", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestPartialReview)))
-	mux.Handle("POST /requests/{id}/accept-partial", a.auth.RequirePermission("approval", "accept_partial", http.HandlerFunc(a.withCSRF(a.requestAcceptPartial))))
-	mux.Handle("POST /requests/{id}/raise-concern", a.auth.RequirePermission("approval", "accept_partial", http.HandlerFunc(a.withCSRF(a.requestRaiseConcern))))
-	// One detail screen for every audience: the action bar changes on
-	// permission, the page does not. Each decision posts to its own route so
-	// the gate is the verb the decision needs, not the one that opened the page.
-	mux.Handle("GET /requests/{id}", a.auth.RequirePermission("request", "view", http.HandlerFunc(a.requestDetail)))
-	mux.Handle("GET /requests/{id}/edit", a.auth.RequirePermission("request", "edit", http.HandlerFunc(a.requestEditForm)))
-	mux.Handle("POST /requests/{id}/edit", a.auth.RequirePermission("request", "edit", http.HandlerFunc(a.withCSRF(a.requestEdit))))
-	mux.Handle("POST /requests/{id}/comment", a.auth.RequirePermission("request", "comment", http.HandlerFunc(a.withCSRF(a.requestComment))))
-	// Q6/L7: a held request still accepts the requester's documents without the
-	// edit path, which is closed once a request is approved. The Phase-2 route
-	// table planned this door (attachment:create) and it was never built, so the
-	// document Accounts asked for had no way in (hold-1).
-	mux.Handle("POST /requests/{id}/attachments", a.auth.RequirePermission("attachment", "create", http.HandlerFunc(a.withCSRF(a.requestAttachmentUpload))))
-	mux.Handle("POST /requests/{id}/withdraw", a.auth.RequirePermission("request", "withdraw", http.HandlerFunc(a.withCSRF(a.requestWithdraw))))
-	mux.Handle("POST /requests/{id}/reraise", a.auth.RequirePermission("request", "reraise", http.HandlerFunc(a.withCSRF(a.requestReraise))))
-	mux.Handle("POST /requests/{id}/approve", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.withCSRF(a.requestApprove))))
-	mux.Handle("POST /requests/{id}/return", a.auth.RequirePermission("approval", "return", http.HandlerFunc(a.withCSRF(a.requestReturn))))
-	mux.Handle("POST /requests/{id}/reject", a.auth.RequirePermission("approval", "reject", http.HandlerFunc(a.withCSRF(a.requestReject))))
-	// A7: handing an approval on to a different approver, with a reason and a
-	// history entry. The path is deliberately not /reassign — that one is the
-	// payment reservation's, on reservation:reassign — because moving an
-	// approval and moving a reservation are different acts by different people
-	// (F-A-06/F-C-02). store.ReassignRequest carried every rule and had no door.
-	mux.Handle("POST /requests/{id}/reassign-approver", a.auth.RequirePermission("approval", "reassign", http.HandlerFunc(a.withCSRF(a.requestReassignApprover))))
-	// The cancellation flow. GET /cancel is the employee asking and POST /cancel
-	// is the approver cancelling outright: two verbs on one path, because they
-	// are the same sentence said by two people, and ServeMux gates each method
-	// on the permission its own actor needs.
-	mux.Handle("GET /requests/{id}/cancel", a.auth.RequirePermission("request", "cancel", http.HandlerFunc(a.requestCancelForm)))
-	mux.Handle("POST /requests/{id}/cancel-request", a.auth.RequirePermission("request", "cancel", http.HandlerFunc(a.withCSRF(a.requestCancelAsk))))
-	mux.Handle("POST /requests/{id}/cancel", a.auth.RequirePermission("approval", "cancel", http.HandlerFunc(a.withCSRF(a.requestCancelOutright))))
-	mux.Handle("GET /requests/{id}/cancellation", a.auth.RequirePermission("approval", "cancel", http.HandlerFunc(a.requestCancellationForm)))
-	mux.Handle("POST /requests/{id}/cancellation", a.auth.RequirePermission("approval", "cancel", http.HandlerFunc(a.withCSRF(a.requestCancellationDecide))))
-	// The manager queue is its own screen (A15), gated on the verb that lets a
-	// person decide rather than on the one that lets them read.
-	mux.Handle("GET /approvals", a.auth.RequirePermission("approval", "approve", http.HandlerFunc(a.approvals)))
-	mux.Handle("GET /users", a.auth.RequirePermission("user", "view", http.HandlerFunc(a.users)))
-	// One handler, two verbs: the screen renders ＋ Add user behind user:create
-	// and the Edit sheet behind user:edit, and the route has to agree with both
-	// or a legitimately configured role gets a control whose submit 403s
-	// (F-A-07). Which verb applies depends on the posted id, which cannot be read
-	// before the form is parsed — so the route refuses anybody holding neither,
-	// keeping the "permission gate outside withCSRF" ordering every other POST
-	// has, and userSave then demands the one the pressed control was gated on.
+	// The user's own notifications: the store only ever returns the caller's
+	// own rows, so a session is enough.
+	signedIn("GET /notifications", a.notificationCentre)
+	signedInForm("POST /notifications/read", a.notificationsMarkAllRead)
+	signedIn("GET /notifications/{id}/open", a.notificationOpen)
+
+	// The admin screen for notification rules and email settings.
+	read("GET /admin/notifications", "notification", "view", a.adminNotifications)
+	write("POST /admin/notifications/smtp", "notification", "edit", a.adminNotificationsSMTP)
+	write("POST /admin/notifications/events/{event}", "notification", "edit", a.adminNotificationEventSave)
+	write("POST /admin/notifications/test", "notification", "edit", a.adminNotificationsTest)
+
+	// Budgets, month locks and masters. Saving a project or head needs
+	// create or edit depending on the posted id, which the handler checks.
+	read("GET /budgets/new", "budget", "edit", a.budgetPlannerNew)
+	read("GET /budgets/plan", "budget", "edit", a.budgetPlannerEdit)
+	read("GET /budgets/plan-data", "budget", "view", a.budgetPlannerData)
+	write("POST /budgets/plan", "budget", "edit", a.budgetPlannerSave)
+	read("GET /budgets", "budget", "view", a.budgets)
+	write("POST /budgets", "budget", "edit", a.budgetSave)
+	write("POST /months/{month}/lock", "month", "lock", a.setMonthLock(a.st.LockMonth))
+	write("POST /months/{month}/unlock", "month", "lock", a.setMonthLock(a.st.UnlockMonth))
+	read("GET /projects", "project", "view", a.projects)
+	signedInForm("POST /projects", a.projectSave)
+	read("GET /heads", "head", "view", a.heads)
+	signedInForm("POST /heads", a.headSave)
+
+	// Vendors.
+	read("GET /vendors", "vendor", "view", a.vendorsList)
+	read("GET /vendors/new", "vendor", "create", a.vendorNew)
+	read("GET /vendors/search", "vendor", "view", a.vendorSearch)
+	read("GET /vendors/{id}/{tab}", "vendor", "view", a.vendorRelated)
+	read("GET /vendors/{id}", "vendor", "view", a.vendorDetail)
+	write("POST /vendors", "vendor", "create", a.vendorCreate)
+	write("POST /vendors/{id}", "vendor", "edit", a.vendorUpdate)
+
+	// Payment requests. Creating a request also submits it; there are no
+	// drafts.
+	read("GET /requests", "request", "view", a.requests)
+	read("GET /requests/export.csv", "request", "view", a.requestsExport)
+	read("GET /requests/new", "request", "create", a.requestNew)
+	read("GET /requests/new/fields", "request", "create", a.requestFormFields)
+	write("POST /requests/duplicate-check", "request", "create", a.requestDuplicateCheck)
+	write("POST /requests", "request", "create", a.requestCreate)
+	read("GET /requests/{id}/submitted", "request", "view", a.requestSubmitted)
+
+	// Paying a request: reserving it, the settlement preview (a POST only
+	// because it carries the form; it saves nothing), and the reservation.
+	write("POST /requests/{id}/record-payment", "reservation", "reserve", a.requestRecordPayment)
+	write("POST /requests/{id}/settlement-preview", "payment", "settle", a.settlementPreview)
+	// The reservation page serves both the holder releasing it and an admin
+	// taking it over, which are different permissions, so the page needs only a
+	// session and reservationForm checks the one that fits the caller. Each POST
+	// has its own gate.
+	signedIn("GET /requests/{id}/reservation", a.reservationForm)
+	write("POST /requests/{id}/release", "reservation", "release", a.requestRelease)
+	write("POST /requests/{id}/reassign", "reservation", "reassign", a.requestReassign)
+	// The "reserved a long time ago" prompt; each choice on it is gated again.
+	read("GET /requests/{id}/reservation/stale", "payment", "process", a.requestStale)
+	// One permission, payment:hold, both puts a request on hold and takes it off.
+	write("POST /requests/{id}/hold", "payment", "hold", a.requestHold)
+	write("POST /requests/{id}/unhold", "payment", "hold", a.requestUnhold)
+	read("GET /accounts-queue", "payment", "process", a.accountsQueue)
+	// A partial payment goes back to the approver. Anyone who can see the
+	// request may read the review page; accepting it or raising a concern
+	// needs approval:accept_partial.
+	read("GET /requests/{id}/partial-review", "request", "view", a.requestPartialReview)
+	write("POST /requests/{id}/accept-partial", "approval", "accept_partial", a.requestAcceptPartial)
+	write("POST /requests/{id}/raise-concern", "approval", "accept_partial", a.requestRaiseConcern)
+
+	// The request detail page is the same for everyone; each decision posts
+	// to its own route with the permission that decision needs.
+	read("GET /requests/{id}", "request", "view", a.requestDetail)
+	read("GET /requests/{id}/edit", "request", "edit", a.requestEditForm)
+	write("POST /requests/{id}/edit", "request", "edit", a.requestEdit)
+	write("POST /requests/{id}/comment", "request", "comment", a.requestComment)
+	// Adding a document works without edit rights, so a requester can still
+	// send the document Accounts asked for while the request is on hold.
+	write("POST /requests/{id}/attachments", "attachment", "create", a.requestAttachmentUpload)
+	write("POST /requests/{id}/withdraw", "request", "withdraw", a.requestWithdraw)
+	write("POST /requests/{id}/reraise", "request", "reraise", a.requestReraise)
+	write("POST /requests/{id}/approve", "approval", "approve", a.requestApprove)
+	write("POST /requests/{id}/return", "approval", "return", a.requestReturn)
+	write("POST /requests/{id}/reject", "approval", "reject", a.requestReject)
+	// Handing the approval to another approver (not the same as
+	// /reassign, which moves a payment reservation).
+	write("POST /requests/{id}/reassign-approver", "approval", "reassign", a.requestReassignApprover)
+	// Cancellation: the requester asks (GET form, POST cancel-request); an
+	// approver cancels outright (POST cancel) or decides on a request to
+	// cancel (cancellation).
+	read("GET /requests/{id}/cancel", "request", "cancel", a.requestCancelForm)
+	write("POST /requests/{id}/cancel-request", "request", "cancel", a.requestCancelAsk)
+	write("POST /requests/{id}/cancel", "approval", "cancel", a.requestCancelOutright)
+	read("GET /requests/{id}/cancellation", "approval", "cancel", a.requestCancellationForm)
+	write("POST /requests/{id}/cancellation", "approval", "cancel", a.requestCancellationDecide)
+	read("GET /approvals", "approval", "approve", a.approvals)
+
+	// Administration.
+	read("GET /users", "user", "view", a.users)
+	// Adding a user needs user:create and editing one needs user:edit; which
+	// applies depends on the posted id. The route refuses anyone with
+	// neither, before the form is read, and userSave checks the exact one.
 	mux.Handle("POST /users", a.requireAnyOf("user", []string{"create", "edit"}, http.HandlerFunc(a.withCSRF(a.userSave))))
-	mux.Handle("GET /roles", a.auth.RequirePermission("role", "view", http.HandlerFunc(a.rolesPage)))
-	mux.Handle("POST /roles", a.auth.RequirePermission("role", "edit", http.HandlerFunc(a.withCSRF(a.rolesSave))))
-	mux.Handle("POST /roles/new", a.auth.RequirePermission("role", "create", http.HandlerFunc(a.withCSRF(a.roleCreate))))
-	mux.Handle("POST /roles/{id}/copy", a.auth.RequirePermission("role", "create", http.HandlerFunc(a.withCSRF(a.roleCopy))))
-	mux.Handle("POST /roles/{id}/delete", a.auth.RequirePermission("role", "delete", http.HandlerFunc(a.withCSRF(a.roleDelete))))
-	mux.Handle("GET /configuration", a.auth.RequirePermission("config", "view", http.HandlerFunc(a.configuration)))
-	mux.Handle("POST /configuration", a.auth.RequirePermission("config", "edit", http.HandlerFunc(a.withCSRF(a.configurationSave))))
-	// The screen is gated on config{view}; the category mutation keeps its own
-	// Phase-1 verb, which is what the store audits against.
-	mux.Handle("POST /configuration/recoverable-categories", a.auth.RequirePermission("recoverable_category", "edit", http.HandlerFunc(a.withCSRF(a.recoverableCategorySave))))
-	// Delete is its own verb and its own route: edit may retire a category by
-	// unticking Active, and removing the row outright is a different power over
-	// the same table (F-E-06). Registered after the collection POST so the
-	// literal path keeps its own handler; ServeMux prefers the more specific
-	// pattern either way.
-	mux.Handle("POST /configuration/recoverable-categories/{id}/delete", a.auth.RequirePermission("recoverable_category", "delete", http.HandlerFunc(a.withCSRF(a.recoverableCategoryDelete))))
-	mux.Handle("GET /audit", a.auth.RequirePermission("audit", "view", http.HandlerFunc(a.auditLog)))
-	mux.Handle("GET /backups", a.auth.RequirePermission("backup", "view", http.HandlerFunc(a.backups)))
-	mux.Handle("POST /backups", a.auth.RequirePermission("backup", "create", http.HandlerFunc(a.withCSRF(a.backupCreate))))
+	read("GET /roles", "role", "view", a.rolesPage)
+	write("POST /roles", "role", "edit", a.rolesSave)
+	write("POST /roles/new", "role", "create", a.roleCreate)
+	write("POST /roles/{id}/copy", "role", "create", a.roleCopy)
+	write("POST /roles/{id}/delete", "role", "delete", a.roleDelete)
+	read("GET /configuration", "config", "view", a.configuration)
+	write("POST /configuration", "config", "edit", a.configurationSave)
+	// Recoverable categories live on the configuration screen but have
+	// their own permissions; deleting one is separate from editing it.
+	write("POST /configuration/recoverable-categories", "recoverable_category", "edit", a.recoverableCategorySave)
+	write("POST /configuration/recoverable-categories/{id}/delete", "recoverable_category", "delete", a.recoverableCategoryDelete)
+	read("GET /audit", "audit", "view", a.auditLog)
+	read("GET /backups", "backup", "view", a.backups)
+	write("POST /backups", "backup", "create", a.backupCreate)
 }
