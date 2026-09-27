@@ -249,7 +249,7 @@ const templates = `
   </div></fieldset>
   <fieldset class="payment-section payment-reference" {{if .Locked}}disabled{{end}}><legend>Vendor and reference</legend><div class="form-grid">
     <label class="field span-4">Vendor / Payee<input name="vendor_payee" value="{{.Payment.VendorPayee}}"></label>
-    <label class="field span-3">Payment mode<select name="payment_mode"><option value="">Select</option><option value="cash" {{select .Payment.PaymentMode "cash"}}>Cash</option><option value="bank_transfer" {{select .Payment.PaymentMode "bank_transfer"}}>Bank transfer</option><option value="cheque" {{select .Payment.PaymentMode "cheque"}}>Cheque</option><option value="card" {{select .Payment.PaymentMode "card"}}>Card</option><option value="upi" {{select .Payment.PaymentMode "upi"}}>UPI</option><option value="other" {{select .Payment.PaymentMode "other"}}>Other</option></select></label>
+    <label class="field span-3">Payment mode<select name="payment_mode"><option value="">Select</option>{{range .PaymentModeChoices}}<option value="{{.Value}}" {{select .Value $.Payment.PaymentMode}}>{{.Label}}</option>{{end}}</select></label>
     <label class="field span-3">Invoice / Bill No<input name="invoice_no" value="{{.Payment.InvoiceNo}}"></label>
     <label class="field span-2">Reference No<input name="reference_no" value="{{.Payment.ReferenceNo}}"></label>
   </div></fieldset>

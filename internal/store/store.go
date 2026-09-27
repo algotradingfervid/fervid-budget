@@ -2569,6 +2569,46 @@ func (s *Store) AuditPage(ctx context.Context, q AuditQuery) (AuditPage, error) 
 	return page, rows.Err()
 }
 
+// paymentModes is the one vocabulary of payment modes, in the order a form
+// offers them when configuration names none. Every payment form builds its
+// options from it and validatePaymentTx refuses anything outside it.
+var paymentModes = []string{"neft", "rtgs", "bank_transfer", "cheque", "upi", "cash", "card", "dd", "other"}
+
+// PaymentModes returns a copy of the payment-mode vocabulary.
+func PaymentModes() []string { return append([]string(nil), paymentModes...) }
+
+// CanonicalPaymentMode maps what a person or the configuration may write
+// ("NEFT", "Bank transfer", "Demand draft") to the stored key ("neft",
+// "bank_transfer", "dd"). A value outside the vocabulary comes back trimmed but
+// otherwise unchanged.
+func CanonicalPaymentMode(value string) string {
+	switch key := strings.ToLower(strings.TrimSpace(value)); key {
+	case "bank transfer":
+		return "bank_transfer"
+	case "demand draft":
+		return "dd"
+	default:
+		for _, mode := range paymentModes {
+			if key == mode {
+				return mode
+			}
+		}
+		return strings.TrimSpace(value)
+	}
+}
+
+// IsPaymentMode reports whether value names a mode in the vocabulary, in any
+// of the spellings CanonicalPaymentMode accepts.
+func IsPaymentMode(value string) bool {
+	canonical := CanonicalPaymentMode(value)
+	for _, mode := range paymentModes {
+		if canonical == mode {
+			return true
+		}
+	}
+	return false
+}
+
 // validatePayment runs the check against the pool, for the callers that have not
 // opened a transaction yet.
 func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOptional bool) error {
@@ -2587,6 +2627,12 @@ func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOption
 func validatePaymentTx(ctx context.Context, q rowQuerier, in PaymentInput, headOptional bool) error {
 	if in.Amount <= 0 || in.Amount > money.MaxAmount || !validDate(in.PaidOn) || (in.HeadID == 0 && !headOptional) {
 		return fmt.Errorf("%w: valid head, date, and positive amount are required", ErrValidation)
+	}
+	// The mode is optional, but when given it must be one the forms offer:
+	// every payment form builds its options from PaymentModes, so anything else
+	// arrived from outside the product.
+	if strings.TrimSpace(in.PaymentMode) != "" && !IsPaymentMode(in.PaymentMode) {
+		return fmt.Errorf("%w: choose a payment mode from the list", ErrValidation)
 	}
 	// F-D-06: paid_on records when money left the bank, so a date after today
 	// records something that has not happened.

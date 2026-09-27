@@ -284,40 +284,4 @@ func vendorPaymentModes(settings map[string]string, current string) []string {
 
 type PaymentModeChoice struct{ Value, Label string }
 
-func canonicalPaymentMode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "neft":
-		return "neft"
-	case "bank transfer", "bank_transfer":
-		return "bank_transfer"
-	case "rtgs":
-		return "rtgs"
-	case "dd", "demand draft":
-		return "dd"
-	case "upi":
-		return "upi"
-	case "cheque":
-		return "cheque"
-	case "cash":
-		return "cash"
-	case "card":
-		return "card"
-	case "other":
-		return "other"
-	default:
-		return strings.TrimSpace(value)
-	}
-}
-func configuredPaymentChoices(settings map[string]string) []PaymentModeChoice {
-	out := []PaymentModeChoice{}
-	seen := map[string]bool{}
-	for _, label := range strings.Split(settings["payment_modes"], ",") {
-		label = strings.TrimSpace(label)
-		value := canonicalPaymentMode(label)
-		if value != "" && !seen[value] {
-			seen[value] = true
-			out = append(out, PaymentModeChoice{Value: value, Label: label})
-		}
-	}
-	return out
-}
+func canonicalPaymentMode(value string) string { return store.CanonicalPaymentMode(value) }

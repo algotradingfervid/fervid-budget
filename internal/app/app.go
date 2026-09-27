@@ -1173,11 +1173,29 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// Older rows may spell the mode "Bank transfer" or "NEFT"; the form's
+	// options carry the stored key, so the saved mode stays selected.
+	p.PaymentMode = canonicalPaymentMode(p.PaymentMode)
+	choices, err := a.paymentEditChoices(r, p.PaymentMode)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
 	// Month is the payment's own, so "Back to grid" returns to the month this
 	// payment belongs to rather than to / — which was the grid before Phase 4 and
 	// is the dashboard now (F-G-029).
-	a.render(w, r, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads,
+	a.render(w, r, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads, PaymentModeChoices: choices,
 		Month: p.PaidOn[:7], Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7]) || p.VoidedAt != nil})
+}
+
+// paymentEditChoices is the edit form's payment-mode options: the same list the
+// settlement form offers, plus the payment's own mode.
+func (a *App) paymentEditChoices(r *http.Request, current string) ([]PaymentModeChoice, error) {
+	settings, err := a.st.AppSettings(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	return paymentModeChoices(settings, current), nil
 }
 
 func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
@@ -1212,8 +1230,13 @@ func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		p := paymentFromInput(in)
 		p.ID = id
+		choices, choicesErr := a.paymentEditChoices(r, p.PaymentMode)
+		if choicesErr != nil {
+			a.respondStoreError(w, r, choicesErr)
+			return
+		}
 		locked := validDateInput(in.PaidOn) && a.st.IsLocked(r.Context(), in.PaidOn[:7])
-		a.renderStatus(w, r, status, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, PaymentAmount: r.FormValue("amount"), Heads: heads, Locked: locked, Error: friendly(err)})
+		a.renderStatus(w, r, status, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, PaymentAmount: r.FormValue("amount"), Heads: heads, PaymentModeChoices: choices, Locked: locked, Error: friendly(err)})
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
