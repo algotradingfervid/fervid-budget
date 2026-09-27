@@ -1,8 +1,8 @@
-import { test, expect, createApprovedRequest, settlePayment } from './fixtures';
+import { test, expect, createApprovedRequest, settlePayment, today } from './fixtures';
 
 test('completed requests live in Closed and visible Clear filters recovers an empty list', async ({ adminPage, runId }) => {
   const request = await createApprovedRequest(adminPage, runId, { amount: '50.00' });
-  await settlePayment(adminPage, request.id, { amount: '50.00', paidOn: '2026-07-15', reference: `CLOSED-${runId}` });
+  await settlePayment(adminPage, request.id, { amount: '50.00', paidOn: today(), reference: `CLOSED-${runId}` });
   await adminPage.goto(`/requests?bucket=closed&type=vendor_invoice&treatment=budget&q=${encodeURIComponent(request.number)}`);
   const card = adminPage.locator('.req-card', { hasText: request.number });
   await expect(card).toBeVisible();

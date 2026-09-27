@@ -8,7 +8,9 @@ import {
   createApproverUser,
   login,
   openNewUserSheet,
-  settlePayment
+  settlePayment,
+  thisMonth,
+  today
 } from './fixtures';
 
 /*
@@ -42,10 +44,6 @@ function paise(text: string | null): number {
   return Math.round(Number(t) * 100);
 }
 
-function today() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 /** Nothing is printed as "Project / Head" with one side missing. */
 function assertNoDanglingSlash(text: string, where: string) {
@@ -218,51 +216,58 @@ test('grid-pill-1 + audit-2 — On track is green like its legend, and budget sa
   adminPage,
   runId
 }) => {
-  // audit-2: the first save of 2026-08 writes what it creates; saving again with
-  // nothing changed writes nothing; changing one head writes one readable row.
+  // audit-2: the first save of the month writes what it creates; saving again
+  // with nothing changed writes nothing; changing one head writes one readable
+  // row. The month is this one because a payment can only be dated today, and
+  // the seed budgets live in 2026-06, so nothing is budgeted here beforehand.
+  const month = thisMonth();
   const auditRows = async () => {
     await adminPage.goto('/audit?entity=budget');
-    return (await adminPage.locator('body').innerText()).match(/2026-08:/g)?.length ?? 0;
+    return (await adminPage.locator('body').innerText()).match(new RegExp(`${month}:`, 'g'))?.length ?? 0;
   };
   const beforeFirst = await auditRows();
-  await adminPage.goto('/budgets?month=2026-08');
+  await adminPage.goto(`/budgets?month=${month}`);
   await adminPage.getByLabel('Budget for Operations / Office Rent').fill('2,50,000.00');
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
-  await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
+  await expect(adminPage).toHaveURL(new RegExp(`/budgets\\?month=${month}`));
   const afterFirst = await auditRows();
   // Every other head on the form went in at ₹0 with no budget behind it, which
   // is no change at all: the first save records the one head that was set.
   expect(afterFirst - beforeFirst, 'the first save audits only the head that was set').toBe(1);
-  await expect(adminPage.getByText('Operations / Office Rent 2026-08: set to ₹2,50,000.00').first()).toBeVisible();
+  await expect(adminPage.getByText(`Operations / Office Rent ${month}: set to ₹2,50,000.00`).first()).toBeVisible();
 
-  await adminPage.goto('/budgets?month=2026-08');
+  await adminPage.goto(`/budgets?month=${month}`);
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
-  await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
+  await expect(adminPage).toHaveURL(new RegExp(`/budgets\\?month=${month}`));
   expect(await auditRows(), 'an unchanged save writes no audit rows').toBe(afterFirst);
 
-  await adminPage.goto('/budgets?month=2026-08');
+  await adminPage.goto(`/budgets?month=${month}`);
   const utilities = adminPage.getByLabel('Budget for Operations / Utilities');
   const before = await utilities.inputValue();
   const next = paise(before) === 100000 ? '2,000.00' : '1,000.00';
   await utilities.fill(next);
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
-  await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
+  await expect(adminPage).toHaveURL(new RegExp(`/budgets\\?month=${month}`));
   expect(await auditRows(), 'one head changed, one audit row').toBe(afterFirst + 1);
-  // Utilities had no 2026-08 budget until now (an untouched head is not
+  // Utilities had no budget this month until now (an untouched head is not
   // written), so its first figure is a "set to"; a later one names both sides.
   const nextRe = next.replace(/[.]/g, '\\.');
   const summary = paise(before) === 0
-    ? new RegExp(`Operations / Utilities 2026-08: set to ₹${nextRe}`)
-    : new RegExp(`Operations / Utilities 2026-08: ₹[\\d,.]+ → ₹${nextRe}`);
+    ? new RegExp(`Operations / Utilities ${month}: set to ₹${nextRe}`)
+    : new RegExp(`Operations / Utilities ${month}: ₹[\\d,.]+ → ₹${nextRe}`);
   await expect(adminPage.getByText(summary).first()).toBeVisible();
   await shoot(adminPage, 'audit2-1440', false);
 
-  // grid-pill-1: pay Office Rent exactly its 2026-08 budget.
-  const request = await createApprovedRequest(adminPage, runId, { amount: '250000' });
-  await settlePayment(adminPage, request.id, { amount: '250000', paidOn: '2026-08-10' });
+  // grid-pill-1: pay Utilities exactly the budget it was just given. On track
+  // means actual equals budget to the paise, and every other spec in this run
+  // pays Office Rent in this same month, so the head nobody else touches is the
+  // one that can be made to land exactly on its budget.
+  const exact = next.replace(/,/g, '');
+  const request = await createApprovedRequest(adminPage, runId, { amount: exact, head: 'Operations / Utilities' });
+  await settlePayment(adminPage, request.id, { amount: exact, paidOn: today() });
   for (const [vp, tag] of [[DESKTOP, '1440'], [PHONE, '390']] as const) {
     await adminPage.setViewportSize(vp);
-    await adminPage.goto('/grid?month=2026-08&status=on-track');
+    await adminPage.goto(`/grid?month=${month}&status=on-track`);
     const pill = adminPage.locator('.pill.on-track:visible').first();
     await expect(pill).toHaveText('On track');
     const colours = await adminPage.evaluate(() => {

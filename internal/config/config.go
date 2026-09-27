@@ -40,6 +40,10 @@ type Config struct {
 	// suites that sign in many times from one address raise them.
 	LoginLimitPerIP  int
 	LoginLimitGlobal int
+	// DevPages also serves the design-system reference page
+	// (/static/_kitchensink.html), which the component tests drive. Production
+	// leaves it off so only the release assets are public.
+	DevPages bool
 }
 
 func Load() Config {
@@ -62,6 +66,7 @@ func Load() Config {
 		AttachmentQuotaBytes: int64(envInt("FERVID_ATTACHMENT_QUOTA_MB", 1024)) * 1024 * 1024,
 		LoginLimitPerIP:      envPositiveInt("FERVID_LOGIN_LIMIT_PER_IP", 30),
 		LoginLimitGlobal:     envPositiveInt("FERVID_LOGIN_LIMIT_GLOBAL", 300),
+		DevPages:             envBool("FERVID_DEV_PAGES", false),
 	}
 }
 

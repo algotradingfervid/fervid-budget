@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test';
-import { capturePageErrors, createApprovedRequest, expect, test } from './fixtures';
+import { capturePageErrors, createApprovedRequest, expect, test, today } from './fixtures';
 
 /**
  * Design-system behaviours (web/static/fervid-app.js).
@@ -47,7 +47,7 @@ test.describe('design system behaviours', () => {
     const amount = adminPage.getByLabel('Amount actually paid');
     const reference = adminPage.getByLabel('Transaction / UTR reference');
     const preview = adminPage.getByRole('button', { name: 'Payment settled →' });
-    await adminPage.getByLabel('Paid on').fill('2026-07-20');
+    await adminPage.getByLabel('Paid on').fill(today());
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await reference.fill('TEST-REF');
     for (const invalid of ['0', '-1.01', '1.001', '100.02']) {

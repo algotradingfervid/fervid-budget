@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { test, expect, capturePageErrors, createApprovedRequest, createDataEntryUser, login, settlePayment } from './fixtures';
+import { test, expect, capturePageErrors, createApprovedRequest, createDataEntryUser, login, settlePayment, thisMonth, today } from './fixtures';
 
 test.describe('authentication, permissions, and navigation', () => {
   test('admin can log in, traverse primary navigation, and log out without browser errors', async ({ adminPage }) => {
@@ -99,13 +99,13 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     // (F-D-09: it reaches every hop, whatever the old KNOWN GAP comment said).
     const payment = await settlePayment(adminPage, request.id, {
       amount: '4200.00',
-      paidOn: '2026-06-15',
+      paidOn: today(),
       mode: 'upi',
       reference: `UTR-${runId}`,
       remarks: `Settled by e2e ${runId}`
     });
 
-    await adminPage.goto('/payments?month=2026-06');
+    await adminPage.goto(`/payments?month=${thisMonth()}`);
     await adminPage.getByLabel('Search').fill(runId);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     // Both halves matter: the filter narrowed the ledger to a single row, and
@@ -141,7 +141,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(adminPage.getByRole('button', { name: 'Save Payment' })).toHaveCount(0);
 
     const download = adminPage.waitForEvent('download');
-    await adminPage.goto('/grid?month=2026-06');
+    await adminPage.goto(`/grid?month=${thisMonth()}`);
     await adminPage.getByRole('link', { name: /Export/ }).click();
     expect(await download).toBeTruthy();
     expect(errors).toEqual([]);
@@ -159,7 +159,8 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(amount).toHaveAttribute('aria-invalid', 'true');
     await amount.fill('6000.00');
     await expect(adminPage.locator('#diff-banner')).toHaveClass(/bad/);
-    await adminPage.getByLabel('Paid on').fill('2026-06-15');
+    const paidOn = today();
+    await adminPage.getByLabel('Paid on').fill(paidOn);
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-${runId}`);
     await adminPage.getByLabel('Processing note').fill(`Retain this note ${runId}`);
@@ -167,7 +168,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(adminPage.locator('.client-error-summary')).toContainText('remaining approved balance');
     await expect(adminPage.locator('#settle-sheet')).not.toBeVisible();
     await expect(amount).toHaveValue('6,000.00');
-    await expect(adminPage.getByLabel('Paid on')).toHaveValue('2026-06-15');
+    await expect(adminPage.getByLabel('Paid on')).toHaveValue(paidOn);
     await expect(adminPage.getByLabel('Payment mode')).toHaveValue('neft');
     await expect(adminPage.getByLabel('Transaction / UTR reference')).toHaveValue(`UTR-${runId}`);
     await expect(adminPage.getByLabel('Processing note')).toHaveValue(`Retain this note ${runId}`);

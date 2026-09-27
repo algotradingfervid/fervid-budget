@@ -33,7 +33,7 @@ Rollbacks restore binary/assets only. Review the saved backup before any databas
 - A head with financial history cannot move to another project. Create a new head instead. Project/head edits have atomic before/after audit records.
 - Vendor totals are marked **Restricted** unless the viewer can read the corresponding company-wide payment/request data. Notification delivery and inbox reads enforce current request visibility, including after permission changes.
 - Uploads require valid PDF/JPEG/PNG structure. Images are re-encoded to remove appended data. Downloads remain attachments and cannot escape the attachment root through symlinks. This is structural validation, not antivirus scanning or a guarantee that every PDF is harmless.
-- Only the seven named release assets are public under `/static/`; arbitrary files and directory listings are refused. HTMX is pinned to 2.0.11 with evaluation and script execution disabled. The CSP permits same-origin scripts; no inline script/event handlers are required.
+- Only the seven named release assets are public under `/static/`; arbitrary files and directory listings are refused. The design-system reference page (`_kitchensink.html`) is served only when `FERVID_DEV_PAGES=true`, which test and development servers set and production never does. HTMX is pinned to 2.0.11 with evaluation and script execution disabled. The CSP permits same-origin scripts; no inline script/event handlers are required.
 
 ## Verification
 
