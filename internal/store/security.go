@@ -19,13 +19,6 @@ import (
 	"fmt"
 )
 
-// securityQuerier is satisfied by both *sql.DB and *sql.Tx, so the permission
-// readers in this file can run inside the caller's transaction or on their own.
-type securityQuerier interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}
-
 // adminRoleSQL is the rule for the built-in administrator role: the system role
 // named exactly "Admin". That role can never lose its user and role management
 // permissions, can never be edited or assigned by a non-administrator, and must
@@ -33,7 +26,7 @@ type securityQuerier interface {
 const adminRoleSQL = `r.is_system=1 AND r.name='Admin'`
 
 // adminMember reports whether user id is active and holds the built-in Admin role.
-func adminMember(ctx context.Context, q securityQuerier, id int64) (bool, error) {
+func adminMember(ctx context.Context, q querier, id int64) (bool, error) {
 	var yes bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id WHERE u.id=? AND u.active=1 AND `+adminRoleSQL+`)`, id).Scan(&yes)
 	return yes, err
@@ -41,7 +34,7 @@ func adminMember(ctx context.Context, q securityQuerier, id int64) (bool, error)
 
 // isAdminRole reports whether roleID is the built-in Admin role. A role id that
 // does not exist returns sql.ErrNoRows.
-func isAdminRole(ctx context.Context, q securityQuerier, roleID int64) (bool, error) {
+func isAdminRole(ctx context.Context, q querier, roleID int64) (bool, error) {
 	var yes bool
 	err := q.QueryRowContext(ctx, `SELECT `+adminRoleSQL+` FROM roles r WHERE r.id=?`, roleID).Scan(&yes)
 	return yes, err
@@ -49,7 +42,7 @@ func isAdminRole(ctx context.Context, q securityQuerier, roleID int64) (bool, er
 
 // eachStringPair runs a query that returns two text columns and calls fn for
 // every row, in the order the query returns them.
-func eachStringPair(ctx context.Context, q securityQuerier, query string, arg any, fn func(a, b string)) error {
+func eachStringPair(ctx context.Context, q querier, query string, arg any, fn func(a, b string)) error {
 	rows, err := q.QueryContext(ctx, query, arg)
 	if err != nil {
 		return err
@@ -67,7 +60,7 @@ func eachStringPair(ctx context.Context, q securityQuerier, query string, arg an
 
 // roleGrants loads one role's grants and data scopes, ordered by resource (and
 // action). Both slices are nil when the role has none.
-func roleGrants(ctx context.Context, q securityQuerier, roleID int64) ([]Grant, []ScopeGrant, error) {
+func roleGrants(ctx context.Context, q querier, roleID int64) ([]Grant, []ScopeGrant, error) {
 	var grants []Grant
 	if err := eachStringPair(ctx, q, `SELECT resource,action FROM role_permissions WHERE role_id=? ORDER BY resource,action`, roleID,
 		func(resource, action string) { grants = append(grants, Grant{resource, action}) }); err != nil {
@@ -101,7 +94,7 @@ func within(ps PermissionSet, grants []Grant, scopes []ScopeGrant) bool {
 // loadPermissions builds a user's permission set from every role they hold:
 // the union of the grants, and the broadest data scope per resource. With
 // activeOnly set, a deactivated user gets an empty set.
-func loadPermissions(ctx context.Context, q securityQuerier, userID int64, activeOnly bool) (*dbPermissionSet, error) {
+func loadPermissions(ctx context.Context, q querier, userID int64, activeOnly bool) (*dbPermissionSet, error) {
 	ps := &dbPermissionSet{grants: map[string]map[string]struct{}{}, scopes: map[string]string{}}
 	from, where := `user_roles ur`, `ur.user_id=?`
 	if activeOnly {
@@ -117,7 +110,7 @@ func loadPermissions(ctx context.Context, q securityQuerier, userID int64, activ
 // effectivePermissionsQ returns the permissions of an active user; a deactivated
 // user holds none. It runs on q, so a write can check the actor inside its own
 // transaction.
-func effectivePermissionsQ(ctx context.Context, q securityQuerier, id int64) (PermissionSet, error) {
+func effectivePermissionsQ(ctx context.Context, q querier, id int64) (PermissionSet, error) {
 	return loadPermissions(ctx, q, id, true)
 }
 
@@ -126,7 +119,7 @@ func effectivePermissionsQ(ctx context.Context, q securityQuerier, id int64) (Pe
 // Administrators may then manage any role. Anyone else may never manage the
 // built-in Admin role, and may manage another role only when its grants and
 // scopes are all within their own (the role ceiling); otherwise ErrForbidden.
-func requireRoleCeiling(ctx context.Context, q securityQuerier, actorID int64, roleIDs []int64) error {
+func requireRoleCeiling(ctx context.Context, q querier, actorID int64, roleIDs []int64) error {
 	admin, err := adminMember(ctx, q, actorID)
 	if err != nil {
 		return err
@@ -167,7 +160,7 @@ func requireRoleCeiling(ctx context.Context, q securityQuerier, actorID int64, r
 }
 
 // userRoleIDs lists the role ids assigned to a user.
-func userRoleIDs(ctx context.Context, q securityQuerier, id int64) ([]int64, error) {
+func userRoleIDs(ctx context.Context, q querier, id int64) ([]int64, error) {
 	rows, err := q.QueryContext(ctx, `SELECT role_id FROM user_roles WHERE user_id=?`, id)
 	if err != nil {
 		return nil, err

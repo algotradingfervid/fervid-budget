@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -190,7 +191,7 @@ func buildVendorOpenRequests() (string, []any) {
 // scanVendor reads one row. withBank and withTotals must match the projection
 // vendorSelect produced, so the scan targets and the column list can never
 // drift apart.
-func scanVendor(scanner interface{ Scan(...any) error }, withBank, withTotals bool) (Vendor, error) {
+func scanVendor(scanner rowScanner, withBank, withTotals bool) (Vendor, error) {
 	var v Vendor
 	dest := []any{
 		&v.ID, &v.Name, &v.DisplayName, &v.VendorType, &v.Status, &v.Categories,
@@ -209,7 +210,7 @@ func scanVendor(scanner interface{ Scan(...any) error }, withBank, withTotals bo
 		dest = append(dest, &v.PaidThisYear, &v.OpenRequests)
 	}
 	if err := scanner.Scan(dest...); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return v, ErrNotFound
 		}
 		return v, err

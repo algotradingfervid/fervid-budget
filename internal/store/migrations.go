@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -391,7 +392,7 @@ func upRequestConcernOpen(tx *sql.Tx) error {
 func upApproverAttachmentView(tx *sql.Tx) error {
 	var roleID int64
 	err := tx.QueryRow(`SELECT id FROM roles WHERE lower(name)='manager' AND is_system=1`).Scan(&roleID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -692,7 +693,7 @@ func systemRoleForLegacy(legacyRole string) string {
 func assignDefaultRoleTx(ctx context.Context, tx *sql.Tx, userID int64, legacyRole string) error {
 	var roleID int64
 	err := tx.QueryRowContext(ctx, `SELECT id FROM roles WHERE lower(name)=lower(?)`, systemRoleForLegacy(legacyRole)).Scan(&roleID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,7 +25,11 @@ import (
 
 // Store is an open database. It is safe for concurrent use.
 type Store struct {
-	db            *sql.DB
+	db *sql.DB
+	// badgeCache memoises nav badge counts per user (see BadgeCounts), and
+	// badgeRevision is bumped on every write so an older snapshot is never
+	// stored over a newer one.
+	badgeCache    sync.Map
 	badgeRevision atomic.Uint64
 }
 
@@ -115,13 +120,23 @@ type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// querier is rowQuerier plus multi-row queries: what *sql.DB and *sql.Tx
+// have in common, so the budget-plan and permission readers can run inside
+// the caller's transaction or on their own.
+type querier interface {
+	rowQuerier
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // validDate reports whether s is a "YYYY-MM-DD" date.
 func validDate(s string) bool {
 	_, err := time.Parse("2006-01-02", s)
 	return err == nil
 }
 
-// validMonth reports whether s is a "YYYY-MM" month.
+// validMonth reports whether s is a "YYYY-MM" month. The app package checks
+// form input with its own validMonthInput, which is the same test; each
+// package keeps its copy so neither has to import the other for one line.
 func validMonth(s string) bool {
 	_, err := time.Parse("2006-01", s)
 	return err == nil

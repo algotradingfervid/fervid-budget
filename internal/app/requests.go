@@ -1,9 +1,7 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/money"
@@ -332,8 +331,7 @@ func (a *App) requestSubmitted(w http.ResponseWriter, r *http.Request) {
 // recoverable_report:view …) before the handler runs. Notifications, which
 // have no route in front of them, use store.CanViewRequest, which checks both.
 func (a *App) canSeeRequest(r *http.Request, req store.Request) bool {
-	u := auth.CurrentUser(r)
-	return store.RequestInScope(a.auth.Scope(u, "request"), u.ID, req)
+	return a.userSeesRequest(auth.CurrentUser(r), req)
 }
 
 // loadRequestByID reads request id and returns it if the signed-in user's data
@@ -950,7 +948,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 			locked+" is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.", nil)
 		return
 	}
-	if err := a.st.ApproveRequest(r.Context(), u, req.ID, amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
+	if err := a.st.ApproveRequestAtRevision(r.Context(), u, req.ID, amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			a.refuseRequestApproval(w, r, friendly(err))
 			return
@@ -1037,14 +1035,14 @@ func (a *App) changeRequest(w http.ResponseWriter, r *http.Request, event, dest 
 // requestReturn sends a pending request back to its requester for correction.
 func (a *App) requestReturn(w http.ResponseWriter, r *http.Request) {
 	a.changeRequest(w, r, notify.EventRequestReturned, "/approvals", func(ctx context.Context, u store.User, id int64) error {
-		return a.st.ReturnRequest(ctx, u, id, r.FormValue("comment"), r.FormValue("revision"))
+		return a.st.ReturnRequestAtRevision(ctx, u, id, r.FormValue("comment"), r.FormValue("revision"))
 	})
 }
 
 // requestReject rejects a pending request. A rejection is final.
 func (a *App) requestReject(w http.ResponseWriter, r *http.Request) {
 	a.changeRequest(w, r, notify.EventRequestRejected, "/approvals", func(ctx context.Context, u store.User, id int64) error {
-		return a.st.RejectRequest(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
+		return a.st.RejectRequestAtRevision(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
 	})
 }
 
@@ -1191,7 +1189,7 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 	}
 	id := pathID(r)
 	accept := r.FormValue("decision") == "accept"
-	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note"), r.FormValue("revision")); err != nil {
+	if err := a.st.DecideCancellationAtRevision(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -1207,7 +1205,7 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 // cancel. The requester is notified, since they did not see it coming.
 func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
 	a.changeRequest(w, r, notify.EventRequestCancelled, "/requests/{id}", func(ctx context.Context, u store.User, id int64) error {
-		return a.st.CancelRequest(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
+		return a.st.CancelRequestAtRevision(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
 	})
 }
 
@@ -1279,29 +1277,19 @@ func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	list := page.Requests
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export",
 		EntityType: "payment_request", Summary: "Exported request list"})
-	var body bytes.Buffer
-	cw := csv.NewWriter(&body)
-	_ = cw.Write([]string{"Number", "Status", "Type", "Title", "Amount", "Approved amount", "Payee", "Requester", "Approver", "Created"})
+	rows := make([][]string, 0, len(list))
 	for _, req := range list {
 		// The approved amount is empty until the request is decided.
 		approved := ""
 		if req.ApprovedAmount != nil {
 			approved = csvAmount(*req.ApprovedAmount)
 		}
-		_ = cw.Write([]string{csvText(req.Number), requestStatusText(csvText(req.Status)), typeLabel(req.Type), csvText(req.ShortTitle),
+		rows = append(rows, []string{csvText(req.Number), requestStatusText(csvText(req.Status)), typeLabel(req.Type), csvText(req.ShortTitle),
 			csvAmount(req.Amount), approved, csvText(req.Vendor), csvText(req.RequesterName), csvText(req.ManagerName),
-			req.CreatedAt.Format("2006-01-02")})
+			req.CreatedAt.Format(time.DateOnly)})
 	}
-	cw.Flush()
-	if err := cw.Error(); err != nil {
-		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="requests.csv"`)
-	if _, err := w.Write(body.Bytes()); err != nil {
-		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
-	}
+	a.sendCSV(w, r, "requests.csv",
+		[]string{"Number", "Status", "Type", "Title", "Amount", "Approved amount", "Payee", "Requester", "Approver", "Created"}, rows)
 }
 
 // optionalID returns nil for an id of 0 or less, else a pointer to id.

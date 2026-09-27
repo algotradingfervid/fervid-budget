@@ -2,8 +2,7 @@ package app
 
 // The web-facing security layer: browser security headers, the cross-origin
 // check on form posts, the sign-in rate limiter, request body size caps, the
-// client address used for rate limits, the public static-file allowlist and
-// CSV cell escaping.
+// client address used for rate limits and the public static-file allowlist.
 
 import (
 	"net"
@@ -214,17 +213,4 @@ func publicStatic(devPages bool) http.Handler {
 		}
 		files.ServeHTTP(w, r)
 	})
-}
-
-// csvText makes a value safe for a CSV cell that a spreadsheet will open. A
-// value that a spreadsheet would treat as a formula (starting with = + - or @,
-// after any leading blanks or byte-order mark), that starts with a byte-order
-// mark, or that contains a tab or line break, is prefixed with an apostrophe
-// so it is shown as plain text.
-func csvText(value string) string {
-	trimmed := strings.TrimLeft(value, " \t\r\n\uFEFF")
-	if strings.ContainsAny(value, "\t\r\n") || strings.HasPrefix(value, "\uFEFF") || (trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0]))) {
-		return "'" + value
-	}
-	return value
 }

@@ -27,7 +27,7 @@ export default page({
         ['Project / Head', 'What the spend was booked against. The cell is the link to the payment.'],
         ['Amount', 'What was paid'],
         ['Payee', 'The vendor or person the money went to'],
-        ['Mode', '`Bank transfer`, `Cheque`, `UPI`, `Cash`, `Card` or `Other`'],
+        ['Mode', 'How it was paid, such as `NEFT`, `UPI` or `Cheque`'],
         ['Reference', 'The invoice or bill number, with the transaction reference under it'],
         ['Entered by', 'Whoever recorded it'],
         ['Status', '`Active`, or `Removed` for a voided payment'],

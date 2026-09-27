@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"sort"
 	"strings"
@@ -56,15 +57,13 @@ func visibleLabels(groups []NavGroup, includeSoon bool) []string {
 	return labels
 }
 
-// specLabels mirrors buildShell's Soon derivation so the expectation tracks
-// the unbuiltPrefixes switch instead of duplicating the list. When a phase
-// builds a screen and deletes its line there, this starts expecting it.
+// specLabels lists navSpec's labels the way buildShell sees them, so the
+// expectation tracks navSpec instead of duplicating it.
 func specLabels(includeSoon bool) []string {
 	spec := make([]NavGroup, 0, len(navSpec))
 	for _, group := range navSpec {
 		items := make([]NavItem, 0, len(group.Items))
 		for _, item := range group.Items {
-			item.Soon = item.Soon || !routeBuilt(item.Href)
 			items = append(items, item)
 		}
 		spec = append(spec, NavGroup{Title: group.Title, Items: items})
@@ -172,8 +171,8 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 		// built. /requests/new and — since Phase 2 Task 25 — /approvals both
 		// exist, so approval:approve is now the first candidate that resolves
 		// and an approver who can also pay lands on Approve rather than falling
-		// through to Pay. TestTabBarNeverLinksToAnUnbuiltRoute keeps the two in
-		// step: a screen leaves unbuiltPrefixes and its tab lights up here.
+		// through to Pay. TestTabBarNeverLinksToAnUnbuiltRoute checks every
+		// tab against the real route table.
 		//
 		// Every tab is gated on the verb its own route is gated on. wantLeft says
 		// which of Requests / Budget / nothing the case is entitled to, because a
@@ -317,8 +316,8 @@ func TestEveryLinkedNavItemResolves(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 
-	// Iterate the built shell, not navSpec: buildShell is where Soon is derived
-	// from unbuiltPrefixes, so this checks what a user is actually shown.
+	// Iterate the built shell, not navSpec, so this checks what a user is
+	// actually shown.
 	for _, group := range buildShell(adminPerms()) {
 		for _, item := range group.Items {
 			if item.Soon || item.Href == "" {
@@ -343,16 +342,29 @@ func truncateForLog(s string) string {
 
 // The tab bar is the only navigation a phone has, so a tab pointing at a
 // screen that does not exist is a dead end with no way around it. This fails
-// until the phase that builds the screen removes its unbuiltPrefixes entry.
+// checks every tab's link against the real route table.
 func TestTabBarNeverLinksToAnUnbuiltRoute(t *testing.T) {
 	for _, perms := range []store.PermissionSet{adminPerms(), dataEntryPerms(), store.NewPermissionSet(nil, nil)} {
 		tabs := resolveTabs(perms)
 		all := append([]TabItem{tabs.Fab}, tabs.Left...)
 		all = append(all, tabs.Right...)
 		for _, tab := range all {
-			if !routeBuilt(tab.Href) {
+			if !routeServed(tab.Href) {
 				t.Errorf("tab %q links to %s, which no route serves", tab.Label, tab.Href)
 			}
 		}
 	}
+}
+
+// routeServed reports whether the app's route table has a route for a GET of
+// href, rather than leaving it to the catch-all 404 handler. An empty href or
+// a "#" toggle (the More sheet) is not a route and counts as served.
+func routeServed(href string) bool {
+	if href == "" || strings.HasPrefix(href, "#") {
+		return true
+	}
+	mux := http.NewServeMux()
+	(&App{}).routes(mux)
+	_, pattern := mux.Handler(httptest.NewRequest(http.MethodGet, href, nil))
+	return pattern != "" && pattern != "GET /"
 }

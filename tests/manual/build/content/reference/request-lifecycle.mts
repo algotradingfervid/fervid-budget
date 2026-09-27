@@ -129,7 +129,7 @@ export default page({
           '`completed`',
           'Record the payment and confirm it as settled',
           'The person holding the reservation, with `payment:create` and `payment:settle`',
-          'An amount no greater than the approved amount, a payment date that is neither in the future nor in a locked month, and a live head unless the request is recoverable.',
+          'An amount no greater than the approved amount, a payment date that is not in the future, not before the day of approval and not in a locked month, and a live head unless the request is recoverable.',
         ],
         [
           '`processing`',

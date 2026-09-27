@@ -47,12 +47,12 @@ export default page({
       {
         name: 'Paid on',
         required: true,
-        note: 'The date the money left. It opens on today and cannot be in the future.',
+        note: 'The date the money left. It opens on today, cannot be in the future, and cannot be earlier than the day the request was approved.',
       },
       {
         name: 'Payment mode',
         required: true,
-        note: 'Choose from `Bank transfer`, `Cheque`, `UPI`, `Cash`, `Card` or `Other`.',
+        note: 'Choose from the modes an administrator set under **Payment modes offered** on the configuration screen — as delivered, `NEFT`, `RTGS`, `UPI`, `Cheque`, `Cash`, `Card` and `DD`.',
       },
       {
         name: 'Transaction / UTR reference',
@@ -87,6 +87,7 @@ export default page({
       [
         ['Enter more than the approved amount', 'It names both figures and tells you to cancel the request and raise a new one — paying more is a different obligation, not a settlement decision.'],
         ['Date the payment in the future', 'Money cannot have left the bank after today, so the date is refused.'],
+        ['Date the payment before the request was approved', '"payment date cannot precede approval". A payment against a request cannot come before its approval.'],
         ['Date it inside a locked month', 'The month is closed. A banner appears above the form before you start typing, naming the month and telling you to pick a date in an open one or ask for that month to be unlocked.'],
         ['Leave the amount, date, mode or reference empty', 'The field is required and the form will not move to the confirmation.'],
       ],

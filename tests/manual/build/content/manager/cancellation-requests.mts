@@ -143,6 +143,7 @@ export default page({
         ['A message saying to say why it should still be paid', 'You declined without filling in the reason.'],
         ['A message saying a reason is required to cancel a request', 'You used **Cancel with reason** and left the box empty.'],
         ['A message saying there is no cancellation to decide on a request in that state', 'Somebody has already decided it. Reload and read the status pill.'],
+        ['*this request changed; reload and review it before deciding*', 'The request changed after you opened the decision. Reload it, read what changed, and decide again.'],
         ['*… somebody else changed this request a moment ago — reload it and look again*', 'Two people acted on the request at once. Reload it; the first decision stands.'],
       ],
     ),

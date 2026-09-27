@@ -65,12 +65,6 @@ type BudgetPlan struct {
 	Projects    []PlanProject `json:"projects"`
 }
 
-// planQuerier is what readBudgetPlan needs: the database or a transaction.
-type planQuerier interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
 // upBudgetLines is the migration that creates the budget_lines table.
 func upBudgetLines(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS budget_lines (
@@ -98,7 +92,7 @@ func (s *Store) BudgetPlan(ctx context.Context, month string) (BudgetPlan, error
 // readBudgetPlan loads a month's plan through q. A head budgeted without line
 // items shows its budget as one "Monthly allocation" line. Revision is the
 // SHA-256 of the plan's JSON, so any change to the plan changes it.
-func readBudgetPlan(ctx context.Context, q planQuerier, month string) (BudgetPlan, error) {
+func readBudgetPlan(ctx context.Context, q querier, month string) (BudgetPlan, error) {
 	p := BudgetPlan{Month: month, Projects: []PlanProject{}}
 	if !validMonth(month) {
 		return p, fmt.Errorf("%w: choose a valid budget month", ErrValidation)

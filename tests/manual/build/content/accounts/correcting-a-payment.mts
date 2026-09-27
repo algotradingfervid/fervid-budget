@@ -54,7 +54,7 @@ export default page({
       { name: 'Paid on', required: true, note: 'The date the money left the bank.' },
       { name: 'Amount', required: true, note: 'In rupees. Commas and the ₹ sign are accepted.' },
       { name: 'Vendor / Payee', required: false, note: 'Free text on this form — there is no request to take the payee from.' },
-      { name: 'Payment mode', required: false, note: '`Cash`, `Bank transfer`, `Cheque`, `Card`, `UPI` or `Other`.' },
+      { name: 'Payment mode', required: false, note: 'The modes set under **Payment modes offered** on the configuration screen. The payment’s current mode stays on the list even if it has since been taken off.' },
       { name: 'Invoice / Bill No', required: false, note: 'The supplier’s document number.' },
       { name: 'Reference No', required: false, note: 'The bank’s reference for the transfer.' },
       { name: 'Attachment', required: false, note: 'An optional bill, receipt or payment proof. Uploading one adds to what is there rather than replacing it.' },
