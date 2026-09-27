@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from './fixtures';
+import { createApproverUser, expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 
 /**
@@ -82,25 +82,7 @@ async function qualityProblems(page: Page, label: string): Promise<string[]> {
   return problems;
 }
 
-/** Gives somebody the Manager role, because nobody may approve their own request. */
-async function createApprover(page: Page, runId: string) {
-  const email = `approver-${runId}@example.test`;
-  const name = `Approver ${runId}`;
-  await page.goto('/users');
-  await page.locator('.pb-actions').getByRole('button', { name: 'Add user' }).click();
-  const sheet = page.locator('#user-new');
-  await sheet.getByLabel('Email').fill(email);
-  await sheet.getByLabel('Name').fill(name);
-  // The role is ticked where the account is created. This used to need a second
-  // trip through the edit sheet, because the create form offered only a
-  // two-value legacy account type that could not name a real role.
-  await sheet.getByRole('checkbox', { name: /^Manager/ }).check();
-  await sheet.getByLabel('Password').fill('StrongTestPassword!42');
-  await sheet.getByRole('button', { name: 'Add User' }).click();
-  await expect(page).toHaveURL(/\/users$/);
-  return name;
-}
-
+/** Creates a vendor and proves the save landed on its new detail page. */
 async function createVendor(page: Page, runId: string) {
   const name = `Sundaram Electricals ${runId}`;
   await page.goto('/vendors/new');
@@ -113,13 +95,13 @@ async function createVendor(page: Page, runId: string) {
 
 test.describe('raising a request', () => {
   test('the type chooser, the adaptive form and the confirmation all hold up', async ({ adminPage, runId }) => {
-    const approver = await createApprover(adminPage, runId);
+    const approver = (await createApproverUser(adminPage, runId)).name;
     const vendor = await createVendor(adminPage, runId);
     const problems: string[] = [];
 
     // Step 1 — the chooser. Picking a type is a navigation, so the card is a link.
     await adminPage.goto('/requests/new');
-    // Five since form-1: the deposit or guarantee has a card of its own.
+    // Five types: the deposit or guarantee has a card of its own.
     await expect(adminPage.locator('.type-grid .type-card')).toHaveCount(5);
     problems.push(...(await qualityProblems(adminPage, '/requests/new')));
 
@@ -170,7 +152,7 @@ test.describe('raising a request', () => {
 
     await adminPage.getByRole('button', { name: 'Submit request' }).click();
 
-    // D1: one POST created it, numbered it and sent it. No draft step existed.
+    // One POST creates, numbers and submits the request; there is no draft step.
     await expect(adminPage).toHaveURL(/\/requests\/\d+\/submitted$/);
     await expect(adminPage.locator('.banner.good')).toContainText(approver);
     await expect(adminPage.locator('.req-head .rh-no')).toContainText('PR-');
@@ -189,7 +171,7 @@ test.describe('raising a request', () => {
   });
 
   test('the duplicate check warns and never blocks', async ({ adminPage, runId }) => {
-    const approver = await createApprover(adminPage, runId);
+    const approver = (await createApproverUser(adminPage, runId)).name;
 
     const raise = async (title: string) => {
       await adminPage.goto('/requests/new?type=reimbursement');

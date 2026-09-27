@@ -1,9 +1,10 @@
 import { mkdirSync } from 'node:fs';
-import type { Browser, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import {
   test,
   expect,
   admin,
+  approveInFull,
   createApprovedRequest,
   createApproverUser,
   login,
@@ -50,11 +51,10 @@ function assertNoDanglingSlash(text: string, where: string) {
   expect(/(^|\s)\/(\s|$|·)/.test(text.replace(/\S+\s\/\s\S+/g, '')), `${where} renders a dangling "/": ${JSON.stringify(text)}`).toBe(false);
 }
 
-async function raiseAndApproveEmd(page: Page, browser: Browser, runId: string, amount: string, expectedReturn: string) {
+async function raiseAndApproveEmd(page: Page, runId: string, amount: string, expectedReturn: string) {
   const approver = await createApproverUser(page, runId);
-  // A deposit is its own request type since the C cluster's form-1 fix: the
-  // "Deposit or guarantee" card carries the category picker and asks who is
-  // paid, and the employee advance no longer offers the deposit categories.
+  // A deposit is its own request type: the "Deposit or guarantee" card carries
+  // the category picker and asks who is paid.
   await page.goto('/requests/new?type=recoverable');
   await page.getByLabel('Short title').fill(`EMD ${runId}`);
   await page.locator('#rcategory').selectOption('emd');
@@ -73,19 +73,7 @@ async function raiseAndApproveEmd(page: Page, browser: Browser, runId: string, a
   await expect(page).toHaveURL(/\/requests\/\d+\/submitted$/);
   const id = Number(new URL(page.url()).pathname.split('/')[2]);
 
-  const context = await browser.newContext();
-  try {
-    const ap = await context.newPage();
-    await login(ap, approver.email, approver.password);
-    await ap.goto(`/requests/${id}`);
-    await ap.getByRole('button', { name: /^Approve / }).click();
-    const sheet = ap.locator('#approve-sheet');
-    await sheet.getByLabel('Amount approved').fill(amount);
-    await sheet.getByRole('button', { name: 'Approve request' }).click();
-    await expect(ap).toHaveURL(/\/approvals$/);
-  } finally {
-    await context.close();
-  }
+  await approveInFull(page, approver, id, amount);
   return { id, approver };
 }
 
@@ -100,7 +88,7 @@ test('recoverables-1/-2, grid-2, grid-1 — a recoverable never reaches the grid
   const outstandingBefore = paise(await categoryTable.locator('tfoot td[data-label="Outstanding"]').innerText());
   const overdueBefore = paise(await categoryTable.locator('tfoot td[data-label="Overdue"]').innerText());
   const countBefore = Number(await categoryTable.locator('tfoot td[data-label="Count"]').innerText());
-  const { id, approver } = await raiseAndApproveEmd(adminPage, browser, runId, amount, '2026-01-15');
+  const { id, approver } = await raiseAndApproveEmd(adminPage, runId, amount, '2026-01-15');
 
   // Approved but unpaid remains visible in the register, with zero money
   // outstanding. Neither the category balance/count nor the overdue total may
@@ -360,11 +348,10 @@ test('grid-htmx-1 — filters swap the grid in over htmx, push the URL, and stil
 });
 
 /*
- * grid-htmx-1, review. Typing a search and pressing Enter (or Apply) before the
- * live-search pause runs out used to fire two requests, the second cancelling
- * the first, and htmx logged the cancellation as console errors. Back and
- * Forward restored the grid rows from htmx's snapshot but not what was typed or
- * picked in the controls, so the next change silently dropped the filter.
+ * Typing a search and pressing Enter (or Apply) before the live-search pause
+ * runs out sends exactly one grid request and logs no console error. Back and
+ * Forward restore what was typed or picked in the controls together with the
+ * grid rows, so the next change keeps the filter the page shows.
  */
 test('grid-htmx-1 — search then Enter logs no errors, and Back/Forward keep the controls in step with the grid', async ({
   adminPage
@@ -374,6 +361,9 @@ test('grid-htmx-1 — search then Enter logs no errors, and Back/Forward keep th
   adminPage.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
   const gridRequests: string[] = [];
   adminPage.on('request', r => { if (r.headers()['hx-request'] && r.url().includes('/grid?')) gridRequests.push(r.url()); });
+  // A controllable clock, so the test can step past the live-search pause
+  // instead of sleeping for it. Time still flows normally otherwise.
+  await adminPage.clock.install();
 
   for (const [vp, tag] of [[DESKTOP, '1440'], [PHONE, '390']] as const) {
     await adminPage.setViewportSize(vp);
@@ -390,7 +380,7 @@ test('grid-htmx-1 — search then Enter logs no errors, and Back/Forward keep th
     await q.press('Enter');
     await expect(adminPage).toHaveURL(/q=Office/);
     await expect(rows.first()).toContainText('Office');
-    await adminPage.waitForTimeout(800); // past the 350ms live-search pause
+    await adminPage.clock.runFor(800); // well past the 350ms live-search pause
     expect(errors, 'no console error from a search submitted mid-pause').toEqual([]);
     expect(gridRequests, 'the pause does not fire the same search a second time').toHaveLength(1);
     await shoot(adminPage, `htmx-enter-${tag}`);
