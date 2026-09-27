@@ -235,8 +235,9 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 		return 0, err
 	}
 	defer tx.Rollback()
-	var status, treatment, displayPayee, invoiceNo, approvedDate string
+	var status, treatment, displayPayee, invoiceNo string
 	var processingBy, headID, vendorID sql.NullInt64
+	var approvedAt sql.NullTime
 	var requested int64
 	var approved sql.NullInt64
 	// The display payee, exactly as Request() resolves it: a vendor_invoice
@@ -247,9 +248,9 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	// matching the payee text.
 	if err := tx.QueryRowContext(ctx, `SELECT r.status, r.processing_by, r.amount, r.approved_amount,
 		r.treatment, r.head_id, r.vendor_id, COALESCE(NULLIF(v.name,''), r.vendor_payee, ''), COALESCE(r.invoice_no,''),
-		COALESCE(substr(r.approved_at,1,10),'')
+		r.approved_at
 		FROM payment_requests r LEFT JOIN vendors v ON v.id=r.vendor_id
-		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &vendorID, &displayPayee, &invoiceNo, &approvedDate); err != nil {
+		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &vendorID, &displayPayee, &invoiceNo, &approvedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotFound
 		}
@@ -280,7 +281,10 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if err := validatePaymentTx(ctx, tx, in, treatment == "recoverable"); err != nil {
 		return 0, err
 	}
-	if approvedDate == "" || in.PaidOn < approvedDate {
+	// approved_at is stored in UTC, but paid_on is a local calendar day (see
+	// validatePaymentTx), so the approval is converted to the server's local
+	// day before the two are compared.
+	if !approvedAt.Valid || in.PaidOn < approvedAt.Time.In(time.Local).Format("2006-01-02") {
 		return 0, fmt.Errorf("%w: payment date cannot precede approval", ErrValidation)
 	}
 	// The approved amount is a hard ceiling. Paying more is not a settlement
