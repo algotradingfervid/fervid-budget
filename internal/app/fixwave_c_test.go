@@ -481,15 +481,6 @@ func TestConfigurationHintNamesThePayeeNotTheCounterparty(t *testing.T) {
 	}
 }
 
-func mustUser(t *testing.T, s *appTestServer, id int64) store.User {
-	t.Helper()
-	u, err := s.st.UserByID(s.ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return u
-}
-
 // seedLegacyDepositAsEmployeeAdvance writes the row the review found: an
 // employee advance recorded under a deposit category before deposits were their
 // own request type. Only raw SQL can write it now, which is the point.

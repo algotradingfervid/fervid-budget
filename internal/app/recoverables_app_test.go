@@ -11,38 +11,6 @@ import (
 	"fervidbudget/internal/auth"
 )
 
-// seedRecoverable inserts a recoverable request and, when paidOn is given, its
-// settled payment. It writes both the category code and the category id — the
-// shape CreateRequest produces — so the register's joins are exercised the way
-// the real form drives them.
-func seedRecoverable(t *testing.T, s *appTestServer, headID int64, number, code, counterparty, expectedReturn, paidOn string, amount int64) int64 {
-	t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var catID int64
-	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&catID); err != nil {
-		t.Fatal(err)
-	}
-	res, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,recoverable_category,recoverable_category_id,head_id,amount,purpose,counterparty,
-		 expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?, 'completed','recoverable','recoverable',?,?,?,?, 'Inter-corporate deposit',?,?, 'Recover on maturity',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		number, code, catID, headID, amount, counterparty, expectedReturn, admin.ID, admin.ID, amount, admin.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reqID, _ := res.LastInsertId()
-	if paidOn != "" {
-		if _, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(?,?,?,?,?,?, 'settled')`,
-			headID, paidOn, amount, counterparty, admin.ID, reqID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return reqID
-}
-
 // assertTCardsLabelled fails when any <td> inside a table.t-cards lacks a
 // data-label attribute. Below 860 px the CSS restacks rows into cards and reads
 // that attribute for the field name, so a missing one renders an unlabelled

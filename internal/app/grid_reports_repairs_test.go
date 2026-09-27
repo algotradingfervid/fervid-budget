@@ -16,33 +16,6 @@ import (
 // sides of the separator.
 var danglingSlash = regexp.MustCompile(`(>\s*/\s*[^\s<])|(>\s*/\s*<)|([^\s>]\s/\s*(<|·))`)
 
-// slice returns the text from the first `from` to the next `to` after it.
-func cut(body, from, to string) string {
-	i := strings.Index(body, from)
-	if i < 0 {
-		return ""
-	}
-	rest := body[i:]
-	if j := strings.Index(rest[len(from):], to); j >= 0 {
-		return rest[:len(from)+j+len(to)]
-	}
-	return rest
-}
-
-// seedHeadlessRecoverable is an approved recoverable shaped the way the request
-// form leaves one since v8: linked to a project, with no head.
-func (s *appTestServer) seedHeadlessRecoverable(seq int, requesterID, managerID, projectID, amount int64) int64 {
-	s.t.Helper()
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,amount,purpose,short_title,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,'approved','recoverable','employee_advance','emd',(SELECT id FROM recoverable_categories WHERE code='emd'),?,?,'Tender deposit','EMD','Ridge Metro','2027-03-31','Refundable on award',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), projectID, amount, requesterID, managerID, amount, managerID)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
-}
-
 // recoverables-2 / grid-2. A recoverable is a deposit, not budget spend: the
 // grid's totals already left it out, but its Recent Payments panel listed it,
 // and every payment screen printed its missing project and head as a bare "/".

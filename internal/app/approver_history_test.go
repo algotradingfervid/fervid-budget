@@ -8,21 +8,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-
-	"fervidbudget/internal/store"
 )
 
 // Fix wave 2026-09-25, cluster B (approver and history). Each test here
 // reproduces one confirmed defect through the real routes before its fix.
-
-// seedManager is a person holding the Manager role, so they may approve and
-// reassign, on top of the Requester grants seedRequester gives.
-func (s *appTestServer) seedManager(email, name, password string) store.User {
-	s.t.Helper()
-	u := s.seedRequester(email, name, password)
-	s.assignRole(u.ID, "Manager")
-	return u
-}
 
 // reassignForm posts the approver reassignment the sheet posts.
 func (s *appTestServer) reassignForm(reqID, to int64, reason string) *http.Response {

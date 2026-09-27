@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,30 +16,6 @@ import (
 
 	"fervidbudget/internal/store"
 )
-
-func attachmentMultipart(t *testing.T, fields url.Values, name string, contents []byte) (*bytes.Buffer, string) {
-	t.Helper()
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
-	for key, values := range fields {
-		for _, value := range values {
-			if err := mw.WriteField(key, value); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	part, err := mw.CreateFormFile("attachment", name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = part.Write(contents); err != nil {
-		t.Fatal(err)
-	}
-	if err = mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return &body, mw.FormDataContentType()
-}
 
 func TestAttachmentValidationMatchesContentAndConfiguredLimit(t *testing.T) {
 	s := newAppTestServer(t)

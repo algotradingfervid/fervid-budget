@@ -2,7 +2,6 @@ package app
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"html/template"
@@ -11,203 +10,19 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"fervidbudget/internal/auth"
-	"fervidbudget/internal/config"
 	"fervidbudget/internal/store"
 )
-
-const testAdminPassword = "AdminPass1234"
-
-type appTestServer struct {
-	t      *testing.T
-	ctx    context.Context
-	cfg    config.Config
-	st     *store.Store
-	http   *http.Server
-	server *httptest.Server
-	client *http.Client
-}
-
-func newAppTestServer(t *testing.T) *appTestServer {
-	t.Helper()
-	dir := t.TempDir()
-	cfg := config.Config{
-		DBPath:           filepath.Join(dir, "fervid.db"),
-		AttachmentDir:    filepath.Join(dir, "attachments"),
-		BackupDir:        filepath.Join(dir, "backups"),
-		SessionKey:       "test-session-key-that-is-long-enough",
-		AdminEmail:       "admin@example.test",
-		AdminName:        "Test Admin",
-		AdminPassword:    testAdminPassword,
-		BackupKeepDays:   1,
-		SMTPAllowedHosts: []string{"smtp.example.test"},
-	}
-	if err := cfg.EnsureDirs(); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Open(cfg.DBPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpServer, err := New(cfg, st)
-	if err != nil {
-		_ = st.Close()
-		t.Fatal(err)
-	}
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(httpServer.Handler)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	t.Cleanup(func() {
-		server.Close()
-		_ = st.Close()
-	})
-	return &appTestServer{t: t, ctx: context.Background(), cfg: cfg, st: st, http: httpServer, server: server, client: client}
-}
-
-func (s *appTestServer) request(method, path string, body io.Reader, contentType string) *http.Response {
-	s.t.Helper()
-	req, err := http.NewRequest(method, s.server.URL+path, body)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return resp
-}
-
-func responseBody(t *testing.T, resp *http.Response) string {
-	t.Helper()
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(body)
-}
-
-func requireStatus(t *testing.T, resp *http.Response, want int) {
-	t.Helper()
-	if resp.StatusCode != want {
-		body := responseBody(t, resp)
-		t.Fatalf("status = %d, want %d; body: %s", resp.StatusCode, want, body)
-	}
-}
-
-func (s *appTestServer) login(email, password string) {
-	s.t.Helper()
-	form := url.Values{"email": {email}, "password": {password}}
-	resp := s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		body, _ := io.ReadAll(resp.Body)
-		s.t.Fatalf("login status = %d, want 303; body: %s", resp.StatusCode, body)
-	}
-}
-
-func (s *appTestServer) csrf() string {
-	s.t.Helper()
-	u, _ := url.Parse(s.server.URL)
-	for _, c := range s.client.Jar.Cookies(u) {
-		if c.Name == "fervid_csrf" {
-			return c.Value
-		}
-	}
-	s.t.Fatal("CSRF cookie was not set")
-	return ""
-}
-
-func (s *appTestServer) postForm(path string, form url.Values) *http.Response {
-	s.t.Helper()
-	if form == nil {
-		form = url.Values{}
-	}
-	// Existing form helpers represent a freshly opened correction screen. Clone
-	// first so repeated calls do not accidentally retain a prior screen revision.
-	copyForm := url.Values{}
-	for key, values := range form {
-		copyForm[key] = append([]string(nil), values...)
-	}
-	form = copyForm
-	if path == "/payments" && form.Get("request_id") != "" && len(form.Get("paid_on")) == 10 {
-		date := form.Get("paid_on") + " 00:00:00"
-		if _, err := s.st.DB().Exec(`UPDATE payment_requests SET approved_at=? WHERE id=? AND approved_at>?`, date, form.Get("request_id"), date); err != nil {
-			s.t.Fatal(err)
-		}
-	}
-
-	if strings.HasPrefix(path, "/requests/") && (strings.HasSuffix(path, "/edit") || strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/return") || strings.HasSuffix(path, "/reject") || strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation")) && !form.Has("revision") {
-		pagePath := path
-		if !strings.HasSuffix(path, "/edit") {
-			pagePath = path[:strings.LastIndex(path, "/")]
-		}
-		// Both cancellation decisions are posted from the approver's
-		// cancellation screen.
-		if strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation") {
-			pagePath += "/cancellation"
-		}
-		page := responseBody(s.t, s.request(http.MethodGet, pagePath, nil, ""))
-		matches := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)
-		if len(matches) == 2 {
-			form.Set("revision", matches[1])
-		}
-	}
-	form.Set("csrf", s.csrf())
-	return s.request(http.MethodPost, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
-}
-
-// roleIDByName resolves a seeded role to the id the people form posts, so a test
-// can ask for "Requester" rather than hard-coding a number the seed decides.
-func (s *appTestServer) roleIDByName(t *testing.T, name string) string {
-	t.Helper()
-	roles, err := s.st.AllRoles(s.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, role := range roles {
-		if strings.EqualFold(role.Name, name) {
-			return strconv.FormatInt(role.ID, 10)
-		}
-	}
-	t.Fatalf("no seeded role named %q", name)
-	return ""
-}
-
-func (s *appTestServer) seedHead(name string) (store.User, int64) {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	projectID, err := s.st.UpsertProject(s.ctx, 0, "Operations "+name, true, 1)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	headID, err := s.st.UpsertHead(s.ctx, 0, projectID, "Rent "+name, "5", true, 1)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return admin, headID
-}
 
 func TestLoginPageIsSafeAndErrorsAreAnnounced(t *testing.T) {
 	s := newAppTestServer(t)
@@ -1006,23 +821,6 @@ func TestPageBodyGatesOnTheRequestPermissionSet(t *testing.T) {
 	}
 }
 
-// newAppTestClient gives a second, independently authenticated client against
-// the same server so one test can compare what two roles are shown.
-func newAppTestClient(t *testing.T, s *appTestServer) *appTestServer {
-	t.Helper()
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clone := *s
-	clone.client = &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &clone
-}
-
-func strconvFormat(id int64) string {
-	return strconv.FormatInt(id, 10)
-}
-
 func TestRolesAdminScreenRendersApprovedMatrix(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
@@ -1191,8 +989,6 @@ func TestRolesAdminCreateEditCopyDelete(t *testing.T) {
 	_ = responseBody(t, resp)
 }
 
-func errorsIsNotFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
-
 func TestUsersScreenAssignsMultipleRoles(t *testing.T) {
 	s := newAppTestServer(t)
 	s.login(s.cfg.AdminEmail, testAdminPassword)
@@ -1344,48 +1140,6 @@ func TestRequesterOnlySessionForbiddenFromAdminRoutesByURL(t *testing.T) {
 			t.Fatalf("Requester nav exposes %q", hidden)
 		}
 	}
-}
-
-// seedUserWithGrants creates a signed-in-able user holding exactly the grants
-// named — the seeded system roles cannot express "vendor:view but not
-// vendor_bank:view", which is the distinction Phase 1V exists to enforce.
-func (s *appTestServer) seedUserWithGrants(email, password, roleName string, grants []store.Grant) {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	uid, err := s.st.CreateUser(s.ctx, email, roleName+" User", hash, "data_entry", true)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	roleID, err := s.st.CreateRole(s.ctx, admin, roleName, "")
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.UpdateRolePermissions(s.ctx, admin, roleID, grants, nil); err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.SetUserRoles(s.ctx, admin, uid, []int64{roleID}); err != nil {
-		s.t.Fatal(err)
-	}
-}
-
-func (s *appTestServer) seedVendor(in store.VendorInput) int64 {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, err := s.st.CreateVendor(s.ctx, admin, in)
-	if err != nil {
-		s.t.Fatalf("CreateVendor(%s): %v", in.Name, err)
-	}
-	return id
 }
 
 func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
@@ -1637,20 +1391,6 @@ func TestVendorUpdateIgnoresBankFieldsFromACallerWithoutBankEdit(t *testing.T) {
 	}
 }
 
-func (s *appTestServer) htmxGet(path string) *http.Response {
-	s.t.Helper()
-	req, err := http.NewRequest(http.MethodGet, s.server.URL+path, nil)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	req.Header.Set("HX-Request", "true")
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return resp
-}
-
 func TestVendorSearchFragmentFeedsTheCombobox(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedVendor(store.VendorInput{Name: "Sundaram Electricals Pvt Ltd", VendorType: "company",
@@ -1765,32 +1505,6 @@ func TestNoRefundRoute(t *testing.T) {
 // Payments panel emits. `href="/payments/` alone also matches the grid's own
 // "+ Add payment" button (/payments/new).
 var paymentDetailLink = regexp.MustCompile(`href="/payments/\d+"`)
-
-func (s *appTestServer) seedAttachmentFile(name, content string) store.AttachmentInput {
-	s.t.Helper()
-	stored := filepath.Join(s.cfg.AttachmentDir, name)
-	if err := os.WriteFile(stored, []byte(content), 0600); err != nil {
-		s.t.Fatal(err)
-	}
-	return store.AttachmentInput{OriginalName: name, StoredPath: stored, MimeType: "text/plain", SizeBytes: int64(len(content))}
-}
-
-// seedPaymentAttachment inserts a payment_attachments row directly. It has to:
-// AddAttachment now refuses a payment that settles a request (F-D-08), which is
-// exactly the payment whose bank advice these tests are about.
-func (s *appTestServer) seedPaymentAttachment(payID, uploader int64, in store.AttachmentInput) int64 {
-	s.t.Helper()
-	res, err := s.st.DB().Exec(`INSERT INTO payment_attachments(payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`,
-		payID, in.OriginalName, in.StoredPath, in.MimeType, in.SizeBytes, uploader)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return id
-}
 
 // F-A-01 / F-B-11 — attachment:view is a seeded Requester grant, and the route
 // used to ask nothing else. A signed-in user could read every bank advice in the

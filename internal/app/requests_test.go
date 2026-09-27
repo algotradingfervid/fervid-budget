@@ -1,159 +1,14 @@
 package app
 
 import (
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
-	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
 )
-
-// assignRole grants a Phase-1 seeded role to a user by name, replacing whatever
-// the legacy-role back-fill gave them.
-func (s *appTestServer) assignRole(userID int64, roleName string) {
-	s.t.Helper()
-	roles, err := s.st.AllRoles(s.ctx)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	var roleID int64
-	for _, r := range roles {
-		if strings.EqualFold(r.Name, roleName) {
-			roleID = r.ID
-		}
-	}
-	if roleID == 0 {
-		s.t.Fatalf("seeded role %q not found", roleName)
-	}
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.SetUserRoles(s.ctx, admin, userID, []int64{roleID}); err != nil {
-		s.t.Fatal(err)
-	}
-}
-
-// seedRequester creates an active user holding only the Requester role and
-// returns their store record.
-func (s *appTestServer) seedRequester(email, name, password string) store.User {
-	s.t.Helper()
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, err := s.st.CreateUser(s.ctx, email, name, hash, "data_entry", true)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	s.assignRole(id, "Requester")
-	u, err := s.st.UserByID(s.ctx, id)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return u
-}
-
-// postFormHX is postForm with the header htmx sets on every request it makes,
-// so a fragment endpoint is exercised the way the browser will reach it.
-func (s *appTestServer) postFormHX(path string, form url.Values) *http.Response {
-	s.t.Helper()
-	if form == nil {
-		form = url.Values{}
-	}
-	form.Set("csrf", s.csrf())
-	req, err := http.NewRequest(http.MethodPost, s.server.URL+path, strings.NewReader(form.Encode()))
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("HX-Request", "true")
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return resp
-}
-
-// grantAlso adds a second role carrying extra grants to a user who already
-// holds one. Phase 1's starter roles were never given request:cancel or
-// approval:cancel — both verbs entered the canonical vocabulary with this
-// phase's cancellation flow, and nothing back-filled the seeded Requester and
-// Manager roles with them. In the product an administrator grants them on the
-// Roles screen; the fixture does the same thing directly.
-func (s *appTestServer) grantAlso(userID int64, roleName string, grants []store.Grant, scopes []store.ScopeGrant) {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	roleID, err := s.st.CreateRole(s.ctx, admin, roleName, "")
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.UpdateRolePermissions(s.ctx, admin, roleID, grants, scopes); err != nil {
-		s.t.Fatal(err)
-	}
-	held, err := s.st.UserRoles(s.ctx, userID)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	ids := []int64{roleID}
-	for _, role := range held {
-		ids = append(ids, role.ID)
-	}
-	if err := s.st.SetUserRoles(s.ctx, admin, userID, ids); err != nil {
-		s.t.Fatal(err)
-	}
-}
-
-// seedSecondApprover returns a user id that holds approval:approve and is never
-// the logged-in requester, so G8 cannot get in a fixture's way.
-func seedSecondApprover(t *testing.T, s *appTestServer) int64 {
-	t.Helper()
-	hash, err := auth.HashPassword("ApproverPass123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := s.st.CreateUser(s.ctx, "kavita@example.test", "Kavita Rao", hash, "admin", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.assignRole(id, "Manager")
-	return id
-}
-
-// between returns the markup of one element, so an assertion about a select can
-// be made about that select rather than about the whole page.
-func between(t *testing.T, body, open, close string) string {
-	t.Helper()
-	start := strings.Index(body, open)
-	if start < 0 {
-		t.Fatalf("markup %q not found", open)
-	}
-	rest := body[start:]
-	end := strings.Index(rest, close)
-	if end < 0 {
-		t.Fatalf("markup %q has no %q", open, close)
-	}
-	return rest[:end]
-}
-
-// probeApp builds an App over the test server's store without going through
-// New, so the pure plumbing helpers can be exercised directly.
-func (s *appTestServer) probeApp() *App {
-	s.t.Helper()
-	manager, err := auth.New(s.cfg, s.st)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return &App{cfg: s.cfg, st: s.st, auth: manager, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-}
 
 // requestInput is the single reader of the request form. Everything the adaptive
 // form can reveal has to arrive here, because the store — not the browser — is
@@ -1141,20 +996,6 @@ func TestRequestEditScreenAndReroute(t *testing.T) {
 	if !strings.Contains(rejected, "Renamed in the browser") || !strings.Contains(rejected, `value="19,000.00"`) {
 		t.Fatalf("a rejected edit lost the typing: %s", rejected)
 	}
-}
-
-func seedThirdApprover(t *testing.T, s *appTestServer) int64 {
-	t.Helper()
-	hash, err := auth.HashPassword("ApproverPass456")
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := s.st.CreateUser(s.ctx, "rakesh@example.test", "Rakesh Iyer", hash, "admin", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.assignRole(id, "Manager")
-	return id
 }
 
 // Returned is not rejected. A returned request keeps its number and its

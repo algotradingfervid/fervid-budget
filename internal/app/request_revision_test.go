@@ -5,19 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 )
-
-func requestRevisionFromPage(t *testing.T, page string) string {
-	t.Helper()
-	m := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)
-	if len(m) != 2 {
-		t.Fatal("edit form lacks revision")
-	}
-	return m[1]
-}
 
 func TestRequestEditRejectsStaleAndMissingRevisionAndKeepsOriginalOnRetry(t *testing.T) {
 	s := newAppTestServer(t)

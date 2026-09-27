@@ -16,47 +16,11 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// projectOf is the project a head belongs to, for the forms that must re-post it.
-func projectOf(t *testing.T, s *appTestServer, headID int64) int64 {
-	t.Helper()
-	var projectID int64
-	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
-	return projectID
-}
-
 // Wave 4 of the 2026-07-27 QA repair: the app layer.
 //
 // One test per finding, or per family where the findings share a mechanism. Each
 // one names the id it pins so a future reader can go back to
 // docs/qa/results/findings-*.md and see what was reproduced.
-
-// notificationTitles is every in-app row addressed to one user, newest first.
-// The events this wave wired are checked through the store rather than through
-// the centre's markup: what matters is that the row exists for the right person,
-// not how it renders.
-func notificationTitles(t *testing.T, s *appTestServer, userID int64) []string {
-	t.Helper()
-	rows, err := s.st.ListNotifications(s.ctx, store.NotificationFilter{UserID: userID, Scope: "all"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := make([]string, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, row.Event+"|"+row.Title)
-	}
-	return out
-}
-
-func hasEvent(titles []string, event string) bool {
-	for _, entry := range titles {
-		if strings.HasPrefix(entry, event+"|") {
-			return true
-		}
-	}
-	return false
-}
 
 // F-F-06 / F-D-12 — six real workflow actions notified nobody, and the release
 // screen promised in as many words that they did. Every one is driven through its
@@ -522,13 +486,6 @@ func TestTheRequestsListNeverTruncatesInSilence(t *testing.T) {
 	}
 }
 
-func firstLines(body string) string {
-	if len(body) > 400 {
-		return body[:400]
-	}
-	return body
-}
-
 // F-E-02 / F-B-17 — the category picker was six literal options unconnected to
 // the table, so an admin-added category could never be selected and a
 // deactivated one was still offered and only refused after the form was filled
@@ -904,52 +861,6 @@ func dashboardTile(t *testing.T, s *appTestServer, label string) int {
 	t.Fatalf("the dashboard has no %q tile: %s", label, firstLines(body))
 	return 0
 }
-
-// seedPendingRequest is a request awaiting its approver, shaped the way the
-// reimbursement form makes one: project and head, an expense date, and a payee
-// the store forces to the requester. Reimbursement rather than vendor_invoice
-// because it needs no vendor row, so a test that re-posts the whole form does not
-// have to seed the vendor master too.
-func (s *appTestServer) seedPendingRequest(seq int, requesterID, managerID, headID, amount int64) int64 {
-	s.t.Helper()
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		s.t.Fatal(err)
-	}
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,project_id,head_id,amount,purpose,short_title,expense_date,vendor_payee,requester_id,manager_id,submitted_at)
-		VALUES(?,'pending','budget','reimbursement',?,?,?,?,?,'2026-07-01',?,?,?,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), projectID, headID, amount, "Site visit", "Site visit",
-		"Requester Payee", requesterID, managerID)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
-}
-
-// seedRecoverableRequest is an approved recoverable in the register, with its
-// category id linked the way both write paths populate it since migration v6 —
-// every register query joins on it, so a row without it shows a blank category.
-func (s *appTestServer) seedRecoverableRequest(seq int, requesterID, managerID int64, code, counterparty string, amount int64) int64 {
-	s.t.Helper()
-	var catID int64
-	if err := s.st.DB().QueryRow(`SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&catID); err != nil {
-		s.t.Fatal(err)
-	}
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,amount,purpose,short_title,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,'approved','recoverable','recoverable',?,?,?,?,?,?,'2027-03-31',?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), code, catID, amount, "Inter-corporate deposit", "ICD",
-		counterparty, "Refundable on maturity", requesterID, managerID, amount, managerID)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
-}
-
-// currentMonthForTest is the month a settlement recorded now lands in, which is
-// the month the payment entry screen tests its lock against.
-func currentMonthForTest() string { return time.Now().Format("2006-01") }
 
 // F-A-05 / F-B-09 — request documents were linked to /attachments/{id}, which
 // reads payment_attachments. The link 404ed, or served an unrelated payment's

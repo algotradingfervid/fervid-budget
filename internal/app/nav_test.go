@@ -334,13 +334,6 @@ func TestEveryLinkedNavItemResolves(t *testing.T) {
 	}
 }
 
-func truncateForLog(s string) string {
-	if len(s) > 200 {
-		return s[:200] + "…"
-	}
-	return s
-}
-
 // The tab bar is the only navigation a phone has, so a tab pointing at a
 // screen that does not exist is a dead end with no way around it. This fails
 // until the phase that builds the screen removes its unbuiltPrefixes entry.

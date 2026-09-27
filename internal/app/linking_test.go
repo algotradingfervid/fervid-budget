@@ -19,85 +19,6 @@ import (
 // store already refuses the illegal moves; these prove the screens never offer
 // them, and that the one endpoint which must not write, does not write.
 
-// seedApprovedRequest inserts an approved, unclaimed request directly. Going
-// through the UI would need a second user for the approval (G8) on every single
-// fixture, and none of these tests are about how a request gets approved.
-func (s *appTestServer) seedApprovedRequest(seq int, requesterID, managerID, headID, amount int64) int64 {
-	s.t.Helper()
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		s.t.Fatal(err)
-	}
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,project_id,head_id,amount,purpose,short_title,vendor_payee,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,'approved','budget','vendor_invoice',?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), projectID, headID, amount, "Office rent", "Office rent", "Acme Landlord",
-		requesterID, managerID, amount, managerID)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
-}
-
-// seedVendorRequest inserts an approved request the way the *real form* writes
-// one: the payee is a vendor_id and the vendor_payee snapshot is empty. That
-// column is only filled for reimbursement and employee advance, so every fixture
-// that writes vendor_payee directly is the one shape the UI can never produce —
-// which is exactly how the blank-payee defect survived a green suite.
-func (s *appTestServer) seedVendorRequest(seq int, requesterID, managerID, headID, amount int64, vendorName string) (reqID, vendorID int64) {
-	s.t.Helper()
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		s.t.Fatal(err)
-	}
-	vres, err := s.st.DB().Exec(`INSERT INTO vendors(name,status) VALUES(?,'active')`, vendorName)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	vendorID, _ = vres.LastInsertId()
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,project_id,head_id,amount,purpose,short_title,vendor_id,vendor_payee,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,'approved','budget','vendor_invoice',?,?,?,?,?,?,'',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), projectID, headID, amount, "Annual licence", "Annual licence", vendorID,
-		requesterID, managerID, amount, managerID)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	reqID, _ = res.LastInsertId()
-	return reqID, vendorID
-}
-
-// strconvPath keeps the id-in-a-path formatting in one place, so the older test
-// file does not have to grow an "fmt" import for it.
-func strconvPath(format string, id int64) string { return fmt.Sprintf(format, id) }
-
-func requestStatusApp(t *testing.T, s *appTestServer, id int64) string {
-	t.Helper()
-	var status string
-	if err := s.st.DB().QueryRow(`SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	return status
-}
-
-// seedColleague creates a second signed-in-able user so a reservation can be
-// held by somebody other than the caller.
-func (s *appTestServer) seedColleague(email, name, password string) store.User {
-	s.t.Helper()
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, err := s.st.CreateUser(s.ctx, email, name, hash, "admin", true)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	u, err := s.st.UserByID(s.ctx, id)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return u
-}
-
 // ---------------------------------------------------------------------------
 // Task 11 — reservation entry point, permission verbs, conflict screen
 // ---------------------------------------------------------------------------
@@ -693,34 +614,6 @@ func TestPartialSettlementRoutesToReview(t *testing.T) {
 	}
 }
 
-// settleOneRequest drives the whole flow once — reserve, then confirm — and
-// returns the request and the payment it produced. Half the assertions below
-// are about what a settled payment must never offer, and none of them are about
-// how it got settled.
-func (s *appTestServer) settleOneRequest(seq int, headID, amount int64, paid, settlement, paidOn string) (int64, int64) {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	reqID := s.seedApprovedRequest(seq, admin.ID, admin.ID, headID, amount)
-	requireStatus(s.t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	form := url.Values{
-		"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
-		"paid_on": {paidOn}, "amount": {paid}, "vendor_payee": {"Acme Landlord"},
-		"settlement": {settlement}, "reference_no": {"N221260725004417"},
-	}
-	if settlement == "partial" {
-		form.Set("partial_reason", "balance next month")
-	}
-	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
-	var payID int64
-	if err := s.st.DB().QueryRow(`SELECT id FROM payments WHERE request_id=?`, reqID).Scan(&payID); err != nil {
-		s.t.Fatal(err)
-	}
-	return reqID, payID
-}
-
 // S12 again, from the other two directions the reviewer found open: the ledger
 // row and the edit URL. The detail screen already hides both controls because a
 // control the route would reject is a lie — but so is a form the store would
@@ -1012,18 +905,6 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	_ = responseBody(t, gone)
 }
 
-// seedPartialReview takes one request all the way to partial_review through the
-// product, so every test below starts where the manager starts. The caller must
-// already be signed in as somebody who can reserve and settle.
-func (s *appTestServer) seedPartialReview(reqID, headID int64, reason string) {
-	s.t.Helper()
-	requireStatus(s.t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
-		"paid_on": {"2026-07-23"}, "amount": {"60000.00"}, "vendor_payee": {"Nova Print Works"},
-		"settlement": {"partial"}, "partial_reason": {reason}, "reference_no": {"N9912"}}
-	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
-}
-
 // TestPartialReviewDecisionsBelongToTheRequestsOwnManager is the ownership
 // proof. approval:accept_partial says a person may accept a shortfall; it never
 // says whose. Every other manager verb in the system — ApproveRequest,
@@ -1219,41 +1100,6 @@ func TestReleaseReturnsTheRequestToTheQueue(t *testing.T) {
 	}
 	// And the screen is gone with the reservation: there is nothing to release.
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""), http.StatusConflict)
-}
-
-// seedProbeUser creates an active user whose single role carries exactly the
-// grants and scopes given. The seeded roles are bundles; proving that one cell
-// of the permission matrix is enough — or not enough — needs a user holding
-// that cell and nothing next to it.
-func (s *appTestServer) seedProbeUser(email, name, password, roleName string, grants []store.Grant, scopes []store.ScopeGrant) store.User {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	uid, err := s.st.CreateUser(s.ctx, email, name, hash, "data_entry", true)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	roleID, err := s.st.CreateRole(s.ctx, admin, roleName, "")
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.UpdateRolePermissions(s.ctx, admin, roleID, grants, scopes); err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.SetUserRoles(s.ctx, admin, uid, []int64{roleID}); err != nil {
-		s.t.Fatal(err)
-	}
-	u, err := s.st.UserByID(s.ctx, uid)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return u
 }
 
 func reservationHolder(t *testing.T, s *appTestServer, reqID int64) int64 {

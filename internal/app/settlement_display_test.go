@@ -7,32 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
 )
 
 // The 2026-09-25 fix wave, cluster D (settlement). One test per defect, each
 // written to fail on the code as it was and to pin the behaviour the specs and
 // the owner decisions ask for.
-
-// seedRoleUser creates an active user holding exactly one seeded system role.
-func (s *appTestServer) seedRoleUser(email, name, password, role string) store.User {
-	s.t.Helper()
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, err := s.st.CreateUser(s.ctx, email, name, hash, "data_entry", true)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	s.assignRole(id, role)
-	u, err := s.st.UserByID(s.ctx, id)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return u
-}
 
 // recordPartial reserves the request as the signed-in accountant and records a
 // short payment against it, the way the entry screen does.
@@ -43,26 +23,6 @@ func (s *appTestServer) recordPartial(reqID, headID, paid int64) {
 		"amount": {money2(paid)}, "vendor_payee": {"Acme Landlord"}, "settlement": {"partial"},
 		"partial_reason": {"Retention held back by agreement."}, "reference_no": {"UTR-PART"}, "payment_mode": {"bank_transfer"}}
 	requireStatus(s.t, s.postForm("/payments", form), http.StatusSeeOther)
-}
-
-func money2(paise int64) string { return fmt.Sprintf("%d.%02d", paise/100, paise%100) }
-
-func mustContain(t *testing.T, what, body string, wants ...string) {
-	t.Helper()
-	for _, want := range wants {
-		if !strings.Contains(body, want) {
-			t.Fatalf("%s missing %q:\n%s", what, want, body)
-		}
-	}
-}
-
-func mustNotContain(t *testing.T, what, body string, unwanted ...string) {
-	t.Helper()
-	for _, bad := range unwanted {
-		if strings.Contains(body, bad) {
-			t.Fatalf("%s must not say %q:\n%s", what, bad, body)
-		}
-	}
 }
 
 // settlement-2: opening the entry screen for an approved request nobody holds

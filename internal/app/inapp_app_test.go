@@ -4,24 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
 )
-
-func seedNotification(t *testing.T, s *appTestServer, userID int64, event, kind, title, href string) int64 {
-	t.Helper()
-	res, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO notifications(user_id,event,kind,title,body,href) VALUES(?,?,?,?,?,?)`,
-		userID, event, kind, title, "detail line", href)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
-}
 
 // notify-2: the body keeps its line breaks and shows the request link as a
 // link, not as flattened text. The row itself is the <a> that opens the
@@ -187,8 +175,6 @@ func TestNotificationCentreRequiresASession(t *testing.T) {
 	}
 	_ = responseBody(t, resp)
 }
-
-func itoa64(v int64) string { return strconv.FormatInt(v, 10) }
 
 func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D7, G20
 	s := newAppTestServer(t)
