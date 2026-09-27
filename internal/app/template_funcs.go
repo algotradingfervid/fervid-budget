@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"html/template"
 
 	"fervidbudget/internal/money"
@@ -133,5 +134,26 @@ func templateFuncs() template.FuncMap {
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
 		},
+		// dict builds the argument for a shared partial from key/value pairs:
+		// {{template "sheet_foot" (dict "ID" "x-sheet" "Submit" "Save")}}.
+		"dict": templateDict,
 	}
+}
+
+// templateDict turns ("key", value, "key", value, …) into a map, so a
+// template can pass several named values to a partial. An odd number of
+// arguments or a non-string key is an error, which fails the page render.
+func templateDict(pairs ...any) (map[string]any, error) {
+	if len(pairs)%2 != 0 {
+		return nil, fmt.Errorf("dict: odd number of arguments (%d)", len(pairs))
+	}
+	m := make(map[string]any, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		key, ok := pairs[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict: key %v is not a string", pairs[i])
+		}
+		m[key] = pairs[i+1]
+	}
+	return m, nil
 }

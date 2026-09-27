@@ -12,15 +12,11 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{.Title}} - Fervid Budget</title>
-    <link rel="stylesheet" href="/static/fervid-ds.css">
+    {{template "head_common" .}}
     <script src="/static/fervid-app.js" defer></script>
   </head>
   <body class="login-body">
-    <main class="login-card">
-    {{end}}
+    <main class="login-card">{{end}}
 {{define "login_bottom"}}</main></body></html>{{end}}
 {{define "login_flash"}}{{if .Error}}
   <div class="alert error" role="alert" aria-live="assertive">{{.Error}}</div>

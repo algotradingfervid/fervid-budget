@@ -69,9 +69,7 @@
       </div>
       <p class="hint" style="margin:0">Accounts will be able to reserve this immediately. {{.Request2.RequesterName}} can no longer edit it.</p>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="approve-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Approve request</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "approve-sheet" "Back" "Cancel" "Tone" "primary" "Submit" "Approve request")}}
   </form>
 </div>
 
@@ -91,9 +89,7 @@
         <label for="rt-reason">What needs correcting <span class="req" aria-hidden="true">*</span></label><textarea id="rt-reason" name="comment" required placeholder="Be specific — this is the whole message they get."></textarea>
       </div>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="return-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Return request</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "return-sheet" "Back" "Cancel" "Tone" "primary" "Submit" "Return request")}}
   </form>
 </div>
 
@@ -115,9 +111,7 @@
       </div>
       <div class="field"><label for="rj-reason">Reason for rejection <span class="req" aria-hidden="true">*</span></label><textarea id="rj-reason" name="reason" required></textarea></div>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="reject-sheet">Cancel</button><span class="row-end"></span><button class="btn danger" type="submit">Reject permanently</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "reject-sheet" "Back" "Cancel" "Tone" "danger" "Submit" "Reject permanently")}}
   </form>
 </div>
 {{end}}
@@ -430,9 +424,7 @@
       </div>
       <p class="hint" style="margin:0">The request keeps its number and its history. The new approver is told, and the reminder clock starts again.</p>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="reassign-approver-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Reassign</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "reassign-approver-sheet" "Back" "Back" "Tone" "primary" "Submit" "Reassign")}}
   </form>
 </div>
 {{end}}
@@ -458,9 +450,7 @@
       </div>
       <p class="hint" style="margin:0">{{.Request2.RequesterName}} is asked to answer. Nobody in Accounts can reserve or pay this until you release it.</p>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="hold-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Put on hold</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "hold-sheet" "Back" "Back" "Tone" "primary" "Submit" "Put on hold")}}
   </form>
 </div>
 {{end}}
@@ -746,9 +736,7 @@
         <label for="cx-note">Note <span class="opt" aria-hidden="true">optional</span></label><textarea id="cx-note" name="note" placeholder="Recorded in the history."></textarea>
       </div>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="accept-sheet">Back</button><span class="row-end"></span><button class="btn danger" type="submit">Cancel request</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "accept-sheet" "Back" "Back" "Tone" "danger" "Submit" "Cancel request")}}
   </form>
 </div>
 
@@ -769,9 +757,7 @@
         <label for="dc-reason">Why it should still be paid <span class="req" aria-hidden="true">*</span></label><textarea id="dc-reason" name="note" required placeholder="{{.Request2.RequesterName}} and Accounts both see this."></textarea>
       </div>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="decline-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Decline and unfreeze</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "decline-sheet" "Back" "Back" "Tone" "primary" "Submit" "Decline and unfreeze")}}
   </form>
 </div>
 {{else if eq .Request2.Status "approved"}}
@@ -791,9 +777,7 @@
         <label for="oc-reason">Reason <span class="req" aria-hidden="true">*</span></label><textarea id="oc-reason" name="reason" required placeholder="{{.Request2.RequesterName}} and Accounts both see this."></textarea>
       </div>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="outright-sheet">Back</button><span class="row-end"></span><button class="btn danger" type="submit">Cancel request</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "outright-sheet" "Back" "Back" "Tone" "danger" "Submit" "Cancel request")}}
   </form>
 </div>
 {{end}}

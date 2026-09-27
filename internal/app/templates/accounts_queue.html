@@ -398,9 +398,7 @@
         <label for="cl-note">Note <span class="opt" aria-hidden="true">optional</span></label><textarea id="cl-note" name="note" placeholder="Recorded in the history and visible to everyone."></textarea>
       </div>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="close-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Accept and close</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "close-sheet" "Back" "Back" "Tone" "primary" "Submit" "Accept and close")}}
   </form>
 </div>
 
@@ -426,9 +424,7 @@
         </div>
       </div>
     </div>
-    <div class="sh-foot">
-      <button class="btn outline" type="button" data-close="concern-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Raise concern</button>
-    </div>
+    {{template "sheet_foot" (dict "ID" "concern-sheet" "Back" "Back" "Tone" "primary" "Submit" "Raise concern")}}
   </form>
 </div>
 {{else}}

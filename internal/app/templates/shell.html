@@ -2,10 +2,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}} - Fervid Budget</title>
-  <link rel="stylesheet" href="/static/fervid-ds.css">
+  {{template "head_common" .}}
   <link rel="stylesheet" href="/static/budget-ux.css">
   <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'>
   <script src="/static/htmx.min.js" defer></script>
@@ -30,14 +27,11 @@
 </div>{{end}}
 </body></html>{{end}}
 
-{{/* Soon items are announcements, not links, so they carry no href at all.
-     Badges are counts the caller is entitled to see; a zero count renders
-     nothing rather than a bare "0". */}}
 {{define "shell_sidebar"}}<aside class="sidebar">
   <div class="side-brand"><span class="sq">F</span><span><b>Fervid Budget</b><small>Smart Solutions</small></span></div>
   {{range .Shell.Groups}}{{if .Title}}<div class="sgroup">{{.Title}}</div>{{end}}
   <nav class="side-nav" aria-label="{{if .Title}}{{.Title}}{{else}}Primary{{end}}">
-    {{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a class="{{if eq $.Shell.Active .Key}}active{{end}}" href="{{.Href}}"{{if eq $.Shell.Active .Key}} aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}
+    {{range .Items}}{{template "nav_item" (dict "Item" . "Shell" $.Shell)}}{{end}}
   </nav>
   {{end}}
   <div class="side-user"><span class="avatar">{{.Initials}}</span><span><strong>{{.User.Name}}</strong><small>{{.Shell.RoleNames}}</small></span></div>
@@ -63,7 +57,7 @@
   <div class="ms-head"><b>{{.User.Name}}</b><button type="button" class="ms-close" aria-label="Close">✕</button></div>
   {{range .Shell.Groups}}<div class="ms-group">{{if .Title}}{{.Title}}{{else}}Overview{{end}}</div>
   <div class="ms-list">
-    {{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a href="{{.Href}}"{{if eq $.Shell.Active .Key}} class="active" aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}
+    {{range .Items}}{{template "nav_item" (dict "Item" . "Shell" $.Shell)}}{{end}}
   </div>
   {{end}}
   <div class="ms-group">Session</div>
@@ -89,13 +83,26 @@
 {{template "bottom" .}}
 {{end}}
 
-{{define "page_header"}}
-<section class="page-banner">
-  <div>
-    <div class="eyebrow">{{.Kicker}}</div>
-    <h1>{{.Heading}}</h1>
-    <p class="sub muted">{{.Sub}}</p>
-  </div>
-  {{.Action}}
-</section>
-{{end}}
+{{/* The <head> lines every page shares, the signed-in shell and the login
+     screens alike. */}}
+{{define "head_common"}}<meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} - Fervid Budget</title>
+  <link rel="stylesheet" href="/static/fervid-ds.css">{{end}}
+
+{{/* One navigation link, used by both the sidebar and the phone More sheet.
+     Called with (dict "Item" <nav item> "Shell" <shell data>). A "Soon" item
+     is an announcement, not a link, so it has no href. A badge shows a count
+     the viewer is allowed to see; a zero count shows nothing rather than "0". */}}
+{{define "nav_item"}}{{$active := .Shell.Active}}{{$badges := .Shell.Badges}}{{with .Item}}
+  {{- if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>
+  {{- else}}<a{{if eq $active .Key}} class="active"{{end}} href="{{.Href}}"{{if eq $active .Key}} aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{with index $badges .Badge}}<span class="n">{{.}}</span>{{end}}</a>
+  {{- end}}{{end}}{{end}}
+
+{{/* The footer of a bottom sheet: a button that closes the sheet, a spacer,
+     and the submit button. Called with (dict "ID" <sheet id> "Back" <close
+     label> "Tone" "primary"|"danger" "Submit" <submit label>). The ID must
+     match the sheet's overlay id so the close button finds it. */}}
+{{define "sheet_foot"}}<div class="sh-foot">
+  <button class="btn outline" type="button" data-close="{{.ID}}">{{.Back}}</button><span class="row-end"></span><button class="btn {{.Tone}}" type="submit">{{.Submit}}</button>
+</div>{{end}}

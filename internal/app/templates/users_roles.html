@@ -102,9 +102,7 @@
         <input type="hidden" name="role" value="{{.Role}}">
         <label class="checkline"><input type="checkbox" name="active" {{check .Active}}> Active</label>
       </div>
-      <div class="sh-foot">
-        <button class="btn outline" type="button" data-close="user-{{.ID}}">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Save user</button>
-      </div>
+      {{template "sheet_foot" (dict "ID" (printf "user-%d" .ID) "Back" "Cancel" "Tone" "primary" "Submit" "Save user")}}
     </form>
   </div>
 </div>
@@ -144,7 +142,7 @@
         <div class="field"><label for="nu-pw">Password</label><input id="nu-pw" name="password" type="password" minlength="12" required></div>
         <label class="checkline"><input type="checkbox" name="active" {{if or (not .NewUser.Open) .NewUser.Active}}checked{{end}}> Active</label>
       </div>
-      <div class="sh-foot"><button class="btn outline" type="button" data-close="user-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Add User</button></div>
+      {{template "sheet_foot" (dict "ID" "user-new" "Back" "Cancel" "Tone" "primary" "Submit" "Add User")}}
     </form>
   </div>
 </div>
@@ -283,9 +281,7 @@
         </div>
         <div class="field"><label for="nr-desc">Description</label><input id="nr-desc" name="description" value="{{.NewRole.Description}}"></div>
       </div>
-      <div class="sh-foot">
-        <button class="btn outline" type="button" data-close="role-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Create role</button>
-      </div>
+      {{template "sheet_foot" (dict "ID" "role-new" "Back" "Cancel" "Tone" "primary" "Submit" "Create role")}}
     </form>
   </div>
 </div>
@@ -304,9 +300,7 @@
       <div class="sh-body stack-12">
         <div class="field"><label for="cr-name">New role name</label><input id="cr-name" name="name" required></div>
       </div>
-      <div class="sh-foot">
-        <button class="btn outline" type="button" data-close="role-copy">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Copy role</button>
-      </div>
+      {{template "sheet_foot" (dict "ID" "role-copy" "Back" "Cancel" "Tone" "primary" "Submit" "Copy role")}}
     </form>
   </div>
 </div>
@@ -336,9 +330,7 @@
         </div>
         <button class="sh-close" type="button" data-close="role-delete">✕</button>
       </div>
-      <div class="sh-foot">
-        <button class="btn outline" type="button" data-close="role-delete">Cancel</button><span class="row-end"></span><button class="btn danger" type="submit">Delete role</button>
-      </div>
+      {{template "sheet_foot" (dict "ID" "role-delete" "Back" "Cancel" "Tone" "danger" "Submit" "Delete role")}}
     </form>
     {{end}}
   </div>

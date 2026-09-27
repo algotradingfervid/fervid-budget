@@ -101,9 +101,7 @@
             <td class="num {{varClass .Total.Variance}}">{{money .Total.Variance}}</td>
             <td class="num">{{remainingText .Total.Budget .Total.Actual}}</td>
             <td>
-              <div class="usedcell">
-                <div class="vbar {{barClass (statusFor .Total.Budget .Total.Actual)}}"><i style="--pct:{{usedPct .Total.Budget .Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Total.Budget .Total.Actual}}</span>
-              </div>
+              {{template "usedcell" (dict "Status" (statusFor .Total.Budget .Total.Actual) "Budget" .Total.Budget "Actual" .Total.Actual)}}
             </td>
             <td></td>
             <td></td>
@@ -118,9 +116,7 @@
               <td class="num {{varClass .Variance}}">{{money .Variance}}</td>
               <td class="num">{{remainingText .Budget .Actual}}</td>
               <td>
-                <div class="usedcell">
-                  <div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Budget .Actual}}</span>
-                </div>
+                {{template "usedcell" (dict "Status" .Status "Budget" .Budget "Actual" .Actual)}}
               </td>
               <td class="c"><span class="pill {{.Status}}">{{statusText .Status}}</span></td>
               <td class="c">{{if and .Active (not $.Grid.Locked) ($.Perms.Can "payment" "create")}}<a class="btn small" href="/payments/new?month={{$.Month}}&head_id={{.HeadID}}">Add</a>{{else if $.Grid.Locked}}<small class="muted">Locked</small>{{else if not .Active}}<small class="muted">Retired</small>{{end}}</td>
@@ -140,9 +136,7 @@
           <td class="num {{varClass .Grid.Total.Variance}}">{{money .Grid.Total.Variance}}</td>
           <td class="num">{{remainingText .Grid.Total.Budget .Grid.Total.Actual}}</td>
           <td>
-            <div class="usedcell">
-              <div class="vbar {{barClass (statusFor .Grid.Total.Budget .Grid.Total.Actual)}}"><i style="--pct:{{usedPct .Grid.Total.Budget .Grid.Total.Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Grid.Total.Budget .Grid.Total.Actual}}</span>
-            </div>
+            {{template "usedcell" (dict "Status" (statusFor .Grid.Total.Budget .Grid.Total.Actual) "Budget" .Grid.Total.Budget "Actual" .Grid.Total.Actual)}}
           </td>
           <td></td>
           <td></td>
@@ -236,3 +230,11 @@
 </div>
 {{template "bottom" .}}
 {{end}}
+
+{{/* The "Used" cell: a bar filled to the share of the budget spent, coloured
+     by .Status, with the percentage beside it. Called with (dict "Status"
+     <status> "Budget" <paise> "Actual" <paise>). Head rows pass their stored
+     status; project and total rows pass one computed from the two amounts. */}}
+{{define "usedcell"}}<div class="usedcell">
+  <div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Budget .Actual}}</span>
+</div>{{end}}
