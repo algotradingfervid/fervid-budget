@@ -110,16 +110,38 @@
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Paying</p>
 <header class="page-head"><h1>Paying part of a request</h1><p class="lede">Record the payment and make an explicit decision about the unpaid balance.</p></header>
 <p>Enter the amount that actually left the bank. The confirmation compares the approved amount, payments already recorded, this payment, and the remaining balance. A short payment has no settlement choice selected for you.</p>
-<h2 id="the-question-the-confirmation-asks">Choose what happens to the balance</h2>
-<table><thead><tr><th>Choice</th><th>When to use it</th><th>Result</th></tr></thead><tbody>
+<h2 id="choose-what-happens-to-the-balance">Choose what happens to the balance</h2>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/settlement-sheet.png" aria-label="Enlarge: The confirmation for a payment short of the approved amount. The remaining balance is called out, and none of the three choices is selected yet.">
+    <img src="../assets/shots/accounts/settlement-sheet.png" alt="The confirmation panel comparing what was approved against what is being paid." loading="lazy" width="1440">
+  </button>
+  <figcaption>The confirmation for a payment short of the approved amount. The remaining balance is called out, and none of the three choices is selected yet. </figcaption>
+</figure>
+<div class="table-wrap"><table><thead><tr><th scope="col">Choice</th><th scope="col">When to use it</th><th scope="col">Result</th></tr></thead><tbody>
 <tr><td><strong>Installment — pay the balance later</strong></td><td>Part has been paid and the rest remains payable under this approval.</td><td>The payment is recorded, the reservation is released, and the request returns to Approved. Accounts can claim it again for another installment.</td></tr>
 <tr><td><strong>Fully settled</strong></td><td>No further amount is owed. For a short payment, explain the agreed deduction or adjustment.</td><td>The request closes. The explanation is required when the paid total is short of the approval; the product does not calculate tax.</td></tr>
-<tr><td><strong>Ask manager to accept a shortfall</strong></td><td>You need the approver to decide whether to close an unpaid balance.</td><td>A reason is required. The request moves to Partial — manager review.</td></tr></tbody></table>
-<h2 id="recording-a-partial-payment">Record an installment</h2><ol><li>Claim the approved request from the Accounts queue.</li><li>Record the actual amount, date, payment mode and reference, and any proof.</li><li>Open the confirmation and choose <strong>Installment — pay the balance later</strong>.</li><li>Check the remaining balance and confirm.</li><li>For the next transfer, claim the same request again. The next payment cannot exceed the remaining approved balance.</li></ol>
+<tr><td><strong>Ask manager to accept a shortfall</strong></td><td>You need the approver to decide whether to close an unpaid balance.</td><td>A reason is required. The request moves to Partial — manager review.</td></tr>
+</tbody></table></div>
+<h2 id="record-an-installment">Record an installment</h2>
+<ol class="steps">
+<li>Claim the approved request from the Accounts queue.</li>
+<li>Record the actual amount, date, payment mode and reference, and any proof.</li>
+<li>Open the confirmation and choose <strong>Installment — pay the balance later</strong>.</li>
+<li>Check the remaining balance and confirm.</li>
+<li>For the next transfer, claim the same request again. The next payment cannot exceed the remaining approved balance.</li>
+</ol>
 <p>Each saved payment is permanent. Multiple installments share the original request and approval; they are not edits to earlier payments. Confirming the same submission twice does not create a second transfer record. Cancellation is unavailable after any payment has been recorded.</p>
-<h2 id="what-the-approver-sees">When the approver reviews a shortfall</h2><p>The approver can <strong>Keep balance payable</strong> with a required plan note, which returns the request to Approved for further payment; <strong>Accept and close</strong>, which permanently writes off the unpaid balance from this request; or <strong>Raise a concern</strong>, which records the question and leaves the request under review.</p>
+<h2 id="when-the-approver-reviews-a-shortfall">When the approver reviews a shortfall</h2>
+<p>The approver can <strong>Keep balance payable</strong> with a required plan note, which returns the request to Approved for further payment; <strong>Accept and close</strong>, which permanently writes off the unpaid balance from this request; or <strong>Raise a concern</strong>, which records the question and leaves the request under review.</p>
 <p>Do not use Accept and close merely to arrange an installment. See <a href="../manager/shortfall-review.html">Reviewing a shortfall</a>.</p>
-<h2 id="the-balance">Following the balance</h2><p>The request shows cumulative payments and what remains. Installments awaiting payment return to the Accounts queue. Closed full settlements and accepted shortfalls remain closed; correcting a mistaken closure needs an agreed accounting process, not rewriting a saved payment.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/manager/partial-review.png" aria-label="Enlarge: The approver’s screen. Your reason is quoted near the top, the payment is marked **Cannot be edited**, and the three decisions sit at the bottom.">
+    <img src="../assets/shots/manager/partial-review.png" alt="What the approver sees when Accounts paid less than was approved." loading="lazy" width="1440">
+  </button>
+  <figcaption>The approver’s screen. Your reason is quoted near the top, the payment is marked <strong>Cannot be edited</strong>, and the three decisions sit at the bottom. </figcaption>
+</figure>
+<h2 id="following-the-balance">Following the balance</h2>
+<p>The request shows cumulative payments and what remains. Installments awaiting payment return to the Accounts queue. Closed full settlements and accepted shortfalls remain closed; correcting a mistaken closure needs an agreed accounting process, not rewriting a saved payment.</p>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/recording-a-payment.html"><span>Previous</span>Recording a payment</a><a class="pager-next" href="../accounts/holding-a-request.html"><span>Next</span>Putting a request on hold</a></nav>
 </div>
 </main>

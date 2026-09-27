@@ -38,7 +38,9 @@ Only four things, and nothing else — no raw HTML, it will be escaped and shown
 - `*italic*` — for emphasis, sparingly
 - backtick-wrapped text — for literal values, statuses and field names
 - `[label](page:section/slug)` — a link to another manual page. The build fails on an
-  unknown target, so you cannot link to a page that does not exist.
+  unknown target, so you cannot link to a page that does not exist. Add `#heading-id` to land
+  on one heading — `[the tabs](page:requester/tracking-your-requests#the-four-tabs)`; the build
+  also fails if that page has no heading with that id.
 
 > **Escape every backtick you write in prose.** Page text is written inside a backtick
 > template literal, so a bare backtick ends the string and breaks the file. Write `\``
@@ -93,13 +95,17 @@ it to a reader.
 
 Use they/them for any person you refer to generically.
 
-## Before you rebuild: the published pages are ahead of these sources
+## Change the source, never the published HTML
 
-Some pages under `docs/manual/` were corrected directly in the HTML during the September 2026
-UX pass, and the matching `.mts` files here were not updated. Running the build today would put
-the older wording back on about thirty pages (backups, signing in, recording a payment and
-others). Before the next `make manual`, compare each regenerated page with the committed one
-(`git diff docs/manual`) and carry the published wording back into its `.mts` file first.
+`docs/manual/` is build output. Edit the `.mts` file and rebuild; a change made directly in the
+HTML is silently undone by the next build.
+
+Screenshots come from `make manual`, which first runs the capture in
+`tests/manual/capture.spec.ts` against an already running server with the full demo dataset
+(it does not start one). To capture against a copy of that dataset on another port, start the
+server with `FERVID_ADDR=127.0.0.1:<port>` and, because it is plain HTTP on your machine,
+`FERVID_SECURE_COOKIES=false` (otherwise every sign-in is refused as a cross-origin post), then
+run the capture with `FERVID_MANUAL_PORT=<port>`.
 
 ## Checking your work
 

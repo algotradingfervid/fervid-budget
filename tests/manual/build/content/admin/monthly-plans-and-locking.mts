@@ -13,7 +13,7 @@ export default page({
     ),
 
     section('The monthly plans screen'),
-    shot('admin/months', 'An earlier monthly plans capture, showing the month list and shortcuts. New plans now start with Create budget.'),
+    shot('admin/months', 'The monthly plans screen: **Create budget** at the top, then every month with its totals and shortcuts.'),
     table(
       ['Column', 'What it shows'],
       [

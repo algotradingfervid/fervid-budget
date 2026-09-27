@@ -103,14 +103,24 @@ function provenance(): { sha: string; counts: string } {
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** Pages are addressed as `page:section/slug`; the build resolves and checks them. */
+/**
+ * Links into another page's heading, recorded while rendering and checked once
+ * every page has been written, because the target may not exist yet.
+ */
+const anchorLinks: { where: string; target: string; anchor: string }[] = [];
+
+/**
+ * Pages are addressed as `page:section/slug`, optionally followed by
+ * `#heading-id` to land on one heading; the build resolves and checks both.
+ */
 function resolveHref(href: string, depth: number, where: string): string {
   if (href.startsWith('page:')) {
-    const target = href.slice(5);
+    const [target, anchor] = href.slice(5).split('#', 2);
     if (!SITE.some((p) => `${p.section}/${p.slug}` === target)) {
       errors.push(`${where}: link to unknown page "${target}"`);
     }
-    return `${up(depth)}${target}.html`;
+    if (anchor) anchorLinks.push({ where, target, anchor });
+    return `${up(depth)}${target}.html${anchor ? `#${anchor}` : ''}`;
   }
   if (href.startsWith('#') || /^https?:\/\//.test(href)) return href;
   errors.push(`${where}: link "${href}" is neither a page: reference, an anchor, nor an absolute URL`);
@@ -345,6 +355,14 @@ async function main(): Promise<void> {
   // Cover and the UX review.
   writeFileSync(join(OUT, 'index.html'), cover(shotList));
   writeFileSync(join(OUT, 'ux-review.html'), uxReview(shots, used));
+
+  // A link to a heading must land on a heading that exists.
+  for (const l of anchorLinks) {
+    const file = join(OUT, `${l.target}.html`);
+    if (existsSync(file) && !readFileSync(file, 'utf8').includes(`id="${l.anchor}"`)) {
+      errors.push(`${l.where}: link to "${l.target}#${l.anchor}", but that page has no heading with that id`);
+    }
+  }
 
   // Every captured shot must earn its place in the repo.
   const unused = shotList.map((s) => s.id).filter((id) => !used.has(id));

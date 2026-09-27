@@ -7,7 +7,7 @@
       "shows": "The refusal that stops the same request being paid twice.",
       "url": "/payments/new?request=58",
       "file": "accounts/conflict-already-paid.png",
-      "bytes": 6881,
+      "bytes": 7300,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -23,7 +23,7 @@
       "shows": "The refusal shown when you try to pay a request somebody has parked.",
       "url": "/payments/new?request=59",
       "file": "accounts/conflict-on-hold.png",
-      "bytes": 7152,
+      "bytes": 7579,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -39,7 +39,7 @@
       "shows": "The screen shown when you open a request another person has claimed.",
       "url": "/payments/new?request=61",
       "file": "accounts/conflict-taken.png",
-      "bytes": 6819,
+      "bytes": 7250,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -55,9 +55,9 @@
       "shows": "The hold panel, which needs a note saying what you want from the requester.",
       "url": "/requests/24",
       "file": "accounts/hold-sheet.png",
-      "bytes": 9624,
+      "bytes": 10808,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1207,
       "headings": [
         "H1:Site safety audit",
         "H2:Details",
@@ -65,7 +65,12 @@
         "H2:History and conversation",
         "H2:Put PR-2026-000024 on hold"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "accounts/payment-detail",
@@ -74,7 +79,7 @@
       "shows": "A recorded payment: the figures, the reference and the request behind it.",
       "url": "/payments/124",
       "file": "accounts/payment-detail.png",
-      "bytes": 8622,
+      "bytes": 9122,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -91,7 +96,7 @@
       "shows": "The edit form, available only for payments not tied to a request.",
       "url": "/payments/1/edit",
       "file": "accounts/payment-edit.png",
-      "bytes": 22619,
+      "bytes": 27085,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -106,7 +111,7 @@
       "shows": "The payment entry form for a request this user has claimed.",
       "url": "/payments/new?request=85",
       "file": "accounts/payment-form.png",
-      "bytes": 10582,
+      "bytes": 11504,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -122,7 +127,7 @@
       "shows": "The picker shown when you open the payment form without naming a request.",
       "url": "/payments/new",
       "file": "accounts/payment-picker.png",
-      "bytes": 17013,
+      "bytes": 18606,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -138,9 +143,9 @@
       "shows": "Every payment recorded, filtered by month.",
       "url": "/payments",
       "file": "accounts/payments-ledger.png",
-      "bytes": 63693,
-      "clipped": true,
-      "pageHeight": 5405,
+      "bytes": 16130,
+      "clipped": false,
+      "pageHeight": 1200,
       "headings": [
         "H1:Payments"
       ],
@@ -153,7 +158,7 @@
       "shows": "What the ledger shows for a month in which nothing was paid.",
       "url": "/payments?month=2026-04",
       "file": "accounts/payments-ledger-empty.png",
-      "bytes": 6586,
+      "bytes": 7204,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -168,9 +173,9 @@
       "shows": "Approved requests nobody has claimed yet — the accounts team’s starting point.",
       "url": "/accounts-queue?tab=approved",
       "file": "accounts/queue-approved.png",
-      "bytes": 142553,
+      "bytes": 134458,
       "clipped": true,
-      "pageHeight": 12855,
+      "pageHeight": 11745,
       "headings": [
         "H1:Payment queue"
       ],
@@ -183,9 +188,9 @@
       "shows": "Approved requests parked with a reason, waiting on the requester.",
       "url": "/accounts-queue?tab=hold",
       "file": "accounts/queue-hold.png",
-      "bytes": 25805,
+      "bytes": 28120,
       "clipped": true,
-      "pageHeight": 2219,
+      "pageHeight": 2336,
       "headings": [
         "H1:Payment queue"
       ],
@@ -198,9 +203,9 @@
       "shows": "The finished work, kept for reference.",
       "url": "/accounts-queue?tab=paid",
       "file": "accounts/queue-paid.png",
-      "bytes": 93703,
+      "bytes": 102609,
       "clipped": true,
-      "pageHeight": 9181,
+      "pageHeight": 9965,
       "headings": [
         "H1:Payment queue"
       ],
@@ -213,9 +218,9 @@
       "shows": "Requests paid short, now waiting on the approver to accept or object.",
       "url": "/accounts-queue?tab=partial_review",
       "file": "accounts/queue-partial-review.png",
-      "bytes": 31548,
+      "bytes": 33811,
       "clipped": true,
-      "pageHeight": 2682,
+      "pageHeight": 2831,
       "headings": [
         "H1:Payment queue"
       ],
@@ -228,9 +233,9 @@
       "shows": "Requests somebody has claimed, and who is holding each one.",
       "url": "/accounts-queue?tab=processing",
       "file": "accounts/queue-processing.png",
-      "bytes": 21756,
+      "bytes": 23737,
       "clipped": false,
-      "pageHeight": 1835,
+      "pageHeight": 2112,
       "headings": [
         "H1:Payment queue"
       ],
@@ -243,13 +248,14 @@
       "shows": "A single item of money expected back, and what has been recovered so far.",
       "url": "/recoverables/4",
       "file": "accounts/recoverable-detail.png",
-      "bytes": 7818,
+      "bytes": 9802,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1356,
       "headings": [
         "H1:Covers site safety audit.",
         "H2:Recoverable details",
-        "H2:Payment",
+        "H2:Latest payment",
+        "H2:Recovery history",
         "H2:History and conversation"
       ],
       "findings": []
@@ -261,7 +267,7 @@
       "shows": "Money expected back, summarised by category and by counterparty.",
       "url": "/recoverables",
       "file": "accounts/recoverables.png",
-      "bytes": 8707,
+      "bytes": 12258,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -278,9 +284,9 @@
       "shows": "Every recoverable item, with its counterparty and due date.",
       "url": "/recoverables/list",
       "file": "accounts/recoverables-list.png",
-      "bytes": 35521,
+      "bytes": 45895,
       "clipped": true,
-      "pageHeight": 3139,
+      "pageHeight": 3532,
       "headings": [
         "H1:All recoverables"
       ],
@@ -293,9 +299,9 @@
       "shows": "A held request, showing the reason and the controls for releasing it.",
       "url": "/requests/59",
       "file": "accounts/request-on-hold.png",
-      "bytes": 9271,
+      "bytes": 9906,
       "clipped": false,
-      "pageHeight": 1234,
+      "pageHeight": 1283,
       "headings": [
         "H1:Statutory filing fees",
         "H2:Details",
@@ -311,7 +317,7 @@
       "shows": "The screen for handing back a request you claimed but will not be paying.",
       "url": "/requests/85/reservation",
       "file": "accounts/reservation-release.png",
-      "bytes": 7931,
+      "bytes": 8399,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -327,7 +333,7 @@
       "shows": "The nudge shown for a request that has been claimed and untouched for a day.",
       "url": "/requests/85/reservation/stale",
       "file": "accounts/reservation-stale.png",
-      "bytes": 7887,
+      "bytes": 9084,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -344,7 +350,7 @@
       "shows": "The confirmation panel comparing what was approved against what is being paid.",
       "url": "/payments/new?request=85",
       "file": "accounts/settlement-sheet.png",
-      "bytes": 13140,
+      "bytes": 14639,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -361,9 +367,9 @@
       "shows": "Who did what and when, in a record that cannot be edited.",
       "url": "/audit",
       "file": "admin/audit.png",
-      "bytes": 63677,
+      "bytes": 46991,
       "clipped": true,
-      "pageHeight": 8483,
+      "pageHeight": 4461,
       "headings": [
         "H1:Audit Log"
       ],
@@ -376,11 +382,12 @@
       "shows": "The list of database copies taken, and the control for taking another.",
       "url": "/backups",
       "file": "admin/backups.png",
-      "bytes": 8002,
+      "bytes": 13549,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
-        "H1:Backups"
+        "H1:Backups",
+        "H2:Restore safely with your operator"
       ],
       "findings": []
     },
@@ -391,9 +398,9 @@
       "shows": "The figures each head is allowed, month by month.",
       "url": "/budgets",
       "file": "admin/budgets.png",
-      "bytes": 104522,
+      "bytes": 132946,
       "clipped": true,
-      "pageHeight": 12529,
+      "pageHeight": 12650,
       "headings": [
         "H1:Budgets"
       ],
@@ -406,9 +413,9 @@
       "shows": "The settings that change how the product behaves for everybody.",
       "url": "/configuration",
       "file": "admin/configuration.png",
-      "bytes": 23371,
+      "bytes": 26484,
       "clipped": false,
-      "pageHeight": 1738,
+      "pageHeight": 1900,
       "headings": [
         "H1:Configuration"
       ],
@@ -421,9 +428,9 @@
       "shows": "The same grid pointed at a month with budgets but little spending.",
       "url": "/grid?month=2026-03",
       "file": "admin/grid-earlier-month.png",
-      "bytes": 344638,
+      "bytes": 405623,
       "clipped": true,
-      "pageHeight": 14541,
+      "pageHeight": 14790,
       "headings": [
         "H1:Variance grid",
         "H2:Recent Payments for 2026-03",
@@ -438,9 +445,9 @@
       "shows": "The individual budget lines that spending is booked against.",
       "url": "/heads",
       "file": "admin/heads.png",
-      "bytes": 480929,
+      "bytes": 320658,
       "clipped": true,
-      "pageHeight": 12470,
+      "pageHeight": 12524,
       "headings": [
         "H1:Heads"
       ],
@@ -453,11 +460,12 @@
       "shows": "Every budget month and whether it is open or locked.",
       "url": "/months",
       "file": "admin/months.png",
-      "bytes": 13514,
+      "bytes": 18410,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1340,
       "headings": [
-        "H1:Monthly Plans"
+        "H1:Monthly Plans",
+        "H2:Create a monthly budget"
       ],
       "findings": []
     },
@@ -468,11 +476,12 @@
       "shows": "A month that has been closed, which no longer accepts new payments.",
       "url": "/months",
       "file": "admin/months-locked.png",
-      "bytes": 13553,
+      "bytes": 18449,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1340,
       "headings": [
-        "H1:Monthly Plans"
+        "H1:Monthly Plans",
+        "H2:Create a monthly budget"
       ],
       "findings": []
     },
@@ -483,13 +492,18 @@
       "shows": "The panel for one event: who is told, and the wording of the email.",
       "url": "/admin/notifications",
       "file": "admin/notification-rule-sheet.png",
-      "bytes": 80912,
+      "bytes": 88650,
       "clipped": false,
       "pageHeight": 1830,
       "headings": [
         "H1:Notification rules"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "admin/notification-rules",
@@ -498,7 +512,7 @@
       "shows": "Every event the product can announce, and who is told about it.",
       "url": "/admin/notifications",
       "file": "admin/notification-rules.png",
-      "bytes": 80922,
+      "bytes": 88279,
       "clipped": false,
       "pageHeight": 1830,
       "headings": [
@@ -513,9 +527,9 @@
       "shows": "The top level of the budget structure.",
       "url": "/projects",
       "file": "admin/projects.png",
-      "bytes": 24905,
+      "bytes": 30700,
       "clipped": false,
-      "pageHeight": 1545,
+      "pageHeight": 1598,
       "headings": [
         "H1:Projects"
       ],
@@ -528,7 +542,7 @@
       "shows": "Starting a new role from an existing one rather than from nothing.",
       "url": "/roles",
       "file": "admin/role-copy-sheet.png",
-      "bytes": 50580,
+      "bytes": 53490,
       "clipped": false,
       "pageHeight": 1312,
       "headings": [
@@ -545,7 +559,7 @@
       "shows": "The panel for adding a role of your own, alongside the four built-in ones.",
       "url": "/roles",
       "file": "admin/role-new-sheet.png",
-      "bytes": 50580,
+      "bytes": 53490,
       "clipped": false,
       "pageHeight": 1312,
       "headings": [
@@ -562,7 +576,7 @@
       "shows": "The permission matrix: what each role may do, and how much data it may see.",
       "url": "/roles",
       "file": "admin/roles.png",
-      "bytes": 50590,
+      "bytes": 53289,
       "clipped": false,
       "pageHeight": 1312,
       "headings": [
@@ -578,9 +592,9 @@
       "shows": "The panel for changing somebody’s roles, approver or password.",
       "url": "/users",
       "file": "admin/user-edit-sheet.png",
-      "bytes": 354199,
+      "bytes": 203957,
       "clipped": true,
-      "pageHeight": 2588,
+      "pageHeight": 2760,
       "headings": [
         "H1:Users",
         "H2:Rahul Gupta"
@@ -594,9 +608,9 @@
       "shows": "The panel for creating an account: email, name, roles and a starting password.",
       "url": "/users",
       "file": "admin/user-new-sheet.png",
-      "bytes": 354199,
+      "bytes": 203264,
       "clipped": true,
-      "pageHeight": 2588,
+      "pageHeight": 2760,
       "headings": [
         "H1:Users",
         "H2:Add user"
@@ -610,9 +624,9 @@
       "shows": "Everybody with an account, the roles they hold, and who approves their requests.",
       "url": "/users",
       "file": "admin/users.png",
-      "bytes": 354209,
+      "bytes": 202532,
       "clipped": true,
-      "pageHeight": 2588,
+      "pageHeight": 2760,
       "headings": [
         "H1:Users"
       ],
@@ -625,7 +639,7 @@
       "shows": "A vendor’s details, bank information and payment history.",
       "url": "/vendors/1",
       "file": "admin/vendor-detail.png",
-      "bytes": 14030,
+      "bytes": 14664,
       "clipped": false,
       "pageHeight": 1514,
       "headings": [
@@ -640,7 +654,7 @@
       "shows": "The blank vendor form, including the bank details block.",
       "url": "/vendors/new",
       "file": "admin/vendor-new.png",
-      "bytes": 13724,
+      "bytes": 14377,
       "clipped": false,
       "pageHeight": 1476,
       "headings": [
@@ -655,7 +669,7 @@
       "shows": "Every vendor, with how much has been paid to each.",
       "url": "/vendors",
       "file": "admin/vendors.png",
-      "bytes": 16017,
+      "bytes": 16852,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -670,7 +684,7 @@
       "shows": "The tab holding requests whose raisers have asked to cancel them.",
       "url": "/approvals?bucket=cancellations",
       "file": "manager/approvals-cancellations.png",
-      "bytes": 7339,
+      "bytes": 7887,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -685,7 +699,7 @@
       "shows": "The record of what this approver has already approved, rejected or cancelled.",
       "url": "/approvals?bucket=decided",
       "file": "manager/approvals-decided.png",
-      "bytes": 18941,
+      "bytes": 19489,
       "clipped": true,
       "pageHeight": 3940,
       "headings": [
@@ -700,7 +714,7 @@
       "shows": "Everything waiting on this approver’s decision.",
       "url": "/approvals?bucket=to-approve",
       "file": "manager/approvals-to-approve.png",
-      "bytes": 13104,
+      "bytes": 13652,
       "clipped": true,
       "pageHeight": 2345,
       "headings": [
@@ -715,7 +729,7 @@
       "shows": "The approve panel, where the amount can be reduced before approving.",
       "url": "/requests/2",
       "file": "manager/approve-sheet.png",
-      "bytes": 13493,
+      "bytes": 15883,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -725,7 +739,12 @@
         "H2:History and conversation",
         "H2:Approve ₹80,700.00?"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/cancellation-accept-sheet",
@@ -734,7 +753,7 @@
       "shows": "The confirmation panel for cancelling the request permanently.",
       "url": "/requests/96/cancellation",
       "file": "manager/cancellation-accept-sheet.png",
-      "bytes": 10471,
+      "bytes": 11790,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -744,7 +763,12 @@
         "H2:History and conversation",
         "H2:Cancel PR-2026-000096?"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/cancellation-decision",
@@ -753,7 +777,7 @@
       "shows": "The screen for accepting or declining a raiser’s request to cancel.",
       "url": "/requests/96/cancellation",
       "file": "manager/cancellation-decision.png",
-      "bytes": 10481,
+      "bytes": 11563,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -771,7 +795,7 @@
       "shows": "The panel for refusing a cancellation, which needs a reason it should still be paid.",
       "url": "/requests/96/cancellation",
       "file": "manager/cancellation-decline-sheet.png",
-      "bytes": 10471,
+      "bytes": 11790,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -781,7 +805,12 @@
         "H2:History and conversation",
         "H2:Decline the cancellation"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/detail-completed",
@@ -790,13 +819,14 @@
       "shows": "The end state: approved, paid, and closed.",
       "url": "/requests/106",
       "file": "manager/detail-completed.png",
-      "bytes": 9229,
+      "bytes": 10069,
       "clipped": false,
-      "pageHeight": 1409,
+      "pageHeight": 1572,
       "headings": [
         "H1:Site safety audit",
         "H2:Details",
         "H2:Payment outcome",
+        "H2:Payment history",
         "H2:Attachments",
         "H2:History and conversation"
       ],
@@ -809,7 +839,7 @@
       "shows": "A rejected request from the approver’s side, with the reason recorded.",
       "url": "/requests/45",
       "file": "manager/detail-rejected.png",
-      "bytes": 7894,
+      "bytes": 8404,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -827,12 +857,11 @@
       "shows": "Budget against actual for every head in a month, with over- and under-spend called out.",
       "url": "/grid?month=2026-07",
       "file": "manager/grid.png",
-      "bytes": 326070,
+      "bytes": 386908,
       "clipped": true,
-      "pageHeight": 14502,
+      "pageHeight": 15588,
       "headings": [
-        "H1:Variance grid",
-        "H2:Recent Payments for 2026-07"
+        "H1:Variance grid"
       ],
       "findings": []
     },
@@ -843,7 +872,7 @@
       "shows": "The approver cancelling an approved request on their own initiative.",
       "url": "/requests/71/cancellation",
       "file": "manager/outright-cancel-sheet.png",
-      "bytes": 8304,
+      "bytes": 9287,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -852,7 +881,12 @@
         "H2:History and conversation",
         "H2:Cancel PR-2026-000071?"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/partial-close-sheet",
@@ -861,16 +895,22 @@
       "shows": "The panel comparing approved, paid and written-off amounts before closing the request.",
       "url": "/requests/151/partial-review",
       "file": "manager/partial-close-sheet.png",
-      "bytes": 11536,
+      "bytes": 13332,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1465,
       "headings": [
         "H1:Sneha Ahuja — Emergency equipment repair",
         "H2:The payment that was recorded",
         "H2:History and conversation",
+        "H2:Pay the remaining balance later",
         "H2:Accept ₹43,100.00 and close?"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/partial-concern-sheet",
@@ -879,16 +919,22 @@
       "shows": "The panel for pushing back on a short payment. Nothing is reversed by it.",
       "url": "/requests/151/partial-review",
       "file": "manager/partial-concern-sheet.png",
-      "bytes": 11536,
+      "bytes": 13332,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1465,
       "headings": [
         "H1:Sneha Ahuja — Emergency equipment repair",
         "H2:The payment that was recorded",
         "H2:History and conversation",
+        "H2:Pay the remaining balance later",
         "H2:Raise a concern"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/partial-review",
@@ -897,13 +943,14 @@
       "shows": "What the approver sees when Accounts paid less than was approved.",
       "url": "/requests/151/partial-review",
       "file": "manager/partial-review.png",
-      "bytes": 11546,
+      "bytes": 13096,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1465,
       "headings": [
         "H1:Sneha Ahuja — Emergency equipment repair",
         "H2:The payment that was recorded",
-        "H2:History and conversation"
+        "H2:History and conversation",
+        "H2:Pay the remaining balance later"
       ],
       "findings": []
     },
@@ -914,9 +961,9 @@
       "shows": "An approver opening the payments ledger. The approver role does not carry that permission.",
       "url": "/payments",
       "file": "manager/payments-refused.png",
-      "bytes": 1172,
+      "bytes": 1254,
       "clipped": false,
-      "pageHeight": 1312,
+      "pageHeight": 1200,
       "headings": [
         "H1:Forbidden"
       ],
@@ -929,7 +976,7 @@
       "shows": "The panel for handing a decision to a different approver, with a required reason.",
       "url": "/requests/2",
       "file": "manager/reassign-sheet.png",
-      "bytes": 13493,
+      "bytes": 15883,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -939,7 +986,12 @@
         "H2:History and conversation",
         "H2:Reassign PR-2026-000002"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/reject-sheet",
@@ -948,7 +1000,7 @@
       "shows": "The reject panel. A reason is required, and rejection cannot be undone.",
       "url": "/requests/2",
       "file": "manager/reject-sheet.png",
-      "bytes": 13493,
+      "bytes": 15883,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -958,7 +1010,12 @@
         "H2:History and conversation",
         "H2:Reject this request?"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "manager/reports-heads",
@@ -967,9 +1024,9 @@
       "shows": "Spending broken down to the individual budget line.",
       "url": "/reports/heads",
       "file": "manager/reports-heads.png",
-      "bytes": 88031,
-      "clipped": true,
-      "pageHeight": 8863,
+      "bytes": 7588,
+      "clipped": false,
+      "pageHeight": 1200,
       "headings": [
         "H1:Reports"
       ],
@@ -982,7 +1039,7 @@
       "shows": "Spending by month across the whole organisation.",
       "url": "/reports/monthly",
       "file": "manager/reports-monthly.png",
-      "bytes": 6647,
+      "bytes": 7426,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -997,9 +1054,9 @@
       "shows": "The same figures grouped by project instead of by month.",
       "url": "/reports/projects",
       "file": "manager/reports-projects.png",
-      "bytes": 13803,
+      "bytes": 7470,
       "clipped": false,
-      "pageHeight": 1255,
+      "pageHeight": 1200,
       "headings": [
         "H1:Reports"
       ],
@@ -1012,7 +1069,7 @@
       "shows": "The request as its approver sees it, with the full action bar along the bottom.",
       "url": "/requests/2",
       "file": "manager/request-pending.png",
-      "bytes": 13503,
+      "bytes": 15638,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1030,7 +1087,7 @@
       "shows": "The return panel, where a correction message is required.",
       "url": "/requests/2",
       "file": "manager/return-sheet.png",
-      "bytes": 13493,
+      "bytes": 15883,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1040,7 +1097,12 @@
         "H2:History and conversation",
         "H2:Return for correction"
       ],
-      "findings": []
+      "findings": [
+        {
+          "kind": "a11y:aria-allowed-role",
+          "detail": "minor — ARIA role should be appropriate for the element (1 element)"
+        }
+      ]
     },
     {
       "id": "requester/cancel-form",
@@ -1049,7 +1111,7 @@
       "shows": "The form for asking an approver to cancel a request they already approved.",
       "url": "/requests/467/cancel",
       "file": "requester/cancel-form.png",
-      "bytes": 6173,
+      "bytes": 6666,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1064,7 +1126,7 @@
       "shows": "Step one of raising a request: the four type cards and what each is for.",
       "url": "/requests/new",
       "file": "requester/choose-type.png",
-      "bytes": 6030,
+      "bytes": 6928,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1079,9 +1141,9 @@
       "shows": "A request that has cleared approval and is waiting for the accounts team.",
       "url": "/requests/467",
       "file": "requester/detail-approved.png",
-      "bytes": 7382,
+      "bytes": 7951,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1225,
       "headings": [
         "H1:Bulk material purchase",
         "H2:Details",
@@ -1097,9 +1159,9 @@
       "shows": "What the raiser sees after asking to cancel an approved request.",
       "url": "/requests/526",
       "file": "requester/detail-cancellation-asked.png",
-      "bytes": 7689,
+      "bytes": 8272,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1228,
       "headings": [
         "H1:Statutory filing fees",
         "H2:Details",
@@ -1115,13 +1177,14 @@
       "shows": "A finished request, showing the payment recorded against it.",
       "url": "/requests/537",
       "file": "requester/detail-completed.png",
-      "bytes": 7943,
+      "bytes": 8770,
       "clipped": false,
-      "pageHeight": 1334,
+      "pageHeight": 1497,
       "headings": [
         "H1:Facility upgrade",
         "H2:Details",
         "H2:Payment outcome",
+        "H2:Payment history",
         "H2:Attachments",
         "H2:History and conversation"
       ],
@@ -1134,7 +1197,7 @@
       "shows": "A freshly submitted request as its raiser sees it, waiting on the approver.",
       "url": "/requests/426",
       "file": "requester/detail-pending.png",
-      "bytes": 6920,
+      "bytes": 8214,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1152,9 +1215,9 @@
       "shows": "A request the accounts team has claimed and is working on.",
       "url": "/requests/533",
       "file": "requester/detail-processing.png",
-      "bytes": 7254,
+      "bytes": 8594,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1263,
       "headings": [
         "H1:Transport reimbursement",
         "H2:Details",
@@ -1170,7 +1233,7 @@
       "shows": "A rejected request, with the reason, and the option to raise a corrected one.",
       "url": "/requests/442",
       "file": "requester/detail-rejected.png",
-      "bytes": 7341,
+      "bytes": 7900,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1188,9 +1251,9 @@
       "shows": "The approver’s reason for returning a request, and the form to correct and resubmit it.",
       "url": "/requests/432",
       "file": "requester/detail-returned.png",
-      "bytes": 9050,
+      "bytes": 10212,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1287,
       "headings": [
         "H1:Annual licence renewal",
         "H2:History and conversation"
@@ -1204,7 +1267,7 @@
       "shows": "A request the raiser took back before anybody decided it.",
       "url": "/requests/461",
       "file": "requester/detail-withdrawn.png",
-      "bytes": 6889,
+      "bytes": 7393,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1222,9 +1285,9 @@
       "shows": "The edit form, reached from a request that has not yet been decided.",
       "url": "/requests/432/edit",
       "file": "requester/edit-form.png",
-      "bytes": 12760,
+      "bytes": 14659,
       "clipped": false,
-      "pageHeight": 1331,
+      "pageHeight": 1464,
       "headings": [
         "H1:Edit request"
       ],
@@ -1237,9 +1300,9 @@
       "shows": "The form for money paid to a colleague before it is spent.",
       "url": "/requests/new?type=employee_advance",
       "file": "requester/form-employee-advance.png",
-      "bytes": 12206,
+      "bytes": 14229,
       "clipped": false,
-      "pageHeight": 1776,
+      "pageHeight": 1887,
       "headings": [
         "H1:Employee advance"
       ],
@@ -1252,9 +1315,9 @@
       "shows": "The extra fields that appear when you say the money is expected back.",
       "url": "/requests/new?type=employee_advance",
       "file": "requester/form-recoverable.png",
-      "bytes": 12206,
+      "bytes": 14229,
       "clipped": false,
-      "pageHeight": 1776,
+      "pageHeight": 1887,
       "headings": [
         "H1:Employee advance"
       ],
@@ -1267,9 +1330,9 @@
       "shows": "The form for claiming back money you spent yourself.",
       "url": "/requests/new?type=reimbursement",
       "file": "requester/form-reimbursement.png",
-      "bytes": 27288,
+      "bytes": 33246,
       "clipped": false,
-      "pageHeight": 1509,
+      "pageHeight": 1443,
       "headings": [
         "H1:Reimbursement"
       ],
@@ -1282,10 +1345,11 @@
       "shows": "The refusal shown when a request is submitted without the details it requires.",
       "url": "/requests/new?type=reimbursement",
       "file": "requester/form-validation.png",
-      "bytes": 27362,
+      "bytes": 34798,
       "clipped": false,
-      "pageHeight": 1560,
+      "pageHeight": 1903,
       "headings": [
+        "H2:Check the highlighted fields",
         "H1:Reimbursement"
       ],
       "findings": []
@@ -1297,9 +1361,9 @@
       "shows": "The form for paying a vendor before the invoice exists.",
       "url": "/requests/new?type=vendor_advance",
       "file": "requester/form-vendor-advance.png",
-      "bytes": 28020,
+      "bytes": 34365,
       "clipped": false,
-      "pageHeight": 1508,
+      "pageHeight": 1441,
       "headings": [
         "H1:Vendor advance"
       ],
@@ -1312,9 +1376,9 @@
       "shows": "The form for paying a vendor against an invoice.",
       "url": "/requests/new?type=vendor_invoice",
       "file": "requester/form-vendor-invoice.png",
-      "bytes": 28375,
+      "bytes": 35156,
       "clipped": false,
-      "pageHeight": 1508,
+      "pageHeight": 1575,
       "headings": [
         "H1:Vendor invoice payment"
       ],
@@ -1327,7 +1391,7 @@
       "shows": "A recoverable request, showing the counterparty and the date the money is due back.",
       "url": "/requests/4",
       "file": "requester/recoverable-request.png",
-      "bytes": 9591,
+      "bytes": 8641,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1345,9 +1409,9 @@
       "shows": "Every request this person has ever raised, in one list.",
       "url": "/requests?bucket=all",
       "file": "requester/requests-all.png",
-      "bytes": 21786,
+      "bytes": 23506,
       "clipped": true,
-      "pageHeight": 4065,
+      "pageHeight": 4135,
       "headings": [
         "H1:My requests"
       ],
@@ -1360,9 +1424,9 @@
       "shows": "Finished requests: paid, rejected, withdrawn and cancelled.",
       "url": "/requests?bucket=closed",
       "file": "requester/requests-closed.png",
-      "bytes": 11920,
+      "bytes": 15003,
       "clipped": false,
-      "pageHeight": 1200,
+      "pageHeight": 1659,
       "headings": [
         "H1:My requests"
       ],
@@ -1375,7 +1439,7 @@
       "shows": "The tab that collects only the requests waiting on something from the requester.",
       "url": "/requests?bucket=needs-me",
       "file": "requester/requests-needs-me.png",
-      "bytes": 9846,
+      "bytes": 11539,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1390,9 +1454,9 @@
       "shows": "The requester’s own list on the Open tab, with the four tabs and their counts.",
       "url": "/requests?bucket=open",
       "file": "requester/requests-open.png",
-      "bytes": 16799,
+      "bytes": 19002,
       "clipped": true,
-      "pageHeight": 2609,
+      "pageHeight": 2824,
       "headings": [
         "H1:My requests"
       ],
@@ -1405,7 +1469,7 @@
       "shows": "What the list shows when a search matches none of your requests.",
       "url": "/requests?bucket=all&q=zzzznothingmatchesthis",
       "file": "requester/requests-search-empty.png",
-      "bytes": 9044,
+      "bytes": 10774,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1420,7 +1484,7 @@
       "shows": "How a request marked urgent is flagged, and where the reason appears.",
       "url": "/requests/12",
       "file": "requester/urgent-request.png",
-      "bytes": 9645,
+      "bytes": 8696,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1438,7 +1502,7 @@
       "shows": "The home screen for the accounts team, led by what is approved and waiting to be paid.",
       "url": "/",
       "file": "shared/dashboard-accounts.png",
-      "bytes": 7803,
+      "bytes": 8275,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1454,7 +1518,7 @@
       "shows": "The home screen for an administrator, who sees every queue in the product.",
       "url": "/",
       "file": "shared/dashboard-admin.png",
-      "bytes": 11351,
+      "bytes": 11925,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1471,13 +1535,14 @@
       "shows": "The home screen for an approver, led by what is waiting on their decision.",
       "url": "/",
       "file": "shared/dashboard-manager.png",
-      "bytes": 8423,
+      "bytes": 10818,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
         "H1:Good day, Karthik Bose",
         "H2:Awaiting your approval",
-        "H2:Decisions only you can make"
+        "H2:Decisions only you can make",
+        "H2:Partial payments to review"
       ],
       "findings": []
     },
@@ -1488,7 +1553,7 @@
       "shows": "The home screen for somebody who only raises requests: their own work and nothing else.",
       "url": "/",
       "file": "shared/dashboard-requester.png",
-      "bytes": 7499,
+      "bytes": 7910,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1505,9 +1570,9 @@
       "shows": "The refusal shown when you follow a link to something your permissions do not cover.",
       "url": "/grid",
       "file": "shared/forbidden.png",
-      "bytes": 1172,
+      "bytes": 1254,
       "clipped": false,
-      "pageHeight": 1312,
+      "pageHeight": 1200,
       "headings": [
         "H1:Forbidden"
       ],
@@ -1520,7 +1585,7 @@
       "shows": "The sign-in form: an email field, a password field, and nothing else.",
       "url": "/login",
       "file": "shared/login.png",
-      "bytes": 607,
+      "bytes": 789,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1535,7 +1600,7 @@
       "shows": "The message shown when the email and password do not match an account.",
       "url": "/login",
       "file": "shared/login-rejected.png",
-      "bytes": 698,
+      "bytes": 884,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1550,9 +1615,9 @@
       "shows": "What the product shows for an address that matches nothing.",
       "url": "/requests/99999999",
       "file": "shared/not-found.png",
-      "bytes": 1157,
+      "bytes": 1239,
       "clipped": false,
-      "pageHeight": 1312,
+      "pageHeight": 1200,
       "headings": [
         "H1:Not Found"
       ],
@@ -1565,9 +1630,9 @@
       "shows": "Everything the product has told this person, newest first, unread ones marked.",
       "url": "/notifications",
       "file": "shared/notifications.png",
-      "bytes": 43285,
+      "bytes": 49584,
       "clipped": true,
-      "pageHeight": 6711,
+      "pageHeight": 12345,
       "headings": [
         "H1:Notifications"
       ],
@@ -1580,9 +1645,9 @@
       "shows": "The sidebar as an administrator sees it, with every section the product has.",
       "url": "/configuration",
       "file": "shared/sidebar-admin.png",
-      "bytes": 23371,
+      "bytes": 26484,
       "clipped": false,
-      "pageHeight": 1738,
+      "pageHeight": 1900,
       "headings": [
         "H1:Configuration"
       ],
