@@ -79,6 +79,7 @@ export default page({
         ['A message naming a month and saying it is locked', 'The month the request is needed by has been closed.', 'Ask an administrator to reopen the month, or ask the requester to change the required-by date.'],
         ['*You do not have permission to perform this action.*', 'You are not the approver this request was routed to, or it is your own request.', 'Check the **Approver** field. If that person cannot act, [reassign it](page:manager/reassigning).'],
         ['A message saying a request in that state cannot be approved', 'Somebody else has already decided it, or the requester withdrew it.', 'Reload the request and read the status pill.'],
+        ['*this request changed; reload and review it before deciding*', 'The request was edited, or somebody acted on it, after you opened it. Your decision is tied to the version you read.', 'Reload the request, read what changed, and decide again.'],
         ['A message about the cancellation decision', 'The requester has asked for this request to be cancelled, so it is frozen.', 'Decide the cancellation first. Declining it is what returns the request to approved.'],
       ],
     ),

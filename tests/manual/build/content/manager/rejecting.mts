@@ -70,6 +70,7 @@ export default page({
       [
         ['A message saying a reason is required to reject a request', 'The reason box was empty. It is checked before anything else.'],
         ['*You do not have permission to perform this action.*', 'You are not the approver this request was routed to.'],
+        ['*this request changed; reload and review it before deciding*', 'The request changed after you opened it. Reload it, read what changed, and decide again.'],
         ['A message saying a request in that state cannot be rejected', 'Only a `pending` request can be rejected. Somebody has already decided it, or the requester withdrew it.'],
       ],
     ),

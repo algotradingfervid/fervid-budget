@@ -61,10 +61,12 @@ manual trustworthy. If you are writing about a screen, open its PNG under
 `docs/manual/assets/shots/<id>.png` and look at it. Do not describe a button because a
 similar product has one.
 
-**2. Verify anything you assert about behaviour.** The code is the source of truth. Templates
-are Go string literals in `internal/app/templates.go` (there is no `web/templates/`
-directory); routes and permissions are in `internal/app/app.go`; validation lives in
-`internal/store/store.go`. You may query the live dataset read-only:
+**2. Verify anything you assert about behaviour.** The code is the source of truth. Screen
+HTML is in `internal/app/templates/*.html`, one file per feature (there is no `web/templates/`
+directory); the route table and the permission each URL needs are in `internal/app/routes.go`;
+refusal messages and business rules live in the `internal/store` package (for example
+`request_validation.go`, `request_transitions.go`, `accounts_queue.go`, `payments.go`).
+`docs/ARCHITECTURE.md` maps the rest. You may query the live dataset read-only:
 
 ```
 sqlite3 -readonly "data/fervid.db" "select …"
@@ -90,6 +92,14 @@ Money is written as `₹80,700.00`. Statuses are written in code font in their l
 it to a reader.
 
 Use they/them for any person you refer to generically.
+
+## Before you rebuild: the published pages are ahead of these sources
+
+Some pages under `docs/manual/` were corrected directly in the HTML during the September 2026
+UX pass, and the matching `.mts` files here were not updated. Running the build today would put
+the older wording back on about thirty pages (backups, signing in, recording a payment and
+others). Before the next `make manual`, compare each regenerated page with the committed one
+(`git diff docs/manual`) and carry the published wording back into its `.mts` file first.
 
 ## Checking your work
 

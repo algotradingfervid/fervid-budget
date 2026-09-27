@@ -25,10 +25,12 @@ Rollbacks restore binary/assets only. Review the saved backup before any databas
 
 ## Intentional behavior changes
 
-- Login/reset submissions are limited by source and globally. Failed guesses cannot globally lock a victim out of a correct-password login from a different source. Failures use the same message and password-hash verification path for unknown/inactive accounts.
+- Login/reset submissions are limited by source and globally. Failed sign-ins do not lock the account, so failed guesses cannot lock a victim out of a correct-password login from a different source. Failures use the same message ("Invalid email or password") and password-hash verification path for unknown/inactive accounts.
+- A request the caller may not see answers **404**, exactly like a request that does not exist, on every page, form and download, so request ids cannot be probed. The `assigned` data scope means requests routed to the person for approval plus the requests they raised; `own` means only the requests they raised.
+- After sign-in, a `?next=` link to a record opens that record only if the user may open it; otherwise the user lands on Home with a notice that does not name the page.
 - Logout increments the user's session version, invalidating **all existing sessions** for that account.
 - Non-administrators can delegate only permissions and scopes they already hold. They cannot manage higher-privilege users or the system Admin role. The administrator's user/role management grants cannot be removed, and self-demotion/deactivation through role IDs is refused.
-- Approval, return and rejection forms must match the reviewed request revision. A stale form must be reloaded and reviewed. A settlement date cannot precede approval; recoveries cannot be entered in a locked month.
+- Approval, return, rejection and cancellation-decision forms must match the reviewed request revision. A stale form must be reloaded and reviewed. A settlement date cannot precede the (local) day of approval; recoveries cannot be entered in a locked month.
 - Each financial entry is capped at **100 crore rupees** (`100,000,000,000` paise). Aggregate storage is bounded at `900,000,000,000,000` paise per financial table. Startup refuses an existing database outside these limits with an operator-review error, without rewriting financial values. Budget amounts are parsed exactly; malformed digit grouping and excess decimal precision are rejected. Reports are limited to 120 months.
 - A head with financial history cannot move to another project. Create a new head instead. Project/head edits have atomic before/after audit records.
 - Vendor totals are marked **Restricted** unless the viewer can read the corresponding company-wide payment/request data. Notification delivery and inbox reads enforce current request visibility, including after permission changes.
