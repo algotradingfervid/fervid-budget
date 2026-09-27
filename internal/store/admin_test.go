@@ -147,3 +147,38 @@ func TestVendorAuditRecordsContactChangesWithoutFalseBankChanges(t *testing.T) {
 		t.Fatal("bank change privacy/accuracy", after)
 	}
 }
+
+func TestReverifyAdminChangeRevokesOutstandingReset(t *testing.T) {
+	for _, mode := range []string{"legacy password", "profile password", "deactivate then reactivate"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			actor := newRoleActor(t, s)
+			id, err := s.CreateUser(ctx, "reset-target@example.invalid", "Reset Target", "oldhash", "data_entry", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			if err = s.CreatePasswordReset(ctx, id, "outstanding", now); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "legacy password":
+				err = s.UpdateUser(ctx, id, "Reset Target", "data_entry", true, "admin-newhash")
+			case "profile password":
+				err = s.SaveUser(ctx, actor, UserSaveInput{ID: id, Name: "Reset Target", Role: "data_entry", Active: true, PasswordHash: "admin-newhash"})
+			default:
+				err = s.SaveUser(ctx, actor, UserSaveInput{ID: id, Name: "Reset Target", Role: "data_entry", Active: false})
+				if err == nil {
+					err = s.SaveUser(ctx, actor, UserSaveInput{ID: id, Name: "Reset Target", Role: "data_entry", Active: true})
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.ConsumePasswordReset(ctx, "outstanding", "attacker-chosen", now); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("stale reset must not override administrator action; got %v", err)
+			}
+		})
+	}
+}

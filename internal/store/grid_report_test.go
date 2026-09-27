@@ -4,58 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
-
-// recoverables-1 (F-E-05, second half). The dashboard tile learned that money
-// which never left cannot be overdue; the By-category/By-counterparty rollup and
-// the register's ageing=overdue filter did not, so an approved-but-unpaid row
-// with a past return date showed red in its category row while the Total row
-// and the tile beneath it read ₹0.00.
-func TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s)
-	asOf := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
-
-	paid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000701", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
-	payRecoverable(t, s, actor, headID, paid, "2026-02-12", 200000)
-	unpaid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000702", "approved", "emd", "Ridge Metro", "2026-01-15", 250000, false)
-
-	m, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, by := range []string{"category", "counterparty"} {
-		rolls, err := s.RecoverableRollups(ctx, by, asOf, RecoverableViewerAll())
-		if err != nil {
-			t.Fatal(err)
-		}
-		var overdue int64
-		for _, r := range rolls {
-			overdue += r.Overdue
-			if r.Label == "Ridge Metro" && r.Overdue != 0 {
-				t.Fatalf("the unpaid counterparty row is overdue by %d; money that never left cannot be overdue", r.Overdue)
-			}
-		}
-		if overdue != m.OverdueAmount {
-			t.Fatalf("%s rollup rows add up to %d overdue while the tile and Total row say %d", by, overdue, m.OverdueAmount)
-		}
-	}
-
-	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "overdue", AsOf: asOf, Viewer: RecoverableViewerAll()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range rows {
-		if r.RequestID == unpaid {
-			t.Fatalf("ageing=overdue lists the unpaid row, labelled %q", r.AgeingLabel)
-		}
-	}
-	if len(rows) != m.OverdueCount {
-		t.Fatalf("ageing=overdue lists %d rows and the tile it is linked from counts %d", len(rows), m.OverdueCount)
-	}
-}
 
 // recoverables-2 / grid-2. A recoverable payment is a deposit, not budget
 // spend, so the variance grid's Recent Payments panel must not list it; and
@@ -235,5 +184,63 @@ func TestSetBudgetsRefusesAnUnknownHeadEvenAtZero(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("a failed batch wrote %d budget audit rows", n)
+	}
+}
+
+func TestUXGridNeutralStatusAndFilteredTotalScope(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, head := seedActorAndHead(t, s)
+	zero, err := s.Grid(ctx, "2026-04", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zero.NoActivity != 1 || zero.NotPaid != 0 || zero.Rows[0].Status != "no-activity" {
+		t.Fatalf("zero activity=%+v", zero)
+	}
+	if err = s.SetBudget(ctx, actor, head, "2026-04", 10000); err != nil {
+		t.Fatal(err)
+	}
+	planned, err := s.Grid(ctx, "2026-04", "not-paid", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.NotPaid != 1 || planned.NoActivity != 0 || planned.Total.Budget != 10000 || !planned.Filtered || planned.ScopeLabel != "Filtered subtotal" {
+		t.Fatalf("planned=%+v", planned)
+	}
+	none, err := s.Grid(ctx, "2026-04", "", "missing-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none.Rows) != 0 || none.Total.Budget != 0 || !none.Filtered {
+		t.Fatalf("filter=%+v", none)
+	}
+}
+
+func TestUXReportStableIDsAndPaymentHeadScope(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, head := seedActorAndHead(t, s)
+	if err := s.SetBudget(ctx, actor, head, "2026-04", 10000); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.Report(ctx, "2026-04", "2026-04", "heads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].HeadID != head || rows[0].ProjectID == 0 {
+		t.Fatalf("report IDs=%+v", rows)
+	}
+	id, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: head, PaidOn: "2026-04-01", Amount: 10000, VendorPayee: "Fixture", PaymentMode: "cash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payments, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-04", HeadID: head, ProjectID: rows[0].ProjectID, Scope: ScopeAll, ExcludeRecoverable: true})
+	if err != nil || len(payments) != 1 || payments[0].ID != id {
+		t.Fatalf("payments=%+v err=%v", payments, err)
+	}
+	wrong, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-04", HeadID: head + 100, Scope: ScopeAll})
+	if err != nil || len(wrong) != 0 {
+		t.Fatalf("wrong head filter=%+v err=%v", wrong, err)
 	}
 }

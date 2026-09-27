@@ -1191,3 +1191,53 @@ func TestRecoverableCreateRecordsCounterpartyReturnDateAndNotes(t *testing.T) {
 		}
 	})
 }
+
+// recoverables-1 (F-E-05, second half). The dashboard tile learned that money
+// which never left cannot be overdue; the By-category/By-counterparty rollup and
+// the register's ageing=overdue filter did not, so an approved-but-unpaid row
+// with a past return date showed red in its category row while the Total row
+// and the tile beneath it read ₹0.00.
+func TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s)
+	asOf := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+
+	paid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000701", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
+	payRecoverable(t, s, actor, headID, paid, "2026-02-12", 200000)
+	unpaid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000702", "approved", "emd", "Ridge Metro", "2026-01-15", 250000, false)
+
+	m, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, by := range []string{"category", "counterparty"} {
+		rolls, err := s.RecoverableRollups(ctx, by, asOf, RecoverableViewerAll())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var overdue int64
+		for _, r := range rolls {
+			overdue += r.Overdue
+			if r.Label == "Ridge Metro" && r.Overdue != 0 {
+				t.Fatalf("the unpaid counterparty row is overdue by %d; money that never left cannot be overdue", r.Overdue)
+			}
+		}
+		if overdue != m.OverdueAmount {
+			t.Fatalf("%s rollup rows add up to %d overdue while the tile and Total row say %d", by, overdue, m.OverdueAmount)
+		}
+	}
+
+	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "overdue", AsOf: asOf, Viewer: RecoverableViewerAll()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.RequestID == unpaid {
+			t.Fatalf("ageing=overdue lists the unpaid row, labelled %q", r.AgeingLabel)
+		}
+	}
+	if len(rows) != m.OverdueCount {
+		t.Fatalf("ageing=overdue lists %d rows and the tile it is linked from counts %d", len(rows), m.OverdueCount)
+	}
+}
