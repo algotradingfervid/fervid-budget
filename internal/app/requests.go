@@ -530,7 +530,7 @@ func (a *App) requestListOptions(r *http.Request) store.RequestListOptions {
 	q := r.URL.Query()
 	opts := store.RequestListOptions{Scope: a.effectiveScope(u, q.Get("scope")), ViewerID: u.ID,
 		Bucket: queryDefault(r, "bucket", "open"), Type: q.Get("type"), Treatment: q.Get("treatment"),
-		ProjectID: parseID(q.Get("project_id")), Query: q.Get("q")}
+		ProjectID: parseID(q.Get("project_id")), VendorID: parseID(q.Get("vendor_id")), Query: q.Get("q")}
 	if status := q.Get("status"); status != "" && status != "all" {
 		opts.Statuses = []string{status}
 	}
