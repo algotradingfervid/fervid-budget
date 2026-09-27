@@ -44,3 +44,26 @@ func TestLoginNextOpensVisibleRecordOnFreshSignIn(t *testing.T) {
 		}
 	}
 }
+
+// The notification centre is open to every signed-in user (its route needs no
+// permission), so a sign-in may return there without notification:view,
+// which only guards the admin rules screen.
+func TestLoginNextReturnsToNotificationCentreWithoutRulesPermission(t *testing.T) {
+	s := newAppTestServer(t)
+	requester := s.seedRequester("bell@example.test", "Bell Reader", "BellPass12345")
+	if s.probeApp().auth.Can(requester, "notification", "view") {
+		t.Fatal("test needs a user without notification:view")
+	}
+	form := url.Values{"email": {"bell@example.test"}, "password": {"BellPass12345"}, "next": {"/notifications?scope=unread"}}
+	res := s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+	res.Body.Close()
+	if got := res.Header.Get("Location"); got != "/notifications?scope=unread" {
+		t.Fatalf("sign-in with next=/notifications redirected to %q", got)
+	}
+	form.Set("next", "/admin/notifications")
+	res = s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+	res.Body.Close()
+	if got := res.Header.Get("Location"); got != "/?login_fallback=1" {
+		t.Fatalf("rules screen without notification:view redirected to %q, want Home", got)
+	}
+}

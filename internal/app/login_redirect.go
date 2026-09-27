@@ -30,8 +30,9 @@ type loginPage struct {
 	records          bool     // /segment/{id} is a page
 }
 
-// loginPages lists every page a sign-in may return to, by first path segment.
-// "/segment/new" needs the create permission instead of view.
+// loginPages lists every page a sign-in may return to, by first path segment,
+// with the permission its route requires (none for a page open to every
+// signed-in user). "/segment/new" needs the create permission instead.
 var loginPages = map[string]loginPage{
 	"grid":           {resource: "grid", action: "view"},
 	"months":         {resource: "month", action: "view"},
@@ -48,7 +49,7 @@ var loginPages = map[string]loginPage{
 	"configuration":  {resource: "config", action: "view"},
 	"audit":          {resource: "audit", action: "view"},
 	"backups":        {resource: "backup", action: "view"},
-	"notifications":  {resource: "notification", action: "view"},
+	"notifications":  {}, // the user's own notification centre: any signed-in user
 	"admin":          {resource: "notification", action: "view", noIndex: true, subpages: []string{"notifications"}},
 	"approvals":      {resource: "approval", action: "approve"},
 	"accounts-queue": {resource: "payment", action: "process"},
@@ -76,7 +77,7 @@ func (a *App) authorizedLoginNext(r *http.Request, u store.User, raw string) str
 	if len(parts) > 1 && parts[1] == "new" {
 		action = "create"
 	}
-	if !a.auth.Can(u, page.resource, action) {
+	if page.resource != "" && !a.auth.Can(u, page.resource, action) {
 		return "/"
 	}
 	// /roles?role={id} opens one role, which must exist.
