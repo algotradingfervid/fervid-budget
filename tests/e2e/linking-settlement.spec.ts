@@ -19,7 +19,8 @@ import { test, expect, capturePageErrors, createApprovedRequest, today } from '.
  *
  * Chromium only: the journey is about the flow, not the engine, and it is
  * expensive — every approved request needs a second signed-in person to approve
- * it (G8), so running it twice buys nothing.
+ * it, because nobody approves their own request — so running it twice buys
+ * nothing.
  */
 
 test.beforeEach(async ({}, testInfo) => {
@@ -32,9 +33,8 @@ test.describe('payment linking and settlement', () => {
     await adminPage.setViewportSize({ width: 390, height: 850 });
     const request = await createApprovedRequest(adminPage, runId, { amount: '5000.00' });
 
-    // Entry point: the queue's "Take for processing" reserves atomically (S1/S2).
-    // The queue is /accounts-queue, not the plan's /requests/to-pay, which is
-    // not a route; its default tab is "approved".
+    // Entry point: the queue's "Take for processing" reserves the request
+    // atomically. The queue's default tab is "approved".
     await adminPage.goto('/accounts-queue');
     await expect(adminPage.locator('.metric-strip .metric')).toHaveCount(4);
     await expect(adminPage.locator('.segmented a')).toHaveCount(5);
@@ -46,7 +46,7 @@ test.describe('payment linking and settlement', () => {
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     await expect(adminPage.locator('.reserve-bar')).toContainText('Reserved by you');
 
-    // Under-paying opens the settlement sheet; nothing is saved yet (D8).
+    // Under-paying opens the settlement sheet; nothing is saved yet.
     await adminPage.getByLabel('Amount actually paid').fill('4000.00');
     await expect(adminPage.locator('#diff-banner')).toHaveClass(/warn/);
     // The plan filled only the amount. Every one of these three is `required`
@@ -88,14 +88,14 @@ test.describe('payment linking and settlement', () => {
     await sheet.locator('input[name="settlement"][value="settled"]').check();
     await sheet.locator('textarea[name="partial_reason"]').fill('Agreed contractual deduction of 1000; no balance remains owed.');
 
-    // Confirm: one POST, and we land on the payment (S10).
+    // Confirm: one POST, and we land on the payment.
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
     await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
     await expect(adminPage.locator('.pill.completed')).toBeVisible();
     await expect(adminPage.locator('.compare .cmp-row.match')).toBeVisible();
     await expect(adminPage.locator('ol.thread li')).not.toHaveCount(0);
 
-    // S12: no mutation control anywhere on a linked payment.
+    // A payment made against a request is immutable: no edit or void control.
     await expect(adminPage.getByRole('link', { name: /Edit/ })).toHaveCount(0);
     await expect(adminPage.getByRole('button', { name: /Void/ })).toHaveCount(0);
 
@@ -124,8 +124,8 @@ test.describe('payment linking and settlement', () => {
     // Their row offers no way to take it — reservation:reassign is admin-only,
     // so an Accounts user gets a read-only "View". Losing the race means going
     // at the entry screen directly, which is exactly what a second tab left
-    // open would do. G15: that is a rendered screen carrying HTTP 409, not an
-    // error page.
+    // open would do. That is a rendered screen carrying HTTP 409, not an error
+    // page.
     const response = await secondPage.goto(`/payments/new?request=${request.id}`);
     expect(response?.status()).toBe(409);
     await expect(secondPage.locator('.banner.bad')).toContainText(`${holder} took this request before you`);

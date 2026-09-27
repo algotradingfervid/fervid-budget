@@ -15,7 +15,7 @@ import {
 } from './fixtures';
 
 /*
- * The grid-and-reports repairs (fix wave 2026-09-25), each driven from the
+ * The grid and reports rules, each driven from the
  * screen a person uses. Every test also leaves 1440px and 390px photographs in
  * output/playwright/fixwave-grid/ (ignored by git), which is where the visual
  * half of each fix — a colour, a card, a drawer — was looked at.

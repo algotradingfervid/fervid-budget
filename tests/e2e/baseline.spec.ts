@@ -13,19 +13,14 @@ import { expect, test } from './fixtures';
 /**
  * Writes to `current/` by default, never to `baseline/`.
  *
- * `output/playwright/baseline/` is the frozen pre-redesign record, and this
- * spec used to write straight into it — so `make test-all`, which runs the
- * whole suite, destroyed the very images the redesign was being compared
- * against. Diff `current/` against `baseline/`; override with FERVID_SHOT_DIR
- * if you want a third set to compare.
+ * `output/playwright/baseline/` is the frozen pre-redesign record, so a full
+ * suite run must not overwrite it. Diff `current/` against `baseline/`;
+ * override with FERVID_SHOT_DIR if you want a third set to compare.
  */
 const OUT_DIR = path.join('output', 'playwright', process.env.FERVID_SHOT_DIR || 'current');
 
-// `grid` pointed at '/' for the life of this file. That was right when '/' was
-// the variance grid, but Phase 2 made '/' the dashboard and the grid moved to
-// '/grid' — so the widest, most layout-sensitive screen in the app quietly
-// stopped being captured, and grid-*.png has been a picture of the dashboard
-// ever since. Both are captured now, under their own names.
+// '/' is the dashboard and '/grid' the variance grid (the widest, most
+// layout-sensitive screen); each is captured under its own name.
 const ROUTES: Array<{ slug: string; path: string }> = [
   { slug: 'dashboard', path: '/' },
   { slug: 'grid', path: '/grid' },
@@ -39,7 +34,7 @@ const ROUTES: Array<{ slug: string; path: string }> = [
   { slug: 'users', path: '/users' },
   { slug: 'audit', path: '/audit' },
   { slug: 'backups', path: '/backups' },
-  // The screens Phases 4 and 5 added; the record should cover the whole app.
+  // Recoverables and notifications, so the record covers the whole app.
   { slug: 'recoverables', path: '/recoverables' },
   { slug: 'recoverables-list', path: '/recoverables/list' },
   { slug: 'notifications', path: '/notifications' },

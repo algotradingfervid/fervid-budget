@@ -70,33 +70,21 @@ test.describe('authentication, permissions, and navigation', () => {
 
 test.describe('payments, budgets, locks, exports, and accessibility', () => {
   /**
-   * Re-scoped, not shrunk. This test used to read "create, filter, view, edit,
-   * void, and export", and all six were one screen's worth of work because a
-   * payment was a free-standing row anybody could type in and change again.
+   * The payment ledger: settling a request puts a row there, the filters find
+   * it, it opens and it exports.
    *
-   * Phase 3 split those six in half. A payment now exists only as the end of an
-   * approved request, and a linked payment is immutable (S12): the store refuses
-   * to edit or void one, the ledger row offers nothing but View, and
-   * /payments/{id}/edit redirects back to the payment rather than serving a form
-   * whose Save can only fail. Edit and Void survive solely for HISTORICAL,
-   * request-less rows (X6) — and the shipped UI can no longer create one
-   * (CreatePayment is off every HTTP route) and the e2e seed contains none, so
-   * there is nothing in this environment to drive them against. Their Go twins
-   * own that branch.
-   *
-   * So the honest subject of this test is the LEDGER: that the journey puts a
-   * row there, that the filters find it, that it opens, and that it exports.
-   * Edit and void stay in the title's place as a proof-of-absence — the thing
-   * this file used to assert worked is now asserted to be gone, on purpose,
-   * rather than quietly dropped.
+   * A payment exists only as the end of an approved request, and such a
+   * payment is immutable: the store refuses to edit or void it, the ledger row
+   * offers nothing but View, and /payments/{id}/edit redirects back to the
+   * payment. Edit and void remain only for historical payments made without a
+   * request, which nothing can create any more; the Go tests cover those.
    */
   test('admin can record, filter, view and export a payment — and cannot edit or void it', async ({ adminPage, runId }) => {
     const errors = capturePageErrors(adminPage);
     const request = await createApprovedRequest(adminPage, runId, { amount: '4200.00' });
     // The processing note is the search term: the ledger's search covers
     // project, head, payee, invoice, reference and remarks, and the remarks are
-    // unique to this run. The payee is asserted on the detail screen below
-    // (F-D-09: it reaches every hop, whatever the old KNOWN GAP comment said).
+    // unique to this run. The payee is asserted on the detail screen below.
     const payment = await settlePayment(adminPage, request.id, {
       amount: '4200.00',
       paidOn: today(),
@@ -116,7 +104,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('4,200.00');
 
-    // S12 from the ledger's side: View is the only action a linked row offers.
+    // Immutable from the ledger's side too: View is the only action offered.
     // The Edit link and the Remove disclosure are gated on `not .RequestID`.
     const actions = row.locator('.actions-cell a');
     await expect(actions).toHaveCount(1);
