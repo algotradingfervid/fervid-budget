@@ -21,34 +21,27 @@ import (
 // seedTwoPartyRecoverables plants one paid recoverable for each of two requesters
 // and returns them. B's counterparty is the disclosure canary: nothing A can read
 // may ever name it.
-func seedTwoPartyRecoverables(t *testing.T, s *Store, ctx context.Context) (a, b User, headID int64) {
+func seedTwoPartyRecoverables(t *testing.T, s *Store) (a, b User, headID int64) {
 	t.Helper()
-	a, headID = seedActorAndHead(t, s, ctx)
+	a, headID = seedActorAndHead(t, s)
 
-	bID, err := s.CreateUser(ctx, "second@example.com", "Second Requester", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	b, err = s.UserByID(ctx, bID)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
+	b = seedUser(t, s, "second@example.com", "Second Requester", "admin")
 
 	// A's two rows: one paid, one still awaiting payment.
-	r1 := seedRecoverableRequestOnly(t, s, ctx, a, headID, 0, "PR-2026-000901", "completed", "emd", "Alpha Counterparty", "2026-11-30", 500000, false)
-	payRecoverable(t, s, ctx, a, headID, r1, "2026-05-04", 500000)
-	seedRecoverableRequestOnly(t, s, ctx, a, headID, 0, "PR-2026-000902", "approved", "icd", "Alpha Counterparty", "2026-12-31", 250000, false)
+	r1 := seedRecoverableRequestOnly(t, s, a, headID, 0, "PR-2026-000901", "completed", "emd", "Alpha Counterparty", "2026-11-30", 500000, false)
+	payRecoverable(t, s, a, headID, r1, "2026-05-04", 500000)
+	seedRecoverableRequestOnly(t, s, a, headID, 0, "PR-2026-000902", "approved", "icd", "Alpha Counterparty", "2026-12-31", 250000, false)
 
 	// B's row, raised and managed by B, so it is outside every one of A's scopes.
-	r3 := seedRecoverableRequestOnly(t, s, ctx, b, headID, 0, "PR-2026-000903", "completed", "pbg", "Bravo Counterparty", "2026-10-15", 900000, false)
-	payRecoverable(t, s, ctx, b, headID, r3, "2026-05-06", 900000)
+	r3 := seedRecoverableRequestOnly(t, s, b, headID, 0, "PR-2026-000903", "completed", "pbg", "Bravo Counterparty", "2026-10-15", 900000, false)
+	payRecoverable(t, s, b, headID, r3, "2026-05-06", 900000)
 	return a, b, headID
 }
 
 func TestRecoverableReportAppliesTheRequestDataScope(t *testing.T) { // R3, R6 · F-G-016/F-E-03
 	ctx := context.Background()
 	s := newTestStore(t)
-	a, b, _ := seedTwoPartyRecoverables(t, s, ctx)
+	a, b, _ := seedTwoPartyRecoverables(t, s)
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 
 	numbers := func(v RecoverableViewer) []string {
@@ -92,7 +85,7 @@ func TestRecoverableReportAppliesTheRequestDataScope(t *testing.T) { // R3, R6 �
 func TestRecoverableMetricsAndRollupsApplyTheRequestDataScope(t *testing.T) { // R3, R6 · F-G-016
 	ctx := context.Background()
 	s := newTestStore(t)
-	a, b, _ := seedTwoPartyRecoverables(t, s, ctx)
+	a, b, _ := seedTwoPartyRecoverables(t, s)
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 
 	all, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())

@@ -172,7 +172,7 @@ func TestEverySeededEventLandsInAKnownNotificationBucket(t *testing.T) { // F-F-
 func TestMigrationV9IsIdempotentAndKeepsAdministratorEdits(t *testing.T) { // F-F-06
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	applyAuditNotificationEvents(t, s)
 
 	// An administrator configures two rows: one of v7's twelve and one of v9's

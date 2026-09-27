@@ -199,10 +199,9 @@ func hasGrant(grants []Grant, want Grant) bool {
 // leans on PRAGMA defer_foreign_keys — this test fails if that mechanism ever
 // stops carrying the child rows across the DROP/RENAME.
 func TestMigrationV8RebuildsPaymentsPreservingRowsIndexesAndForeignKeys(t *testing.T) {
-	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 
 	// Reconstruct the exact pre-v8 shape: schemaSQL's table plus the three v4
 	// columns and all four indexes. payment_attachments is empty at this
@@ -409,11 +408,10 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 // none of v8's stash-and-restore machinery is needed. The assertions at the end
 // are what prove the shortcut is sound rather than merely quiet.
 func TestMigrationV10AddsAndBackfillsPaymentsVendorID(t *testing.T) {
-	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
 	vendorID := seedVendorNamed(t, s, "Sundaram Electricals Pvt Ltd")
-	reqID := seedVendorRequest(t, s, ctx, 7, "approved", requester.ID, mgrID, headID, vendorID, 500000)
+	reqID := seedVendorRequest(t, s, 7, "approved", requester.ID, mgrID, headID, vendorID, 500000)
 
 	// Reconstruct the pre-v10 shape: v8's rebuilt table, minus vendor_id.
 	// payment_attachments is empty on a fresh store, so the DROP is legal with

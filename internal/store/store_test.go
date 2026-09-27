@@ -102,7 +102,7 @@ func TestCaseInsensitiveIdentifiersAndDueDayValidation(t *testing.T) {
 func TestSetBudgetsIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	err := s.SetBudgets(ctx, actor, "2026-08", []BudgetInput{{HeadID: headID, Amount: 10000}, {HeadID: 999999, Amount: 20000}})
 	if err == nil {
 		t.Fatal("SetBudgets succeeded with a nonexistent head")
@@ -152,7 +152,7 @@ func TestLoginAttemptLockAndReset(t *testing.T) {
 func TestLastActiveAdminAndAttachmentInvariants(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	if err := s.UpdateUser(ctx, actor.ID, actor.Name, "data_entry", true, ""); !errors.Is(err, ErrValidation) {
 		t.Fatalf("demoting final admin = %v, want %v", err, ErrValidation)
 	}
@@ -201,7 +201,7 @@ func TestLastActiveAdminAndAttachmentInvariants(t *testing.T) {
 func TestCreatePaymentWithAttachmentIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	_, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-04-02", Amount: 5000}, &AttachmentInput{OriginalName: "", StoredPath: "/tmp/nope", SizeBytes: 1})
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("invalid attachment = %v, want %v", err, ErrValidation)
@@ -227,7 +227,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	ctx := context.Background()
 	t.Run("create", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		abortAuditAction(t, s, "create")
 		if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000}); err == nil {
 			t.Fatal("CreatePayment succeeded despite audit failure")
@@ -238,7 +238,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	})
 	t.Run("update_with_attachment", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000, VendorPayee: "Original"})
 		if err != nil {
 			t.Fatal(err)
@@ -259,7 +259,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	})
 	t.Run("void", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000})
 		if err != nil {
 			t.Fatal(err)
@@ -275,7 +275,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	})
 	t.Run("attachment", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000})
 		if err != nil {
 			t.Fatal(err)
@@ -294,7 +294,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 func TestUpdatePaymentWithAttachmentCommitsTogether(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-06-01", Amount: 1000})
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +393,7 @@ func TestCreateMonthPlanCopiesOnlyActiveHeads(t *testing.T) {
 func TestHistoricalGridAndReportsIncludeRetiredHeads(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	if err := s.SetBudget(ctx, actor, headID, "2026-06", 100000); err != nil {
 		t.Fatalf("SetBudget: %v", err)
@@ -439,7 +439,7 @@ func TestHistoricalGridAndReportsIncludeRetiredHeads(t *testing.T) {
 func TestPaymentCreateEditVoidAndAudit(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{
 		HeadID:      headID,
@@ -515,7 +515,7 @@ func TestPaymentCreateEditVoidAndAudit(t *testing.T) {
 func TestLockedMonthRejectsBudgetAndPaymentMutations(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	oldMonthPaymentID, err := s.CreatePayment(ctx, actor, PaymentInput{
 		HeadID:      headID,
@@ -578,7 +578,7 @@ func TestLockedMonthRejectsBudgetAndPaymentMutations(t *testing.T) {
 func TestRecordAuditCreatesQueryableEntry(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	entityID := int64(42)
 
 	err := s.RecordAudit(ctx, AuditInput{
@@ -624,7 +624,7 @@ func TestRecordAuditCreatesQueryableEntry(t *testing.T) {
 func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	otherProjectID, err := s.UpsertProject(ctx, 0, "People", true, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -633,7 +633,7 @@ func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 440000, 440000)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 440000, 440000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx) // budget head for the grid contrast
+	actor, headID := seedActorAndHead(t, s) // budget head for the grid contrast
 	mgrRow, err := s.CreateUser(ctx, "approver@example.com", "Approver", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -801,14 +801,14 @@ func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	otherID, err := s.CreateUser(ctx, "other-acc@example.com", "Other Accountant", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other, _ := s.UserByID(ctx, otherID)
 
-	held := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 100000, 100000)
+	held := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 100000, 100000)
 	if err := s.HoldRequest(ctx, acc, held, "waiting on the requester"); err != nil {
 		t.Fatal(err)
 	}
@@ -816,7 +816,7 @@ func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 		t.Fatalf("reserve held = %v, want ErrRequestOnHold (wrapping ErrForbidden)", err)
 	}
 
-	taken := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 200000, 200000)
+	taken := seedApprovedRequest(t, s, 2, req.ID, mgrID, headID, 200000, 200000)
 	if err := s.ReserveRequest(ctx, other, taken); err != nil {
 		t.Fatal(err)
 	}
@@ -824,7 +824,7 @@ func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 		t.Fatalf("reserve taken = %v, want ErrAlreadyReserved (wrapping ErrForbidden)", err)
 	}
 
-	done := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 300000, 300000)
+	done := seedApprovedRequest(t, s, 3, req.ID, mgrID, headID, 300000, 300000)
 	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET status='completed' WHERE id=?`, done); err != nil {
 		t.Fatal(err)
 	}
@@ -854,7 +854,7 @@ func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 	}
 
 	// And through a real write: a request naming a vendor that does not exist.
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	mgrRow, err := s.CreateUser(ctx, "fk-approver@example.com", "FK Approver", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -881,7 +881,7 @@ func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	otherID, err := s.CreateUser(ctx, "second-entry@example.com", "Second Entry", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -940,7 +940,7 @@ func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	clock := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
 
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-07-28", Amount: 1000, Now: clock}); !errors.Is(err, ErrValidation) {
@@ -965,7 +965,7 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID := seedApprovedRequest(t, s, ctx, 41, reqRow, mgrID, headID, 5000, 5000)
+	reqID := seedApprovedRequest(t, s, 41, reqRow, mgrID, headID, 5000, 5000)
 	if err := s.ReserveRequest(ctx, actor, reqID); err != nil {
 		t.Fatal(err)
 	}
@@ -994,8 +994,8 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
@@ -1020,8 +1020,8 @@ func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
 func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 
 	docID, err := s.AddRequestAttachment(ctx, req, reqID, AttachmentInput{OriginalName: "invoice-mine.txt", StoredPath: "/tmp/invoice-mine.txt", MimeType: "text/plain", SizeBytes: 12})
 	if err != nil {
@@ -1114,7 +1114,7 @@ func assertAuditPayloads(t *testing.T, audits []AuditEntry, paymentID int64) {
 func TestSaveUserIsAtomicAcrossProfileRolesAndApprover(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	subject, err := s.CreateUser(ctx, "envelope@example.com", "Original Name", "hash", "data_entry", true)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -1200,7 +1200,7 @@ func TestSaveUserIsAtomicAcrossProfileRolesAndApprover(t *testing.T) {
 func TestSaveUserKeepsTheLastAdministrator(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	err := s.SaveUser(ctx, actor, UserSaveInput{ID: actor.ID, Name: actor.Name, Role: "data_entry", Active: true})
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("demoting the last administrator = %v, want ErrValidation", err)

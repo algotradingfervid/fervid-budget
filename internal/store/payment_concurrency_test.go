@@ -34,14 +34,14 @@ import (
 func TestConcurrentSettlementsAllSucceedAndLeaveTheDatabaseWritable(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 
 	const settlers = 8
 	ids := make([]int64, settlers)
 	actors := make([]User, settlers)
 
 	for i := 0; i < settlers; i++ {
-		id := auditRequest(t, s, ctx, req, mgr, headID, 500000)
+		id := auditRequest(t, s, req, mgr, headID, 500000)
 		if err := s.ApproveRequest(ctx, mgr, id, 500000, ""); err != nil {
 			t.Fatalf("ApproveRequest: %v", err)
 		}

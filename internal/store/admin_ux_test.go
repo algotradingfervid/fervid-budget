@@ -11,7 +11,7 @@ import (
 func TestRoleAuditContainsNamedBeforeAfterGrantsAndScopes(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	id, err := s.CreateRole(ctx, actor, "Audit UX", "test")
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestRoleAuditContainsNamedBeforeAfterGrantsAndScopes(t *testing.T) {
 func TestPasswordResetExpiresSingleUseAndUnlocks(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
-	u := newRoleActor(t, s, ctx)
+	u := newRoleActor(t, s)
 	now := time.Now()
 	if _, err := s.DB().Exec(`UPDATE users SET attempt_count=5,locked=? WHERE id=?`, now.Add(time.Hour), u.ID); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestPasswordResetThrottleLimitsAndRecovers(t *testing.T) {
 func TestVendorAuditRecordsContactChangesWithoutFalseBankChanges(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	input := validVendorInput()
 	input.ContactPerson = "Old contact"
 	input.Bank = &VendorBank{AccountNumber: "secret-account-77", UPIID: "secret@upi", IFSC: "SBIN0001234"}

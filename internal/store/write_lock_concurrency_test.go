@@ -65,12 +65,12 @@ func TestConcurrentFailedLoginsAreAllCounted(t *testing.T) {
 func TestReleaseAndReassignRaceHasOneWinner(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	holder := newAccountsUser(t, s, ctx, "holder@example.com")
-	successor := newAccountsUser(t, s, ctx, "successor@example.com")
+	req, mgr, headID := seedRequestActors(t, s)
+	holder := newAccountsUser(t, s, "holder@example.com")
+	successor := newAccountsUser(t, s, "successor@example.com")
 
 	for round := 0; round < 10; round++ {
-		id := auditRequest(t, s, ctx, req, mgr, headID, 100000)
+		id := auditRequest(t, s, req, mgr, headID, 100000)
 		if err := s.ApproveRequest(ctx, mgr, id, 100000, ""); err != nil {
 			t.Fatalf("ApproveRequest: %v", err)
 		}

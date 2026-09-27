@@ -14,7 +14,7 @@ func TestReverifyAdminChangeRevokesOutstandingReset(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
-			actor := newRoleActor(t, s, ctx)
+			actor := newRoleActor(t, s)
 			id, err := s.CreateUser(ctx, "reset-target@example.invalid", "Reset Target", "oldhash", "data_entry", true)
 			if err != nil {
 				t.Fatal(err)

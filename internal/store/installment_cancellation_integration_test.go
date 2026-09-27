@@ -9,12 +9,12 @@ import (
 func TestInstallmentCannotBeCancelledAndHidden(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, managerID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, managerID, headID := seedRequestParty(t, s)
 	manager, err := s.UserByID(ctx, managerID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, managerID, headID, 1200000, 1200000)
+	id := seedApprovedRequest(t, s, 1, requester.ID, managerID, headID, 1200000, 1200000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}

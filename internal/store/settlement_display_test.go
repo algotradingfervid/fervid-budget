@@ -13,14 +13,15 @@ import (
 // settlementDisplayFixture takes one request to partial_review the way the
 // product does — reserved by the accountant, paid short, marked partial — and
 // returns the people involved.
-func settlementDisplayFixture(t *testing.T, s *Store, ctx context.Context, seq int) (acc, req, mgr User, headID, id int64) {
+func settlementDisplayFixture(t *testing.T, s *Store, seq int) (acc, req, mgr User, headID, id int64) {
 	t.Helper()
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	ctx := t.Context()
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	var err error
 	if mgr, err = s.UserByID(ctx, mgrID); err != nil {
 		t.Fatal(err)
 	}
-	id = seedApprovedRequest(t, s, ctx, seq, req.ID, mgrID, headID, 500000, 500000)
+	id = seedApprovedRequest(t, s, seq, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func settlementDisplayFixture(t *testing.T, s *Store, ctx context.Context, seq i
 func TestRaiseConcernMarksTheRequestUnderDiscussionUntilAccountsAnswers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgr, _, id := settlementDisplayFixture(t, s, ctx, 1)
+	acc, req, mgr, _, id := settlementDisplayFixture(t, s, 1)
 
 	before, err := s.Request(ctx, id)
 	if err != nil {
@@ -95,7 +96,7 @@ func TestRaiseConcernMarksTheRequestUnderDiscussionUntilAccountsAnswers(t *testi
 func TestNeedsMeCountsPartialReviewsForTheManagerAndOpenConcernsForTheHolder(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, _, mgr, _, id := settlementDisplayFixture(t, s, ctx, 1)
+	acc, _, mgr, _, id := settlementDisplayFixture(t, s, 1)
 
 	needsMe := func(viewer int64) int {
 		n, err := s.CountRequests(ctx, RequestListOptions{Scope: "all", ViewerID: viewer, Bucket: "needs-me"})
@@ -142,8 +143,8 @@ func TestNeedsMeCountsPartialReviewsForTheManagerAndOpenConcernsForTheHolder(t *
 func TestRequestRowsCarryTheHolderName(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	id := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	r, err := s.Request(ctx, id)
 	if err != nil {
 		t.Fatal(err)

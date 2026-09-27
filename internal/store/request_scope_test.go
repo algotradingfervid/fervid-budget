@@ -18,19 +18,14 @@ type scopeFixture struct {
 
 func newScopeFixture(t *testing.T) scopeFixture {
 	t.Helper()
-	ctx := context.Background()
 	s := newTestStore(t)
-	requester, viewer, headID := seedRequestActors(t, s, ctx)
-	otherID, err := s.CreateUser(ctx, "other-approver@example.com", "Other Approver", "hash", "admin", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, _ := s.UserByID(ctx, otherID)
+	requester, viewer, headID := seedRequestActors(t, s)
+	other := seedUser(t, s, "other-approver@example.com", "Other Approver", "admin")
 	return scopeFixture{
 		s: s, viewer: viewer, requester: requester, other: other, headID: headID,
-		raised:   seedApprovedRequest(t, s, ctx, 1, viewer.ID, other.ID, headID, 1000, 1000),
-		routed:   seedApprovedRequest(t, s, ctx, 2, requester.ID, viewer.ID, headID, 2000, 2000),
-		stranger: seedApprovedRequest(t, s, ctx, 3, requester.ID, other.ID, headID, 3000, 3000),
+		raised:   seedApprovedRequest(t, s, 1, viewer.ID, other.ID, headID, 1000, 1000),
+		routed:   seedApprovedRequest(t, s, 2, requester.ID, viewer.ID, headID, 2000, 2000),
+		stranger: seedApprovedRequest(t, s, 3, requester.ID, other.ID, headID, 3000, 3000),
 	}
 }
 
@@ -134,8 +129,8 @@ func TestRoutedToViewerAndHeldByViewerFilterInsideTheScope(t *testing.T) {
 func TestHiddenRequestIsNotFoundInWriteTimeChecks(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, mgrID, headID, 500000, 500000)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, requester.ID, mgrID, headID, 500000, 500000)
 	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET treatment='recoverable', type='employee_advance' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}

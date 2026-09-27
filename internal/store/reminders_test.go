@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-func seedReminderRequest(t *testing.T, s *Store, ctx context.Context, number, status string) int64 {
+func seedReminderRequest(t *testing.T, s *Store, number, status string) int64 {
 	t.Helper()
+	ctx := t.Context()
 	reqUser, err := s.CreateUser(ctx, number+"-req@test", "Req", "h", "data_entry", true)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,7 @@ func seedReminderRequest(t *testing.T, s *Store, ctx context.Context, number, st
 func TestReminderThresholdsCountElapsedDaysNotCalendarBoundaries(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	id := seedReminderRequest(t, s, ctx, "PR-2026-000020", "pending")
+	id := seedReminderRequest(t, s, "PR-2026-000020", "pending")
 	th := ReminderThresholds{PendingAfterDays: 1, RepeatEveryDays: 1, StaleAfterDays: 1}
 
 	submitted := time.Date(2026, 7, 20, 23, 50, 0, 0, time.UTC)
@@ -86,7 +87,7 @@ func TestReminderThresholdsCountElapsedDaysNotCalendarBoundaries(t *testing.T) {
 func TestMarkReminderSentWritesAnAuditRow(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	id := seedReminderRequest(t, s, ctx, "PR-2026-000030", "processing")
+	id := seedReminderRequest(t, s, "PR-2026-000030", "processing")
 	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
 
 	if err := s.MarkReminderSent(ctx, id, now, ReminderAudit{
@@ -155,7 +156,7 @@ func TestMarkReminderSentWritesAnAuditRow(t *testing.T) {
 func TestReminderThresholdsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	th, err := s.ReminderThresholds(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +190,7 @@ func TestReminderThresholdsDefaultsAndOverrides(t *testing.T) {
 func TestRequestsPendingReminderHonoursConfiguredThreshold(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	id := seedReminderRequest(t, s, ctx, "PR-2026-000001", "pending")
+	id := seedReminderRequest(t, s, "PR-2026-000001", "pending")
 	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
 	th := ReminderThresholds{PendingAfterDays: 3, RepeatEveryDays: 1, StaleAfterDays: 1}
 	if _, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET submitted_at=? WHERE id=?`, now.AddDate(0, 0, -4), id); err != nil {
@@ -240,16 +241,16 @@ func TestRequestsPendingReminderHonoursConfiguredThreshold(t *testing.T) {
 func TestRequestsStaleProcessingSkipsSettledAndHonoursThreshold(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
 	th := ReminderThresholds{PendingAfterDays: 3, RepeatEveryDays: 1, StaleAfterDays: 1}
 
-	stale := seedReminderRequest(t, s, ctx, "PR-2026-000010", "processing")
+	stale := seedReminderRequest(t, s, "PR-2026-000010", "processing")
 	if _, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET processing_at=?, processing_by=? WHERE id=?`,
 		now.AddDate(0, 0, -3), actor.ID, stale); err != nil {
 		t.Fatal(err)
 	}
-	paid := seedReminderRequest(t, s, ctx, "PR-2026-000011", "processing")
+	paid := seedReminderRequest(t, s, "PR-2026-000011", "processing")
 	if _, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET processing_at=?, processing_by=? WHERE id=?`,
 		now.AddDate(0, 0, -3), actor.ID, paid); err != nil {
 		t.Fatal(err)

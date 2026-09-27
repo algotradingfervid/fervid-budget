@@ -14,7 +14,7 @@ import (
 func plannerFixture(t *testing.T) (*Store, User, BudgetPlan) {
 	t.Helper()
 	s := newTestStore(t)
-	actor, hid := seedActorAndHead(t, s, context.Background())
+	actor, hid := seedActorAndHead(t, s)
 	var pid int64
 	if err := s.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, hid).Scan(&pid); err != nil {
 		t.Fatal(err)
@@ -367,7 +367,7 @@ func TestBudgetPlannerThreeMonthPaymentsGridAndReports(t *testing.T) {
 		if _, err := s.CreatePayment(ctx, u, PaymentInput{HeadID: hid, PaidOn: month + "-05", Amount: payment, VendorPayee: "Budget vendor"}); err != nil {
 			t.Fatal(err)
 		}
-		seedRecoverablePayment(t, s, ctx, u, hid, 0, fmt.Sprintf("PR-2026-%06d", i+1), month+"-06", 90000)
+		seedRecoverablePayment(t, s, u, hid, 0, fmt.Sprintf("PR-2026-%06d", i+1), month+"-06", 90000)
 		grid, err := s.Grid(ctx, month, "", "")
 		if err != nil {
 			t.Fatal(err)

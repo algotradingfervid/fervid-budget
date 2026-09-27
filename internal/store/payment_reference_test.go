@@ -9,10 +9,10 @@ import (
 func TestPaymentReferenceRejectsWhitespaceWithoutWriting(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, manager, head := seedRequestParty(t, s, ctx)
+	acc, requester, manager, head := seedRequestParty(t, s)
 	for i, mode := range []string{"neft", "rtgs", "upi", "cheque", "card", "dd", "bank_transfer", "cash"} {
 		t.Run(mode, func(t *testing.T) {
-			id := seedApprovedRequest(t, s, ctx, i+1, requester.ID, manager, head, 101, 101)
+			id := seedApprovedRequest(t, s, i+1, requester.ID, manager, head, 101, 101)
 			if err := s.ReserveRequest(ctx, acc, id); err != nil {
 				t.Fatal(err)
 			}

@@ -160,7 +160,7 @@ func validVendorInput() VendorInput {
 func TestCreateVendorStoresTheRecordAndWritesAudit(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	id, err := s.CreateVendor(ctx, actor, validVendorInput())
 	if err != nil {
@@ -188,7 +188,7 @@ func TestCreateVendorStoresTheRecordAndWritesAudit(t *testing.T) {
 func TestCreateVendorDefaultsTypeAndStatus(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	in := validVendorInput()
 	in.VendorType = ""
@@ -206,7 +206,7 @@ func TestCreateVendorDefaultsTypeAndStatus(t *testing.T) {
 func TestCreateVendorRejectsBadInput(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	blank := validVendorInput()
 	blank.Name = "   "
@@ -240,7 +240,7 @@ func TestCreateVendorRejectsBadInput(t *testing.T) {
 func TestCreateVendorRejectsDuplicateNameCaseInsensitively(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	if _, err := s.CreateVendor(ctx, actor, validVendorInput()); err != nil {
 		t.Fatal(err)
@@ -257,7 +257,7 @@ func TestCreateVendorRejectsDuplicateNameCaseInsensitively(t *testing.T) {
 func TestUpdateVendorIgnoresBankFieldsWithoutPermission(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 	id := seedVendorWithBank(t, s, "Sundaram Electricals Pvt Ltd")
 
 	in := validVendorInput()
@@ -282,7 +282,7 @@ func TestUpdateVendorIgnoresBankFieldsWithoutPermission(t *testing.T) {
 func TestUpdateVendorAppliesBankFieldsWithPermission(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 	id := seedVendorWithBank(t, s, "Sundaram Electricals Pvt Ltd")
 
 	editor := NewPermissionSet([]Grant{{"vendor", "edit"}, {"vendor_bank", "view"}, {"vendor_bank", "edit"}}, nil)
@@ -312,7 +312,7 @@ func TestUpdateVendorAppliesBankFieldsWithPermission(t *testing.T) {
 func TestVendorAuditNeverRecordsBankValues(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 	id := seedVendorWithBank(t, s, "Sundaram Electricals Pvt Ltd")
 
 	editor := NewPermissionSet([]Grant{{"vendor", "edit"}, {"vendor_bank", "view"}, {"vendor_bank", "edit"}}, nil)
@@ -338,7 +338,7 @@ func TestVendorAuditNeverRecordsBankValues(t *testing.T) {
 func TestUpdateVendorRejectsMissingRowAndDuplicateName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	first, err := s.CreateVendor(ctx, actor, validVendorInput())
 	if err != nil {
@@ -407,7 +407,7 @@ func TestVendorStatsAndCategories(t *testing.T) {
 func TestListVendorsTotalsPaymentsRecordedAgainstTheVendorName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	if _, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status) VALUES
 		('Sundaram Electricals Pvt Ltd','company','active'),
@@ -589,13 +589,13 @@ func vendorByName(t *testing.T, rows []Vendor, name string) Vendor {
 func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
 	today := time.Now().UTC().Format("2006-01-02")
 
 	vendorID := seedVendorNamed(t, s, "Sundaram Electricals Pvt Ltd")
 	seedVendorNamed(t, s, "Meridian Facility Services")
 
-	settled := seedVendorRequest(t, s, ctx, 1, "approved", requester.ID, mgrID, headID, vendorID, 910000)
+	settled := seedVendorRequest(t, s, 1, "approved", requester.ID, mgrID, headID, vendorID, 910000)
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
@@ -645,7 +645,7 @@ func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
 	today := time.Now().UTC().Format("2006-01-02")
 
 	vendorID := seedVendorNamed(t, s, "Sundaram Electricals Pvt Ltd")
@@ -653,10 +653,10 @@ func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 
 	// Two open, one rejected, and one carried all the way to settled — so the
 	// count is a filter and not a row count.
-	seedVendorRequest(t, s, ctx, 2, "pending", requester.ID, mgrID, headID, vendorID, 40000)
-	seedVendorRequest(t, s, ctx, 3, "approved", requester.ID, mgrID, headID, vendorID, 50000)
-	seedVendorRequest(t, s, ctx, 4, "rejected", requester.ID, mgrID, headID, vendorID, 60000)
-	settled := seedVendorRequest(t, s, ctx, 5, "approved", requester.ID, mgrID, headID, vendorID, 910000)
+	seedVendorRequest(t, s, 2, "pending", requester.ID, mgrID, headID, vendorID, 40000)
+	seedVendorRequest(t, s, 3, "approved", requester.ID, mgrID, headID, vendorID, 50000)
+	seedVendorRequest(t, s, 4, "rejected", requester.ID, mgrID, headID, vendorID, 60000)
+	settled := seedVendorRequest(t, s, 5, "approved", requester.ID, mgrID, headID, vendorID, 910000)
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
@@ -684,19 +684,19 @@ func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 func TestVendorOpenRequestsUsesTheProductsOwnOpenBucket(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	_, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	_, requester, mgrID, headID := seedRequestParty(t, s)
 	vendorID := seedVendorNamed(t, s, "Harith Infra")
 
 	seq := 100
 	for _, status := range requestBuckets["open"] {
 		seq++
-		seedVendorRequest(t, s, ctx, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
+		seedVendorRequest(t, s, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
 	}
 	// Every status that is not in the open bucket, so the count is a filter and
 	// not just a row count.
 	for _, status := range []string{"rejected", "withdrawn", "cancelled", "completed", "completed_partial"} {
 		seq++
-		seedVendorRequest(t, s, ctx, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
+		seedVendorRequest(t, s, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
 	}
 
 	rows, err := s.ListVendors(ctx, VendorListOptions{}, bankBlind())
@@ -721,7 +721,7 @@ func TestVendorOpenRequestsUsesTheProductsOwnOpenBucket(t *testing.T) {
 func TestVendorPaidThisYearPrefersTheIdAndFallsBackExactly(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	today := time.Now().UTC().Format("2006-01-02")
 
 	linked := seedVendorNamed(t, s, "Coastal Power Systems")

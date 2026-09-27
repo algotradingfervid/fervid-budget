@@ -13,7 +13,7 @@ import (
 func TestSecurityDelegationCannotEscalateOrResetAdministrator(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	admin := newRoleActor(t, s, ctx)
+	admin := newRoleActor(t, s)
 	role, err := s.CreateRole(ctx, admin, "Delegated operator", "")
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestSecurityDelegationCannotEscalateOrResetAdministrator(t *testing.T) {
 func TestSecurityLegacyPaymentScopeAndMoneyCeiling(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	admin, head := seedActorAndHead(t, s, ctx)
+	admin, head := seedActorAndHead(t, s)
 	role, _ := s.CreateRole(ctx, admin, "Own payments", "")
 	if err := s.UpdateRolePermissions(ctx, admin, role, []Grant{{"payment", "view"}, {"payment", "edit"}, {"payment", "void"}}, []ScopeGrant{{"payment", "own"}}); err != nil {
 		t.Fatal(err)
@@ -92,9 +92,9 @@ func TestSecurityLegacyPaymentScopeAndMoneyCeiling(t *testing.T) {
 func TestSecurityDecisionRevisionAndPreApprovalPayment(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	account, requester, managerID, head := seedRequestParty(t, s, ctx)
+	account, requester, managerID, head := seedRequestParty(t, s)
 	manager, _ := s.UserByID(ctx, managerID)
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, managerID, head, 10000, 10000)
+	id := seedApprovedRequest(t, s, 1, requester.ID, managerID, head, 10000, 10000)
 	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='pending',approved_at=NULL,approved_amount=NULL WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}

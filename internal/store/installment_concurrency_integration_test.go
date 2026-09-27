@@ -10,8 +10,8 @@ import (
 func TestConcurrentInstallmentsAndStaleConfirmationPreserveCeiling(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, managerID, headID := seedRequestParty(t, s, ctx)
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, managerID, headID, 1200000, 1200000)
+	acc, requester, managerID, headID := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, requester.ID, managerID, headID, 1200000, 1200000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}

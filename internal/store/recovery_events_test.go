@@ -12,13 +12,12 @@ import (
 func recoveryFixture(t *testing.T) (*Store, User, int64, int64) {
 	t.Helper()
 	s := newTestStore(t)
-	ctx := context.Background()
-	u, h := seedActorAndHead(t, s, ctx)
-	id := seedRecoverableRequestOnly(t, s, ctx, u, h, 0, "PR-REC-1", "completed", "employee_advance", "", "2026-06-01", 1200000, false)
+	u, h := seedActorAndHead(t, s)
+	id := seedRecoverableRequestOnly(t, s, u, h, 0, "PR-REC-1", "completed", "employee_advance", "", "2026-06-01", 1200000, false)
 	if _, err := s.DB().Exec(`UPDATE payment_requests SET type='employee_advance' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
-	payRecoverable(t, s, ctx, u, h, id, "2026-01-02", 700000)
+	payRecoverable(t, s, u, h, id, "2026-01-02", 700000)
 	return s, u, h, id
 }
 func recoveryInput(token string, amount int64) RecoveryInput {
@@ -44,7 +43,7 @@ func TestRecoveryLifecyclePreservesPaymentsAndAggregatesInstallments(t *testing.
 	if len(rows) != 1 || rows[0].Amount != 500000 || rows[0].PaidAmount != 700000 || rows[0].RecoveredAmount != 200000 || rows[0].Counterparty != u.Name {
 		t.Fatalf("after return %+v", rows)
 	}
-	payRecoverable(t, s, ctx, u, h, id, "2026-03-01", 500000)
+	payRecoverable(t, s, u, h, id, "2026-03-01", 500000)
 	rows, err = s.RecoverableReport(ctx, RecoverableReportOptions{Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)

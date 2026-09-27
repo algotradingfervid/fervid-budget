@@ -10,7 +10,7 @@ import (
 func TestCreateRoleAndListAndDeleteCustomRole(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	id, err := s.CreateRole(ctx, actor, "Auditor", "Read-only reviewer")
 	if err != nil {
@@ -145,7 +145,7 @@ func TestNewPermissionSetMatchesExactlyAndAllGrantsIsTheWholeVocabulary(t *testi
 func TestUpdateRolePermissionsPersistsAndValidates(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	id, err := s.CreateRole(ctx, actor, "Approvers", "")
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func TestUpdateRolePermissionsPersistsAndValidates(t *testing.T) {
 func TestCopyRoleDuplicatesGrantsAndScopes(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	srcID, err := s.CreateRole(ctx, actor, "Template", "source")
 	if err != nil {
@@ -230,7 +230,7 @@ func TestCopyRoleDuplicatesGrantsAndScopes(t *testing.T) {
 func TestSetUserRolesReplacesAssignment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	uid, err := s.CreateUser(ctx, "member@example.com", "Member", "hash", "data_entry", true)
 	if err != nil {
@@ -265,7 +265,7 @@ func TestSetUserRolesReplacesAssignment(t *testing.T) {
 func TestEffectivePermissionsUnionAndBroadestScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	uid, err := s.CreateUser(ctx, "union@example.com", "Union User", "hash", "data_entry", true)
 	if err != nil {
@@ -367,7 +367,7 @@ func TestSeedSystemRolesMatchDefaults(t *testing.T) {
 func TestDeleteRoleRejectsSystemRole(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	roles, _ := s.AllRoles(ctx)
 	var adminID int64
 	for _, r := range roles {
@@ -383,7 +383,7 @@ func TestDeleteRoleRejectsSystemRole(t *testing.T) {
 func TestUpdateRoleRenamesCustomRolesAndProtectsSystemNames(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	id, err := s.CreateRole(ctx, actor, "Reviewer", "first")
 	if err != nil {
@@ -427,7 +427,7 @@ func TestUpdateRoleRenamesCustomRolesAndProtectsSystemNames(t *testing.T) {
 func TestSetUserDefaultApproverRejectsSelfAndUnknownUsers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	uid, err := s.CreateUser(ctx, "employee@example.com", "Employee", "hash", "data_entry", true)
 	if err != nil {
@@ -519,7 +519,7 @@ func TestCreateUserAssignsDefaultRole(t *testing.T) {
 func TestDeleteRoleRefusesARoleSomebodyHolds(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	roleID, err := s.CreateRole(ctx, actor, "Held", "")
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)

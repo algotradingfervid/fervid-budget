@@ -8,7 +8,7 @@ import (
 func TestUXGridNeutralStatusAndFilteredTotalScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, head := seedActorAndHead(t, s, ctx)
+	actor, head := seedActorAndHead(t, s)
 	zero, err := s.Grid(ctx, "2026-04", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestUXGridNeutralStatusAndFilteredTotalScope(t *testing.T) {
 func TestUXReportStableIDsAndPaymentHeadScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, head := seedActorAndHead(t, s, ctx)
+	actor, head := seedActorAndHead(t, s)
 	if err := s.SetBudget(ctx, actor, head, "2026-04", 10000); err != nil {
 		t.Fatal(err)
 	}

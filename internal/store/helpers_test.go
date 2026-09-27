@@ -22,65 +22,64 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func seedActorAndHead(t *testing.T, s *Store, ctx context.Context) (User, int64) {
+// seedUser creates an active user and returns the row as the store reads it
+// back. legacyRole fills the old users.role column ("admin" or "data_entry"):
+// it decides which seeded role a new user starts with, and the last-admin guard
+// still counts it, so fixtures keep choosing it explicitly.
+func seedUser(t *testing.T, s *Store, email, name, legacyRole string) User {
 	t.Helper()
-	userID, err := s.CreateUser(ctx, "qa@example.com", "QA User", "hash", "admin", true)
+	ctx := t.Context()
+	id, err := s.CreateUser(ctx, email, name, "hash", legacyRole, true)
 	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+		t.Fatalf("CreateUser %s: %v", email, err)
 	}
-	actor, err := s.UserByID(ctx, userID)
+	u, err := s.UserByID(ctx, id)
 	if err != nil {
-		t.Fatalf("UserByID: %v", err)
+		t.Fatalf("UserByID %s: %v", email, err)
 	}
-	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
-	if err != nil {
-		t.Fatalf("UpsertProject: %v", err)
-	}
-	headID, err := s.UpsertHead(ctx, 0, projectID, "Rent", "5", true, 1)
-	if err != nil {
-		t.Fatalf("UpsertHead: %v", err)
-	}
-	return actor, headID
+	return u
 }
 
-// seedRequestParty creates the users, project, and head that request fixtures
-// share, returning an Accounts actor, a requester, a manager id, and a head id.
-func seedRequestParty(t *testing.T, s *Store, ctx context.Context) (accountant User, requester User, managerID, headID int64) {
+// seedHead creates an active project holding one active head (due on the 5th,
+// first in sort order) and returns the head id.
+func seedHead(t *testing.T, s *Store, project, head string) int64 {
 	t.Helper()
-	accID, err := s.CreateUser(ctx, "accounts@example.com", "Accounts", "hash", "admin", true)
+	ctx := t.Context()
+	projectID, err := s.UpsertProject(ctx, 0, project, true, 1)
 	if err != nil {
-		t.Fatalf("create accountant: %v", err)
+		t.Fatalf("UpsertProject %s: %v", project, err)
 	}
-	reqID, err := s.CreateUser(ctx, "requester@example.com", "Requester", "hash", "data_entry", true)
+	headID, err := s.UpsertHead(ctx, 0, projectID, head, "5", true, 1)
 	if err != nil {
-		t.Fatalf("create requester: %v", err)
+		t.Fatalf("UpsertHead %s: %v", head, err)
 	}
-	mgrID, err := s.CreateUser(ctx, "manager@example.com", "Manager", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("create manager: %v", err)
-	}
-	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
-	if err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	hid, err := s.UpsertHead(ctx, 0, projectID, "Rent", "5", true, 1)
-	if err != nil {
-		t.Fatalf("create head: %v", err)
-	}
-	if accountant, err = s.UserByID(ctx, accID); err != nil {
-		t.Fatal(err)
-	}
-	if requester, err = s.UserByID(ctx, reqID); err != nil {
-		t.Fatal(err)
-	}
-	return accountant, requester, mgrID, hid
+	return headID
+}
+
+// seedActorAndHead creates one admin-legacy user (qa@example.com) and the
+// Operations / Rent head most store tests post against.
+func seedActorAndHead(t *testing.T, s *Store) (User, int64) {
+	t.Helper()
+	actor := seedUser(t, s, "qa@example.com", "QA User", "admin")
+	return actor, seedHead(t, s, "Operations", "Rent")
+}
+
+// seedRequestParty creates the people a linked request needs and the
+// Operations / Rent head: an Accounts actor, a requester, and a manager id.
+func seedRequestParty(t *testing.T, s *Store) (accountant User, requester User, managerID, headID int64) {
+	t.Helper()
+	accountant = seedUser(t, s, "accounts@example.com", "Accounts", "admin")
+	requester = seedUser(t, s, "requester@example.com", "Requester", "data_entry")
+	manager := seedUser(t, s, "manager@example.com", "Manager", "admin")
+	return accountant, requester, manager.ID, seedHead(t, s, "Operations", "Rent")
 }
 
 // seedApprovedRequest inserts an approved payment_requests row directly (its
 // schema is fixed by overview §3) so Phase-3 store tests do not depend on the
 // Phase-2 request methods. seq keeps the request number unique within a test.
-func seedApprovedRequest(t *testing.T, s *Store, ctx context.Context, seq int, requesterID, managerID, headID, amount, approved int64) int64 {
+func seedApprovedRequest(t *testing.T, s *Store, seq int, requesterID, managerID, headID, amount, approved int64) int64 {
 	t.Helper()
+	ctx := t.Context()
 	var projectID int64
 	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
 		t.Fatalf("head project: %v", err)
@@ -99,8 +98,9 @@ func seedApprovedRequest(t *testing.T, s *Store, ctx context.Context, seq int, r
 	return id
 }
 
-func requestStatus(t *testing.T, s *Store, ctx context.Context, id int64) string {
+func requestStatus(t *testing.T, s *Store, id int64) string {
 	t.Helper()
+	ctx := t.Context()
 	var status string
 	if err := s.DB().QueryRowContext(ctx, `SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
 		t.Fatalf("request status: %v", err)
@@ -108,8 +108,9 @@ func requestStatus(t *testing.T, s *Store, ctx context.Context, id int64) string
 	return status
 }
 
-func requestProcessingBy(t *testing.T, s *Store, ctx context.Context, id int64) *int64 {
+func requestProcessingBy(t *testing.T, s *Store, id int64) *int64 {
 	t.Helper()
+	ctx := t.Context()
 	var pb sql.NullInt64
 	if err := s.DB().QueryRowContext(ctx, `SELECT processing_by FROM payment_requests WHERE id=?`, id).Scan(&pb); err != nil {
 		t.Fatalf("processing_by: %v", err)
@@ -121,32 +122,19 @@ func requestProcessingBy(t *testing.T, s *Store, ctx context.Context, id int64) 
 	return nil
 }
 
-func seedRequestActors(t *testing.T, s *Store, ctx context.Context) (requester User, manager User, headID int64) {
+// seedRequestActors creates a requester, an admin-legacy manager, and the
+// Operations / Rent head.
+func seedRequestActors(t *testing.T, s *Store) (requester User, manager User, headID int64) {
 	t.Helper()
-	rid, err := s.CreateUser(ctx, "req@example.com", "Rhea Requester", "hash", "data_entry", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mid, err := s.CreateUser(ctx, "mgr@example.com", "Manav Manager", "hash", "admin", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requester, _ = s.UserByID(ctx, rid)
-	manager, _ = s.UserByID(ctx, mid)
-	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	headID, err = s.UpsertHead(ctx, 0, projectID, "Rent", "5", true, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return requester, manager, headID
+	requester = seedUser(t, s, "req@example.com", "Rhea Requester", "data_entry")
+	manager = seedUser(t, s, "mgr@example.com", "Manav Manager", "admin")
+	return requester, manager, seedHead(t, s, "Operations", "Rent")
 }
 
 // seedTestVendor inserts a Phase-1V vendor row directly; Phase 2 only needs its id.
-func seedTestVendor(t *testing.T, s *Store, ctx context.Context, name string) int64 {
+func seedTestVendor(t *testing.T, s *Store, name string) int64 {
 	t.Helper()
+	ctx := t.Context()
 	res, err := s.DB().ExecContext(ctx, `INSERT INTO vendors(name,vendor_type,status,gstin) VALUES(?,'company','active','29AABCS1429B1ZQ')`, name)
 	if err != nil {
 		t.Fatal(err)
@@ -159,8 +147,9 @@ func seedTestVendor(t *testing.T, s *Store, ctx context.Context, name string) in
 }
 
 // grantApprovalPermission gives a user a role carrying approval:approve.
-func grantApprovalPermission(t *testing.T, s *Store, ctx context.Context, userID int64) {
+func grantApprovalPermission(t *testing.T, s *Store, userID int64) {
 	t.Helper()
+	ctx := t.Context()
 	var roleID int64
 	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM roles WHERE lower(name)='manager'`).Scan(&roleID); err != nil {
 		t.Fatalf("seeded Manager role missing: %v", err)
@@ -170,30 +159,16 @@ func grantApprovalPermission(t *testing.T, s *Store, ctx context.Context, userID
 	}
 }
 
-func newRoleActor(t *testing.T, s *Store, ctx context.Context) User {
+// newRoleActor is the admin-legacy user the role and permission tests act as.
+func newRoleActor(t *testing.T, s *Store) User {
 	t.Helper()
-	id, err := s.CreateUser(ctx, "roleadmin@example.com", "Role Admin", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, id)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
+	return seedUser(t, s, "roleadmin@example.com", "Role Admin", "admin")
 }
 
-func vendorActor(t *testing.T, s *Store, ctx context.Context) User {
+// vendorActor is the admin-legacy user the vendor tests act as.
+func vendorActor(t *testing.T, s *Store) User {
 	t.Helper()
-	id, err := s.CreateUser(ctx, "vendor-admin@example.com", "Vendor Admin", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, id)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
+	return seedUser(t, s, "vendor-admin@example.com", "Vendor Admin", "admin")
 }
 
 // seedVendorRequest inserts a payment_requests row shaped the way the request
@@ -202,8 +177,9 @@ func vendorActor(t *testing.T, s *Store, ctx context.Context) User {
 // records, and it is exactly the trap a test about vendor totals must not fall
 // into — a fixture that fills vendor_payee would make the payee-name fallback
 // look like the vendor_id join working.
-func seedVendorRequest(t *testing.T, s *Store, ctx context.Context, seq int, status string, requesterID, managerID, headID, vendorID, amount int64) int64 {
+func seedVendorRequest(t *testing.T, s *Store, seq int, status string, requesterID, managerID, headID, vendorID, amount int64) int64 {
 	t.Helper()
+	ctx := t.Context()
 	var projectID int64
 	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
 		t.Fatalf("head project: %v", err)
@@ -237,17 +213,10 @@ func seedVendorNamed(t *testing.T, s *Store, name string) int64 {
 	return id
 }
 
-func newAccountsUser(t *testing.T, s *Store, ctx context.Context, email string) User {
+// newAccountsUser creates a data-entry-legacy user named after their email.
+func newAccountsUser(t *testing.T, s *Store, email string) User {
 	t.Helper()
-	uid, err := s.CreateUser(ctx, email, fmt.Sprintf("Accounts %s", email), "hash", "data_entry", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, uid)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
+	return seedUser(t, s, email, fmt.Sprintf("Accounts %s", email), "data_entry")
 }
 
 // Existing workflow fixtures use fixed historical payment dates. Model an

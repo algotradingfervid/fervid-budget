@@ -256,7 +256,7 @@ func TestCanTransition(t *testing.T) {
 func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 
 	id, err := s.CreateRequest(ctx, req, RequestInput{
 		Treatment: "budget", Type: "reimbursement", ShortTitle: "Team lunch",
@@ -309,8 +309,8 @@ func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
 func TestEmployeeAdvancePayeeIsForcedAndADepositPayeeIsFree(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, _ := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, _ := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 
 	advance, err := s.CreateRequest(ctx, req, RequestInput{
 		Treatment: "recoverable", Type: "employee_advance", ShortTitle: "Site float",
@@ -368,7 +368,7 @@ func TestEmployeeAdvancePayeeIsForcedAndADepositPayeeIsFree(t *testing.T) {
 func TestNoDraftStateExists(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 
 	if requestStatuses["draft"] {
 		t.Fatal("draft is in the status enum")
@@ -396,7 +396,7 @@ func TestNoDraftStateExists(t *testing.T) {
 func TestCreateRequestRejectsInvalidType(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	_, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
 		ShortTitle: "t", HeadID: headID, Amount: 1, Purpose: "x", ManagerID: mgr.ID,
 		VendorID: 1, InvoiceNo: "A/1", InvoiceDate: "2026-07-01"})
@@ -418,8 +418,8 @@ func TestCreateRequestRejectsInvalidType(t *testing.T) {
 func TestCreateRequestWritesStagedAttachments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Sundaram Electricals Pvt Ltd")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Sundaram Electricals Pvt Ltd")
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
 		ShortTitle: "July switchgear", ProjectID: 1, HeadID: headID, Amount: 100000, Purpose: "panels",
 		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "SE/26-27/1184", InvoiceDate: "2026-07-18",
@@ -442,7 +442,7 @@ func TestCreateRequestWritesStagedAttachments(t *testing.T) {
 func TestSubmitRequestResubmitsAReturnedRequest(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
 		ShortTitle: "t", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "p",
 		ExpenseDate: "2026-07-21", ManagerID: mgr.ID})
@@ -470,8 +470,8 @@ func TestSubmitRequestResubmitsAReturnedRequest(t *testing.T) {
 func TestRequestRetainsHistoricalProjectHead(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
 		ShortTitle: "Inv", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "inv",
 		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "A/1", InvoiceDate: "2026-07-01"})
@@ -505,7 +505,7 @@ func TestRequestRetainsHistoricalProjectHead(t *testing.T) {
 func TestUrgencyReasonIsRequiredWhenUrgent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	mk := func(urgent bool, reason string) error {
 		_, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
 			ShortTitle: "Travel", ProjectID: 1, HeadID: headID, Amount: 18400, Purpose: "site visit",
@@ -547,8 +547,8 @@ func TestUrgencyReasonIsRequiredWhenUrgent(t *testing.T) {
 func TestAttachmentPolicyAsksForAReasonInsteadOfBlocking(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Kaveri Logistics")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Kaveri Logistics")
 	mk := func(in RequestInput) (int64, error) {
 		in.Treatment, in.Type = "budget", "vendor_invoice"
 		in.ShortTitle, in.ProjectID, in.HeadID = "Freight", 1, headID
@@ -600,7 +600,7 @@ func TestAttachmentPolicyAsksForAReasonInsteadOfBlocking(t *testing.T) {
 func TestSelfApprovalIsRejectedAndNeverOffered(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 
 	// The store refuses to route a request to its own requester.
 	_, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
@@ -617,8 +617,8 @@ func TestSelfApprovalIsRejectedAndNeverOffered(t *testing.T) {
 	}
 
 	// The approver list never contains the requester.
-	grantApprovalPermission(t, s, ctx, req.ID)
-	grantApprovalPermission(t, s, ctx, mgr.ID)
+	grantApprovalPermission(t, s, req.ID)
+	grantApprovalPermission(t, s, mgr.ID)
 	approvers, err := s.ListApprovers(ctx, req.ID)
 	if err != nil {
 		t.Fatalf("ListApprovers: %v", err)
@@ -636,8 +636,8 @@ func TestSelfApprovalIsRejectedAndNeverOffered(t *testing.T) {
 func TestUpdateRequestPendingReroutesAndResetsReminder(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	newMgrID, err := s.CreateUser(ctx, "mgr2@example.com", "Second Manager", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -681,8 +681,8 @@ func TestUpdateRequestPendingReroutesAndResetsReminder(t *testing.T) {
 func TestUpdateRequestRejectedAfterApproval(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	in := RequestInput{Treatment: "budget", Type: "vendor_advance", ShortTitle: "Advance",
 		ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance", ManagerID: mgr.ID,
 		VendorID: vendorID, AdvanceReason: "booking"}
@@ -700,8 +700,8 @@ func TestUpdateRequestRejectedAfterApproval(t *testing.T) {
 func TestWithdrawRequestFromPending(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	mk := func() int64 {
 		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
 			ShortTitle: "Advance", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance",
@@ -742,8 +742,8 @@ func TestWithdrawRequestFromPending(t *testing.T) {
 func TestApproveRequestAdjustsAmountAndIsAssignedOnly(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	otherID, _ := s.CreateUser(ctx, "other@example.com", "Other Manager", "hash", "admin", true)
 	other, _ := s.UserByID(ctx, otherID)
 	mk := func(amount int64, purpose string) int64 {
@@ -790,8 +790,8 @@ func TestApproveRequestAdjustsAmountAndIsAssignedOnly(t *testing.T) {
 func TestReturnAndRejectRequireTextAndAreAssignedOnly(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	mk := func() int64 {
 		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
 			ShortTitle: "Advance", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance",
@@ -841,8 +841,8 @@ func TestReturnAndRejectRequireTextAndAreAssignedOnly(t *testing.T) {
 func TestReassignAndReraise(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	admin, _ := s.UserByID(ctx, mgr.ID) // acts as admin reassigner
 	newMgrID, _ := s.CreateUser(ctx, "cover@example.com", "Cover Manager", "hash", "admin", true)
 	mk := func(managerID, amount int64) int64 {
@@ -914,8 +914,8 @@ func TestReassignAndReraise(t *testing.T) {
 func TestCancellationRequestAcceptAndDecline(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Anand Steel Traders")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Anand Steel Traders")
 	mkApproved := func() int64 {
 		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
 			ShortTitle: "Binding wire order", ProjectID: 1, HeadID: headID, Amount: 47000,
@@ -1010,8 +1010,8 @@ func TestCancellationRequestAcceptAndDecline(t *testing.T) {
 func TestRequestCommentsAndAttachments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
 		ShortTitle: "Inv", ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "inv",
 		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "A/1", InvoiceDate: "2026-07-18"})
@@ -1049,8 +1049,8 @@ func TestRequestCommentsAndAttachments(t *testing.T) {
 func TestRequestThreadMergesEventsCommentsAndFiles(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
 		ShortTitle: "Inv", ProjectID: 1, HeadID: headID, Amount: 96000, Purpose: "inv",
 		ManagerID: mgr.ID, VendorID: vendorID, InvoiceNo: "SE/26-27/1180", InvoiceDate: "2026-07-18"})
@@ -1128,8 +1128,8 @@ func TestRequestThreadMergesEventsCommentsAndFiles(t *testing.T) {
 func TestCancellationFreezesTheApprovedState(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Anand Steel Traders")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Anand Steel Traders")
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
 		ShortTitle: "Wire", ProjectID: 1, HeadID: headID, Amount: 47000, Purpose: "advance",
 		ManagerID: mgr.ID, VendorID: vendorID, AdvanceReason: "booking"})
@@ -1155,8 +1155,8 @@ func TestCancellationFreezesTheApprovedState(t *testing.T) {
 func TestListRequestsByScopeAndCount(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	otherID, _ := s.CreateUser(ctx, "someoneelse@example.com", "Someone Else", "hash", "data_entry", true)
 	other, _ := s.UserByID(ctx, otherID)
 	mk := func(actor User, amount int64, purpose string) int64 {
@@ -1203,8 +1203,8 @@ func TestListRequestsByScopeAndCount(t *testing.T) {
 func TestListRequestsBuckets(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 	mk := func(purpose string) int64 {
 		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_advance",
 			ShortTitle: purpose, ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: purpose,
@@ -1256,9 +1256,9 @@ func TestListRequestsBuckets(t *testing.T) {
 func TestSimilarRequestsFindsRecentNearDuplicatesOnly(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	sundaram := seedTestVendor(t, s, ctx, "Sundaram Electricals Pvt Ltd")
-	anand := seedTestVendor(t, s, ctx, "Anand Steel Traders")
+	req, mgr, headID := seedRequestActors(t, s)
+	sundaram := seedTestVendor(t, s, "Sundaram Electricals Pvt Ltd")
+	anand := seedTestVendor(t, s, "Anand Steel Traders")
 	mk := func(vendorID, amount int64, invoice string) int64 {
 		id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
 			ShortTitle: "Switchgear", ProjectID: 1, HeadID: headID, Amount: amount, Purpose: "panels",
@@ -1329,8 +1329,9 @@ func TestSimilarRequestsFindsRecentNearDuplicatesOnly(t *testing.T) {
 
 // auditRequest raises a plain, valid reimbursement so a decision test does not
 // have to restate the whole body.
-func auditRequest(t *testing.T, s *Store, ctx context.Context, req, mgr User, headID, amount int64) int64 {
+func auditRequest(t *testing.T, s *Store, req, mgr User, headID, amount int64) int64 {
 	t.Helper()
+	ctx := t.Context()
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
 		ShortTitle: "Site travel", ProjectID: 1, HeadID: headID, Amount: amount,
 		Purpose: "site visit", ExpenseDate: "2026-07-21", ManagerID: mgr.ID})
@@ -1347,9 +1348,9 @@ func auditRequest(t *testing.T, s *Store, ctx context.Context, req, mgr User, he
 func TestApproveRequestRefusesMoreThanWasRequested(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 
-	over := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	over := auditRequest(t, s, req, mgr, headID, 1840000)
 	err := s.ApproveRequest(ctx, mgr, over, 2500000, "")
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("approving ₹25,000 against an ₹18,400 request = %v, want ErrValidation", err)
@@ -1371,7 +1372,7 @@ func TestApproveRequestRefusesMoreThanWasRequested(t *testing.T) {
 		t.Fatalf("approving the exact amount: %v", err)
 	}
 	// And less is the adjustment the approve sheet exists for.
-	under := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	under := auditRequest(t, s, req, mgr, headID, 1840000)
 	if err := s.ApproveRequest(ctx, mgr, under, 1200000, "only the flights"); err != nil {
 		t.Fatalf("approving less: %v", err)
 	}
@@ -1390,8 +1391,8 @@ func TestApproveRequestRefusesMoreThanWasRequested(t *testing.T) {
 func TestApproveIsRefusedWhileACancellationIsUndecided(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	id := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	req, mgr, headID := seedRequestActors(t, s)
+	id := auditRequest(t, s, req, mgr, headID, 1840000)
 	if err := s.ApproveRequest(ctx, mgr, id, 1840000, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1446,14 +1447,14 @@ func TestApproveIsRefusedWhileACancellationIsUndecided(t *testing.T) {
 func TestADeclinedCancellationRestoresAccountsHold(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	accID, err := s.CreateUser(ctx, "acct-hold@example.com", "Asha Accounts", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	acc, _ := s.UserByID(ctx, accID)
 
-	id := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	id := auditRequest(t, s, req, mgr, headID, 1840000)
 	if err := s.ApproveRequest(ctx, mgr, id, 1840000, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1506,11 +1507,11 @@ func TestADeclinedCancellationRestoresAccountsHold(t *testing.T) {
 func TestAnAcceptedCancellationClearsTheHoldEntirely(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	accID, _ := s.CreateUser(ctx, "acct-accept@example.com", "Asha Accounts", "hash", "admin", true)
 	acc, _ := s.UserByID(ctx, accID)
 
-	id := auditRequest(t, s, ctx, req, mgr, headID, 500000)
+	id := auditRequest(t, s, req, mgr, headID, 500000)
 	if err := s.ApproveRequest(ctx, mgr, id, 500000, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1538,7 +1539,7 @@ func TestAnAcceptedCancellationClearsTheHoldEntirely(t *testing.T) {
 func TestConcurrentSubmitsBothSucceed(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	other, err := s.CreateUser(ctx, "second-raiser@example.com", "Second Raiser", "hash", "data_entry", true)
 	if err != nil {
 		t.Fatal(err)
@@ -1591,7 +1592,7 @@ func TestConcurrentSubmitsBothSucceed(t *testing.T) {
 func TestConcurrentDecisionsRefuseTheLoserRatherThanFailing(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 
 	// race runs two writers at once and returns their errors in order.
 	race := func(a, b func() error) (error, error) {
@@ -1623,25 +1624,25 @@ func TestConcurrentDecisionsRefuseTheLoserRatherThanFailing(t *testing.T) {
 		}
 	}
 
-	approveRace := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	approveRace := auditRequest(t, s, req, mgr, headID, 1840000)
 	a, b := race(
 		func() error { return s.ApproveRequest(ctx, mgr, approveRace, 1840000, "first") },
 		func() error { return s.ApproveRequest(ctx, mgr, approveRace, 1200000, "second") })
 	exactlyOneWon("approve vs approve", a, b)
-	if got := requestStatus(t, s, ctx, approveRace); got != "approved" {
+	if got := requestStatus(t, s, approveRace); got != "approved" {
 		t.Fatalf("approve vs approve left status %q", got)
 	}
 
-	mixedRace := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	mixedRace := auditRequest(t, s, req, mgr, headID, 1840000)
 	a, b = race(
 		func() error { return s.ApproveRequest(ctx, mgr, mixedRace, 1840000, "") },
 		func() error { return s.RejectRequest(ctx, mgr, mixedRace, "Race it.") })
 	exactlyOneWon("approve vs reject", a, b)
-	if got := requestStatus(t, s, ctx, mixedRace); got != "approved" && got != "rejected" {
+	if got := requestStatus(t, s, mixedRace); got != "approved" && got != "rejected" {
 		t.Fatalf("approve vs reject left status %q", got)
 	}
 
-	cancelRace := auditRequest(t, s, ctx, req, mgr, headID, 1840000)
+	cancelRace := auditRequest(t, s, req, mgr, headID, 1840000)
 	if err := s.ApproveRequest(ctx, mgr, cancelRace, 1840000, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1652,7 +1653,7 @@ func TestConcurrentDecisionsRefuseTheLoserRatherThanFailing(t *testing.T) {
 		func() error { return s.DecideCancellation(ctx, mgr, cancelRace, true, "") },
 		func() error { return s.DecideCancellation(ctx, mgr, cancelRace, false, "Keep it.") })
 	exactlyOneWon("accept vs decline", a, b)
-	if got := requestStatus(t, s, ctx, cancelRace); got != "cancelled" && got != "approved" {
+	if got := requestStatus(t, s, cancelRace); got != "cancelled" && got != "approved" {
 		t.Fatalf("accept vs decline left status %q", got)
 	}
 
@@ -1681,10 +1682,10 @@ func TestConcurrentDecisionsRefuseTheLoserRatherThanFailing(t *testing.T) {
 func TestListRequestsPageReportsTheTotalAndTheTruncation(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	const total = 205
 	for i := 0; i < total; i++ {
-		auditRequest(t, s, ctx, req, mgr, headID, int64(1000+i))
+		auditRequest(t, s, req, mgr, headID, int64(1000+i))
 	}
 
 	opts := RequestPageOptions{RequestListOptions: RequestListOptions{Scope: "all"}}
@@ -1746,10 +1747,10 @@ func TestListRequestsPageReportsTheTotalAndTheTruncation(t *testing.T) {
 func TestListRequestsPutsTheLongestWaitingFirst(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	oldest := auditRequest(t, s, ctx, req, mgr, headID, 1000)
-	middle := auditRequest(t, s, ctx, req, mgr, headID, 2000)
-	newest := auditRequest(t, s, ctx, req, mgr, headID, 3000)
+	req, mgr, headID := seedRequestActors(t, s)
+	oldest := auditRequest(t, s, req, mgr, headID, 1000)
+	middle := auditRequest(t, s, req, mgr, headID, 2000)
+	newest := auditRequest(t, s, req, mgr, headID, 3000)
 
 	list, err := s.ListRequests(ctx, RequestListOptions{Scope: "all"})
 	if err != nil {
@@ -1783,7 +1784,7 @@ func TestListRequestsPutsTheLongestWaitingFirst(t *testing.T) {
 func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	strangerID, err := s.CreateUser(ctx, "nobody@example.com", "No Body", "hash", "data_entry", true)
 	if err != nil {
 		t.Fatal(err)
@@ -1807,7 +1808,7 @@ func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 	}
 
 	// The edit path is the same hole one route over.
-	id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+	id := auditRequest(t, s, req, mgr, headID, 1000)
 	reroute := body
 	reroute.ManagerID = strangerID
 	if err := s.UpdateRequest(ctx, req, id, reroute); !errors.Is(err, ErrValidation) {
@@ -1824,7 +1825,7 @@ func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 
 	// Granting the verb makes the same person acceptable, which proves the check
 	// reads the grant and not something incidental about the account.
-	grantApprovalPermission(t, s, ctx, strangerID)
+	grantApprovalPermission(t, s, strangerID)
 	if _, err := s.CreateRequest(ctx, req, body); err != nil {
 		t.Fatalf("routing to a real approver: %v", err)
 	}
@@ -1843,8 +1844,8 @@ func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 func TestCreateRequestRechecksTheIdsTheFormNarrows(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 
 	otherProject, err := s.UpsertProject(ctx, 0, "People", true, 2)
 	if err != nil {
@@ -1858,7 +1859,7 @@ func TestCreateRequestRechecksTheIdsTheFormNarrows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadVendorID := seedTestVendor(t, s, ctx, "Dead Vendor")
+	deadVendorID := seedTestVendor(t, s, "Dead Vendor")
 	if _, err := s.DB().ExecContext(ctx, `UPDATE vendors SET status='inactive' WHERE id=?`, deadVendorID); err != nil {
 		t.Fatal(err)
 	}
@@ -1892,7 +1893,7 @@ func TestCreateRequestRechecksTheIdsTheFormNarrows(t *testing.T) {
 			t.Fatalf("%s: message %q does not say why", tc.name, err)
 		}
 		// And the same refusal on the edit path.
-		id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+		id := auditRequest(t, s, req, mgr, headID, 1000)
 		if err := s.UpdateRequest(ctx, req, id, in); !errors.Is(err, ErrValidation) {
 			t.Fatalf("%s on edit = %v, want ErrValidation", tc.name, err)
 		}
@@ -1917,8 +1918,8 @@ func TestCreateRequestRechecksTheIdsTheFormNarrows(t *testing.T) {
 func TestColumnsAShapeDoesNotOwnAreCleared(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Acme Supplies")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Acme Supplies")
 
 	// F-B-15: a budget vendor_invoice carrying the recoverable fieldset.
 	budgetID, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
@@ -1992,8 +1993,8 @@ func TestColumnsAShapeDoesNotOwnAreCleared(t *testing.T) {
 func TestEditRequestCommitsTheWholePressOrNoneOfIt(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
-	vendorID := seedTestVendor(t, s, ctx, "Kaveri Logistics")
+	req, mgr, headID := seedRequestActors(t, s)
+	vendorID := seedTestVendor(t, s, "Kaveri Logistics")
 	base := func() RequestInput {
 		return RequestInput{
 			Treatment: "budget", Type: "vendor_invoice", ShortTitle: "Freight",
@@ -2082,7 +2083,7 @@ func TestEditRequestCommitsTheWholePressOrNoneOfIt(t *testing.T) {
 func TestReassignmentIsRefusedToAnApproverTheRequestHasAlreadyLeft(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	adminID, err := s.CreateUser(ctx, "root@example.com", "Root Admin", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -2097,7 +2098,7 @@ func TestReassignmentIsRefusedToAnApproverTheRequestHasAlreadyLeft(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+	id := auditRequest(t, s, req, mgr, headID, 1000)
 
 	// The administrator hands it from mgr to second.
 	if err := s.ReassignRequest(ctx, admin, id, secondID, "Manav is on leave", true); err != nil {
@@ -2137,13 +2138,13 @@ func TestReassignmentIsRefusedToAnApproverTheRequestHasAlreadyLeft(t *testing.T)
 func TestHeldRequestAttachmentIsOpenExactlyAsWideAsTheHold(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	otherID, err := s.CreateUser(ctx, "other@example.com", "Other Requester", "hash", "data_entry", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other, _ := s.UserByID(ctx, otherID)
-	id := auditRequest(t, s, ctx, req, mgr, headID, 1000)
+	id := auditRequest(t, s, req, mgr, headID, 1000)
 	doc := AttachmentInput{OriginalName: "gst.pdf", StoredPath: "/tmp/gst.pdf", MimeType: "application/pdf", SizeBytes: 7}
 
 	// Pending, approved and released: not on hold, so refused, and nothing written.

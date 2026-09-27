@@ -10,7 +10,7 @@ import (
 func TestUpsertProjectAndHeadAuditCreatedThenUpdated(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 
 	projectID, err := s.UpsertProject(ctx, 0, "Audit Project", true, 2, actor)
 	if err != nil {

@@ -23,7 +23,7 @@ import (
 func TestPaidOnAcceptsTodayInAZoneAheadOfUTC(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	_, headID := seedActorAndHead(t, s, ctx)
+	_, headID := seedActorAndHead(t, s)
 
 	utcNow := time.Now().UTC()
 	secondsIntoDay := utcNow.Hour()*3600 + utcNow.Minute()*60 + utcNow.Second()
@@ -53,7 +53,7 @@ func TestPaidOnAcceptsTodayInAZoneAheadOfUTC(t *testing.T) {
 func TestPaidOnStillRefusesAGenuineFutureDate(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	_, headID := seedActorAndHead(t, s, ctx)
+	_, headID := seedActorAndHead(t, s)
 
 	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	err := s.validatePayment(ctx, PaymentInput{HeadID: headID, PaidOn: tomorrow, Amount: 1000}, false)

@@ -13,8 +13,8 @@ import (
 func TestEmptyScopeReadsNoRequestsOrPayments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if _, err := s.CreatePayment(ctx, acc, PaymentInput{HeadID: headID, PaidOn: "2026-05-05", Amount: 1100, VendorPayee: "Mine"}); err != nil {
 		t.Fatal(err)
 	}

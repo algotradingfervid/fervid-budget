@@ -19,7 +19,7 @@ import (
 func TestMonthIsLockedReportsFailureInsteadOfAnsweringOpen(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 
 	if err := s.LockMonth(ctx, actor, "2026-07", "audit in progress"); err != nil {
 		t.Fatalf("LockMonth: %v", err)
@@ -56,7 +56,7 @@ func TestMonthIsLockedReportsFailureInsteadOfAnsweringOpen(t *testing.T) {
 func TestValidatePaymentSurfacesAnUnreadableMonthLock(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	_, headID := seedActorAndHead(t, s, ctx)
+	_, headID := seedActorAndHead(t, s)
 
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-07-21", Amount: 1000}
 	if err := s.validatePayment(ctx, in, false); err != nil {

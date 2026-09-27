@@ -15,12 +15,12 @@ import (
 func TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	asOf := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
 
-	paid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000701", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
-	payRecoverable(t, s, ctx, actor, headID, paid, "2026-02-12", 200000)
-	unpaid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000702", "approved", "emd", "Ridge Metro", "2026-01-15", 250000, false)
+	paid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000701", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
+	payRecoverable(t, s, actor, headID, paid, "2026-02-12", 200000)
+	unpaid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000702", "approved", "emd", "Ridge Metro", "2026-01-15", 250000, false)
 
 	m, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
 	if err != nil {
@@ -64,7 +64,7 @@ func TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft(t *testing.T) {
 func TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	budgetPay, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-09-10", Amount: 12345, VendorPayee: "Landlord", PaymentMode: "cash"})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment(t *testing.T) {
 func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, rent := seedActorAndHead(t, s, ctx)
+	actor, rent := seedActorAndHead(t, s)
 	var projectID int64
 	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, rent).Scan(&projectID); err != nil {
 		t.Fatal(err)
@@ -227,7 +227,7 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 func TestSetBudgetsRefusesAnUnknownHeadEvenAtZero(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, rent := seedActorAndHead(t, s, ctx)
+	actor, rent := seedActorAndHead(t, s)
 	err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 4500000}, {HeadID: 999999, Amount: 0}})
 	if err == nil || !errors.Is(err, ErrValidation) {
 		t.Fatalf("SetBudgets with an unknown head at ₹0 = %v, want a validation error", err)

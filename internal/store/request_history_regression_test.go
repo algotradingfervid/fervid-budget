@@ -10,7 +10,7 @@ import (
 func TestRequestThreadRetainsDecisionNotesAfterCancellation(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
 		ShortTitle: "Historical notes", ProjectID: 1, HeadID: headID, Amount: 12345,
 		Purpose: "Verify notes", ManagerID: mgr.ID, ExpenseDate: "2026-09-26"})

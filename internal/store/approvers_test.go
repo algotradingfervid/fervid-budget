@@ -15,9 +15,9 @@ import (
 func TestDefaultApproverPreselectsAnOfferedApprover(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	admin := mgr
-	grantApprovalPermission(t, s, ctx, mgr.ID)
+	grantApprovalPermission(t, s, mgr.ID)
 
 	// Unset by default: 0 means "no default", and the form pre-selects nothing.
 	u, err := s.UserByID(ctx, req.ID)

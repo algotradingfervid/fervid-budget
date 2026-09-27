@@ -9,8 +9,8 @@ import (
 func TestFullBalanceCannotEnterShortfallReview(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgr, head := seedRequestParty(t, s, ctx)
-	id := seedApprovedRequest(t, s, ctx, 1, req.ID, mgr, head, 1200000, 1200000)
+	acc, req, mgr, head := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, req.ID, mgr, head, 1200000, 1200000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
@@ -30,12 +30,12 @@ func TestFullBalanceCannotEnterShortfallReview(t *testing.T) {
 func TestContinuedShortfallThenAcceptedDeductionKeepsCumulativeAccounting(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, head := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, head := seedRequestParty(t, s)
 	mgr, err := s.UserByID(ctx, mgrID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, head, 1200000, 1200000)
+	id := seedApprovedRequest(t, s, 1, req.ID, mgrID, head, 1200000, 1200000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}

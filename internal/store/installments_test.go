@@ -11,8 +11,8 @@ import (
 func TestInstallmentsCumulativeCeilingRetryAndHistory(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, mgr, head := seedRequestParty(t, s, ctx)
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, mgr, head, 1200000, 1200000)
+	acc, requester, mgr, head := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, requester.ID, mgr, head, 1200000, 1200000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +80,8 @@ func TestInstallmentsCumulativeCeilingRetryAndHistory(t *testing.T) {
 func TestDuplicateInvoiceRequiresReasonAndEditCannotBypass(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	requester, mgr, head := seedRequestActors(t, s, ctx)
-	vendor := seedTestVendor(t, s, ctx, "Invoice Test")
+	requester, mgr, head := seedRequestActors(t, s)
+	vendor := seedTestVendor(t, s, "Invoice Test")
 	in := RequestInput{Type: "vendor_invoice", Treatment: "budget", ProjectID: 1, HeadID: head, VendorID: vendor, ShortTitle: "Test", Purpose: "Invoice test", Amount: 220000, ManagerID: mgr.ID, InvoiceNo: " INV-123 ", InvoiceDate: "2026-06-15"}
 	if _, err := s.CreateRequest(ctx, requester, in); err != nil {
 		t.Fatal(err)
@@ -124,9 +124,9 @@ func TestDuplicateInvoiceRequiresReasonAndEditCannotBypass(t *testing.T) {
 func TestPartialReviewCanContinueWithoutNewApproval(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, mgrID, head := seedRequestParty(t, s, ctx)
+	acc, requester, mgrID, head := seedRequestParty(t, s)
 	mgr, _ := s.UserByID(ctx, mgrID)
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, mgrID, head, 1200000, 1200000)
+	id := seedApprovedRequest(t, s, 1, requester.ID, mgrID, head, 1200000, 1200000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
