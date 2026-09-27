@@ -1,7 +1,8 @@
 package app
 
-// Page rendering and error responses. Every HTML answer the app sends goes
-// through renderStatus, which fills in what every page needs (user, CSRF
+// Page rendering and error responses. Handlers call render for a full page
+// and renderPartial for an htmx fragment. Every full page goes through
+// renderStatus, which fills in what every page needs (user, CSRF
 // token, permissions, navigation shell) before executing the template. Error
 // pages are ordinary renders of the "error_page" template.
 
@@ -16,6 +17,33 @@ import (
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
 )
+
+// render renders a full page with status 200.
+func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data PageData) {
+	a.renderStatus(w, r, http.StatusOK, name, data)
+}
+
+// renderPartial renders one template on its own, without the page shell, for
+// htmx requests that replace part of a page. It fills in the user,
+// permissions, CSRF token and request id like a full page, so the fragment's
+// controls are gated the same way.
+func (a *App) renderPartial(w http.ResponseWriter, r *http.Request, name string, data PageData) {
+	data.User = auth.CurrentUser(r)
+	data.Perms = a.auth.Permissions(data.User)
+	data.CSRF = a.auth.EnsureCSRF(w, r)
+	data.RequestID = requestID(r)
+	data.Shell = Shell{Chrome: chromeNone}
+
+	var buf bytes.Buffer
+	if err := a.tpl.ExecuteTemplate(&buf, name, data); err != nil {
+		a.respondError(w, r, http.StatusInternalServerError, "That section could not be rendered.", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		a.log.ErrorContext(r.Context(), "fragment write failed", "request_id", requestID(r), "error", err)
+	}
+}
 
 // renderStatus renders the named template with the given HTTP status. It adds
 // the fields every page shares, builds the navigation shell for full pages,
