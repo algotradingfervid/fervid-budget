@@ -53,9 +53,21 @@ func TestSecurityBoundaryOriginsLimitsAndHeaders(t *testing.T) {
 	}
 	for _, p := range []string{"/", "/_kitchensink.html", "/unexpected-secret.env"} {
 		w := httptest.NewRecorder()
-		publicStatic().ServeHTTP(w, httptest.NewRequest("GET", p, nil))
+		publicStatic(false).ServeHTTP(w, httptest.NewRequest("GET", p, nil))
 		if w.Code != 404 {
 			t.Fatalf("static path %s: %d", p, w.Code)
+		}
+	}
+	// With dev pages switched on, the design-system reference page is served
+	// but nothing else slips through the allowlist. The file server reads
+	// web/static relative to the working directory, which is the repository
+	// root when the server runs and this package's directory under go test.
+	t.Chdir("../..")
+	for p, want := range map[string]int{"/_kitchensink.html": 200, "/": 404, "/unexpected-secret.env": 404} {
+		w := httptest.NewRecorder()
+		publicStatic(true).ServeHTTP(w, httptest.NewRequest("GET", p, nil))
+		if w.Code != want {
+			t.Fatalf("dev static path %s: %d, want %d", p, w.Code, want)
 		}
 	}
 }

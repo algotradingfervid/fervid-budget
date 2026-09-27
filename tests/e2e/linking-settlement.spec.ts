@@ -1,4 +1,4 @@
-import { test, expect, capturePageErrors, createApprovedRequest } from './fixtures';
+import { test, expect, capturePageErrors, createApprovedRequest, today } from './fixtures';
 
 /**
  * The accounts journey, on a phone.
@@ -54,7 +54,8 @@ test.describe('payment linking and settlement', () => {
     // and save payment", so leaving them empty makes the browser refuse the
     // confirm submit — the sheet opens and then nothing happens. Paid on is
     // prefilled with today; the mode and the reference are not.
-    await adminPage.getByLabel('Paid on').fill('2026-07-24');
+    const paidOn = today();
+    await adminPage.getByLabel('Paid on').fill(paidOn);
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-${request.id}`);
 
@@ -79,7 +80,7 @@ test.describe('payment linking and settlement', () => {
     await sheet.getByRole('button', { name: 'Go back' }).click();
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     await expect(adminPage.getByLabel('Amount actually paid')).toHaveValue('4,000.00');
-    await expect(adminPage.getByLabel('Paid on')).toHaveValue('2026-07-24');
+    await expect(adminPage.getByLabel('Paid on')).toHaveValue(paidOn);
     await expect(adminPage.getByLabel('Payment mode')).toHaveValue('neft');
     await expect(adminPage.getByLabel('Transaction / UTR reference')).toHaveValue(`UTR-${request.id}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();

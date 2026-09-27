@@ -37,6 +37,33 @@ export const test = base.extend<{ adminPage: Page; secondPage: Page; runId: stri
 
 export { expect };
 
+/**
+ * The only date a payment can carry in these specs.
+ *
+ * A settlement may be dated no earlier than the day its request was approved
+ * and no later than today, and every request these fixtures approve is
+ * approved moments before it is paid. So "today" it is — read from the local
+ * clock, because the server compares against its own local date and both run
+ * on this machine.
+ */
+export function today(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** The month today's payments land in, as the ledger and grid key it (YYYY-MM). */
+export function thisMonth(): string {
+  return today().slice(0, 7);
+}
+
+/** The month before thisMonth(): a month no payment of this run can land in. */
+export function lastMonth(): string {
+  const [year, month] = thisMonth().split('-').map(Number);
+  const previous = new Date(year, month - 2, 1);
+  return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export async function login(page: Page, email: string, password: string) {
   await page.goto('/login');
   await page.getByLabel('Email').fill(email);
@@ -196,16 +223,23 @@ async function ensureVendor(page: Page, name: string) {
  * request must use `seedVendorRequest`, not `seedApprovedRequest`, to get the
  * shape the real form produces.
  *
+ * `head` is the "Project / Head" label to charge, Operations / Office Rent
+ * unless a spec says otherwise. Every payment now lands in the current month,
+ * so a spec that needs a head or a project nobody else in the run has paid or
+ * budgeted picks its own here instead of picking its own month.
+ *
  * Returns the request number (PR-YYYY-NNNNNN) and its id.
  */
 export async function createApprovedRequest(
   page: Page,
   runId: string,
-  opts: { amount: string; payee?: string; neededBy?: string }
+  opts: { amount: string; payee?: string; neededBy?: string; head?: string }
 ): Promise<{ number: string; id: number }> {
   const approver = await ensureApprover(page, runId);
   const payee = opts.payee ?? `Payee ${runId}`;
   await ensureVendor(page, payee);
+  const headLabel = opts.head ?? 'Operations / Office Rent';
+  const projectLabel = headLabel.split(' / ')[0];
 
   const seq = (requestSeq.get(runId) ?? 0) + 1;
   requestSeq.set(runId, seq);
@@ -215,11 +249,11 @@ export async function createApprovedRequest(
 
   // Choosing a project swaps #form-fields from the server and narrows the heads
   // to that project's own. Waiting for a head count would be guessing at the
-  // seed; waiting for every remaining option to belong to Operations is the
+  // seed; waiting for every remaining option to belong to the project is the
   // swap itself. Only the "Choose a head" placeholder survives the filter.
-  await page.locator('#project').selectOption({ label: 'Operations' });
-  await expect(page.locator('#head option').filter({ hasNotText: 'Operations /' })).toHaveCount(1);
-  await page.locator('#head').selectOption({ label: 'Operations / Office Rent' });
+  await page.locator('#project').selectOption({ label: projectLabel });
+  await expect(page.locator('#head option').filter({ hasNotText: `${projectLabel} /` })).toHaveCount(1);
+  await page.locator('#head').selectOption({ label: headLabel });
 
   // The combobox writes the vendor's id into the hidden input the form posts;
   // the visible text is never trusted by the server.

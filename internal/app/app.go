@@ -539,7 +539,7 @@ func contextWithTimeout() struct {
 }
 
 func (a *App) routes(mux *http.ServeMux) {
-	mux.Handle("GET /static/", http.StripPrefix("/static/", publicStatic()))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", publicStatic(a.cfg.DevPages)))
 	mux.HandleFunc("GET /login", a.loginForm)
 	mux.HandleFunc("GET /login/help", a.loginHelp)
 	mux.HandleFunc("POST /login/help", a.withCSRF(a.passwordResetRequest))

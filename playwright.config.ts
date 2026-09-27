@@ -65,6 +65,9 @@ export default defineConfig({
       // login limits (30 a minute per address, 300 overall) allow.
       'FERVID_LOGIN_LIMIT_PER_IP=100000',
       'FERVID_LOGIN_LIMIT_GLOBAL=100000',
+      // components.spec.ts drives the design-system reference page, which the
+      // static allowlist hides unless a server is told it is a dev server.
+      'FERVID_DEV_PAGES=true',
       'go run ./cmd/server --seed'
     ].join(' '),
     url: `http://127.0.0.1:${port}/login`,

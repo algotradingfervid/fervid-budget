@@ -167,9 +167,15 @@ func (a *App) securityBoundary(next http.Handler) http.Handler {
 }
 
 // Only release assets are public. Files accidentally copied under web/static
-// cannot become a download or a directory listing.
-func publicStatic() http.Handler {
+// cannot become a download or a directory listing. The design-system reference
+// page is a development aid: it is served only when the operator asks for it
+// (FERVID_DEV_PAGES), which the component test suite does and production never
+// does.
+func publicStatic(devPages bool) http.Handler {
 	allowed := map[string]bool{"fervid-ds.css": true, "fervid-app.js": true, "fervid-logo.svg": true, "budget-planner.css": true, "budget-ux.css": true, "budget-planner.js": true, "htmx.min.js": true}
+	if devPages {
+		allowed["_kitchensink.html"] = true
+	}
 	files := http.FileServer(http.Dir("web/static"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")

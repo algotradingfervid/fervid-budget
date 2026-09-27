@@ -574,7 +574,7 @@ func (s *Store) UpsertProject(ctx context.Context, id int64, name string, active
 		actorID = &actor.ID
 	}
 	after := map[string]any{"name": name, "active": boolInt(active), "sort_order": sortOrder}
-	if err = recordAuditTx(ctx, tx, AuditInput{ActorID: actorID, ActorName: actor.Name, Action: action, EntityType: "project", EntityID: &id, Summary: "Updated project " + name, Before: before, After: after}); err != nil {
+	if err = recordAuditTx(ctx, tx, AuditInput{ActorID: actorID, ActorName: actor.Name, Action: action, EntityType: "project", EntityID: &id, Summary: auditVerb(action) + " project " + name, Before: before, After: after}); err != nil {
 		return 0, err
 	}
 	return id, tx.Commit()
@@ -670,10 +670,20 @@ func (s *Store) UpsertHead(ctx context.Context, id, projectID int64, name, dueDa
 		actorID = &actor.ID
 	}
 	after := map[string]any{"project_id": projectID, "name": name, "due_day": dueDay, "active": boolInt(active), "sort_order": sortOrder}
-	if err = recordAuditTx(ctx, tx, AuditInput{ActorID: actorID, ActorName: actor.Name, Action: action, EntityType: "head", EntityID: &id, Summary: "Updated head " + name, Before: before, After: after}); err != nil {
+	if err = recordAuditTx(ctx, tx, AuditInput{ActorID: actorID, ActorName: actor.Name, Action: action, EntityType: "head", EntityID: &id, Summary: auditVerb(action) + " head " + name, Before: before, After: after}); err != nil {
 		return 0, err
 	}
 	return id, tx.Commit()
+}
+
+// auditVerb is the word an audit summary opens with for a create or update
+// action, so the log reads "Created project X" for a new record and "Updated
+// project X" for a changed one.
+func auditVerb(action string) string {
+	if action == "create" {
+		return "Created"
+	}
+	return "Updated"
 }
 
 // OpenRequest is one unfinished request, named on a deactivation warning.

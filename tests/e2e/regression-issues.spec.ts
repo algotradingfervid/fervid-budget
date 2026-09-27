@@ -8,7 +8,10 @@ import {
   createDataEntryUser,
   login,
   openNewUserSheet,
-  settlePayment
+  settlePayment,
+  lastMonth,
+  thisMonth,
+  today
 } from './fixtures';
 
 test.beforeEach(async ({}, testInfo) => {
@@ -70,6 +73,36 @@ function proofFile(testInfo: TestInfo, name: string, body: string) {
   writeFileSync(path, body);
   return path;
 }
+
+// The smallest PDF the upload validator accepts: one empty page, with the
+// cross-reference offsets exactly right. Uploads are parsed as real PDFs now
+// rather than sniffed for a "%PDF" prefix, so a stand-in made of a header and
+// a trailer is refused as a corrupt file. The trailing spaces in the xref
+// entries are part of the format (each entry is exactly twenty bytes).
+const validProofPdf = [
+  '%PDF-1.4',
+  '1 0 obj',
+  '<< /Type /Catalog /Pages 2 0 R >>',
+  'endobj',
+  '2 0 obj',
+  '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+  'endobj',
+  '3 0 obj',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>',
+  'endobj',
+  'xref',
+  '0 4',
+  '0000000000 65535 f ',
+  '0000000009 00000 n ',
+  '0000000058 00000 n ',
+  '0000000115 00000 n ',
+  'trailer',
+  '<< /Size 4 /Root 1 0 R >>',
+  'startxref',
+  '203',
+  '%%EOF',
+  ''
+].join('\n');
 
 async function addProject(page: import('@playwright/test').Page, name: string, active = true) {
   await page.goto('/projects');
@@ -151,11 +184,13 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-003 labels spend without a budget as unbudgeted', async ({ adminPage, runId }) => {
-    // Operations / Office Rent is budgeted for 2026-06 alone, so a payment
-    // recorded into any other month is spend against no budget at all.
-    const request = await createApprovedRequest(adminPage, runId, { amount: '20.00' });
-    await settlePayment(adminPage, request.id, { amount: '20.00', paidOn: '2025-09-15' });
-    await adminPage.goto('/grid?month=2025-09&status=unbudgeted');
+    // The seed budgets every head for 2026-06 alone, and a payment can only be
+    // dated today, so today's spend on a head no spec budgets this month is
+    // spend against no budget at all. Office Supplies, not Office Rent: the
+    // grid spec gives Office Rent a budget for this month before this runs.
+    const request = await createApprovedRequest(adminPage, runId, { amount: '20.00', head: 'Operations / Office Supplies' });
+    await settlePayment(adminPage, request.id, { amount: '20.00', paidOn: today() });
+    await adminPage.goto(`/grid?month=${thisMonth()}&status=unbudgeted`);
     await expect(adminPage.locator('.pill.unbudgeted', { hasText: 'Unbudgeted spend' }).first()).toBeVisible();
   });
 
@@ -174,53 +209,63 @@ test.describe('documented issue regression guards', () => {
   // no route in this product creates an unlinked payment to reach it with. The
   // redirect is asserted instead of a form this phase put out of reach.
   test('ISS-004 makes locked-month payment surfaces read-only', async ({ adminPage, runId }) => {
-    const month = '2025-10';
+    // A payment can only be dated today, so the month under test is this one —
+    // the same month every later spec pays into. It is therefore unlocked again
+    // at the end, whatever happened in between.
+    const month = thisMonth();
     const settled = await createApprovedRequest(adminPage, runId, { amount: '30.00' });
     const blocked = await createApprovedRequest(adminPage, runId, { amount: '40.00' });
 
     // The e2e server can outlive a run and keep its database, so a month this
     // test locked last time is still locked. Reopen it before recording into it.
-    await adminPage.goto(`/grid?month=${month}`);
-    const unlock = adminPage.getByRole('button', { name: 'Unlock Month' });
-    if ((await unlock.count()) > 0) {
-      await adminPage.getByLabel('Unlock reason').fill('Regression reopen');
+    const unlockIfLocked = async () => {
+      await adminPage.goto(`/grid?month=${month}`);
+      const unlock = adminPage.getByRole('button', { name: 'Unlock Month' });
+      if ((await unlock.count()) > 0) {
+        await adminPage.getByLabel('Unlock reason').fill('Regression reopen');
+        adminPage.once('dialog', dialog => dialog.accept());
+        await unlock.click();
+        await expect(adminPage).toHaveURL(new RegExp(`month=${month}$`));
+      }
+    };
+    await unlockIfLocked();
+
+    try {
+      const paymentPath = await settlePayment(adminPage, settled.id, { amount: '30.00', paidOn: today() });
+
+      await adminPage.goto(`/grid?month=${month}`);
+      await adminPage.getByLabel('Lock reason').fill('Regression close');
       adminPage.once('dialog', dialog => dialog.accept());
-      await unlock.click();
-      await expect(adminPage).toHaveURL(new RegExp(`month=${month}$`));
+      await adminPage.getByRole('button', { name: 'Lock Month' }).click();
+      // lockMonth redirects to /?month=... (app.go:971), which is the dashboard and
+      // shows nothing about the month. The lock notice lives on the grid, so read
+      // it there rather than wherever the redirect happens to land.
+      await adminPage.goto(`/grid?month=${month}`);
+      await expect(adminPage.locator('.locked')).toContainText(`Month ${month} is locked`);
+
+      // Detail side, unchanged in spirit: nothing that would alter the payment.
+      await adminPage.goto(paymentPath);
+      await expect(adminPage.getByRole('link', { name: 'Edit' })).toHaveCount(0);
+      await expect(adminPage.getByRole('button', { name: 'Upload' })).toHaveCount(0);
+      await adminPage.goto(`${paymentPath}/edit`);
+      await expect(adminPage).toHaveURL(new RegExp(`${paymentPath}$`));
+
+      // Recording INTO the locked month is refused where the accountant is
+      // standing, with the reason spelled out and nothing saved.
+      await openPaymentEntry(adminPage, blocked.id);
+      await fillPaymentEntry(adminPage, { amount: '40.00', paidOn: today(), reference: `UTR-${runId}` });
+      await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+      const sheet = adminPage.locator('.overlay .sheet');
+      await expect(sheet).toBeVisible();
+      await sheet.locator('input[name="settlement"][value="settled"]').check();
+      await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
+      await expect(adminPage.getByRole('alert')).toContainText(/month is locked/i);
+      await expect(adminPage.locator('.sheet .banner.bad')).toContainText(/month is locked/i);
+      await expect(adminPage.locator('.error-state')).toHaveCount(0);
+      await expect(adminPage).not.toHaveURL(/\/payments\/\d+$/);
+    } finally {
+      await unlockIfLocked();
     }
-
-    const paymentPath = await settlePayment(adminPage, settled.id, { amount: '30.00', paidOn: `${month}-15` });
-
-    await adminPage.goto(`/grid?month=${month}`);
-    await adminPage.getByLabel('Lock reason').fill('Regression close');
-    adminPage.once('dialog', dialog => dialog.accept());
-    await adminPage.getByRole('button', { name: 'Lock Month' }).click();
-    // lockMonth redirects to /?month=... (app.go:971), which is the dashboard and
-    // shows nothing about the month. The lock notice lives on the grid, so read
-    // it there rather than wherever the redirect happens to land.
-    await adminPage.goto(`/grid?month=${month}`);
-    await expect(adminPage.locator('.locked')).toContainText(`Month ${month} is locked`);
-
-    // Detail side, unchanged in spirit: nothing that would alter the payment.
-    await adminPage.goto(paymentPath);
-    await expect(adminPage.getByRole('link', { name: 'Edit' })).toHaveCount(0);
-    await expect(adminPage.getByRole('button', { name: 'Upload' })).toHaveCount(0);
-    await adminPage.goto(`${paymentPath}/edit`);
-    await expect(adminPage).toHaveURL(new RegExp(`${paymentPath}$`));
-
-    // Recording INTO the locked month is refused where the accountant is
-    // standing, with the reason spelled out and nothing saved.
-    await openPaymentEntry(adminPage, blocked.id);
-    await fillPaymentEntry(adminPage, { amount: '40.00', paidOn: `${month}-20`, reference: `UTR-${runId}` });
-    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
-    const sheet = adminPage.locator('.overlay .sheet');
-    await expect(sheet).toBeVisible();
-    await sheet.locator('input[name="settlement"][value="settled"]').check();
-    await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
-    await expect(adminPage.getByRole('alert')).toContainText(/month is locked/i);
-    await expect(adminPage.locator('.sheet .banner.bad')).toContainText(/month is locked/i);
-    await expect(adminPage.locator('.error-state')).toHaveCount(0);
-    await expect(adminPage).not.toHaveURL(/\/payments\/\d+$/);
   });
 
   // F-G-020's remaining edge. The entry screen warned about the month it opened
@@ -279,10 +324,10 @@ test.describe('documented issue regression guards', () => {
   // recorded. The guard moves to that moment; it does not disappear.
   test('ISS-005 stores an attachment selected while the payment is recorded', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '50.00' });
-    const proof = proofFile(testInfo, 'recorded-proof.pdf', '%PDF-1.4\nrecorded proof\n%%EOF');
+    const proof = proofFile(testInfo, 'recorded-proof.pdf', validProofPdf);
     await settlePayment(adminPage, request.id, {
       amount: '50.00',
-      paidOn: '2025-11-15',
+      paidOn: today(),
       attachment: proof
     });
     const file = adminPage.locator('.file-row', { hasText: 'recorded-proof.pdf' });
@@ -303,10 +348,11 @@ test.describe('documented issue regression guards', () => {
   // this one is the documented issue's own guard: what was typed comes back.
   test('ISS-006 retains every payment field after a rejected amount', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '5000.00' });
+    const paidOn = today();
     await openPaymentEntry(adminPage, request.id);
     await fillPaymentEntry(adminPage, {
       amount: '6000.00',
-      paidOn: '2025-12-19',
+      paidOn,
       mode: 'neft',
       reference: `REF-${runId}`,
       note: `Remark ${runId}`
@@ -318,7 +364,7 @@ test.describe('documented issue regression guards', () => {
     // Preflight now rejects the amount before opening confirmation; every
     // original entry remains available for correction in the same form.
     await expect(adminPage.getByRole('textbox', { name: 'Amount actually paid', exact: true })).toHaveValue(/^6,?000\.00$/);
-    await expect(adminPage.getByRole('textbox', { name: 'Paid on', exact: true })).toHaveValue('2025-12-19');
+    await expect(adminPage.getByRole('textbox', { name: 'Paid on', exact: true })).toHaveValue(paidOn);
     await expect(adminPage.getByRole('combobox', { name: 'Payment mode', exact: true })).toHaveValue('neft');
     await expect(adminPage.getByRole('textbox', { name: 'Transaction / UTR reference', exact: true })).toHaveValue(`REF-${runId}`);
     await expect(adminPage.getByRole('textbox', { name: 'Processing note', exact: true })).toHaveValue(`Remark ${runId}`);
@@ -378,7 +424,14 @@ test.describe('documented issue regression guards', () => {
     expect(await response.text()).toContain('password must be at least');
   });
 
-  test('ISS-010 temporarily locks repeated failed sign-ins', async ({ page, runId }) => {
+  // Re-scoped by the 2026-09-27 security review. Locking the account after five
+  // wrong passwords let anyone who knew an email keep its owner — including the
+  // only administrator — signed out for good, and the "too many attempts"
+  // wording told them which emails were real. Failed sign-ins are now throttled
+  // per source address (a limit this test server raises out of reach) and every
+  // failure gets the same generic answer, so a wrong-password storm neither
+  // locks the account nor gives the attacker anything to read.
+  test('ISS-010 repeated failed sign-ins get one generic answer and never lock the account', async ({ page, runId }) => {
     await login(page, 'admin@fervid.local', 'TestAdmin12345');
     const email = `lock-${runId}@example.test`;
     await page.goto('/users');
@@ -394,12 +447,14 @@ test.describe('documented issue regression guards', () => {
       await page.getByLabel('Email').fill(email);
       await page.getByLabel('Password').fill('WrongPassword42');
       await page.getByRole('button', { name: 'Login' }).click();
+      await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+      await expect(page.getByRole('alert')).not.toContainText(/too many/i);
     }
     await page.goto('/login');
     await page.getByLabel('Email').fill(email);
     await page.getByLabel('Password').fill('LockPassword42');
     await page.getByRole('button', { name: 'Login' }).click();
-    await expect(page.getByRole('alert')).toContainText(/too many failed attempts/i);
+    await expect(page).toHaveURL(/\/$/);
   });
 
   test('ISS-011 records failed sign-ins in the audit log', async ({ page }) => {
@@ -452,17 +507,20 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-017 scopes recent payments to the selected month', async ({ adminPage, runId }) => {
-    // One request, one payment: two months now means two approved requests,
-    // each reserved and settled in its own month.
-    const january = await createApprovedRequest(adminPage, runId, { amount: '11.11' });
-    const february = await createApprovedRequest(adminPage, runId, { amount: '22.22' });
-    const janPath = await settlePayment(adminPage, january.id, { amount: '11.11', paidOn: '2024-01-15' });
-    const febPath = await settlePayment(adminPage, february.id, { amount: '22.22', paidOn: '2024-02-15' });
-    await adminPage.goto('/grid?month=2024-01');
+    // A payment can only be dated today, so the two months to tell apart are
+    // this one, which holds the payments, and last month, which must not.
+    const first = await createApprovedRequest(adminPage, runId, { amount: '11.11' });
+    const second = await createApprovedRequest(adminPage, runId, { amount: '22.22' });
+    const firstPath = await settlePayment(adminPage, first.id, { amount: '11.11', paidOn: today() });
+    const secondPath = await settlePayment(adminPage, second.id, { amount: '22.22', paidOn: today() });
     // Keyed on each payment's own link: both payments share this run's payee,
-    // so the link is the one handle that tells the two months apart.
-    await expect(adminPage.locator(`a[href="${janPath}"]`)).toBeVisible();
-    await expect(adminPage.locator(`a[href="${febPath}"]`)).toHaveCount(0);
+    // so the link is the one handle that tells them apart from everything else.
+    await adminPage.goto(`/grid?month=${thisMonth()}`);
+    await expect(adminPage.locator(`a[href="${firstPath}"]`)).toBeVisible();
+    await expect(adminPage.locator(`a[href="${secondPath}"]`)).toBeVisible();
+    await adminPage.goto(`/grid?month=${lastMonth()}`);
+    await expect(adminPage.locator(`a[href="${firstPath}"]`)).toHaveCount(0);
+    await expect(adminPage.locator(`a[href="${secondPath}"]`)).toHaveCount(0);
   });
 
   test('ISS-018 renders empty future head reports without all-zero rows', async ({ adminPage }) => {
@@ -541,10 +599,10 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-023 downloads authenticated attachment bytes', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
-    const proof = proofFile(testInfo, 'download-proof.pdf', '%PDF-1.4\ndownload proof\n%%EOF');
+    const proof = proofFile(testInfo, 'download-proof.pdf', validProofPdf);
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
-      paidOn: '2024-03-15',
+      paidOn: today(),
       attachment: proof
     });
     // The proof list is .file-row with its own Download link; the old detail
@@ -565,10 +623,10 @@ test.describe('documented issue regression guards', () => {
   // request and the payment together.
   test('ISS-024 includes attachment uploads in the payment trail', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
-    const proof = proofFile(testInfo, 'timeline-proof.pdf', '%PDF-1.4\ntimeline\n%%EOF');
+    const proof = proofFile(testInfo, 'timeline-proof.pdf', validProofPdf);
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
-      paidOn: '2024-04-15',
+      paidOn: today(),
       attachment: proof
     });
     const trail = adminPage.locator('ol.thread');
@@ -589,7 +647,7 @@ test.describe('documented issue regression guards', () => {
   // is asserted on the payment that does exist, screen and route alike.
   test('ISS-025 offers no attachment or void mutation on a payment that cannot be mutated', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '60.00' });
-    const paymentPath = await settlePayment(adminPage, request.id, { amount: '60.00', paidOn: '2024-05-15' });
+    const paymentPath = await settlePayment(adminPage, request.id, { amount: '60.00', paidOn: today() });
 
     await expect(adminPage.locator('.card-head .pill', { hasText: 'Read-only' })).toBeVisible();
     await expect(adminPage.getByRole('button', { name: 'Upload' })).toHaveCount(0);
@@ -598,7 +656,7 @@ test.describe('documented issue regression guards', () => {
     await expect(adminPage.locator('input[name="attachment"]')).toHaveCount(0);
 
     // The ledger row agrees: View, and no Remove disclosure to open.
-    await adminPage.goto('/payments?month=2024-05');
+    await adminPage.goto(`/payments?month=${thisMonth()}`);
     const row = adminPage.locator('tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
     await expect(row.getByRole('link', { name: 'View' })).toBeVisible();
     await expect(row.getByRole('link', { name: 'Edit' })).toHaveCount(0);
@@ -617,7 +675,7 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-026 treats percent and underscore as literal search characters', async ({ adminPage, runId }) => {
-    const month = '2024-06';
+    const month = thisMonth();
     const literal = `Literal%_${runId}`;
     // The payee is the request's, not the payment's — it is a hidden input
     // copied from the approved request, and a vendor request stores it as
@@ -630,12 +688,12 @@ test.describe('documented issue regression guards', () => {
     const plain = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
     const markedPath = await settlePayment(adminPage, marked.id, {
       amount: '10.00',
-      paidOn: `${month}-15`,
+      paidOn: today(),
       reference: literal
     });
     const plainPath = await settlePayment(adminPage, plain.id, {
       amount: '10.00',
-      paidOn: `${month}-16`,
+      paidOn: today(),
       reference: `REF-${runId}`
     });
     await adminPage.goto(`/payments?month=${month}&q=%25_`);
@@ -667,16 +725,20 @@ test.describe('documented issue regression guards', () => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
-      paidOn: '2024-07-15',
+      paidOn: today(),
       mode: 'neft'
     });
     await expect(adminPage.locator('dd', { hasText: 'NEFT' }).first()).toBeVisible();
   });
 
   test('ISS-029 gives project subtotal bars their utilization status', async ({ adminPage, runId }) => {
-    const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
-    await settlePayment(adminPage, request.id, { amount: '10.00', paidOn: '2026-07-10' });
-    await adminPage.goto('/grid?month=2026-07');
+    // A project's subtotal is unbudgeted only when none of its heads has a
+    // budget in the month. Every payment is dated today and the grid spec has
+    // already budgeted Operations for this month, so the spend goes to People,
+    // which no spec budgets.
+    const request = await createApprovedRequest(adminPage, runId, { amount: '10.00', head: 'People / Staff Welfare' });
+    await settlePayment(adminPage, request.id, { amount: '10.00', paidOn: today() });
+    await adminPage.goto(`/grid?month=${thisMonth()}`);
     await expect(adminPage.locator('tr.project-row .vbar.is-unbudgeted').first()).toBeVisible();
   });
 
