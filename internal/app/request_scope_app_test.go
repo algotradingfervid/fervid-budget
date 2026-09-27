@@ -26,7 +26,7 @@ func TestAssignedApproverSeesOwnRequestInListButNotInApprovalQueue(t *testing.T)
 	stranger := number(103)
 
 	s.login("assigned-approver@example.test", "ApproverPass1234")
-	list := responseBody(t, s.request(http.MethodGet, "/requests?bucket=open", nil, ""))
+	list := s.get("/requests?bucket=open")
 	if !strings.Contains(list, raised) || !strings.Contains(list, routed) || strings.Contains(list, stranger) {
 		t.Fatalf("assigned-scope list should show the raised and routed requests only:\n%s", list)
 	}
@@ -34,7 +34,7 @@ func TestAssignedApproverSeesOwnRequestInListButNotInApprovalQueue(t *testing.T)
 		requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""), http.StatusOK)
 	}
 
-	queue := responseBody(t, s.request(http.MethodGet, "/approvals", nil, ""))
+	queue := s.get("/approvals")
 	if !strings.Contains(queue, routed) {
 		t.Fatalf("approval queue misses the request routed to the approver:\n%s", queue)
 	}

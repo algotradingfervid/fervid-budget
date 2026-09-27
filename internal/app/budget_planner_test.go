@@ -23,7 +23,7 @@ func plannerForm(t *testing.T, p store.BudgetPlan, mode string) url.Values {
 }
 func TestBudgetPlannerHTTPCreateReadEditAndLegacyProtection(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	p := plannerFixture("2026-07")
 	resp := s.postForm("/budgets/plan", plannerForm(t, p, "create"))
 	requireStatus(t, resp, http.StatusSeeOther)
@@ -49,7 +49,7 @@ func TestBudgetPlannerHTTPCreateReadEditAndLegacyProtection(t *testing.T) {
 	saved.Projects[0].Heads[0].Lines[1].Amount = 300025
 	requireStatus(t, s.postForm("/budgets/plan", plannerForm(t, saved, "edit")), http.StatusSeeOther)
 	requireStatus(t, s.postForm("/budgets/plan", plannerForm(t, saved, "edit")), http.StatusBadRequest)
-	body := responseBody(t, s.request(http.MethodGet, "/budgets?month=2026-07", nil, ""))
+	body := s.get("/budgets?month=2026-07")
 	if !strings.Contains(body, "Edit lines") || !strings.Contains(body, "Edit budget lines") {
 		t.Fatal("legacy aggregate view lacks detailed editor link")
 	}
@@ -65,7 +65,7 @@ func TestBudgetPlannerHTTPCreateReadEditAndLegacyProtection(t *testing.T) {
 }
 func TestBudgetPlannerFormValidationRetainsDraftAndEscapesMarkup(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	p := plannerFixture("2026-08")
 	p.Projects[0].Name = `</script><img src=x onerror=alert(1)>`
 	p.Projects[0].Heads[0].Lines[1].Amount = -1
@@ -89,7 +89,7 @@ func TestBudgetPlannerAuthorizationSourceAndCSRF(t *testing.T) {
 	s.login("budget-editor@example.test", "BudgetEditor123")
 	requireStatus(t, s.request(http.MethodGet, "/budgets/new", nil, ""), http.StatusForbidden)
 	requireStatus(t, s.postForm("/budgets/plan", plannerForm(t, plannerFixture("2026-09"), "create")), http.StatusForbidden)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.request(http.MethodGet, "/budgets/plan-data?month=2031-01", nil, ""), http.StatusNotFound)
 	requireStatus(t, s.request(http.MethodGet, "/budgets/plan-data?month=bad", nil, ""), http.StatusBadRequest)
 	form := plannerForm(t, plannerFixture("2026-09"), "create")
@@ -111,13 +111,13 @@ func TestLegacyCopyRequiresBudgetPermissions(t *testing.T) {
 	if err := s.st.DB().QueryRow(`SELECT COUNT(*) FROM budget_months WHERE month='2026-10'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("unauthorized copy created month: %d %v", n, err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm("/months", url.Values{"target_month": {"2026-10"}, "source_mode": {"copy"}}), http.StatusBadRequest)
 }
 
 func TestBudgetPlannerRejectedDraftUsesCanonicalMetadata(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm("/budgets/plan", plannerForm(t, plannerFixture("2026-07"), "create")), http.StatusSeeOther)
 	p, err := s.st.BudgetPlan(s.ctx, "2026-07")
 	if err != nil {

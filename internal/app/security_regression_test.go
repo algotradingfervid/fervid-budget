@@ -74,7 +74,7 @@ func TestSecurityBoundaryOriginsLimitsAndHeaders(t *testing.T) {
 
 func TestSecurityLogoutRevokesCopiedCookieAndBoundsAudit(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	u, _ := url.Parse(s.server.URL)
 	cookies := s.client.Jar.Cookies(u)
 	responseBody(t, s.postForm("/logout", nil))

@@ -15,9 +15,9 @@ func TestRecoveryHTTPWorkflowAndRefusedInputPreserved(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recovery lifecycle")
 	id := seedRecoverable(t, s, headID, "PR-REC-HTTP", "icd", "Beacon Infra", "2026-06-30", "2026-02-01", 700000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	path := fmt.Sprintf("/recoverables/%d", id)
-	body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	body := s.get(path)
 	if !strings.Contains(body, "Record recovery") {
 		t.Fatal("missing recovery form")
 	}
@@ -25,7 +25,7 @@ func TestRecoveryHTTPWorkflowAndRefusedInputPreserved(t *testing.T) {
 	resp := s.postForm(path+"/events", fields)
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
-	body = responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	body = s.get(path)
 	for _, want := range []string{"₹5,000", "₹2,000", "UTR-2000", "2026-02-02", "Bank statement February row 42"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("detail missing %q", want)
@@ -41,7 +41,7 @@ func TestRecoveryHTTPWorkflowAndRefusedInputPreserved(t *testing.T) {
 			t.Fatalf("refused form missing %q", want)
 		}
 	}
-	csv := responseBody(t, s.request(http.MethodGet, "/recoverables/list.csv", nil, ""))
+	csv := s.get("/recoverables/list.csv")
 	if !strings.Contains(csv, "5000.00,7000.00,2000.00") {
 		t.Fatalf("CSV balance columns %s", csv)
 	}
@@ -75,7 +75,7 @@ func TestRecoveryHTTPPermissionScopeAndCSRF(t *testing.T) {
 	}
 	s.login("recover-read@example.test", "ScopedPassword123")
 	path := fmt.Sprintf("/recoverables/%d", id)
-	body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	body := s.get(path)
 	if strings.Contains(body, `id="record-recovery"`) {
 		t.Fatal("read-only user offered record form")
 	}
@@ -106,12 +106,12 @@ func TestRecoveryHTTPPermissionScopeAndCSRF(t *testing.T) {
 
 func TestRecoverableMobileFiltersExposeApplyResetAndSelectedState(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	cats, err := s.st.ListRecoverableCategories(s.ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := responseBody(t, s.request(http.MethodGet, "/recoverables/list?category="+strconv.FormatInt(cats[0].ID, 10)+"&ageing=overdue", nil, ""))
+	body := s.get("/recoverables/list?category=" + strconv.FormatInt(cats[0].ID, 10) + "&ageing=overdue")
 	start := strings.Index(body, `class="m-only recovery-filters"`)
 	if start < 0 {
 		t.Fatal("missing mobile filters")

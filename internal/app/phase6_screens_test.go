@@ -18,16 +18,13 @@ import (
 func TestEveryListScreenRestacksOnMobile(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Phase6")
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if _, err := s.st.CreatePayment(s.ctx, admin, store.PaymentInput{
 		HeadID: headID, PaidOn: "2026-07-05", Amount: 250000, VendorPayee: "Phase Six Vendor",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	for _, route := range []string{
 		"/payments", "/months", "/reports/monthly", "/audit", "/backups",
@@ -50,8 +47,8 @@ func TestEveryListScreenRestacksOnMobile(t *testing.T) {
 func TestVarianceGridHasAMobileAccordion(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedHead("Phase6Grid")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
+	s.loginAdmin()
+	body := s.get("/grid")
 	for _, want := range []string{`class="acc m-only"`, "acc-item", "acc-head", "acc-body", "ah-main", "ah-amt", "hr-figs"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("variance grid missing mobile accordion markup %q", want)
@@ -67,7 +64,7 @@ func TestVarianceGridHasAMobileAccordion(t *testing.T) {
 // that just failed. It renders chrome-less, like login.
 func TestErrorPageRendersWithoutChrome(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.request(http.MethodGet, "/definitely-not-a-route", nil, "")
 	requireStatus(t, resp, http.StatusNotFound)
 	body := responseBody(t, resp)
@@ -85,13 +82,13 @@ func TestErrorPageRendersWithoutChrome(t *testing.T) {
 // that can be empty offers the next step.
 func TestEmptyStatesOfferAnAction(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, tc := range []struct{ route, want string }{
 		{"/payments?month=2099-01", "/payments/new"},
 		{"/reports/heads?from=2099-01&to=2099-01", "/budgets"},
 		{"/budgets?month=2099-01", "empty"},
 	} {
-		body := responseBody(t, s.request(http.MethodGet, tc.route, nil, ""))
+		body := s.get(tc.route)
 		if !strings.Contains(body, `class="empty"`) {
 			t.Fatalf("%s has no empty state at all", tc.route)
 		}

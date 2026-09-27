@@ -41,7 +41,7 @@ func TestWorkflowActionsThatUsedToNotifyNobodyNowFire(t *testing.T) {
 
 	// Re-raise: fired for the NEW request, which is the one that needs deciding.
 	rejected := s.seedPendingRequest(902, requester.ID, admin.ID, headID, 130000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reject", rejected),
 		url.Values{"reason": {"Wrong head"}}), http.StatusSeeOther)
 	s.login("firer@example.test", "FirePass12345")
@@ -54,7 +54,7 @@ func TestWorkflowActionsThatUsedToNotifyNobodyNowFire(t *testing.T) {
 	// Hold then unhold: request_on_hold already told the requester the pause
 	// began; request_unheld is the half that says it is over.
 	held := s.seedApprovedRequest(903, requester.ID, admin.ID, headID, 140000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", held),
 		url.Values{"reason": {"Which cost centre?"}}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", held), url.Values{}), http.StatusSeeOther)
@@ -77,7 +77,7 @@ func TestWorkflowActionsThatUsedToNotifyNobodyNowFire(t *testing.T) {
 	reassigned := s.seedApprovedRequest(905, requester.ID, admin.ID, headID, 160000)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reassigned), url.Values{}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reassigned),
-		url.Values{"to_user_id": {itoa64(colleague.ID)}, "reason": {"Off sick"}, "confirm": {"on"}}), http.StatusSeeOther)
+		url.Values{"to_user_id": {strconvFormat(colleague.ID)}, "reason": {"Off sick"}, "confirm": {"on"}}), http.StatusSeeOther)
 	if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventReservationReassigned) {
 		t.Error("reassigning a reservation tells the requester nothing")
 	}
@@ -92,7 +92,7 @@ func TestPartialAndCancellationDecisionsFire(t *testing.T) {
 	requester := s.seedRequester("decided@example.test", "Decided Requester", "DecidePass1234")
 
 	// Accept a partial: the requester learns the balance is never coming.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	accepted := s.seedApprovedRequest(911, requester.ID, admin.ID, headID, 10000000)
 	s.seedPartialReview(accepted, headID, "Bank deducted charges")
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", accepted),
@@ -125,7 +125,7 @@ func TestPartialAndCancellationDecisionsFire(t *testing.T) {
 		s.login("decided@example.test", "DecidePass1234")
 		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel-request", id),
 			url.Values{"reason": {"Order withdrawn"}}), http.StatusSeeOther)
-		s.login(s.cfg.AdminEmail, testAdminPassword)
+		s.loginAdmin()
 		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancellation", id),
 			url.Values{"decision": {tc.decision}, "note": {"Decided"}}), http.StatusSeeOther)
 		if !hasEvent(notificationTitles(t, s, requester.ID), tc.event) {
@@ -144,15 +144,15 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	requester := s.seedRequester("saver@example.test", "Save Requester", "SavePass12345")
 	id := s.seedPendingRequest(921, requester.ID, admin.ID, headID, 180000)
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", id),
 		url.Values{"comment": {"Add the GST breakup"}}), http.StatusSeeOther)
 
 	edit := url.Values{"type": {"reimbursement"}, "treatment": {"budget"},
-		"short_title": {"Site visit"}, "project_id": {itoa64(projectOf(t, s, headID))},
-		"head_id": {itoa64(headID)}, "amount": {"1,900.00"},
+		"short_title": {"Site visit"}, "project_id": {strconvFormat(projectOf(t, s, headID))},
+		"head_id": {strconvFormat(headID)}, "amount": {"1,900.00"},
 		"purpose":      {"flights and cabs, with the GST split out"},
-		"expense_date": {"2026-07-01"}, "manager_id": {itoa64(admin.ID)}}
+		"expense_date": {"2026-07-01"}, "manager_id": {strconvFormat(admin.ID)}}
 
 	s.login("saver@example.test", "SavePass12345")
 	saveOnly := edit
@@ -189,7 +189,7 @@ func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 		url.Values{"comment": {"Add GST split"}}), http.StatusSeeOther)
 
 	s.login("fulledit@example.test", "FullEdit12345")
-	page := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	page := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	// The same button also follows the approver select (rbac-10), so the
 	// markup carries both: the resubmit action and the follow-select hooks.
 	button := `<button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}" name="submit_action" value="resubmit">Save and notify Apra Approver</button>`
@@ -199,10 +199,10 @@ func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 	// Post exactly what that form sends: its fields plus the button's value.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"},
-		"short_title": {"Site visit"}, "project_id": {itoa64(projectOf(t, s, headID))},
-		"head_id": {itoa64(headID)}, "amount": {"1,800.00"},
+		"short_title": {"Site visit"}, "project_id": {strconvFormat(projectOf(t, s, headID))},
+		"head_id": {strconvFormat(headID)}, "amount": {"1,800.00"},
 		"purpose":      {"flights and cabs, with the GST split out"},
-		"expense_date": {"2026-07-01"}, "manager_id": {itoa64(approver.ID)},
+		"expense_date": {"2026-07-01"}, "manager_id": {strconvFormat(approver.ID)},
 		"submit_action": {"resubmit"},
 	}), http.StatusSeeOther)
 	var status string
@@ -218,7 +218,7 @@ func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 
 	// Editing a pending request still saves in place: no submit_action there,
 	// and it notifies as TestEditingAPendingRequestReNotifiesTheApprover pins.
-	page = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	page = s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(page, `<button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}">Save and notify Apra Approver</button>`) {
 		t.Fatal("the pending edit form's button changed")
 	}
@@ -244,10 +244,10 @@ func TestEditingAPendingRequestReNotifiesTheApprover(t *testing.T) {
 	s.login("pendingeditor@example.test", "PendingEdit12345")
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"},
-		"short_title": {"Site visit"}, "project_id": {itoa64(projectOf(t, s, headID))},
-		"head_id": {itoa64(headID)}, "amount": {"2,400.00"},
+		"short_title": {"Site visit"}, "project_id": {strconvFormat(projectOf(t, s, headID))},
+		"head_id": {strconvFormat(headID)}, "amount": {"2,400.00"},
 		"purpose":      {"flights, cabs and a second night's hotel"},
-		"expense_date": {"2026-07-01"}, "manager_id": {itoa64(approver.ID)},
+		"expense_date": {"2026-07-01"}, "manager_id": {strconvFormat(approver.ID)},
 	}), http.StatusSeeOther)
 
 	var status string
@@ -278,9 +278,9 @@ func TestARefusedResubmitLeavesNothingWritten(t *testing.T) {
 	s.login("atomic@example.test", "AtomicPass1234")
 	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Site visit"},
-		"project_id": {itoa64(projectOf(t, s, headID))}, "head_id": {itoa64(headID)},
+		"project_id": {strconvFormat(projectOf(t, s, headID))}, "head_id": {strconvFormat(headID)},
 		"amount": {"31,000.00"}, "purpose": {"flights and cabs"},
-		"expense_date": {"2026-07-01"}, "manager_id": {itoa64(admin.ID)},
+		"expense_date": {"2026-07-01"}, "manager_id": {strconvFormat(admin.ID)},
 		"submit_action": {"resubmit"},
 	})
 	requireStatus(t, resp, http.StatusBadRequest)
@@ -356,11 +356,11 @@ func TestRecoverablesRegisterAppliesTheRequestDataScope(t *testing.T) {
 	// The control: the same caller is refused the request itself.
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""), http.StatusNotFound)
 
-	list := responseBody(t, s.request(http.MethodGet, "/recoverables/list", nil, ""))
+	list := s.get("/recoverables/list")
 	if strings.Contains(list, "Kalyani Steels") {
 		t.Fatal("the register lists a recoverable this caller is refused on /requests/{id}")
 	}
-	csv := responseBody(t, s.request(http.MethodGet, "/recoverables/list.csv", nil, ""))
+	csv := s.get("/recoverables/list.csv")
 	for _, leak := range []string{"Kalyani Steels", "Other Requester"} {
 		if strings.Contains(csv, leak) {
 			t.Fatalf("the CSV discloses %q to a caller outside its data scope", leak)
@@ -369,8 +369,8 @@ func TestRecoverablesRegisterAppliesTheRequestDataScope(t *testing.T) {
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", id), nil, ""), http.StatusNotFound)
 
 	// And an administrator, who holds request=all, still sees everything.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	if body := responseBody(t, s.request(http.MethodGet, "/recoverables/list", nil, "")); !strings.Contains(body, "Kalyani Steels") {
+	s.loginAdmin()
+	if body := s.get("/recoverables/list"); !strings.Contains(body, "Kalyani Steels") {
 		t.Fatal("the scope filter hides a row from a caller who holds request=all")
 	}
 }
@@ -384,8 +384,8 @@ func TestRecoverablesRegisterShowsEveryColumnItsCSVExports(t *testing.T) {
 	requester := s.seedRequester("columns@example.test", "Column Requester", "ColumnPass1234")
 	s.seedRecoverableRequest(961, requester.ID, admin.ID, "icd", "Parity Counterparty", 400000)
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/recoverables/list", nil, ""))
+	s.loginAdmin()
+	body := s.get("/recoverables/list")
 	for _, want := range []string{">Status<", ">Requester<", ">Repayment notes<", "Column Requester"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the register does not carry %q, which its own CSV exports", want)
@@ -400,7 +400,7 @@ func TestRecoverablesRegisterShowsEveryColumnItsCSVExports(t *testing.T) {
 func TestCSVExportsCarryNumbersAndTheLevelTheyWereAskedFor(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Numeric CSV")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	s.settleOneRequest(971, headID, 150000, "1,500.00", "settled", "2026-04-15")
 
 	for _, path := range []string{"/export.csv?month=2026-04", "/reports/ytd.csv?from=2026-04&to=2026-04", "/requests/export.csv?bucket=all"} {
@@ -420,8 +420,8 @@ func TestCSVExportsCarryNumbersAndTheLevelTheyWereAskedFor(t *testing.T) {
 
 	// The level is a parameter, and an unknown one falls back to heads rather
 	// than reaching store.Report with a mode it does not know.
-	monthly := responseBody(t, s.request(http.MethodGet, "/reports/ytd.csv?from=2026-04&to=2026-04&level=monthly", nil, ""))
-	heads := responseBody(t, s.request(http.MethodGet, "/reports/ytd.csv?from=2026-04&to=2026-04&level=heads", nil, ""))
+	monthly := s.get("/reports/ytd.csv?from=2026-04&to=2026-04&level=monthly")
+	heads := s.get("/reports/ytd.csv?from=2026-04&to=2026-04&level=heads")
 	if monthly == heads {
 		t.Fatal("?level= changes nothing, so the export cannot be the tab it was pressed from")
 	}
@@ -437,7 +437,7 @@ func TestRequestsListAndItsExportDescribeTheSameSet(t *testing.T) {
 	requester := s.seedRequester("statuses@example.test", "Status Requester", "StatusPass1234")
 	pending := s.seedPendingRequest(981, requester.ID, admin.ID, headID, 100000)
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	number := fmt.Sprintf("PR-2026-%06d", 981)
 	// No bucket at all, which is where the defect lived: the screen's own default
 	// bucket used to swallow the status.
@@ -445,13 +445,13 @@ func TestRequestsListAndItsExportDescribeTheSameSet(t *testing.T) {
 		"/requests?status=rejected", "/requests?bucket=all&status=rejected",
 		"/requests/export.csv?status=rejected", "/requests/export.csv?bucket=all&status=rejected",
 	} {
-		if strings.Contains(responseBody(t, s.request(http.MethodGet, path, nil, "")), number) {
+		if strings.Contains(s.get(path), number) {
 			t.Fatalf("%s lists a pending request, so ?status= is being ignored", path)
 		}
 	}
 	// Bare, both default to the open bucket and both find the pending request.
-	screen := responseBody(t, s.request(http.MethodGet, "/requests", nil, ""))
-	bare := responseBody(t, s.request(http.MethodGet, "/requests/export.csv", nil, ""))
+	screen := s.get("/requests")
+	bare := s.get("/requests/export.csv")
 	if !strings.Contains(screen, number) || !strings.Contains(bare, number) {
 		t.Fatal("the screen and its export no longer share a default bucket")
 	}
@@ -471,7 +471,7 @@ func TestTheRequestsListNeverTruncatesInSilence(t *testing.T) {
 	}
 
 	s.login("bulk@example.test", "BulkPass12345")
-	body := responseBody(t, s.request(http.MethodGet, "/requests?bucket=all", nil, ""))
+	body := s.get("/requests?bucket=all")
 	if !strings.Contains(body, fmt.Sprintf("200 of %d shown", total)) {
 		t.Fatalf("the list does not admit what it is not showing: %s", firstLines(body))
 	}
@@ -479,7 +479,7 @@ func TestTheRequestsListNeverTruncatesInSilence(t *testing.T) {
 		t.Fatal("the remaining rows are unreachable: no next page link")
 	}
 
-	csv := responseBody(t, s.request(http.MethodGet, "/requests/export.csv?bucket=all", nil, ""))
+	csv := s.get("/requests/export.csv?bucket=all")
 	rows := strings.Count(strings.TrimSpace(csv), "\n") // one header + one per row
 	if rows != total {
 		t.Fatalf("the export carries %d data rows, want every one of %d", rows, total)
@@ -493,10 +493,7 @@ func TestTheRequestsListNeverTruncatesInSilence(t *testing.T) {
 // silently rewritten to "emd".
 func TestRecoverableCategoryPickerRendersTheLiveCategories(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if _, err := s.st.UpsertRecoverableCategory(s.ctx, admin, 0, "Retention money", true, false, true, 9); err != nil {
 		t.Fatal(err)
 	}
@@ -518,11 +515,11 @@ func TestRecoverableCategoryPickerRendersTheLiveCategories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	// The picker lives on the deposit-or-guarantee form since form-1: an employee
 	// advance is always in the Employee advance category, so that form states
 	// its category rather than offering the list.
-	body := responseBody(t, s.request(http.MethodGet, "/requests/new?type=recoverable", nil, ""))
+	body := s.get("/requests/new?type=recoverable")
 	if !strings.Contains(body, `value="retention_money"`) {
 		t.Fatalf("an admin-added category is not selectable on the real form: %s", firstLines(body))
 	}
@@ -532,7 +529,7 @@ func TestRecoverableCategoryPickerRendersTheLiveCategories(t *testing.T) {
 	if strings.Contains(body, `value="employee_advance"`) {
 		t.Fatal("the deposit form offers the Employee advance category, which the store refuses for this type")
 	}
-	advance := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	advance := s.get("/requests/new?type=employee_advance")
 	if !strings.Contains(advance, `<input type="hidden" name="recoverable_category" value="employee_advance">`) {
 		t.Fatalf("the employee advance form does not fix its category: %s", firstLines(advance))
 	}
@@ -589,12 +586,12 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", pending),
 		url.Values{"comment": {"Add the invoice"}}), http.StatusSeeOther)
 	reserved := s.seedApprovedRequest(992, requester.ID, admin.ID, headID, 100000)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reserved), url.Values{}), http.StatusSeeOther)
-	stale := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation/stale", reserved), nil, ""))
+	stale := s.get(fmt.Sprintf("/requests/%d/reservation/stale", reserved))
 	if !strings.Contains(stale, "open 3 days") {
 		t.Errorf("the stale banner does not read reminder_stale_days: %s", firstLines(stale))
 	}
@@ -603,7 +600,7 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	}
 	// copy-1: the Configuration note under these same three fields still said
 	// "calendar days" after decision 2 made the thresholds elapsed days.
-	config := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	config := s.get("/configuration")
 	if strings.Contains(config, "calendar day") {
 		t.Error("the Configuration reminders note still says calendar days")
 	}
@@ -612,11 +609,11 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	}
 
 	s.login("copy@example.test", "CopyPass12345")
-	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	form := s.get("/requests/new?type=vendor_invoice")
 	if !strings.Contains(form, "nothing happens for 7 days") {
 		t.Errorf("the new-request hint does not read reminder_pending_days: %s", firstLines(form))
 	}
-	returned := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", pending), nil, ""))
+	returned := s.get(fmt.Sprintf("/requests/%d/edit", pending))
 	if !strings.Contains(returned, "7-day reminder clock") {
 		t.Errorf("the correction screen does not read reminder_pending_days: %s", firstLines(returned))
 	}
@@ -642,7 +639,7 @@ func TestARequestCannotBeApprovedIntoALockedMonth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm(fmt.Sprintf("/requests/%d/approve", id), url.Values{"approved_amount": {"1,000.00"}})
 	requireStatus(t, resp, http.StatusConflict)
 	if body := responseBody(t, resp); !strings.Contains(body, "2027-11 is locked") {
@@ -674,13 +671,13 @@ func TestTheLockedMonthFamilyConfirmsItselfAndWarnsInAdvance(t *testing.T) {
 	requester := s.seedRequester("lockui@example.test", "Lock Requester", "LockUIPass1234")
 	month := currentMonthForTest()
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm("/months/"+month+"/lock", url.Values{"reason": {"Audit lock"}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	if loc := resp.Header.Get("Location"); loc != "/grid?month="+month {
 		t.Fatalf("lock redirect = %q, want /grid?month=%s — the dashboard confirms nothing", loc, month)
 	}
-	landing := responseBody(t, s.request(http.MethodGet, resp.Header.Get("Location"), nil, ""))
+	landing := s.get(resp.Header.Get("Location"))
 	if !strings.Contains(landing, "Audit lock") {
 		t.Fatal("the operator is still not shown the lock they just applied")
 	}
@@ -688,7 +685,7 @@ func TestTheLockedMonthFamilyConfirmsItselfAndWarnsInAdvance(t *testing.T) {
 	// The entry screen says so before the accountant types anything.
 	id := s.seedApprovedRequest(997, requester.ID, admin.ID, headID, 100000)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
-	entry := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", id), nil, ""))
+	entry := s.get(fmt.Sprintf("/payments/new?request=%d", id))
 	if !strings.Contains(entry, `class="locked"`) {
 		t.Fatalf("the payment entry screen carries no lock warning: %s", firstLines(entry))
 	}
@@ -712,7 +709,7 @@ func TestPaymentLockStatusFollowsTheDateField(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	fragment := func(query string) string {
 		t.Helper()
 		resp := s.request(http.MethodGet, "/payments/lock-status"+query, nil, "")
@@ -755,7 +752,7 @@ func TestTheConflictScreenNamesTheRealRefusal(t *testing.T) {
 	admin, headID := s.seedHead("Conflict causes")
 	requester := s.seedRequester("conflict@example.test", "Conflict Requester", "ConflictPass123")
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	held := s.seedApprovedRequest(998, requester.ID, admin.ID, headID, 100000)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", held),
 		url.Values{"reason": {"Which cost centre is this?"}}), http.StatusSeeOther)
@@ -801,7 +798,7 @@ func TestDashboardAreasAgreeWithTheQueuesTheyLinkTo(t *testing.T) {
 	// which includes returned.
 	pending := s.seedPendingRequest(1301, requester.ID, admin.ID, headID, 100000)
 	returned := s.seedPendingRequest(1302, requester.ID, admin.ID, headID, 110000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", returned),
 		url.Values{"comment": {"Add the invoice"}}), http.StatusSeeOther)
 	_ = pending
@@ -823,14 +820,14 @@ func TestDashboardAreasAgreeWithTheQueuesTheyLinkTo(t *testing.T) {
 		[]store.Grant{{Resource: "payment", Action: "process"}, {Resource: "request", Action: "view"}},
 		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
 	s.login("processor@example.test", "ProcessorPass12")
-	body := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	body := s.get("/")
 	if strings.Contains(body, fmt.Sprintf("PR-2026-%06d", 1303)) {
 		t.Fatal("the dashboard lists an approved request the caller cannot open")
 	}
 	_ = visible
 
 	// With a hold placed, the tile drops exactly as the queue's metric does.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	before := dashboardTile(t, s, "Approved, unclaimed")
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", visible),
 		url.Values{"reason": {"Waiting on a reply"}}), http.StatusSeeOther)
@@ -877,14 +874,14 @@ func TestRequestDocumentsLinkToTheirOwnRoute(t *testing.T) {
 
 	s.login("docs@example.test", "DocPass12345")
 	want := fmt.Sprintf(`href="/requests/%d/attachments/%d"`, id, attID)
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
 	if !strings.Contains(detail, want) {
 		t.Fatalf("the request detail does not link a document to its own route: %s", firstLines(detail))
 	}
 	if strings.Contains(detail, fmt.Sprintf(`href="/attachments/%d"`, attID)) {
 		t.Fatal("the request detail still points a request document at the payment attachment route")
 	}
-	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(edit, want) {
 		t.Fatal("the correction screen lists a document with no way to open it")
 	}
@@ -902,10 +899,7 @@ func TestRequestDocumentsLinkToTheirOwnRoute(t *testing.T) {
 // option of its own and that row's Save moved it.
 func TestHeadRowsOfferTheirOwnRetiredProject(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	_ = admin
 	retiredID, err := s.st.UpsertProject(s.ctx, 0, "Retired Programme", true, 5)
 	if err != nil {
@@ -919,8 +913,8 @@ func TestHeadRowsOfferTheirOwnRetiredProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/heads", nil, ""))
+	s.loginAdmin()
+	body := s.get("/heads")
 	want := fmt.Sprintf(`<option value="%d" selected>Retired Programme (retired)</option>`, retiredID)
 	if !strings.Contains(body, want) {
 		t.Fatalf("the row offers no option for the head's own retired project: %s", firstLines(body))
@@ -928,13 +922,10 @@ func TestHeadRowsOfferTheirOwnRetiredProject(t *testing.T) {
 
 	// Saving the row unchanged leaves the head where it is.
 	requireStatus(t, s.postForm("/heads", url.Values{
-		"id": {itoa64(headID)}, "project_id": {itoa64(retiredID)},
+		"id": {strconvFormat(headID)}, "project_id": {strconvFormat(retiredID)},
 		"name": {"Stranded head"}, "due_day": {"5"}, "active": {"on"}, "sort_order": {"1"},
 	}), http.StatusSeeOther)
-	var got int64
-	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&got); err != nil {
-		t.Fatal(err)
-	}
+	got := projectOf(t, s, headID)
 	if got != retiredID {
 		t.Fatalf("project_id = %d after an unchanged Save, want %d", got, retiredID)
 	}
@@ -948,9 +939,9 @@ func TestHeadRowsOfferTheirOwnRetiredProject(t *testing.T) {
 // F-F-05 — the notification centre had no desktop entry point.
 func TestScreensThatWereUnusableAsRendered(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	rules := responseBody(t, s.request(http.MethodGet, "/admin/notifications", nil, ""))
+	rules := s.get("/admin/notifications")
 	sheets := strings.Count(rules, `<div class="overlay" id="ev-`)
 	hidden := strings.Count(rules, `<div class="overlay" id="ev-`) - strings.Count(rules, `<div class="overlay" id="ev-{{`)
 	if sheets == 0 {
@@ -965,14 +956,14 @@ func TestScreensThatWereUnusableAsRendered(t *testing.T) {
 		}
 	}
 
-	audit := responseBody(t, s.request(http.MethodGet, "/audit", nil, ""))
+	audit := s.get("/audit")
 	for _, want := range []string{`value="payment_request"`, `value="approve"`, `value="settle"`, `value="reassign"`} {
 		if !strings.Contains(audit, want) {
 			t.Errorf("the audit filters cannot ask for %s", want)
 		}
 	}
 
-	queue := responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	queue := s.get("/accounts-queue")
 	if !strings.Contains(queue, `<form class="toolbar" method="get" action="/accounts-queue">`) {
 		t.Error("the Accounts queue still ships only the mobile filter form")
 	}
@@ -980,7 +971,7 @@ func TestScreensThatWereUnusableAsRendered(t *testing.T) {
 		t.Error("the desktop search input is gone")
 	}
 
-	dash := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	dash := s.get("/")
 	if !strings.Contains(dash, `class="sidebar"`) || !strings.Contains(dash, `href="/notifications"`) {
 		t.Error("the sidebar has no entry point to the notification centre")
 	}
@@ -996,8 +987,8 @@ func TestTheTwoDeclaredWorkQueueBadgesArePopulated(t *testing.T) {
 	s.seedPendingRequest(1501, requester.ID, admin.ID, headID, 100000)
 	s.seedApprovedRequest(1502, requester.ID, admin.ID, headID, 110000)
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	s.loginAdmin()
+	body := s.get("/")
 	for _, want := range []string{`href="/approvals"`, `href="/accounts-queue"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the nav item %s is missing", want)
@@ -1013,7 +1004,7 @@ func TestTheTwoDeclaredWorkQueueBadgesArePopulated(t *testing.T) {
 // "validation failed: ", which is not a sentence for a person.
 func TestValidationMessagesLoseTheSentinelPrefix(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm("/heads", url.Values{"project_id": {"0"}, "name": {""}, "due_day": {"5"}})
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
@@ -1030,19 +1021,16 @@ func TestValidationMessagesLoseTheSentinelPrefix(t *testing.T) {
 // about a type the store had accepted seconds earlier, throwing the form away.
 func TestARefusedUnlabelledTypeKeepsItsRealReason(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	approver := seedSecondApprover(t, s)
 	_ = admin
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm("/requests", url.Values{
 		"type": {"recoverable"}, "treatment": {"recoverable"},
 		"recoverable_category": {"pbg"}, "short_title": {"Bank guarantee"},
 		"amount": {"1,00,000.00"}, "purpose": {"guarantee against the tender"},
 		"expected_return_date": {"2027-01-01"}, "repayment_notes": {"Released on completion"},
-		"manager_id": {itoa64(approver)},
+		"manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
@@ -1103,16 +1091,16 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	reqID, vendorID := s.seedVendorRequest(1, admin.ID, admin.ID, headID, 910000, vendorName)
 	// A second request against the same vendor, left pending, so the open count
 	// still has something to count once the first one is paid.
-	projectID := projectOf(t, s, headID)
-	if _, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,project_id,head_id,amount,purpose,short_title,vendor_id,vendor_payee,requester_id,manager_id,submitted_at)
-		VALUES('PR-2026-000002','pending','budget','vendor_invoice',?,?,?,?,?,?,'',?,?,CURRENT_TIMESTAMP)`,
-		projectID, headID, 250000, "Switchgear", "Switchgear", vendorID, admin.ID, admin.ID); err != nil {
-		t.Fatal(err)
-	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.insertRequest(t, map[string]any{
+		"number": requestNumber(2), "status": "pending", "treatment": "budget", "type": "vendor_invoice",
+		"project_id": projectOf(t, s, headID), "head_id": headID, "amount": 250000,
+		"purpose": "Switchgear", "short_title": "Switchgear", "vendor_id": vendorID, "vendor_payee": "",
+		"requester_id": admin.ID, "manager_id": admin.ID, "submitted_at": sqlNow,
+	})
+	s.loginAdmin()
 
 	// Before any payment: two open requests, nothing paid.
-	body := responseBody(t, s.request(http.MethodGet, "/vendors", nil, ""))
+	body := s.get("/vendors")
 	if got := tableCell(t, body, vendorName, "Open requests"); got != "2" {
 		t.Fatalf("Open requests = %q before settlement, want 2", got)
 	}
@@ -1124,7 +1112,7 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	// payments.vendor_id from the request.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	settle := url.Values{
-		"request_id": {itoa64(reqID)}, "head_id": {itoa64(headID)},
+		"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
 		"paid_on": {time.Now().Format("2006-01-02")}, "amount": {"9100.00"},
 		"settlement": {"settled"}, "reference_no": {"VENDOR-TOTALS-REF"},
 	}
@@ -1132,7 +1120,7 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 
-	body = responseBody(t, s.request(http.MethodGet, "/vendors", nil, ""))
+	body = s.get("/vendors")
 	if got := tableCell(t, body, vendorName, "Paid this year"); got != "₹9,100.00" {
 		t.Fatalf("Paid this year = %q after settlement, want ₹9,100.00", got)
 	}
@@ -1151,13 +1139,13 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	// F-G-009 itself: rename the vendor, touch no payment, and the money stays
 	// with it. Under the old payee-text join this cell became ₹0.00.
 	const renamed = "Sundaram Electricals and Controls Pvt Ltd"
-	resp = s.postForm("/vendors/"+itoa64(vendorID), url.Values{
+	resp = s.postForm("/vendors/"+strconvFormat(vendorID), url.Values{
 		"name": {renamed}, "vendor_type": {"company"}, "status": {"active"},
 	})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 
-	body = responseBody(t, s.request(http.MethodGet, "/vendors", nil, ""))
+	body = s.get("/vendors")
 	if strings.Contains(body, vendorName) {
 		t.Fatal("the rename did not apply")
 	}
@@ -1171,7 +1159,7 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	// The detail screen renders neither figure, so there is no second place
 	// quietly showing a zero: Vendor() does not compute them and nothing on the
 	// record page claims to.
-	detail := responseBody(t, s.request(http.MethodGet, "/vendors/"+itoa64(vendorID), nil, ""))
+	detail := s.get("/vendors/" + strconvFormat(vendorID))
 	for _, banned := range []string{"Paid this year", "Open requests"} {
 		if strings.Contains(detail, banned) {
 			t.Fatalf("the vendor detail screen renders %q, which Vendor() never fills in", banned)
@@ -1185,14 +1173,11 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 // than reporting a permission problem the caller does not have.
 func TestRecoverableCategoryDeleteHasADoorAndNamesItsRefusal(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	admin := s.admin()
+	s.loginAdmin()
 
 	// The control exists, in its own form, on the row.
-	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	body := s.get("/configuration")
 	if !strings.Contains(body, `action="/configuration/recoverable-categories/`) {
 		t.Fatalf("the Configuration screen offers no delete control: %s", firstLines(body))
 	}
@@ -1251,7 +1236,7 @@ func TestRecoverableCategoryDeleteHasADoorAndNamesItsRefusal(t *testing.T) {
 	})
 	editor := newAppTestClient(t, s)
 	editor.login("cat-editor@example.test", "CatEditorPass1234")
-	screen := responseBody(t, editor.request(http.MethodGet, "/configuration", nil, ""))
+	screen := editor.get("/configuration")
 	if strings.Contains(screen, "/delete") {
 		t.Fatal("a caller without recoverable_category:delete is offered the control")
 	}
@@ -1279,18 +1264,15 @@ func recoverableCategoryID(t *testing.T, s *appTestServer, name string) int64 {
 // total the list could not account for and nothing said which rows were missing.
 func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	const total = 105
 	for i := 1; i <= total; i++ {
 		seedNotification(t, s, admin.ID, "request_approved", "activity",
 			fmt.Sprintf("Notice %03d", i), fmt.Sprintf("/requests/%d", i))
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	first := responseBody(t, s.request(http.MethodGet, "/notifications", nil, ""))
+	first := s.get("/notifications")
 	if n := strings.Count(first, `<a class="notif`); n != notificationPageSize {
 		t.Fatalf("the first page drew %d rows, want %d", n, notificationPageSize)
 	}
@@ -1312,7 +1294,7 @@ func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
 		t.Fatal("the first page is not the newest 100")
 	}
 
-	rest := responseBody(t, s.request(http.MethodGet, "/notifications?scope=all&offset=100", nil, ""))
+	rest := s.get("/notifications?scope=all&offset=100")
 	if n := strings.Count(rest, `<a class="notif`); n != 5 {
 		t.Fatalf("the second page drew %d rows, want 5", n)
 	}
@@ -1327,7 +1309,7 @@ func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
 	// The scope rides along, so a page boundary never widens the filter. Every
 	// row seeded here is activity, so mentions has none of them and says so
 	// without a pager at all.
-	mentions := responseBody(t, s.request(http.MethodGet, "/notifications?scope=mentions", nil, ""))
+	mentions := s.get("/notifications?scope=mentions")
 	if strings.Contains(mentions, "Showing ") {
 		t.Fatalf("an uncapped list rendered a pager: %s", firstLines(mentions))
 	}
@@ -1341,7 +1323,7 @@ func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
 // naming nothing is still a 400 on the chooser with the reason above it.
 func TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	// No ?type= at all is step 1 of 2, unchanged and not an error.
 	chooser := s.request(http.MethodGet, "/requests/new", nil, "")
@@ -1415,7 +1397,7 @@ func TestReassignmentAndOutrightCancellationNotifyTheirSubject(t *testing.T) {
 	s.assignRole(second.ID, "Manager")
 
 	id := s.seedPendingRequest(931, requester.ID, admin.ID, headID, 140000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", id), url.Values{
 		"manager_id": {fmt.Sprint(second.ID)},
 		"reason":     {"Original approver is on leave"},

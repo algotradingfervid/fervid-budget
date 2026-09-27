@@ -31,7 +31,7 @@ func TestLongAttachmentNamesSurviveCreateEditAndDownload(t *testing.T) {
 		if i > 0 {
 			path = fmt.Sprintf("/requests/%d/edit", id)
 			fields.Set("short_title", "Unicode filename correction")
-			fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, ""))))
+			fields.Set("revision", requestRevisionFromPage(t, s.get(path)))
 		}
 		body, ct := attachmentMultipart(t, fields, name, pdf)
 		response := s.request(http.MethodPost, path, body, ct)
@@ -84,7 +84,7 @@ func TestLongAttachmentNamesSurviveCreateEditAndDownload(t *testing.T) {
 	}
 	// A rejected edit must remove its validly staged long-name file as well.
 	fields.Set("purpose", "")
-	fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))))
+	fields.Set("revision", requestRevisionFromPage(t, s.get(fmt.Sprintf("/requests/%d/edit", id))))
 	body, ct := attachmentMultipart(t, fields, names[0], pdf)
 	response := s.request(http.MethodPost, fmt.Sprintf("/requests/%d/edit", id), body, ct)
 	requireStatus(t, response, http.StatusBadRequest)

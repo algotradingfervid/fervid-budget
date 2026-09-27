@@ -9,7 +9,7 @@ import (
 
 func TestAdminDefaultApproversFilterAndRejectIneligibleWithLegacyGuidance(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	admin, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	requester := s.seedRoleUser("default.employee@qa.test", "Default Employee", "DefaultEmployee123", "Requester")
 	invalid := s.seedRoleUser("invalid.approver@qa.test", "Not An Approver", "InvalidApprover123", "Requester")
@@ -54,7 +54,7 @@ func TestAdminDefaultApproversFilterAndRejectIneligibleWithLegacyGuidance(t *tes
 
 func TestDuplicateUserEmailIsSpecificAndRetainsCreateForm(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	existing := s.seedRoleUser("duplicate.email@qa.test", "Existing Person", "ExistingPassword123", "Requester")
 	roles, _ := s.st.UserRoles(s.ctx, existing.ID)
 	form := url.Values{"name": {"Different Person"}, "email": {" DUPLICATE.EMAIL@QA.TEST "}, "active": {"on"}, "password": {"DuplicatePassword123"}, "role_ids": {strconvFormat(roles[0].ID)}}
@@ -77,7 +77,7 @@ func TestDuplicateUserEmailIsSpecificAndRetainsCreateForm(t *testing.T) {
 
 func TestInvalidNotificationRecipientsKeepDrawerAndInput(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	before, _ := s.st.NotificationSetting(s.ctx, "request_submitted")
 	for _, tc := range []struct{ field, value, label string }{{"to_recipients", "not-an-email", "Always also send To"}, {"cc_recipients", "valid@example.test, broken", "Always copy (Cc)"}} {
 		form := url.Values{"include_manager": {"on"}, "subject_template": {"Retain my edited subject"}, "body_template": {"Body {{number}}"}, tc.field: {tc.value}}

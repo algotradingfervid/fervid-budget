@@ -94,7 +94,7 @@ func TestReverifyPasswordResetValidationPreservesLinkAndSession(t *testing.T) {
 	if err := s.st.CreatePasswordReset(s.ctx, actor.ID, resetHash(token), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	tooLong := strings.Repeat("界", 24) + "A1"
 	bad := s.postForm("/login/reset", url.Values{"token": {token}, "password": {tooLong}, "confirm_password": {tooLong}})
 	requireStatus(t, bad, 422)

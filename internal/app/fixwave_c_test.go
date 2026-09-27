@@ -26,14 +26,14 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 	s.login("rhea@example.test", "RheaPass12345")
 
 	// Step 1: the chooser offers the deposit as a card of its own.
-	chooser := responseBody(t, s.request(http.MethodGet, "/requests/new", nil, ""))
+	chooser := s.get("/requests/new")
 	if !strings.Contains(chooser, `href="/requests/new?type=recoverable"`) || !strings.Contains(chooser, "Deposit or guarantee") {
 		t.Fatalf("the chooser has no card for a deposit or guarantee: %s", firstLines(chooser))
 	}
 
 	// Step 2: its form fixes the recoverable treatment, offers every category
 	// except Employee advance, and asks who is paid.
-	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=recoverable", nil, ""))
+	form := s.get("/requests/new?type=recoverable")
 	for _, want := range []string{
 		`<input type="hidden" name="treatment" value="recoverable">`,
 		`id="rcategory"`, `value="emd"`, `value="icd"`, `value="security_deposit"`,
@@ -56,7 +56,7 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 		"short_title": {"ICD to Meridian"}, "amount": {"10,00,000"}, "purpose": {"inter-corporate deposit"},
 		"counterparty": {"Meridian Holdings Pvt Ltd"}, "vendor_payee": {"Meridian Holdings Pvt Ltd"},
 		"expected_return_date": {"2027-03-31"}, "repayment_notes": {"returned at maturity with interest"},
-		"manager_id": {itoa64(approver)},
+		"manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, resp, http.StatusSeeOther)
 	loc := resp.Header.Get("Location")
@@ -65,7 +65,7 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 	if _, err := fmt.Sscanf(loc, "/requests/%d/submitted", &id); err != nil {
 		t.Fatalf("redirected to %q, want the submitted screen", loc)
 	}
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
 	if !strings.Contains(detail, "Deposit or guarantee") {
 		t.Fatalf("the request is not labelled as a deposit: %s", firstLines(detail))
 	}
@@ -86,7 +86,7 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 		"type": {"recoverable"}, "treatment": {"recoverable"}, "recoverable_category": {"emd"},
 		"short_title": {"Ridge Metro EMD"}, "amount": {"2,50,000"}, "purpose": {"tender"},
 		"project_id": {"1"}, "expected_return_date": {"2027-03-31"}, "repayment_notes": {"on award"},
-		"manager_id": {itoa64(approver)},
+		"manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, refused, http.StatusBadRequest)
 	if body := responseBody(t, refused); !strings.Contains(body, "say who receives the money") || !strings.Contains(body, `value="Ridge Metro EMD"`) {
@@ -95,7 +95,7 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 
 	// The employee advance states its category rather than offering the list,
 	// and the store refuses any other category under that type.
-	advance := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	advance := s.get("/requests/new?type=employee_advance")
 	if !strings.Contains(advance, `<input type="hidden" name="recoverable_category" value="employee_advance">`) || strings.Contains(advance, `id="rcategory"`) {
 		t.Fatalf("the employee advance form still lets the requester pick a deposit category: %s", firstLines(advance))
 	}
@@ -107,7 +107,7 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 		"short_title": {"ICD as an advance"}, "amount": {"10,00,000"}, "purpose": {"deposit"},
 		"advance_reason": {"deposit"}, "counterparty": {"Meridian Holdings Pvt Ltd"},
 		"expected_return_date": {"2027-03-31"}, "repayment_notes": {"at maturity"},
-		"manager_id": {itoa64(approver)},
+		"manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, forged, http.StatusBadRequest)
 	if body := responseBody(t, forged); !strings.Contains(body, "Employee advance category") {
@@ -122,10 +122,7 @@ func TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen(t *testing.T) {
 	_, headID := s.seedHead("Ridge")
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
 	approver := seedSecondApprover(t, s)
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{
 		Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
 		RecoverableCategory: "emd", ProjectID: projectID, Amount: 25000000, Purpose: "tender",
@@ -136,16 +133,16 @@ func TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.login("rhea@example.test", "RheaPass12345")
-	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(edit, `name="vendor_payee" value="Ridge Metro Rail Corporation"`) {
 		t.Fatalf("the edit form does not carry the deposit's payee: %s", firstLines(edit))
 	}
 	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"recoverable"}, "treatment": {"recoverable"}, "recoverable_category": {"emd"},
 		"short_title": {"Ridge Metro EMD"}, "amount": {"2,50,000"}, "purpose": {"tender, corrected"},
-		"project_id": {itoa64(projectID)}, "vendor_payee": {"Ridge Metro Rail Corporation Ltd"},
+		"project_id": {strconvFormat(projectID)}, "vendor_payee": {"Ridge Metro Rail Corporation Ltd"},
 		"expected_return_date": {"2027-03-31"}, "repayment_notes": {"on award"},
-		"manager_id": {itoa64(approver)},
+		"manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
@@ -161,7 +158,7 @@ func TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen(t *testing.T) {
 	if err := s.st.ReturnRequest(s.ctx, mustUser(t, s, approver), id, "attach the tender notice"); err != nil {
 		t.Fatal(err)
 	}
-	returned := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	returned := s.get(fmt.Sprintf("/requests/%d", id))
 	if !strings.Contains(returned, `<input type="hidden" name="vendor_payee" value="Ridge Metro Rail Corporation Ltd">`) {
 		t.Fatalf("the returned screen drops the payee, so a resubmit would be refused: %s", firstLines(returned))
 	}
@@ -174,19 +171,9 @@ func TestLegacyEmployeeAdvanceUnderADepositCategoryStaysEditable(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
 	approver := seedSecondApprover(t, s)
-	var catID int64
-	if err := s.st.DB().QueryRow(`SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&catID); err != nil {
-		t.Fatal(err)
-	}
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,amount,purpose,short_title,advance_reason,counterparty,expected_return_date,repayment_notes,vendor_payee,requester_id,manager_id,submitted_at)
-		VALUES('PR-2026-000900','pending','recoverable','employee_advance','icd',?,100000000,'deposit','ICD to Meridian','deposit','Meridian Holdings Pvt Ltd','2027-03-31','at maturity',?,?,?,CURRENT_TIMESTAMP)`,
-		catID, requester.Name, requester.ID, approver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
+	id := seedLegacyDepositAsEmployeeAdvance(t, s, 900, requester, approver)
 	s.login("rhea@example.test", "RheaPass12345")
-	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(edit, `<input type="hidden" name="recoverable_category" value="employee_advance">`) {
 		t.Fatalf("the legacy row is not offered back as an Employee advance: %s", firstLines(edit))
 	}
@@ -194,7 +181,7 @@ func TestLegacyEmployeeAdvanceUnderADepositCategoryStaysEditable(t *testing.T) {
 		t.Fatalf("the edit form does not explain the reclassification: %s", firstLines(edit))
 	}
 	// And the row itself still reads as it was recorded.
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
 	if !strings.Contains(detail, "ICD — inter-corporate deposit") || !strings.Contains(detail, "Meridian Holdings Pvt Ltd") {
 		t.Fatalf("the legacy row no longer reads as recorded: %s", firstLines(detail))
 	}
@@ -209,10 +196,7 @@ func TestEditFormOffersARetiredProjectBackAndSaysWhy(t *testing.T) {
 	admin, headID := s.seedHead("Legacy")
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
 	approver := seedSecondApprover(t, s)
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{
 		Treatment: "budget", Type: "reimbursement", ShortTitle: "Legacy plant visit",
 		ProjectID: projectID, HeadID: headID, Amount: 120000, Purpose: "Original purpose",
@@ -227,7 +211,7 @@ func TestEditFormOffersARetiredProjectBackAndSaysWhy(t *testing.T) {
 	_ = admin
 
 	s.login("rhea@example.test", "RheaPass12345")
-	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	projectSelect := between(t, edit, `<select id="project"`, `</select>`)
 	if !strings.Contains(projectSelect, fmt.Sprintf(`<option value="%d" selected>Operations Legacy (retired)</option>`, projectID)) {
 		t.Fatalf("the retired project is not offered back, marked and selected: %s", projectSelect)
@@ -244,7 +228,7 @@ func TestEditFormOffersARetiredProjectBackAndSaysWhy(t *testing.T) {
 	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
 		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Legacy plant visit"},
 		"amount": {"1,200"}, "purpose": {"Corrected purpose"}, "expense_date": {"2026-07-01"},
-		"project_id": {itoa64(projectID)}, "head_id": {itoa64(headID)}, "manager_id": {itoa64(approver)},
+		"project_id": {strconvFormat(projectID)}, "head_id": {strconvFormat(headID)}, "manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
@@ -271,17 +255,14 @@ func TestCompulsoryAttachmentsAreEnforcedOnSubmit(t *testing.T) {
 	if err := s.st.SetAppSetting(s.ctx, admin, "require_attachments", "1"); err != nil {
 		t.Fatal(err)
 	}
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	_ = requester
 	s.login("rhea@example.test", "RheaPass12345")
 	body := func(reason string) url.Values {
 		return url.Values{
 			"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Team lunch"},
 			"amount": {"500"}, "purpose": {"team lunch"}, "expense_date": {"2026-07-21"},
-			"project_id": {itoa64(projectID)}, "head_id": {itoa64(headID)}, "manager_id": {itoa64(approver)},
+			"project_id": {strconvFormat(projectID)}, "head_id": {strconvFormat(headID)}, "manager_id": {strconvFormat(approver)},
 			"attachment_exception_reason": {reason},
 		}
 	}
@@ -302,10 +283,7 @@ func TestRetiredProjectIsHiddenFromNewRequestsAndKeptOnHistory(t *testing.T) {
 	_, headID := s.seedHead("Legacy")
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
 	approver := seedSecondApprover(t, s)
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{
 		Treatment: "budget", Type: "reimbursement", ShortTitle: "Legacy plant visit",
 		ProjectID: projectID, HeadID: headID, Amount: 120000, Purpose: "site visit",
@@ -315,21 +293,21 @@ func TestRetiredProjectIsHiddenFromNewRequestsAndKeptOnHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.login("rhea@example.test", "RheaPass12345")
-	before := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	before := s.get("/requests/new?type=vendor_invoice")
 	if !strings.Contains(between(t, before, `<select id="project"`, `</select>`), "Operations Legacy") {
 		t.Fatal("the live project is not offered on the new-request form, so the retirement below proves nothing")
 	}
 	if _, err := s.st.UpsertProject(s.ctx, projectID, "Operations Legacy", false, 1); err != nil {
 		t.Fatal(err)
 	}
-	after := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	after := s.get("/requests/new?type=vendor_invoice")
 	if strings.Contains(between(t, after, `<select id="project"`, `</select>`), "Operations Legacy") {
 		t.Fatal("a retired project is still offered for new requests")
 	}
 	if strings.Contains(between(t, after, `<select id="head"`, `</select>`), "Rent Legacy") {
 		t.Fatal("a head under a retired project is still offered for new requests")
 	}
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
 	if !strings.Contains(detail, "<dd>Operations Legacy</dd>") || !strings.Contains(detail, "<dd>Rent Legacy</dd>") {
 		t.Fatalf("the historical request lost its retired project or head name: %s", firstLines(detail))
 	}
@@ -344,10 +322,7 @@ func TestEveryRecoverableCategoryMayLinkAProject(t *testing.T) {
 	_, headID := s.seedHead("Link")
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
 	approver := seedSecondApprover(t, s)
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	_ = requester
 	s.login("rhea@example.test", "RheaPass12345")
 
@@ -372,8 +347,8 @@ func TestEveryRecoverableCategoryMayLinkAProject(t *testing.T) {
 		"type": {"recoverable"}, "treatment": {"recoverable"}, "recoverable_category": {"icd"},
 		"short_title": {"ICD to Meridian"}, "amount": {"10,00,000"}, "purpose": {"deposit"},
 		"counterparty": {"Meridian Holdings Pvt Ltd"}, "vendor_payee": {"Meridian Holdings Pvt Ltd"},
-		"project_id": {itoa64(projectID)}, "expected_return_date": {"2027-03-31"}, "repayment_notes": {"at maturity"},
-		"manager_id": {itoa64(approver)},
+		"project_id": {strconvFormat(projectID)}, "expected_return_date": {"2027-03-31"}, "repayment_notes": {"at maturity"},
+		"manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, resp, http.StatusSeeOther)
 	loc := resp.Header.Get("Location")
@@ -382,7 +357,7 @@ func TestEveryRecoverableCategoryMayLinkAProject(t *testing.T) {
 	if _, err := fmt.Sscanf(loc, "/requests/%d/submitted", &id); err != nil {
 		t.Fatalf("redirected to %q", loc)
 	}
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
 	if !strings.Contains(detail, "<dd>Operations Link</dd>") {
 		t.Fatalf("the linked project is not on the request: %s", firstLines(detail))
 	}
@@ -393,8 +368,8 @@ func TestEveryRecoverableCategoryMayLinkAProject(t *testing.T) {
 	refused := s.postForm("/requests", url.Values{
 		"type": {"recoverable"}, "treatment": {"recoverable"}, "recoverable_category": {"other"},
 		"short_title": {"Misc"}, "amount": {"1,000"}, "purpose": {"misc"}, "vendor_payee": {"Someone"},
-		"project_id": {itoa64(projectID)}, "expected_return_date": {"2027-03-31"}, "repayment_notes": {"n/a"},
-		"manager_id": {itoa64(approver)},
+		"project_id": {strconvFormat(projectID)}, "expected_return_date": {"2027-03-31"}, "repayment_notes": {"n/a"},
+		"manager_id": {strconvFormat(approver)},
 	})
 	requireStatus(t, refused, http.StatusBadRequest)
 	if body := responseBody(t, refused); !strings.Contains(body, "project has been retired") {
@@ -408,7 +383,7 @@ func TestEveryRecoverableCategoryMayLinkAProject(t *testing.T) {
 // store refuses while any request names it.
 func TestRecoverableCategoriesAreEditableInPlace(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	cats, err := s.st.ListRecoverableCategories(s.ctx, false)
 	if err != nil {
 		t.Fatal(err)
@@ -422,7 +397,7 @@ func TestRecoverableCategoriesAreEditableInPlace(t *testing.T) {
 	if emd.ID == 0 {
 		t.Fatal("the seed no longer carries EMD")
 	}
-	page := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	page := s.get("/configuration")
 	for _, want := range []string{
 		fmt.Sprintf(`<input form="rc-%d" name="name" aria-label="Name for EMD" value="EMD" required>`, emd.ID),
 		fmt.Sprintf(`<select form="rc-%d" name="requires" aria-label="Requires for EMD">`, emd.ID),
@@ -437,7 +412,7 @@ func TestRecoverableCategoriesAreEditableInPlace(t *testing.T) {
 	}
 
 	resp := s.postForm("/configuration/recoverable-categories", url.Values{
-		"id": {itoa64(emd.ID)}, "name": {"Earnest money"}, "requires": {"both"},
+		"id": {strconvFormat(emd.ID)}, "name": {"Earnest money"}, "requires": {"both"},
 		"sort_order": {"2"}, "active": {"on"},
 	})
 	requireStatus(t, resp, http.StatusSeeOther)
@@ -471,8 +446,8 @@ func TestRecoverableCategoriesAreEditableInPlace(t *testing.T) {
 // could slip back.
 func TestConfigurationHintNamesThePayeeNotTheCounterparty(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	page := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	s.loginAdmin()
+	page := s.get("/configuration")
 	if !strings.Contains(page, "fills the <b>payee</b> in from the requester automatically") {
 		t.Fatalf("the hint no longer says the payee is filled in: %s", firstLines(page))
 	}
@@ -484,20 +459,16 @@ func TestConfigurationHintNamesThePayeeNotTheCounterparty(t *testing.T) {
 // seedLegacyDepositAsEmployeeAdvance writes the row the review found: an
 // employee advance recorded under a deposit category before deposits were their
 // own request type. Only raw SQL can write it now, which is the point.
-func seedLegacyDepositAsEmployeeAdvance(t *testing.T, s *appTestServer, requester store.User, approver int64) int64 {
+func seedLegacyDepositAsEmployeeAdvance(t *testing.T, s *appTestServer, seq int, requester store.User, approver int64) int64 {
 	t.Helper()
-	var catID int64
-	if err := s.st.DB().QueryRow(`SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&catID); err != nil {
-		t.Fatal(err)
-	}
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,amount,purpose,short_title,advance_reason,counterparty,expected_return_date,repayment_notes,vendor_payee,requester_id,manager_id,submitted_at)
-		VALUES('PR-2026-000901','pending','recoverable','employee_advance','icd',?,100000000,'deposit','ICD to Meridian','deposit','Meridian Holdings Pvt Ltd','2027-03-31','at maturity',?,?,?,CURRENT_TIMESTAMP)`,
-		catID, requester.Name, requester.ID, approver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
+	return s.insertRequest(t, map[string]any{
+		"number": requestNumber(seq), "status": "pending", "treatment": "recoverable", "type": "employee_advance",
+		"recoverable_category": "icd", "recoverable_category_id": categoryIDByCode(t, s, "icd"),
+		"amount": int64(100000000), "purpose": "deposit", "short_title": "ICD to Meridian", "advance_reason": "deposit",
+		"counterparty": "Meridian Holdings Pvt Ltd", "expected_return_date": "2027-03-31", "repayment_notes": "at maturity",
+		"vendor_payee": requester.Name, "requester_id": requester.ID, "manager_id": approver,
+		"submitted_at": sqlNow,
+	})
 }
 
 // form-1 / recoverables-1, review round 2 — the returned screen's one-press
@@ -510,13 +481,13 @@ func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
 	approver := seedSecondApprover(t, s)
-	id := seedLegacyDepositAsEmployeeAdvance(t, s, requester, approver)
+	id := seedLegacyDepositAsEmployeeAdvance(t, s, 901, requester, approver)
 	if err := s.st.ReturnRequest(s.ctx, mustUser(t, s, approver), id, "please fix"); err != nil {
 		t.Fatal(err)
 	}
 	s.login("rhea@example.test", "RheaPass12345")
 
-	returned := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	returned := s.get(fmt.Sprintf("/requests/%d", id))
 	for _, want := range []string{
 		"Recorded before deposits and guarantees were their own request type",
 		"ICD — inter-corporate deposit",
@@ -539,7 +510,7 @@ func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
 		"type": {"employee_advance"}, "treatment": {"recoverable"}, "recoverable_category": {"employee_advance"},
 		"short_title": {"ICD to Meridian"}, "purpose": {"deposit"}, "advance_reason": {"deposit"},
 		"counterparty": {"Meridian Holdings Pvt Ltd"}, "expected_return_date": {"2027-03-31"},
-		"repayment_notes": {"at maturity"}, "manager_id": {itoa64(approver)}, "submit_action": {"resubmit"},
+		"repayment_notes": {"at maturity"}, "manager_id": {strconvFormat(approver)}, "submit_action": {"resubmit"},
 	}
 	refused := url.Values{}
 	for k, v := range base {
@@ -583,10 +554,10 @@ func TestEditFormWarningsCarryTheirOwnHeadings(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
 	approver := seedSecondApprover(t, s)
-	id := seedLegacyDepositAsEmployeeAdvance(t, s, requester, approver)
+	id := seedLegacyDepositAsEmployeeAdvance(t, s, 901, requester, approver)
 	s.login("rhea@example.test", "RheaPass12345")
 
-	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(edit, "<b>Recorded before deposits and guarantees were their own request type</b>") {
 		t.Fatalf("the legacy warning has no heading of its own: %s", firstLines(edit))
 	}
@@ -595,10 +566,7 @@ func TestEditFormWarningsCarryTheirOwnHeadings(t *testing.T) {
 	}
 
 	// Now retire the project the legacy row is linked to: two warnings, two headings.
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	projectID, err := s.st.UpsertProject(s.ctx, 0, "Legacy Plant", true, 5)
 	if err != nil {
 		t.Fatal(err)
@@ -610,7 +578,7 @@ func TestEditFormWarningsCarryTheirOwnHeadings(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = admin
-	both := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	both := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(both, "<b>Recorded before deposits and guarantees were their own request type</b>") ||
 		!strings.Contains(both, "<b>This request charges something that has since been retired</b>") {
 		t.Fatalf("the two warnings do not each carry their heading: %s", firstLines(both))
@@ -636,10 +604,7 @@ func TestRetiringTheEmployeeAdvanceCategoryIsNotMistakenForALegacyRow(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	cats, err := s.st.ListRecoverableCategories(s.ctx, false)
 	if err != nil {
 		t.Fatal(err)
@@ -652,7 +617,7 @@ func TestRetiringTheEmployeeAdvanceCategoryIsNotMistakenForALegacyRow(t *testing
 		}
 	}
 	s.login("rhea@example.test", "RheaPass12345")
-	edit := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if strings.Contains(edit, "before deposits and guarantees") {
 		t.Fatalf("an ordinary employee advance is called a legacy deposit because its category was retired: %s", firstLines(edit))
 	}

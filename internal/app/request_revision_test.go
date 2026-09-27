@@ -21,7 +21,7 @@ func TestRequestEditRejectsStaleAndMissingRevisionAndKeepsOriginalOnRetry(t *tes
 	}
 	s.login(requester.Email, "RequesterPass123")
 	path := fmt.Sprintf("/requests/%d/edit", id)
-	original := requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, "")))
+	original := requestRevisionFromPage(t, s.get(path))
 	fields := url.Values{"csrf": {s.csrf()}, "revision": {original}, "type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Winning correction"}, "project_id": {"1"}, "head_id": {strconvFormat(head)}, "amount": {"123.45"}, "purpose": {"Corrected purpose"}, "expense_date": {"2026-09-26"}, "manager_id": {strconvFormat(manager)}}
 	post := func() *http.Response {
 		return s.request(http.MethodPost, path, strings.NewReader(fields.Encode()), "application/x-www-form-urlencoded")
@@ -49,7 +49,7 @@ func TestRequestEditRejectsStaleAndMissingRevisionAndKeepsOriginalOnRetry(t *tes
 	if current.ShortTitle != "Winning correction" {
 		t.Fatalf("stale overwrite: %s", current.ShortTitle)
 	}
-	fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, ""))))
+	fields.Set("revision", requestRevisionFromPage(t, s.get(path)))
 	fields.Set("short_title", "Reviewed current correction")
 	requireStatus(t, post(), http.StatusSeeOther)
 }
@@ -58,7 +58,7 @@ func TestRecoveryPrecisionRejectedWithoutLosingInput(t *testing.T) {
 	s := newAppTestServer(t)
 	_, head := s.seedHead("Recovery precision")
 	id := seedRecoverable(t, s, head, "PR-PRECISION", "icd", "Precision Counterparty", "2026-06-30", "2026-02-01", 700000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	path := fmt.Sprintf("/recoverables/%d/events", id)
 	fields := url.Values{"kind": {"return"}, "amount": {"1.001"}, "occurred_on": {"2026-02-02"}, "reference": {"PRECISION-REF"}, "note": {"Retain this evidence"}, "token": {"recovery-precision-retained-token"}}
 	resp := s.postForm(path, fields)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
@@ -26,11 +27,11 @@ func TestPaymentReceiptDoesNotInventNotificationRecipients(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqID := s.seedApprovedRequest(1, requester.ID, manager.ID, headID, 550000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	resp := s.postForm("/payments", url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"}, "amount": {"4000.13"}, "settlement": {"partial"}, "partial_reason": {"Agreed retention"}, "reference_no": {"AUDIENCE-13"}, "payment_mode": {"bank_transfer"}})
 	requireStatus(t, resp, http.StatusSeeOther)
-	body := responseBody(t, s.request(http.MethodGet, resp.Header.Get("Location"), nil, ""))
+	body := s.get(resp.Header.Get("Location"))
 	mustContain(t, "partial receipt", body, "Payment saved. The request is with the manager", "The payment is recorded against this request.")
 	mustNotContain(t, "partial receipt", body, "have been notified")
 	if hasEvent(notificationTitles(t, s, requester.ID), notify.EventPaymentPartialReview) {
@@ -57,12 +58,12 @@ func TestPaidQueueOffersViewAndOnlyActiveReservationsOfferReassign(t *testing.T)
 	if err := s.st.ReserveRequest(s.ctx, colleague, active); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	paid := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=paid", nil, ""))
+	s.loginAdmin()
+	paid := s.get("/accounts-queue?tab=paid")
 	mustContain(t, "paid queue", paid, "PR-2026-000001", "PR-2026-000002", ">View</a>")
 	mustNotContain(t, "paid queue", paid, ">Reassign</a>", ">Resume</a>")
-	processing := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=processing", nil, ""))
-	mustContain(t, "processing queue", processing, strconvPath(`href="/requests/%d/reservation">Reassign</a>`, active))
+	processing := s.get("/accounts-queue?tab=processing")
+	mustContain(t, "processing queue", processing, fmt.Sprintf(`href="/requests/%d/reservation">Reassign</a>`, active))
 }
 
 // PAY-D04: recreate a stale confirmation across a real reassignment. The
@@ -73,10 +74,10 @@ func TestStaleSettlementConfirmationShowsCurrentHolderAndCannotResubmit(t *testi
 	admin, headID := s.seedHead("StaleConfirm")
 	next := s.seedRoleUser("new-owner@example.test", "New Accounts Owner", "NextPass1234", "Accounts")
 	id := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 12345)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"request_id": {strconvFormat(id)}, "head_id": {strconvFormat(headID)}, "amount": {"123.45"}, "paid_on": {"2026-07-23"}, "payment_mode": {"bank_transfer"}, "reference_no": {"STALE-REF-123"}, "remarks": {"Keep this processing note"}, "settlement": {"settled"}}
-	preview := responseBody(t, s.postForm(strconvPath("/requests/%d/settlement-preview", id), form))
+	preview := responseBody(t, s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", id), form))
 	mustContain(t, "original confirmation", preview, "Reserved by you", "Confirm and save payment")
 	if err := s.st.ReassignReservation(s.ctx, admin, id, next.ID, "Shift handover", true); err != nil {
 		t.Fatal(err)

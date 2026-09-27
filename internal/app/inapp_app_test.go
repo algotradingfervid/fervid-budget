@@ -17,17 +17,14 @@ import (
 // valid HTML), and everything else in the body stays escaped.
 func TestNotificationCentreRendersBodyLinesAndLink(t *testing.T) { // N1
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if _, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO notifications(user_id,event,kind,title,body,href) VALUES(?,?,?,?,?,?)`,
 		admin.ID, "request_submitted", "activity", "PR-2026-000005 needs your approval",
 		"Rhea raised PR-2026-000005 <b>now</b>.\n\nProject: Ops / Rent\n\nOpen it: https://budget.test/requests/5.", "/requests/5"); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/notifications", nil, ""))
+	s.loginAdmin()
+	body := s.get("/notifications")
 	want := `<p>Rhea raised PR-2026-000005 &lt;b&gt;now&lt;/b&gt;.<br><br>Project: Ops / Rent<br><br>Open it: <span class="n-link">https://budget.test/requests/5</span>.</p>`
 	if !strings.Contains(body, want) {
 		t.Fatalf("notification body not rendered with its lines and link; want %s", want)
@@ -53,16 +50,13 @@ func TestNotifBodyOnlyLinksTheRowsOwnTarget(t *testing.T) { // N1
 
 func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	returned := seedNotification(t, s, admin.ID, "request_returned", "mention", "Kavita Rao returned PR-2026-000131", "/requests/1")
 	seedNotification(t, s, admin.ID, "reminder_pending", "reminder", "PR-2026-000134 has waited 3 days", "/requests/2")
 	seedNotification(t, s, admin.ID, "request_approved", "activity", "Kavita Rao approved PR-2026-000128", "/requests/3")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/notifications", nil, ""))
+	body := s.get("/notifications")
 	for _, want := range []string{
 		"Kavita Rao returned PR-2026-000131", "PR-2026-000134 has waited 3 days",
 		`class="segmented"`, `class="notif-list"`, `class="notif unread"`, `class="n-ico"`, `class="n-main"`,
@@ -82,13 +76,13 @@ func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
 	}
 
 	// Scope filters narrow the list.
-	mentions := responseBody(t, s.request(http.MethodGet, "/notifications?scope=mentions", nil, ""))
+	mentions := s.get("/notifications?scope=mentions")
 	if !strings.Contains(mentions, "Kavita Rao returned") || strings.Contains(mentions, "has waited 3 days") {
 		t.Fatal("scope=mentions did not narrow the list")
 	}
 
 	// Opening one marks it read and forwards to where it points.
-	resp := s.request(http.MethodGet, "/notifications/"+itoa64(returned)+"/open", nil, "")
+	resp := s.request(http.MethodGet, "/notifications/"+strconvFormat(returned)+"/open", nil, "")
 	requireStatus(t, resp, http.StatusSeeOther)
 	if loc := resp.Header.Get("Location"); loc != "/requests/1" {
 		t.Fatalf("redirect = %q, want the notification's own href", loc)
@@ -117,10 +111,7 @@ func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
 // user's rows — the store scopes every read to the caller.
 func TestNotificationCentreNeverShowsAnotherUsersRows(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	adminsRow := seedNotification(t, s, admin.ID, "request_approved", "activity", "Admin only secret", "/requests/1")
 
 	hash, err := auth.HashPassword("EntryPassword123")
@@ -132,12 +123,12 @@ func TestNotificationCentreNeverShowsAnotherUsersRows(t *testing.T) {
 	}
 	s.login("nosy@example.test", "EntryPassword123")
 
-	body := responseBody(t, s.request(http.MethodGet, "/notifications", nil, ""))
+	body := s.get("/notifications")
 	if strings.Contains(body, "Admin only secret") {
 		t.Fatal("the centre leaked another user's notification")
 	}
 	// And it cannot be opened or marked read by guessing its id.
-	resp := s.request(http.MethodGet, "/notifications/"+itoa64(adminsRow)+"/open", nil, "")
+	resp := s.request(http.MethodGet, "/notifications/"+strconvFormat(adminsRow)+"/open", nil, "")
 	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
 	unread, err := s.st.UnreadNotificationCount(s.ctx, admin.ID)
@@ -153,13 +144,10 @@ func TestNotificationCentreNeverShowsAnotherUsersRows(t *testing.T) {
 // query string cannot aim the redirect anywhere.
 func TestNotificationOpenRedirectsToTheStoredHrefOnly(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	id := seedNotification(t, s, admin.ID, "request_approved", "activity", "Row", "/requests/1")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	resp := s.request(http.MethodGet, "/notifications/"+itoa64(id)+"/open?href=https://evil.test/steal", nil, "")
+	s.loginAdmin()
+	resp := s.request(http.MethodGet, "/notifications/"+strconvFormat(id)+"/open?href=https://evil.test/steal", nil, "")
 	requireStatus(t, resp, http.StatusSeeOther)
 	if loc := resp.Header.Get("Location"); loc != "/requests/1" {
 		t.Fatalf("redirect = %q, want the stored href", loc)
@@ -178,9 +166,9 @@ func TestNotificationCentreRequiresASession(t *testing.T) {
 
 func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D7, G20
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/admin/notifications", nil, ""))
+	body := s.get("/admin/notifications")
 	if !strings.Contains(body, "FERVID_SMTP_PASSWORD") {
 		t.Fatal("the rules screen must document the env-only SMTP password")
 	}
@@ -267,7 +255,7 @@ func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D
 // sheet and threw away what the admin had typed.
 func TestAdminNotificationsShowsEachResultOnceAndKeepsARefusedRule(t *testing.T) { // N2, N8
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	// No SMTP host is configured, so the test send fails: one error, no
 	// "did not save" heading for something that was never a save.
@@ -335,15 +323,9 @@ func TestAdminNotificationsBlocksUnprivileged(t *testing.T) {
 // the requester ends up with an in-app row.
 func TestApprovingARequestNotifiesTheRequester(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	_, headID := s.seedHead("Notify")
-	var projectID int64
-	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	hash, err := auth.HashPassword("EntryPassword123")
 	if err != nil {
 		t.Fatal(err)
@@ -373,7 +355,7 @@ func TestApprovingARequestNotifiesTheRequester(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm(fmt.Sprintf("/requests/%d/approve", reqID), url.Values{
 		"approved_amount": {"500.00"}, "note": {"ok"},
 	})

@@ -45,7 +45,7 @@ func TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval(t *testing
 	// Max is a Manager and not the chosen approver. The control is not offered
 	// to him and the route refuses him — to himself or to anybody else.
 	s.login("max@example.test", "MaxPass12345")
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if strings.Contains(body, "reassign-approver-sheet") {
 		t.Fatalf("a manager who is not the approver is offered the reassign control:\n%s", body)
 	}
@@ -66,7 +66,7 @@ func TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval(t *testing
 	// Mona, the request's own approver, sees the control and may hand it on —
 	// to somebody else. Her own name is not a destination.
 	s.login("mona@example.test", "MonaPass12345")
-	body = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	body = s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(body, "reassign-approver-sheet") {
 		t.Fatalf("the request's own approver is not offered the reassign control:\n%s", body)
 	}
@@ -81,7 +81,7 @@ func TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval(t *testing
 	// An administrator (user:edit — the grant that deactivates a person is the
 	// grant that rescues what they leave behind) may reassign any request, and
 	// is held to the same rule about themselves.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp = s.reassignForm(reqID, admin.ID, "I will decide it")
 	requireStatus(t, resp, http.StatusBadRequest)
 	if body := responseBody(t, resp); !strings.Contains(body, "yourself") {
@@ -109,7 +109,7 @@ func TestReassignmentRescuesEveryStatusTheDeactivationWarningLists(t *testing.T)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel-request", cancelID), url.Values{"reason": {"Ordered twice"}}), http.StatusSeeOther)
 
 	partialID := s.seedApprovedRequest(972, requester.ID, leaver.ID, headID, 9500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	s.seedPartialReview(partialID, headID, "Vendor short-shipped")
 
 	returnedID := s.seedPendingRequest(973, requester.ID, leaver.ID, headID, 90000)
@@ -117,7 +117,7 @@ func TestReassignmentRescuesEveryStatusTheDeactivationWarningLists(t *testing.T)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/return", returnedID), url.Values{"comment": {"Attach the bill"}}), http.StatusSeeOther)
 
 	// The warning names all three, and the administrator confirms anyway.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	form := url.Values{
 		"id": {fmt.Sprint(leaver.ID)}, "email": {leaver.Email}, "name": {leaver.Name},
 		"role": {"data_entry"}, "default_approver_id": {"0"},
@@ -134,7 +134,7 @@ func TestReassignmentRescuesEveryStatusTheDeactivationWarningLists(t *testing.T)
 
 	// Every listed request offers the way out the warning promised, and it works.
 	for _, id := range []int64{cancelID, partialID, returnedID} {
-		body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+		body := s.get(fmt.Sprintf("/requests/%d", id))
 		if !strings.Contains(body, "reassign-approver-sheet") {
 			t.Errorf("request %d offers no Reassign approval control to the administrator", id)
 		}
@@ -180,11 +180,11 @@ func TestHistoryNamesTheApproversAChangeMovedBetween(t *testing.T) {
 	max := s.seedManager("max@example.test", "Max Manager", "MaxPass12345")
 	reqID := s.seedPendingRequest(4, rita.ID, mona.ID, headID, 90000)
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.reassignForm(reqID, max.ID, "Mona on leave"), http.StatusSeeOther)
 
 	s.login("rita@example.test", "RitaPass12345")
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d", reqID))
 	want := `Approver <span class="was">Mona Manager</span> → <span class="now">Max Manager</span>`
 	if !strings.Contains(body, want) {
 		chip := between(t, body, `<div class="tl-change">`, `</div>`)
@@ -202,7 +202,7 @@ func TestEditFormLabelsFollowTheChosenApprover(t *testing.T) {
 	reqID := s.seedPendingRequest(5, rita.ID, mona.ID, headID, 90000)
 
 	s.login("rita@example.test", "RitaPass12345")
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/edit", reqID))
 	for _, want := range []string{
 		`data-follows-select="apr" data-follows-text="Save and notify {name}">Save and notify Mona Manager</button>`,
 		`data-follows-select="apr" data-follows-text="Editing tells {name} again">Editing tells Mona Manager again</b>`,
@@ -233,11 +233,11 @@ func TestDetailThreadNamesTheActorForAccountsEvents(t *testing.T) {
 	requireStatus(t, s.postForm("/payments", url.Values{"request_id": {strconvFormat(settledID)}, "head_id": {strconvFormat(headID)},
 		"paid_on": {"2026-07-23"}, "amount": {"1000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"ACTOR-PAYMENT-REF"}}), http.StatusSeeOther)
 	s.seedPartialReview(partialID, headID, "Vendor short-shipped")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", partialID), url.Values{"note": {"fine"}}), http.StatusSeeOther)
 
 	s.login("rita@example.test", "RitaPass12345")
-	settled := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", settledID), nil, ""))
+	settled := s.get(fmt.Sprintf("/requests/%d", settledID))
 	for _, want := range []string{
 		"<b>Aarav Accounts put the request on hold: Checking GST</b>",
 		"<b>Aarav Accounts lifted the hold</b>",
@@ -248,7 +248,7 @@ func TestDetailThreadNamesTheActorForAccountsEvents(t *testing.T) {
 			t.Errorf("settled request's thread lacks %q", want)
 		}
 	}
-	partial := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", partialID), nil, ""))
+	partial := s.get(fmt.Sprintf("/requests/%d", partialID))
 	for _, want := range []string{
 		"<b>Aarav Accounts recorded a partial settlement: Vendor short-shipped</b>",
 		"<b>" + admin.Name + " accepted the partial settlement — completed, partial accepted: fine</b>",
@@ -273,7 +273,7 @@ func TestIllegalTransitionRefusalsReadAsSentences(t *testing.T) {
 	rita := s.seedRequester("rita@example.test", "Rita Requester", "RitaPass12345")
 	approvedID := s.seedApprovedRequest(1, rita.ID, admin.ID, headID, 100000)
 	partialID := s.seedApprovedRequest(2, rita.ID, admin.ID, headID, 9500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	s.seedPartialReview(partialID, headID, "Vendor short-shipped")
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", partialID), url.Values{}), http.StatusSeeOther)
 
@@ -351,7 +351,7 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 
 	// The requester sees the upload beside the hold and it works.
 	s.login("rita@example.test", "RitaPass12345")
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(body, fmt.Sprintf(`action="/requests/%d/attachments"`, reqID)) || !strings.Contains(body, `type="file"`) {
 		t.Fatalf("the held request offers the requester no way to add a document:\n%s", between(t, body, "<main", "</main>"))
 	}
@@ -364,7 +364,7 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 	if len(atts) != 1 || atts[0].OriginalName != "gst-receipt.pdf" || atts[0].UploadedBy != rita.ID {
 		t.Fatalf("attachments after the upload: %+v", atts)
 	}
-	body = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	body = s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(body, "gst-receipt.pdf") {
 		t.Fatalf("the uploaded document is not shown on the request")
 	}
@@ -385,7 +385,7 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 	// a pending one the edit form still serves, refuse it — and neither offers
 	// the control (hold-1 review).
 	for _, id := range []int64{openID, pendingID} {
-		body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+		body := s.get(fmt.Sprintf("/requests/%d", id))
 		if strings.Contains(body, fmt.Sprintf(`action="/requests/%d/attachments"`, id)) {
 			t.Fatalf("request %d is not on hold but offers the upload:\n%s", id, between(t, body, "<main", "</main>"))
 		}

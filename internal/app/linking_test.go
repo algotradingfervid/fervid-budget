@@ -27,7 +27,7 @@ func TestReservationEntryPointReservesAndRedirects(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Reserve")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	resp := s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{})
 	requireStatus(t, resp, http.StatusSeeOther)
@@ -101,9 +101,9 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 	if err := s.st.HoldRequest(s.ctx, admin, held, "await vendor GST"); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	body := s.get("/accounts-queue")
 	for _, want := range []string{
 		`class="metric-strip"`,
 		"Approved, unclaimed",
@@ -136,7 +136,7 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 	}
 
 	// The Processing tab shows the reserved row and hides the open one.
-	proc := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=processing", nil, ""))
+	proc := s.get("/accounts-queue?tab=processing")
 	if !strings.Contains(proc, "PR-2026-000002") || strings.Contains(proc, "PR-2026-000001") {
 		t.Fatalf("processing tab wrong:\n%s", proc)
 	}
@@ -144,7 +144,7 @@ func TestAccountsQueueRendersMetricsTabsAndRowActions(t *testing.T) {
 		t.Fatalf("processing tab has no Resume action:\n%s", proc)
 	}
 	// The hold tab shows the held row, which is never takeable.
-	hold := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=hold", nil, ""))
+	hold := s.get("/accounts-queue?tab=hold")
 	if !strings.Contains(hold, "PR-2026-000003") || strings.Contains(hold, "Take for processing") {
 		t.Fatalf("hold tab wrong:\n%s", hold)
 	}
@@ -179,7 +179,7 @@ func TestAccountsQueueMarksAndSurfacesUrgentRequests(t *testing.T) { // N6
 	// The queue, the Accounts area of the dashboard, and the payment form's
 	// request picker are the three places Accounts chooses what to pay next.
 	for _, path := range []string{"/accounts-queue", "/", "/payments/new"} {
-		body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+		body := s.get(path)
 		u, n := strings.Index(body, "PR-2026-000002"), strings.Index(body, "PR-2026-000001")
 		if u < 0 || n < 0 {
 			t.Fatalf("%s is missing a request row", path)
@@ -198,8 +198,8 @@ func TestAccountsQueueSearchNarrowsRows(t *testing.T) {
 	admin, headID := s.seedHead("QueueSearch")
 	s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
 	s.seedApprovedRequest(2, admin.ID, admin.ID, headID, 600000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue?q=PR-2026-000002", nil, ""))
+	s.loginAdmin()
+	body := s.get("/accounts-queue?q=PR-2026-000002")
 	if !strings.Contains(body, "PR-2026-000002") || strings.Contains(body, "PR-2026-000001") {
 		t.Fatalf("queue search did not narrow:\n%s", body)
 	}
@@ -222,9 +222,9 @@ func TestPaymentPickerRendersComboAndTakenRows(t *testing.T) {
 	if err := s.st.ReserveRequest(s.ctx, deepak, taken); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	body := s.get("/payments/new")
 	for _, want := range []string{
 		`class="banner info"`,
 		"Free payment entry has been removed",
@@ -290,8 +290,8 @@ func TestPaymentPickerListsOnlyYourOwnRecentPayments(t *testing.T) {
 		"partial", "balance later", nil); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	s.loginAdmin()
+	body := s.get("/payments/new")
 	recent := body[strings.Index(body, "Recently paid by you"):]
 	if !strings.Contains(recent, "PR-2026-000002") {
 		t.Fatalf("the caller's own settlement is missing:\n%s", recent)
@@ -312,10 +312,10 @@ func TestPaymentEntryScreenShowsReservationApprovalAndRule(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Entry")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
-	body := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/payments/new?request=%d", reqID))
 	for _, want := range []string{
 		`class="reserve-bar"`,
 		"Reserved by you",
@@ -356,8 +356,8 @@ func TestPaymentEntryRefusesSomeoneElsesReservation(t *testing.T) {
 	if err := s.st.ReserveRequest(s.ctx, deepak, reqID); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	resp := s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, "")
+	s.loginAdmin()
+	resp := s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", reqID), nil, "")
 	requireStatus(t, resp, http.StatusConflict)
 	body := responseBody(t, resp)
 	if !strings.Contains(body, "Deepak Menon took this request") || !strings.Contains(body, `class="a-list"`) {
@@ -374,8 +374,8 @@ func TestHistoricalPaymentEditFormStillRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/%d/edit", payID), nil, ""))
+	s.loginAdmin()
+	body := s.get(fmt.Sprintf("/payments/%d/edit", payID))
 	for _, want := range []string{"Legacy Vendor", `name="head_id"`, "Save Payment"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("historical payment edit form missing %q:\n%s", want, body)
@@ -386,7 +386,7 @@ func TestHistoricalPaymentEditFormStillRenders(t *testing.T) {
 func TestPaymentCreateRequiresReservedRequest(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("X5")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	// No request_id at all → refused.
 	form := url.Values{"head_id": {strconvFormat(headID)}, "paid_on": {"2026-06-15"}, "amount": {"100.00"}, "settlement": {"settled"}}
 	resp := s.postForm("/payments", form)
@@ -418,11 +418,11 @@ func TestSettlementPreviewWritesNothingAndRendersTheSheet(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Preview")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
 	form := url.Values{"amount": {"98000.00"}, "paid_on": {"2026-07-25"}, "payment_mode": {"bank_transfer"}, "reference_no": {"N221260725004417"}}
-	resp := s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), form)
+	resp := s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form)
 	requireStatus(t, resp, http.StatusOK)
 	body := responseBody(t, resp)
 	for _, want := range []string{
@@ -466,12 +466,12 @@ func TestSettlementPreviewMatchesRowAndNoJSFullPage(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("PreviewExact")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"amount": {"5000.00"}, "paid_on": {"2026-07-25"}, "payment_mode": {"bank_transfer"}, "reference_no": {"N1"}}
 
 	// No-JS: a whole page, shell and all, wrapping the same sheet.
-	page := responseBody(t, s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), form))
+	page := responseBody(t, s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form))
 	if !strings.Contains(page, `class="cmp-row match"`) || strings.Contains(page, `class="cmp-row diff"`) {
 		t.Fatalf("equal amounts must render .match, not .diff:\n%s", page)
 	}
@@ -486,7 +486,7 @@ func TestSettlementPreviewMatchesRowAndNoJSFullPage(t *testing.T) {
 	}
 
 	// htmx: the fragment only.
-	frag := responseBody(t, s.postFormHX(strconvPath("/requests/%d/settlement-preview", reqID), form))
+	frag := responseBody(t, s.postFormHX(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form))
 	if !strings.Contains(frag, `class="overlay"`) {
 		t.Fatalf("htmx fragment missing the sheet:\n%s", frag)
 	}
@@ -499,13 +499,13 @@ func TestSettlementPreviewRefusesWhenTheReservationIsGone(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("PreviewLost")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	// An authorised colleague takes it away mid-flow.
 	if err := s.st.ReleaseRequest(s.ctx, admin, reqID, "needed elsewhere", true, true); err != nil {
 		t.Fatal(err)
 	}
-	resp := s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), url.Values{"amount": {"5000.00"}, "paid_on": {"2026-07-25"}})
+	resp := s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", reqID), url.Values{"amount": {"5000.00"}, "paid_on": {"2026-07-25"}})
 	requireStatus(t, resp, http.StatusConflict)
 	if body := responseBody(t, resp); !strings.Contains(body, `class="a-list"`) {
 		t.Fatalf("a lost reservation must land on the conflict screen:\n%s", body)
@@ -520,7 +520,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Settle")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 10000000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
 	// Settle for less than approved (S10).
@@ -536,7 +536,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 		t.Fatalf("status = %q, want completed", got)
 	}
 
-	body := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
+	body := s.get(loc)
 	for _, want := range []string{
 		`class="banner good"`, "The request is completed",
 		`class="req-head"`, "from PR-2026-000001",
@@ -565,7 +565,7 @@ func TestSettlementFlowCompletesAndShowsPaymentDetail(t *testing.T) {
 	}
 
 	// Q4: the request page shows the outcome and links to the payment.
-	reqBody := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	reqBody := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(reqBody, `class="compare"`) || !strings.Contains(reqBody, "98,000.00") || !strings.Contains(reqBody, loc) {
 		t.Fatalf("request outcome missing the comparison or the payment link:\n%s", reqBody)
 	}
@@ -575,7 +575,7 @@ func TestDoubleConfirmLandsOnTheExistingPayment(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Double")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"submission_key": {"double-confirm-fixture"}, "request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme"}, "settlement": {"settled"}, "reference_no": {"N1"}}
 	first := s.postForm("/payments", form)
@@ -601,14 +601,14 @@ func TestPartialSettlementRoutesToReview(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Partial")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-06-15"}, "amount": {"3000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"partial"}, "partial_reason": {"balance later"}, "reference_no": {"N2"}}
 	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
 	if got := requestStatusApp(t, s, reqID); got != "partial_review" {
 		t.Fatalf("status = %q, want partial_review", got)
 	}
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(body, "balance later") || !strings.Contains(body, `class="pill partial"`) {
 		t.Fatalf("partial outcome missing from the request:\n%s", body)
 	}
@@ -621,7 +621,7 @@ func TestPartialSettlementRoutesToReview(t *testing.T) {
 func TestLinkedPaymentIsImmutableInTheLedgerAndOnItsEditRoute(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Immutable")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	_, linkedID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
 
 	// A payment recorded before this module has no request behind it and stays
@@ -632,7 +632,7 @@ func TestLinkedPaymentIsImmutableInTheLedgerAndOnItsEditRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ledger := responseBody(t, s.request(http.MethodGet, "/payments?month=2026-07", nil, ""))
+	ledger := s.get("/payments?month=2026-07")
 	for _, forbidden := range []string{fmt.Sprintf("/payments/%d/edit", linkedID), fmt.Sprintf("/payments/%d/void", linkedID)} {
 		if strings.Contains(ledger, forbidden) {
 			t.Fatalf("the ledger offers %q on a request-linked payment:\n%s", forbidden, ledger)
@@ -669,7 +669,7 @@ func TestSeededAccountsRoleTakesARequestForProcessing(t *testing.T) {
 	if !strings.HasPrefix(loc, "/payments/new") {
 		t.Fatalf("Accounts reservation went to %q, want the payment entry screen", loc)
 	}
-	body := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
+	body := s.get(loc)
 	if !strings.Contains(body, "Record the payment") {
 		t.Fatalf("Accounts cannot reach the entry screen:\n%s", body)
 	}
@@ -690,7 +690,7 @@ func TestPickerOffersNoTakeControlWithoutTheReservationGrant(t *testing.T) {
 	}, []store.ScopeGrant{{Resource: "request", Scope: store.ScopeAll}})
 
 	s.login("ledger@example.test", "LedgerPassword123")
-	body := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	body := s.get("/payments/new")
 	if strings.Contains(body, fmt.Sprintf(`action="/requests/%d/record-payment"`, reqID)) {
 		t.Fatalf("the picker offers a take control the route answers 403 to:\n%s", body)
 	}
@@ -709,13 +709,13 @@ func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
 	requester := s.seedRequester("ravi@example.test", "Ravi Kumar", "RequesterPass123")
 	reqID := s.seedApprovedRequest(1, requester.ID, admin.ID, headID, 10000000)
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-25"}, "partial_reason": {"Agreed TDS deduction"}, "amount": {"98000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"N1"}}
 	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
 
 	s.login("ravi@example.test", "RequesterPass123")
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d", reqID))
 	for _, want := range []string{"Payment outcome", `class="compare"`, "98,000.00", "confirmed settled by Accounts"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the requester's own request is missing %q:\n%s", want, body)
@@ -739,7 +739,7 @@ func TestRequesterReadsThePaymentOutcomeOnTheirOwnRequest(t *testing.T) {
 func TestPaymentDetailRefusesTheRequestBehindItOutOfScope(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Scope")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	_, linkedID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
 	histID, err := s.st.CreatePayment(s.ctx, admin, store.PaymentInput{HeadID: headID, PaidOn: "2026-07-10", Amount: 12345, VendorPayee: "Legacy Vendor", PaymentMode: "cash"})
 	if err != nil {
@@ -806,7 +806,7 @@ func TestAuditGlyphsStayMonochrome(t *testing.T) {
 func TestPaymentDetailHeadTrailAndProofReadLikeTheMockup(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Reads")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
 	if _, err := s.st.DB().Exec(`INSERT INTO request_attachments(request_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`,
 		reqID, "SE-26-27-1184.pdf", "req/SE.pdf", "application/pdf", 219136, admin.ID); err != nil {
@@ -824,7 +824,7 @@ func TestPaymentDetailHeadTrailAndProofReadLikeTheMockup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", payID), nil, ""))
+	body := s.get(fmt.Sprintf("/payments/%d", payID))
 	for _, want := range []string{
 		// The waiting line is waitingOn's, so it says "you" to the manager it
 		// is waiting on rather than reading them their own name.
@@ -850,12 +850,12 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Review")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 9500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)}, "paid_on": {"2026-07-23"}, "amount": {"60000.00"}, "vendor_payee": {"Nova Print Works"}, "settlement": {"partial"}, "partial_reason": {"Vendor delivered 700 of the 1,000 copies."}, "reference_no": {"N9912"}}
 	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/partial-review", reqID))
 	for _, want := range []string{
 		`class="req-head"`, `class="pill partial"`, `class="waiting you"`,
 		// "payee", as every other screen says: the request may be a
@@ -889,7 +889,7 @@ func TestPartialReviewScreenAndManagerDecision(t *testing.T) {
 	if got := requestStatusApp(t, s, reqID); got != "completed_partial" {
 		t.Fatalf("status after accept = %q, want completed_partial (G14)", got)
 	}
-	after := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	after := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(after, `class="pill completed-partial"`) || !strings.Contains(after, "Completed — partial accepted") {
 		t.Fatalf("accepted request does not render .pill.completed-partial:\n%s", after)
 	}
@@ -914,7 +914,7 @@ func TestPartialReviewDecisionsBelongToTheRequestsOwnManager(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Owner")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 9500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	s.seedPartialReview(reqID, headID, "Vendor delivered 700 of the 1,000 copies.")
 
 	// A second person holding every verb and seeing every request, who simply
@@ -922,7 +922,7 @@ func TestPartialReviewDecisionsBelongToTheRequestsOwnManager(t *testing.T) {
 	s.seedColleague("other-manager@example.test", "Other Manager", "OtherManagerPass1")
 	s.login("other-manager@example.test", "OtherManagerPass1")
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/partial-review", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/partial-review", reqID))
 	if strings.Contains(body, `class="overlay"`) || strings.Contains(body, `data-open="close-sheet"`) {
 		t.Fatalf("a decision that is not theirs was offered:\n%s", body)
 	}
@@ -952,11 +952,11 @@ func TestPartialReviewThreadIsOneChronologicalStream(t *testing.T) {
 		reqID, admin.ID, "EARLYWORD the invoice is already with the vendor", "2026-07-01 09:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	s.seedPartialReview(reqID, headID, "Vendor delivered 700 of the 1,000 copies.")
 
 	path := fmt.Sprintf("/requests/%d/partial-review", reqID)
-	body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	body := s.get(path)
 	early, paid := strings.Index(body, "EARLYWORD"), strings.Index(body, "recorded a payment")
 	if early < 0 || paid < 0 {
 		t.Fatalf("the thread is missing the comment or the payment event:\n%s", body)
@@ -969,7 +969,7 @@ func TestPartialReviewThreadIsOneChronologicalStream(t *testing.T) {
 	// words. The screen the concern lands on prints it once.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/raise-concern", reqID),
 		url.Values{"comment": {"CONCERNWORD confirm the balance timeline"}}), http.StatusSeeOther)
-	after := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	after := s.get(path)
 	if n := strings.Count(after, "CONCERNWORD"); n != 1 {
 		t.Fatalf("the concern is printed %d times, want 1:\n%s", n, after)
 	}
@@ -998,10 +998,10 @@ func TestReservationScreenReleaseAndReassign(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/reservation", reqID))
 	for _, want := range []string{
 		`class="reserve-bar"`, "Reserved by you",
 		`class="banner bad"`, "Confirm no payment has been started",
@@ -1052,7 +1052,7 @@ func TestReassignRefusesWithoutATargetServerSide(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("ReassignGuard")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	resp := s.postForm(fmt.Sprintf("/requests/%d/reassign", reqID), url.Values{"action": {"reassign"}, "reason": {"someone else"}, "confirm": {"on"}})
 	if resp.StatusCode < http.StatusBadRequest {
@@ -1072,7 +1072,7 @@ func TestReleaseReturnsTheRequestToTheQueue(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Released")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 4200000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
 	resp := s.postForm(fmt.Sprintf("/requests/%d/release", reqID), url.Values{
@@ -1095,7 +1095,7 @@ func TestReleaseReturnsTheRequestToTheQueue(t *testing.T) {
 	}
 	// The reason is in the history, so the requester and the approver can read
 	// why their money stopped moving.
-	if got := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, "")); !strings.Contains(got, "Vendor bank details need confirming") {
+	if got := s.get(fmt.Sprintf("/requests/%d", reqID)); !strings.Contains(got, "Vendor bank details need confirming") {
 		t.Fatalf("the release reason is not in the request history:\n%s", got)
 	}
 	// And the screen is gone with the reservation: there is nothing to release.
@@ -1119,7 +1119,7 @@ func TestReservationScreenOpensForAReassignOnlyRole(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("ReassignOnly")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 900000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
 	s.seedProbeUser("reassign-only@example.test", "Reassign Only", "ReassignPass1234", "Reassign only",
@@ -1133,7 +1133,7 @@ func TestReservationScreenOpensForAReassignOnlyRole(t *testing.T) {
 	s.login("reassign-only@example.test", "ReassignPass1234")
 
 	link := fmt.Sprintf("/requests/%d/reservation", reqID)
-	queue := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=processing", nil, ""))
+	queue := s.get("/accounts-queue?tab=processing")
 	if !strings.Contains(queue, link) {
 		t.Fatalf("the queue does not offer the reassign link this test is about:\n%s", queue)
 	}
@@ -1161,7 +1161,7 @@ func TestReservationScreenRefusesARequestTheCallerMayNotRead(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Scoped")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 700000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	deepak := s.seedColleague("deepak@example.test", "Deepak Menon", "DeepakPass1234")
 
@@ -1202,10 +1202,10 @@ func TestReassignOffersOnlyPeopleWhoCanWorkTheAccountsQueue(t *testing.T) {
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 600000)
 	bystander := s.seedRequester("bystander@example.test", "Bystander Bhat", "BystanderPass1234")
 	colleague := s.seedColleague("deepak@example.test", "Deepak Menon", "DeepakPass1234")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/reservation", reqID))
 	if !strings.Contains(body, colleague.Name) {
 		t.Fatalf("the reassign select does not offer anyone who can work the queue:\n%s", body)
 	}
@@ -1233,10 +1233,10 @@ func TestReleaseIsTheReservationFormsDefaultButton(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("DefaultButton")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 300000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/reservation", reqID))
 	release := strings.Index(body, fmt.Sprintf(`formaction="/requests/%d/release"`, reqID))
 	reassign := strings.Index(body, fmt.Sprintf(`formaction="/requests/%d/reassign"`, reqID))
 	if release < 0 || reassign < 0 {
@@ -1300,24 +1300,24 @@ func TestHoldAndUnholdMoveTheRequestThroughTheQueue(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Hold")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	body := s.get("/accounts-queue")
 	if !strings.Contains(body, "PR-2026-000001") {
 		t.Fatalf("approved request missing from the queue:\n%s", body)
 	}
 	// Hold takes it out of the takeable tab (L7) and onto the hold tab.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
-	body = responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	body = s.get("/accounts-queue")
 	if strings.Contains(body, "Take for processing") {
 		t.Fatalf("held request is still takeable:\n%s", body)
 	}
-	held := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=hold", nil, ""))
+	held := s.get("/accounts-queue?tab=hold")
 	if !strings.Contains(held, "PR-2026-000001") {
 		t.Fatalf("held request missing from the hold tab:\n%s", held)
 	}
 	// The request screen explains the hold and offers the Accounts-only release.
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", reqID))
 	for _, want := range []string{`class="pill hold"`, `class="banner warn"`, "Which site is this for?", "Release hold", `class="comment-box"`} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("on-hold request detail missing %q:\n%s", want, detail)
@@ -1325,7 +1325,7 @@ func TestHoldAndUnholdMoveTheRequestThroughTheQueue(t *testing.T) {
 	}
 	// Unhold restores it.
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", reqID), url.Values{}), http.StatusSeeOther)
-	body = responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	body = s.get("/accounts-queue")
 	if !strings.Contains(body, "Take for processing") {
 		t.Fatalf("unheld request is not takeable again:\n%s", body)
 	}
@@ -1335,12 +1335,12 @@ func TestStaleReservationScreenOffersTheFourChoices(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Stale")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 7800000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET processing_at=datetime('now','-26 hours') WHERE id=?`, reqID); err != nil {
 		t.Fatal(err)
 	}
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation/stale", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/reservation/stale", reqID))
 	for _, want := range []string{
 		`class="banner warn"`, "reserved by you for", "26 h",
 		`class="req-head"`, `class="pill processing"`, `class="waiting"`,
@@ -1362,7 +1362,7 @@ func TestCancellingAHeldRequestClearsTheHold(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("HoldCancel")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel", reqID), url.Values{"reason": {"Site dropped"}}), http.StatusSeeOther)
 
@@ -1376,11 +1376,11 @@ func TestCancellingAHeldRequestClearsTheHold(t *testing.T) {
 	if onHold != 0 {
 		t.Fatalf("cancelled request still carries on_hold=%d", onHold)
 	}
-	held := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=hold", nil, ""))
+	held := s.get("/accounts-queue?tab=hold")
 	if strings.Contains(held, "PR-2026-000001") {
 		t.Fatalf("cancelled request is still in the hold tab:\n%s", held)
 	}
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", reqID))
 	for _, unwanted := range []string{`class="pill hold"`, "Release hold", "This request is on hold"} {
 		if strings.Contains(detail, unwanted) {
 			t.Fatalf("cancelled request still shows %q:\n%s", unwanted, detail)
@@ -1399,7 +1399,7 @@ func TestAskingForCancellationOnAHeldRequestClearsTheHold(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("HoldAsk")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel-request", reqID), url.Values{"reason": {"No longer needed"}}), http.StatusSeeOther)
 
@@ -1410,7 +1410,7 @@ func TestAskingForCancellationOnAHeldRequestClearsTheHold(t *testing.T) {
 	if onHold != 0 {
 		t.Fatalf("cancellation_requested request still carries on_hold=%d", onHold)
 	}
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	detail := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if strings.Contains(detail, `class="pill hold"`) {
 		t.Fatalf("pill still says On hold while a cancellation is pending:\n%s", detail)
 	}
@@ -1429,14 +1429,14 @@ func TestTheHoldBannerIsTheOnlyBannerOnAHeldRequest(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("HoldBanner")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 2500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	s.loginAdmin()
+	detail := s.get(fmt.Sprintf("/requests/%d", reqID))
 	if !strings.Contains(detail, "Approved requests are locked") {
 		t.Fatalf("approved request is missing its lock banner:\n%s", detail)
 	}
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", reqID), url.Values{"reason": {"Which site is this for?"}}), http.StatusSeeOther)
 
-	detail = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""))
+	detail = s.get(fmt.Sprintf("/requests/%d", reqID))
 	if strings.Contains(detail, "Approved requests are locked") {
 		t.Fatalf("the approved lock stacks above the hold banner:\n%s", detail)
 	}
@@ -1459,14 +1459,14 @@ func TestTheQueueLinksAStaleReservationToTheNudgeScreen(t *testing.T) {
 	admin, headID := s.seedHead("StaleLink")
 	fresh := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 4400000)
 	old := s.seedApprovedRequest(2, admin.ID, admin.ID, headID, 7800000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", fresh), url.Values{}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", old), url.Values{}), http.StatusSeeOther)
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET processing_at=datetime('now','-26 hours') WHERE id=?`, old); err != nil {
 		t.Fatal(err)
 	}
 
-	body := responseBody(t, s.request(http.MethodGet, "/accounts-queue?tab=processing", nil, ""))
+	body := s.get("/accounts-queue?tab=processing")
 	if !strings.Contains(body, fmt.Sprintf("/requests/%d/reservation/stale", old)) {
 		t.Fatalf("the stale row does not link to the nudge screen:\n%s", body)
 	}
@@ -1489,12 +1489,12 @@ func TestStaleScreenOffersFourChoicesThatAllLandSomewhereUsable(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("StaleFour")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 7800000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET processing_at=datetime('now','-26 hours') WHERE id=?`, reqID); err != nil {
 		t.Fatal(err)
 	}
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/reservation/stale", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d/reservation/stale", reqID))
 
 	list := body[strings.Index(body, `class="a-list"`):]
 	list = list[:strings.Index(list, "</div>")]
@@ -1535,26 +1535,26 @@ func TestTheVendorNameSurvivesTheWholeSettlementFlow(t *testing.T) {
 	admin, headID := s.seedHead("Payee")
 	const vendorName = "Sundaram Electricals Pvt Ltd"
 	reqID, _ := s.seedVendorRequest(1, admin.ID, admin.ID, headID, 500000, vendorName)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	// The queue names the vendor, and searching for it finds the row.
-	queue := responseBody(t, s.request(http.MethodGet, "/accounts-queue", nil, ""))
+	queue := s.get("/accounts-queue")
 	if !strings.Contains(queue, vendorName) {
 		t.Fatalf("the queue does not name the vendor:\n%s", queue)
 	}
-	found := responseBody(t, s.request(http.MethodGet, "/accounts-queue?q=Sundaram", nil, ""))
+	found := s.get("/accounts-queue?q=Sundaram")
 	if !strings.Contains(found, "PR-2026-000001") {
 		t.Fatalf("searching the queue by vendor name found nothing:\n%s", found)
 	}
 
 	// The entry screen names it, and so does the confirmation sheet.
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	entry := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, ""))
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	entry := s.get(fmt.Sprintf("/payments/new?request=%d", reqID))
 	if !strings.Contains(entry, vendorName) {
 		t.Fatalf("the payment entry screen does not name the vendor:\n%s", entry)
 	}
 	form := url.Values{"amount": {"5000.00"}, "paid_on": {"2026-07-25"}, "payment_mode": {"bank_transfer"}, "reference_no": {"N1"}}
-	sheet := responseBody(t, s.postFormHX(strconvPath("/requests/%d/settlement-preview", reqID), form))
+	sheet := responseBody(t, s.postFormHX(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form))
 	if !strings.Contains(sheet, vendorName) {
 		t.Fatalf("the settlement sheet does not name the vendor:\n%s", sheet)
 	}
@@ -1575,7 +1575,7 @@ func TestTheVendorNameSurvivesTheWholeSettlementFlow(t *testing.T) {
 	if storedPayee != vendorName {
 		t.Fatalf("payments.vendor_payee = %q, want %q — the payment was written with no payee", storedPayee, vendorName)
 	}
-	detail := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
+	detail := s.get(loc)
 	if !strings.Contains(detail, "<h1>"+vendorName+"</h1>") {
 		t.Fatalf("the payment detail h1 does not name the vendor:\n%s", detail)
 	}

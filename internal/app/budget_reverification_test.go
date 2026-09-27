@@ -31,14 +31,11 @@ func TestReportCurrentMonthKeepsSelectedScopeAndBack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var project int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, head).Scan(&project); err != nil {
-		t.Fatal(err)
-	}
+	project := projectOf(t, s, head)
 	if err := s.st.SetBudget(s.ctx, actor, other, currentMonthForTest(), 87600); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	origin := "/reports/heads?from=2026-01&to=2026-06"
 	for _, headID := range []int64{0, head} {
 		t.Run(fmt.Sprint(headID), func(t *testing.T) {
@@ -108,13 +105,10 @@ func TestReportMultiMonthTotalsCSVLabelAndPaymentScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var project int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, head).Scan(&project); err != nil {
-		t.Fatal(err)
-	}
+	project := projectOf(t, s, head)
 	path := fmt.Sprintf("/reports/heads?from=2026-03&to=2026-04&project_id=%d&head_id=%d", project, head)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	s.loginAdmin()
+	body := s.get(path)
 	for _, want := range []string{"Own March", "Own April", "Other viewer payment", "₹1,000.00", "Export full heads report CSV"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("admin report missing %s", want)
@@ -145,7 +139,7 @@ func TestReportMultiMonthTotalsCSVLabelAndPaymentScopes(t *testing.T) {
 	}
 	// Following the expressly labelled full export must actually return full scope.
 	export := reportAnchor(t, body, "Export full heads report CSV")
-	csvBody := responseBody(t, s.request(http.MethodGet, export, nil, ""))
+	csvBody := s.get(export)
 	records, err := csv.NewReader(strings.NewReader(csvBody)).ReadAll()
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +148,7 @@ func TestReportMultiMonthTotalsCSVLabelAndPaymentScopes(t *testing.T) {
 		t.Fatalf("full CSV scope unexpected rows=%d body=%s", len(records), csvBody)
 	}
 	s.login(owned.Email, "ReportScopedPass1")
-	limited := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	limited := s.get(path)
 	for _, want := range []string{"Own March", "Own April", "Restricted payment access may show fewer records"} {
 		if !strings.Contains(limited, want) {
 			t.Errorf("own report missing %s", want)
@@ -170,11 +164,11 @@ func TestReportMultiMonthTotalsCSVLabelAndPaymentScopes(t *testing.T) {
 	}
 	s.seedProbeUser("no-pay-scope@example.test", "No scope", "NoScopePass123", "no-pay-scope", []store.Grant{{Resource: "report", Action: "view"}, {Resource: "payment", Action: "view"}}, nil)
 	s.login("no-pay-scope@example.test", "NoScopePass123")
-	none := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	none := s.get(path)
 	if strings.Contains(none, "Own March") || strings.Contains(none, "Other viewer payment") {
 		t.Fatal("missing payment scope did not fail closed")
 	}
-	empty := responseBody(t, s.request(http.MethodGet, "/reports/heads?from=2099-01&to=2099-01", nil, ""))
+	empty := s.get("/reports/heads?from=2099-01&to=2099-01")
 	if strings.Contains(empty, `href="/budgets">Set a budget`) {
 		t.Fatal("empty report offers an inaccessible budget action")
 	}
@@ -188,7 +182,7 @@ func TestGridPaymentActivityDoesNotDeclareOpenBalancesSettled(t *testing.T) {
 	if err := s.st.SetBudget(s.ctx, actor, head, month, 1000000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	installment, _ := s.settleOneRequest(501, head, 1200000, "7000.00", "installment", month+"-01")
 	kept, _ := s.settleOneRequest(502, head, 60000, "100.00", "partial", month+"-01")
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", kept), url.Values{"decision": {"continue"}, "note": {"Pay the remaining 500 on next transfer"}}), http.StatusSeeOther)
@@ -202,7 +196,7 @@ func TestGridPaymentActivityDoesNotDeclareOpenBalancesSettled(t *testing.T) {
 			t.Fatalf("request %d status=%s remaining=%d", id, req.Status, approvedOf(req)-req.PaidAmount)
 		}
 	}
-	body := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
+	body := s.get("/grid?month=" + month)
 	row := cut(body, `<tr class="head`, `</tr>`)
 	t.Logf("Grid head row with ₹5,000 + ₹500 still payable: %s", row)
 	for _, want := range []string{"₹10,000.00", "₹9,100.00", "₹900.00", "Under budget", "Payment recorded"} {

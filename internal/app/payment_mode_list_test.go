@@ -46,12 +46,12 @@ func TestPaymentEditFormOffersTheSettlementModeList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	settlement := selectOptionValues(t, responseBody(t, s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, "")), settlementModeSelect)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	settlement := selectOptionValues(t, s.get(fmt.Sprintf("/payments/new?request=%d", reqID)), settlementModeSelect)
 
-	editBody := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/%d/edit", payID), nil, ""))
+	editBody := s.get(fmt.Sprintf("/payments/%d/edit", payID))
 	edit := selectOptionValues(t, editBody, editModeSelect)
 
 	want := append(slices.Clone(settlement), "bank_transfer")
@@ -73,9 +73,9 @@ func TestPaymentEditFormOffersTheSettlementModeList(t *testing.T) {
 	// A mode the forms offer saves; one outside the list is refused and nothing
 	// changes.
 	form := url.Values{"head_id": {fmt.Sprint(head)}, "paid_on": {"2026-06-15"}, "amount": {"50.00"}, "vendor_payee": {"Legacy"}, "payment_mode": {"neft"}}
-	requireStatus(t, s.postForm(strconvPath("/payments/%d/edit", payID), form), http.StatusSeeOther)
+	requireStatus(t, s.postForm(fmt.Sprintf("/payments/%d/edit", payID), form), http.StatusSeeOther)
 	form.Set("payment_mode", "wire")
-	refused := s.postForm(strconvPath("/payments/%d/edit", payID), form)
+	refused := s.postForm(fmt.Sprintf("/payments/%d/edit", payID), form)
 	requireStatus(t, refused, http.StatusBadRequest)
 	refused.Body.Close()
 	p, err := s.st.Payment(s.ctx, payID)

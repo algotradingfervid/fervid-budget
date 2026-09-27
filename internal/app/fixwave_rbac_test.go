@@ -20,7 +20,7 @@ import (
 // JavaScript-less path, where ticking a cell cannot tick its boxes).
 func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm("/roles/new", url.Values{"name": {"Field Staff"}}), http.StatusSeeOther)
 	roleID := s.roleIDByName(t, "Field Staff")
 
@@ -62,7 +62,7 @@ func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 	// partial, and the mobile badge counts the row's grants, not its cells.
 	save = url.Values{"role_id": {roleID}, "name": {"Field Staff"}, "cell": {"requests:view"}, "perm": {"request:view", "approval:approve"}}
 	requireStatus(t, s.postForm("/roles", save), http.StatusSeeOther)
-	body := responseBody(t, s.request(http.MethodGet, "/roles?role="+roleID, nil, ""))
+	body := s.get("/roles?role=" + roleID)
 	viewCell := regexp.MustCompile(`<input type="checkbox" name="cell" value="requests:view"[^>]*>`).FindString(body)
 	if viewCell == "" || !strings.Contains(viewCell, `data-partial`) || strings.Contains(viewCell, "checked") {
 		t.Fatalf("the half-held View cell renders as %q, want unchecked and marked data-partial", viewCell)
@@ -88,11 +88,11 @@ func TestRequestScopeNoneShowsNoRowsAnywhere(t *testing.T) {
 		[]store.Grant{{Resource: "request", Action: "view"}, {Resource: "grid", Action: "view"}}, nil)
 
 	s.login("carl@example.test", "CarlPass12345")
-	body := responseBody(t, s.request(http.MethodGet, "/requests?bucket=all", nil, ""))
+	body := s.get("/requests?bucket=all")
 	if strings.Contains(body, "PR-2026-000001") {
 		t.Fatalf("a viewer with no request scope sees the list: %s", body)
 	}
-	csv := responseBody(t, s.request(http.MethodGet, "/requests/export.csv?bucket=all", nil, ""))
+	csv := s.get("/requests/export.csv?bucket=all")
 	if strings.Contains(csv, "PR-2026-000001") {
 		t.Fatalf("a viewer with no request scope gets rows in the export: %s", csv)
 	}
@@ -112,7 +112,7 @@ func TestPaymentScopeNoneShowsNoLedgerRows(t *testing.T) {
 		[]store.Grant{{Resource: "payment", Action: "view"}}, nil)
 
 	s.login("dana@example.test", "DanaPass12345")
-	body := responseBody(t, s.request(http.MethodGet, "/payments?month=2026-06&status=all", nil, ""))
+	body := s.get("/payments?month=2026-06&status=all")
 	if strings.Contains(body, "Scope Probe Payee") {
 		t.Fatalf("a viewer with no payment scope sees the ledger: %s", body)
 	}
@@ -123,7 +123,7 @@ func TestPaymentScopeNoneShowsNoLedgerRows(t *testing.T) {
 		[]store.Grant{{Resource: "payment", Action: "view"}},
 		[]store.ScopeGrant{{Resource: "payment", Scope: store.ScopeAll}})
 	s.login("erin@example.test", "ErinPass12345")
-	body = responseBody(t, s.request(http.MethodGet, "/payments?month=2026-06&status=all", nil, ""))
+	body = s.get("/payments?month=2026-06&status=all")
 	if !strings.Contains(body, "Scope Probe Payee") {
 		t.Fatalf("a viewer with scope All lost the ledger: %s", body)
 	}
@@ -159,8 +159,8 @@ func TestRoleDeleteSheetExplainsAHeldRole(t *testing.T) {
 		return rest[:end]
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/roles?role="+roleID, nil, ""))
+	s.loginAdmin()
+	body := s.get("/roles?role=" + roleID)
 	sheet := deleteSheet(body)
 	if !strings.Contains(sheet, "1 user holds this role") || strings.Contains(sheet, "1 users") {
 		t.Fatalf("the sheet miscounts or mis-pluralises the holders: %s", sheet[:600])
@@ -176,14 +176,11 @@ func TestRoleDeleteSheetExplainsAHeldRole(t *testing.T) {
 	}
 
 	// Once nobody holds it, the sheet offers the deletion again.
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if err := s.st.SetUserRoles(s.ctx, admin, holder.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	body = responseBody(t, s.request(http.MethodGet, "/roles?role="+roleID, nil, ""))
+	body = s.get("/roles?role=" + roleID)
 	sheet = deleteSheet(body)
 	if !strings.Contains(sheet, `type="submit"`) || !strings.Contains(sheet, "Nobody holds this role") {
 		t.Fatalf("an unheld role no longer offers Delete: %s", sheet[:600])

@@ -102,7 +102,7 @@ func TestSecurityReplayNotificationScopeDisclosure(t *testing.T) {
 
 func TestSecurityReplayLogoutReplay(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	base, _ := url.Parse(s.server.URL)
 	var stolen *http.Cookie
 	for _, c := range s.client.Jar.Cookies(base) {
@@ -150,15 +150,12 @@ func TestSecurityReplayCSVFormula(t *testing.T) {
 	admin, head := s.seedHead("CSV")
 	u := s.seedRequester("csv@example.test", "CSV requester", "CsvPass12345")
 	s.login(u.Email, "CsvPass12345")
-	var project int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, head).Scan(&project); err != nil {
-		t.Fatal(err)
-	}
+	project := projectOf(t, s, head)
 	form := url.Values{"type": {"reimbursement"}, "treatment": {"budget"}, "project_id": {fmt.Sprint(project)}, "head_id": {fmt.Sprint(head)}, "manager_id": {fmt.Sprint(admin.ID)}, "amount": {"10"}, "short_title": {"=1+1"}, "purpose": {"Security formula probe"}, "expense_date": {"2026-06-03"}, "attachment_exception_reason": {"Synthetic test"}}
 	created := s.postForm("/requests", form)
 	requireStatus(t, created, 303)
 	created.Body.Close()
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	res := s.request("GET", "/requests/export.csv?scope=all&bucket=all", nil, "")
 	requireStatus(t, res, 200)
 	rows, err := csv.NewReader(strings.NewReader(responseBody(t, res))).ReadAll()
@@ -200,7 +197,7 @@ func TestSecurityReplayHeadersDefaultsAndCSRF(t *testing.T) {
 		t.Fatal("insecure defaults")
 	}
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	res := s.request("GET", "/users", nil, "")
 	requireStatus(t, res, 200)
 	defer res.Body.Close()

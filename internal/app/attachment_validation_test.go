@@ -110,7 +110,7 @@ func TestRejectedRequestAttachmentRetainsInputWithoutSavingChanges(t *testing.T)
 	} {
 		for _, path := range []string{fmt.Sprintf("/requests/%d/edit", id), "/requests"} {
 			if strings.HasSuffix(path, "/edit") {
-				fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, ""))))
+				fields.Set("revision", requestRevisionFromPage(t, s.get(path)))
 			}
 			body, ct := attachmentMultipart(t, fields, tc.name, tc.data)
 			resp := s.request(http.MethodPost, path, body, ct)
@@ -141,7 +141,7 @@ func TestRejectedRequestAttachmentRetainsInputWithoutSavingChanges(t *testing.T)
 			}
 		}
 	}
-	page := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	page := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(page, "up to 10 MiB") || !strings.Contains(page, `accept=".pdf,.jpg,.jpeg,.png"`) {
 		t.Fatal("upload control does not advertise the enforced policy")
 	}
@@ -149,7 +149,7 @@ func TestRejectedRequestAttachmentRetainsInputWithoutSavingChanges(t *testing.T)
 
 func TestAttachmentLimitConfigurationRejectsUnsupportedValues(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, raw := range []string{"0", "-1", "21", "1.5", "invalid", ""} {
 		resp := s.postForm("/configuration", url.Values{"attachment_max_mb": {raw}, "number_prefix": {"Must not save"}})
 		requireStatus(t, resp, http.StatusBadRequest)

@@ -27,7 +27,7 @@ func TestApproveIsBoundToTheReviewedRevision(t *testing.T) {
 	s.login("kavita@example.test", "ApproverPass123")
 	path := fmt.Sprintf("/requests/%d/approve", id)
 	screen := func() string {
-		return requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, "")))
+		return requestRevisionFromPage(t, s.get(fmt.Sprintf("/requests/%d", id)))
 	}
 	seen := screen()
 	if _, err := s.st.AddRequestComment(s.ctx, requester, id, "One more detail"); err != nil {

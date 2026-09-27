@@ -16,12 +16,9 @@ func TestDeactivatingAHeadWithOpenRequestsAsksForConfirmation(t *testing.T) {
 	admin, headID := s.seedHead("Retire")
 	requester := s.seedRequester("retire.req@example.test", "Retire Requester", "RetirePass12345")
 	s.seedPendingRequest(951, requester.ID, admin.ID, headID, 120000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	form := func() url.Values {
 		return url.Values{
 			"id": {fmt.Sprint(headID)}, "project_id": {fmt.Sprint(projectID)},
@@ -73,7 +70,7 @@ func TestDeactivatingAnApproverWithWaitingRequestsAsksForConfirmation(t *testing
 	approver := s.seedRequester("leaver.apr@example.test", "Leaving Approver", "ApproverPass12345")
 	s.assignRole(approver.ID, "Manager")
 	s.seedPendingRequest(961, requester.ID, approver.ID, headID, 90000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	const newPassword = "FreshPassword98765"
 	form := url.Values{
@@ -127,11 +124,11 @@ func TestRequestsExportCarriesTheApprovedAmount(t *testing.T) {
 	requester := s.seedRequester("export.req@example.test", "Export Requester", "ExportPass12345")
 	approved := s.seedPendingRequest(971, requester.ID, admin.ID, headID, 120000)
 	s.seedPendingRequest(972, requester.ID, admin.ID, headID, 50000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/approve", approved),
 		url.Values{"approved_amount": {"1000.00"}, "reason": {"Capped at the policy rate"}}), http.StatusSeeOther)
 
-	body := responseBody(t, s.request(http.MethodGet, "/requests/export.csv?bucket=all", nil, ""))
+	body := s.get("/requests/export.csv?bucket=all")
 	if !strings.HasPrefix(body, "Number,Status,Type,Title,Amount,Approved amount,Payee,") {
 		t.Fatalf("export header lacks the approved-amount column: %s", strings.SplitN(body, "\n", 2)[0])
 	}

@@ -87,10 +87,7 @@ func TestScopeNarrowsFromTheURLButNeverWidens(t *testing.T) {
 	s := newAppTestServer(t)
 	a := s.probeApp()
 	requester := s.seedRequester("scoped@example.test", "Scoped", "RequesterPass123")
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 
 	for _, tc := range []struct {
 		name      string
@@ -140,7 +137,7 @@ func TestRequestExportIsScopedAndCarriesThePhase2Columns(t *testing.T) {
 	// Q5: another requester exports nothing of it, even asking for scope=all.
 	s.seedRequester("olga@example.test", "Olga", "OtherPass1234")
 	s.login("olga@example.test", "OtherPass1234")
-	other := responseBody(t, s.request(http.MethodGet, "/requests/export.csv?scope=all", nil, ""))
+	other := s.get("/requests/export.csv?scope=all")
 	if strings.Contains(other, "Lunch with the client") {
 		t.Fatalf("scope=all widened a requester's export: %s", other)
 	}
@@ -151,8 +148,8 @@ func TestRequestExportIsScopedAndCarriesThePhase2Columns(t *testing.T) {
 // anywhere in the application.
 func TestRequestNewTypeChooser(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/requests/new", nil, ""))
+	s.loginAdmin()
+	body := s.get("/requests/new")
 
 	if !strings.Contains(body, `class="type-grid"`) {
 		t.Fatal("the chooser does not use the .type-grid layout")
@@ -190,7 +187,7 @@ func TestRequestNewTypeChooser(t *testing.T) {
 	}
 
 	// An unknown type falls back to the chooser rather than rendering a broken form.
-	body = responseBody(t, s.request(http.MethodGet, "/requests/new?type=mystery", nil, ""))
+	body = s.get("/requests/new?type=mystery")
 	if !strings.Contains(body, `class="type-grid"`) {
 		t.Fatal("an unknown type must fall back to the chooser")
 	}
@@ -204,9 +201,9 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	s.seedHead("Form")
 	mgrID := seedSecondApprover(t, s)
 	s.seedVendor(store.VendorInput{Name: "Sundaram Electricals Pvt Ltd", VendorType: "company", Status: "active"})
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	form := s.get("/requests/new?type=vendor_invoice")
 
 	// T3: bank details live on the vendor record, never on a request screen.
 	for _, banned := range []string{"bank account", "ifsc", "copy previous", "save draft", "save as draft"} {
@@ -241,7 +238,7 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	if !strings.Contains(form, `<input type="hidden" name="treatment" value="budget">`) {
 		t.Fatal("the vendor invoice form must still submit a treatment")
 	}
-	advanceForm := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	advanceForm := s.get("/requests/new?type=employee_advance")
 	for _, want := range []string{`class="choice"`, `value="recoverable"`, `value="budget"`} {
 		if !strings.Contains(advanceForm, want) {
 			t.Fatalf("the employee advance form is missing %q; it is the one type that may be recoverable", want)
@@ -249,10 +246,7 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	}
 
 	// G8: the requester is never in their own approver list, and somebody else is.
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	approverSelect := between(t, form, `<select id="approver"`, `</select>`)
 	if strings.Contains(approverSelect, `value="`+strconvFormat(admin.ID)+`"`) {
 		t.Fatalf("the requester appears in their own approver select: %s", approverSelect)
@@ -268,7 +262,7 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	}
 
 	// Each type gets its own fieldsets and nobody else's.
-	reimb := responseBody(t, s.request(http.MethodGet, "/requests/new?type=reimbursement", nil, ""))
+	reimb := s.get("/requests/new?type=reimbursement")
 	if !strings.Contains(reimb, `name="expense_date"`) {
 		t.Fatal("reimbursement does not ask for the expense date")
 	}
@@ -277,7 +271,7 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 			t.Fatalf("reimbursement rendered %q, which belongs to a vendor invoice", absent)
 		}
 	}
-	advance := responseBody(t, s.request(http.MethodGet, "/requests/new?type=employee_advance", nil, ""))
+	advance := s.get("/requests/new?type=employee_advance")
 	if !strings.Contains(advance, `name="advance_reason"`) {
 		t.Fatal("employee advance does not ask what the money is for")
 	}
@@ -317,15 +311,12 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 func TestCompulsoryAttachmentsAskForAReasonRatherThanBlocking(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedHead("Att")
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if err := s.st.SetAppSetting(s.ctx, admin, "require_attachments", "1"); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=reimbursement", nil, ""))
+	s.loginAdmin()
+	form := s.get("/requests/new?type=reimbursement")
 	if !strings.Contains(form, `name="attachment_exception_reason"`) {
 		t.Fatal("attachments are compulsory but the form never asks why one is missing")
 	}
@@ -338,8 +329,8 @@ func TestCompulsoryAttachmentsAskForAReasonRatherThanBlocking(t *testing.T) {
 func TestRenderPartialOmitsTheShell(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedHead("Frag")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	full := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	s.loginAdmin()
+	full := s.get("/requests/new?type=vendor_invoice")
 	if !strings.Contains(full, "<aside") {
 		t.Fatal("the full page is missing the shell")
 	}
@@ -388,7 +379,7 @@ func TestRequesterCreatesAndSubmitsInOnePost(t *testing.T) {
 		t.Fatalf("amount = %d, want 100000 paise", list[0].Amount)
 	}
 
-	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(list[0].ID)+"/submitted", nil, ""))
+	body := s.get("/requests/" + strconvFormat(list[0].ID) + "/submitted")
 	for _, want := range []string{`class="banner good"`, `class="req-head"`, `class="thread"`,
 		`class="pill awaiting"`, `class="waiting"`, list[0].Number, "Kavita Rao",
 		`href="/requests/new"`, "<h1>"} {
@@ -532,7 +523,7 @@ func TestDuplicateCheckWarnsAndNeverBlocks(t *testing.T) {
 	}
 
 	// The form carries the wiring that asks for the check, and somewhere to put it.
-	form := responseBody(t, s.request(http.MethodGet, "/requests/new?type=vendor_invoice", nil, ""))
+	form := s.get("/requests/new?type=vendor_invoice")
 	for _, want := range []string{`hx-post="/requests/duplicate-check"`, `id="dup-check"`} {
 		if !strings.Contains(form, want) {
 			t.Fatalf("the form is missing the duplicate-check wiring %q", want)
@@ -637,7 +628,7 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 	}
 
 	s.login("lister@example.test", "RequesterPass123")
-	body := responseBody(t, s.request(http.MethodGet, "/requests", nil, ""))
+	body := s.get("/requests")
 	for _, want := range []string{
 		`class="req-list"`, `class="req-card`, `class="rc-no"`, `class="rc-amt"`,
 		`class="rc-title"`, `class="rc-meta"`, `class="rc-foot"`,
@@ -663,11 +654,11 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 	if !strings.Contains(body, `bucket=needs-me`) {
 		t.Fatal("the Needs me tab is missing")
 	}
-	needsMe := responseBody(t, s.request(http.MethodGet, "/requests?bucket=needs-me", nil, ""))
+	needsMe := s.get("/requests?bucket=needs-me")
 	if !strings.Contains(needsMe, "Sent back to me") || strings.Contains(needsMe, "Still waiting") {
 		t.Fatalf("the Needs me bucket listed the wrong requests: %s", needsMe)
 	}
-	closed := responseBody(t, s.request(http.MethodGet, "/requests?bucket=closed", nil, ""))
+	closed := s.get("/requests?bucket=closed")
 	if strings.Contains(closed, "Still waiting") || strings.Contains(closed, "Sent back to me") {
 		t.Fatal("an open request was listed under Closed")
 	}
@@ -678,7 +669,7 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 	// Q5: the list is scoped. Another requester sees none of it.
 	s.seedRequester("notlister@example.test", "Not Lister", "OtherPass1234")
 	s.login("notlister@example.test", "OtherPass1234")
-	other := responseBody(t, s.request(http.MethodGet, "/requests", nil, ""))
+	other := s.get("/requests")
 	if strings.Contains(other, "Still waiting") {
 		t.Fatal("a requester can see another person's requests in the list")
 	}
@@ -715,7 +706,7 @@ func TestApprovalsQueueIsItsOwnScreen(t *testing.T) {
 	}
 
 	s.login("kavita@example.test", "ApproverPass123")
-	body := responseBody(t, s.request(http.MethodGet, "/approvals", nil, ""))
+	body := s.get("/approvals")
 	for _, want := range []string{`class="segmented"`, `class="req-list"`, `class="req-card`,
 		"Travel reimbursement", `class="waiting you"`, "<h1>"} {
 		if !strings.Contains(body, want) {
@@ -733,7 +724,7 @@ func TestApprovalsQueueIsItsOwnScreen(t *testing.T) {
 	if !strings.Contains(body, `href="/approvals?bucket=cancellations`) {
 		t.Fatal("no cancellations tab")
 	}
-	cancel := responseBody(t, s.request(http.MethodGet, "/approvals?bucket=cancellations", nil, ""))
+	cancel := s.get("/approvals?bucket=cancellations")
 	if !strings.Contains(cancel, "Binding wire advance") || strings.Contains(cancel, "Travel reimbursement") {
 		t.Fatalf("the cancellations tab listed the wrong requests: %s", cancel)
 	}
@@ -773,7 +764,7 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 
 	// --- The approver sees the decision controls. ---
 	s.login("kavita@example.test", "ApproverPass123")
-	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	body := s.get("/requests/" + strconvFormat(id))
 	for _, want := range []string{
 		`class="req-head"`, `class="rh-no"`, `class="rh-amt"`, `class="rh-status"`,
 		`class="pill awaiting"`, `class="waiting you"`, `class="dl"`, `class="thread"`,
@@ -808,7 +799,7 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 
 	// --- The requester sees the same page, with a different action bar. ---
 	s.login("sneha@example.test", "RequesterPass123")
-	body = responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	body = s.get("/requests/" + strconvFormat(id))
 	if strings.Contains(body, `data-open="approve-sheet"`) {
 		t.Fatal("the requester is offered an approve control on their own request")
 	}
@@ -823,7 +814,7 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 	if err := s.st.ApproveRequest(s.ctx, mgr, id, 23500000, "ok"); err != nil {
 		t.Fatal(err)
 	}
-	body = responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	body = s.get("/requests/" + strconvFormat(id))
 	if strings.Contains(body, `href="/requests/`+strconvFormat(id)+`/edit"`) {
 		t.Fatal("an approved request still offers an edit link")
 	}
@@ -938,7 +929,7 @@ func TestRequestEditScreenAndReroute(t *testing.T) {
 	}
 
 	s.login("arun@example.test", "RequesterPass123")
-	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/edit", nil, ""))
+	body := s.get("/requests/" + strconvFormat(id) + "/edit")
 	for _, want := range []string{`class="banner info"`, ` money-field"`, `class="in-words"`,
 		`class="action-bar"`, `name="manager_id"`, `value="16,900.00"`, "restarts", "<h1>"} {
 		if !strings.Contains(body, want) {
@@ -1024,7 +1015,7 @@ func TestReturnedRequestScreenCorrectsAndResubmits(t *testing.T) {
 	before, _ := s.st.Request(s.ctx, id)
 
 	s.login("ret@example.test", "RequesterPass123")
-	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	body := s.get("/requests/" + strconvFormat(id))
 	for _, want := range []string{
 		`class="pill returned"`, `class="banner warn"`, "The invoice attached is the June one.",
 		`class="thread"`, `action="/requests/` + strconvFormat(id) + `/edit"`,
@@ -1043,7 +1034,7 @@ func TestReturnedRequestScreenCorrectsAndResubmits(t *testing.T) {
 	// The approver looking at the same URL gets the read-only detail, not a
 	// correction form they could never submit.
 	s.login("kavita@example.test", "ApproverPass123")
-	managerView := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	managerView := s.get("/requests/" + strconvFormat(id))
 	if strings.Contains(managerView, "Resubmit for approval") {
 		t.Fatal("the approver is offered the requester's correction form")
 	}
@@ -1106,7 +1097,7 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 
 	// --- The employee asks. ---
 	s.login("cancelreq@example.test", "RequesterPass123")
-	body := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/cancel", nil, ""))
+	body := s.get("/requests/" + strconvFormat(id) + "/cancel")
 	for _, want := range []string{`class="banner warn"`, "Payment freezes", `class="req-head"`,
 		`name="reason"`, `class="action-bar"`, "<h1>"} {
 		if !strings.Contains(body, want) {
@@ -1123,7 +1114,7 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 		t.Fatalf("status = %q, want cancellation_requested", frozen.Status)
 	}
 	// The requester sees the freeze on the detail page.
-	detail := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""))
+	detail := s.get("/requests/" + strconvFormat(id))
 	if !strings.Contains(detail, `class="pill cancelreq"`) || !strings.Contains(detail, "Payment is frozen") {
 		t.Fatalf("the frozen state is not shown to the requester: %s", detail)
 	}
@@ -1132,7 +1123,7 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 
 	// --- The approver decides. ---
 	s.login("kavita@example.test", "ApproverPass123")
-	body = responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id)+"/cancellation", nil, ""))
+	body = s.get("/requests/" + strconvFormat(id) + "/cancellation")
 	for _, want := range []string{"Site cancelled the order", `data-open="accept-sheet"`,
 		`data-open="decline-sheet"`, `class="overlay"`, `class="sheet"`, `class="thread"`, "<h1>"} {
 		if !strings.Contains(body, want) {
@@ -1162,7 +1153,7 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 
 	// --- G2: the approver cancels a different request outright. ---
 	other := mk("Second order", 100000)
-	outright := responseBody(t, s.request(http.MethodGet, "/requests/"+strconvFormat(other)+"/cancellation", nil, ""))
+	outright := s.get("/requests/" + strconvFormat(other) + "/cancellation")
 	if !strings.Contains(outright, `data-open="outright-sheet"`) {
 		t.Fatal("an approved request offers no outright cancellation to its approver")
 	}
@@ -1193,8 +1184,8 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 		t.Fatalf("an unprivileged POST changed a setting: %q", v)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
+	s.loginAdmin()
+	body := s.get("/configuration")
 	for _, want := range []string{
 		"<legend>Request numbering</legend>", "<legend>Attachments</legend>",
 		"<legend>Urgency</legend>", "<legend>Approvals</legend>", "<legend>Payments</legend>",
@@ -1256,7 +1247,7 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 		t.Fatalf("configuration save was not audited: %#v, %v", audit, err)
 	}
 	// And it is shown back, so the screen is a reading of the stored rules.
-	if !strings.Contains(responseBody(t, s.request(http.MethodGet, "/configuration", nil, "")), `value="REQ"`) {
+	if !strings.Contains(s.get("/configuration"), `value="REQ"`) {
 		t.Fatal("the saved prefix is not shown back")
 	}
 
@@ -1319,7 +1310,7 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 
 	// --- Requester. ---
 	s.login("dashreq@example.test", "RequesterPass123")
-	body := responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	body := s.get("/dashboard")
 	for _, want := range []string{
 		`class="work-areas"`, `class="area"`, `class="a-head"`, `class="a-list"`, `class="a-foot"`,
 		`class="metric-strip"`, "Needs your action", "Cab receipts", `class="pill returned"`, "<h1>",
@@ -1341,7 +1332,7 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 
 	// --- Approver sees their own areas. ---
 	s.login("kavita@example.test", "ApproverPass123")
-	body = responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	body = s.get("/dashboard")
 	for _, want := range []string{"Awaiting your approval", "Team lunch", `href="/approvals"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("approver dashboard is missing %q", want)
@@ -1349,8 +1340,8 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 	}
 
 	// --- Admin sees the administration area. ---
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body = responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	s.loginAdmin()
+	body = s.get("/dashboard")
 	for _, want := range []string{"Configuration", `href="/configuration"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("admin dashboard is missing %q", want)
@@ -1360,7 +1351,7 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 	// --- Somebody with nothing waiting is told so, not shown an empty page. ---
 	s.seedRequester("idle@example.test", "Idle Hands", "OtherPass1234")
 	s.login("idle@example.test", "OtherPass1234")
-	body = responseBody(t, s.request(http.MethodGet, "/dashboard", nil, ""))
+	body = s.get("/dashboard")
 	if !strings.Contains(body, "Nothing is waiting on you") {
 		t.Fatalf("an empty dashboard says nothing at all: %s", body)
 	}
@@ -1369,7 +1360,7 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 // A6/D5: no bulk-approve and no copy-previous endpoint may exist.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	bulk := s.postForm("/requests/bulk-approve", url.Values{})
 	if bulk.StatusCode != http.StatusNotFound && bulk.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("bulk-approve status = %d, want 404/405 (the endpoint must not exist)", bulk.StatusCode)
@@ -1428,7 +1419,7 @@ func TestNoTaxColumnsInSchema(t *testing.T) {
 		}
 		cols.Close()
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.request(http.MethodGet, "/tax", nil, "")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("GET /tax = %d, want 404 (no tax route may exist)", resp.StatusCode)

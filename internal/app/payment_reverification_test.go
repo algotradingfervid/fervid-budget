@@ -61,7 +61,7 @@ func TestEditedRecoveryReplayDoesNotShowSuccess(t *testing.T) {
 	s := newAppTestServer(t)
 	_, head := s.seedHead("Recovery replay")
 	id := seedRecoverable(t, s, head, "PR-REPLAY-HTTP", "icd", "Replay Party", "2026-06-30", "2026-02-01", 700000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	path := fmt.Sprintf("/recoverables/%d/events", id)
 	form := url.Values{"kind": {"return"}, "amount": {"2000"}, "occurred_on": {"2026-02-02"}, "reference": {"ORIGINAL-RECEIPT"}, "note": {"Bank evidence"}, "token": {"http-recovery-replay-confirmation"}}
 	requireStatus(t, s.postForm(path, form), http.StatusSeeOther)

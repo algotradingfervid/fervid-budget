@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,16 +20,16 @@ func TestNEFTIdentitySurvivesConfiguredEntryPreviewSaveAndReceipt(t *testing.T) 
 	if err := s.st.SetAppSetting(s.ctx, actor, "payment_modes", "NEFT, RTGS, Bank transfer, DD"); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
-	entry := responseBody(t, s.request("GET", strconvPath("/payments/new?request=%d", reqID), nil, ""))
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	entry := responseBody(t, s.request("GET", fmt.Sprintf("/payments/new?request=%d", reqID), nil, ""))
 	for _, want := range []string{`value="neft" selected>NEFT`, `value="rtgs" >RTGS`, `value="bank_transfer" >Bank transfer`, `value="dd" >DD`} {
 		if !strings.Contains(entry, want) {
 			t.Fatalf("entry missing %q", want)
 		}
 	}
 	form := url.Values{"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(head)}, "amount": {"123.45"}, "paid_on": {"2026-09-26"}, "payment_mode": {"neft"}, "reference_no": {"NEFT-IDENTITY-123"}, "settlement": {"settled"}}
-	preview := responseBody(t, s.postForm(strconvPath("/requests/%d/settlement-preview", reqID), form))
+	preview := responseBody(t, s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", reqID), form))
 	if !strings.Contains(preview, ">NEFT<") || !strings.Contains(preview, `value="neft"`) {
 		t.Fatal("preview lost NEFT identity")
 	}
@@ -63,9 +64,9 @@ func TestVendorShortNameInListSearchAndRequestPickers(t *testing.T) {
 	s := newAppTestServer(t)
 	id := s.seedVendor(store.VendorInput{Name: "Short Name Supplier Legal", DisplayName: "SN Supplier", VendorType: "company", Status: "active"})
 	s.seedVendor(store.VendorInput{Name: "No Short Name Supplier", VendorType: "company", Status: "active"})
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	list := responseBody(t, s.request("GET", "/vendors", nil, ""))
-	if !strings.Contains(list, strconvPath(`/vendors/%d">SN Supplier</a>`, id)) || !strings.Contains(list, `>Short Name Supplier Legal</span>`) || !strings.Contains(list, `>No Short Name Supplier</a>`) {
+	if !strings.Contains(list, fmt.Sprintf(`/vendors/%d">SN Supplier</a>`, id)) || !strings.Contains(list, `>Short Name Supplier Legal</span>`) || !strings.Contains(list, `>No Short Name Supplier</a>`) {
 		t.Fatal("list must use short name, keep legal context, and fall back when empty")
 	}
 	search := responseBody(t, s.htmxGet("/vendors/search?q=SN+Supplier"))
@@ -78,7 +79,7 @@ func TestVendorShortNameInListSearchAndRequestPickers(t *testing.T) {
 			t.Fatalf("%s picker must show short name and fall back when empty", kind)
 		}
 	}
-	detail := responseBody(t, s.request("GET", strconvPath("/vendors/%d", id), nil, ""))
+	detail := responseBody(t, s.request("GET", fmt.Sprintf("/vendors/%d", id), nil, ""))
 	if !strings.Contains(detail, `value="Short Name Supplier Legal"`) || !strings.Contains(detail, `value="SN Supplier"`) {
 		t.Fatal("legal and short names must remain distinct on detail")
 	}

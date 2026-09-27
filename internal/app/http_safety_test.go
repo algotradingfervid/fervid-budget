@@ -34,7 +34,7 @@ func TestHTTPErrorStatusContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	invalid := url.Values{"project_id": {"0"}, "name": {"Invalid head"}, "due_day": {"32"}}
 	resp := s.postForm("/heads", invalid)

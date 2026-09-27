@@ -22,16 +22,13 @@ var danglingSlash = regexp.MustCompile(`(>\s*/\s*[^\s<])|(>\s*/\s*<)|([^\s>]\s/\
 func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("RecGrid")
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	projectID := projectOf(t, s, headID)
+	s.loginAdmin()
 	month := currentMonthForTest()
 	_, budgetPay := s.settleOneRequest(1, headID, 400000, "4000.00", "settled", month+"-02")
 
 	reqID := s.seedHeadlessRecoverable(2, admin.ID, admin.ID, projectID, 25000000)
-	picker := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	picker := s.get("/payments/new")
 	row := cut(cut(picker, "PR-2026-000002", "</small>"), "<small>", "</small>")
 	if row == "" || danglingSlash.MatchString(row) || !strings.Contains(row, "Recoverable") {
 		t.Fatalf("the payment picker row for a recoverable reads %q", row)
@@ -40,7 +37,7 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 
 	// The reservation screen, before the payment exists: a recoverable is not
 	// charged to any budget, so "Charge to" must not read "Operations /".
-	entry := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", reqID), nil, ""))
+	entry := s.get(fmt.Sprintf("/payments/new?request=%d", reqID))
 	if cut(entry, "<dt>Charge to</dt>", "</dd>") == "" {
 		t.Fatal("the payment entry screen has no Charge to line")
 	}
@@ -63,7 +60,7 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	grid := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
+	grid := s.get("/grid?month=" + month)
 	panel := cut(grid, "Recent Payments for", "</table>")
 	if strings.Contains(panel, fmt.Sprintf(`href="/payments/%d"`, recPay)) || strings.Contains(panel, "2,50,000.00") {
 		t.Fatalf("the grid's Recent Payments lists the recoverable payment: %s", panel)
@@ -72,13 +69,13 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 		t.Fatalf("the budget payment fell out of Recent Payments too: %s", panel)
 	}
 
-	ledger := responseBody(t, s.request(http.MethodGet, "/payments?month="+month, nil, ""))
+	ledger := s.get("/payments?month=" + month)
 	cell := cut(ledger, fmt.Sprintf(`<a href="/payments/%d">`, recPay), "</a>")
 	if cell == "" || danglingSlash.MatchString(cell) || !strings.Contains(cell, "Recoverable") {
 		t.Fatalf("the ledger's Project / Head cell for a recoverable = %q, want it named Recoverable", cell)
 	}
 
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", recPay), nil, ""))
+	detail := s.get(fmt.Sprintf("/payments/%d", recPay))
 	meta := cut(detail, `<p class="rh-meta">`, "</p>")
 	if meta == "" || danglingSlash.MatchString(meta) || !strings.Contains(meta, "Recoverable") {
 		t.Fatalf("the payment detail head reads %q, want it named Recoverable", meta)
@@ -92,14 +89,14 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 func TestGridHidesThePaymentsPanelRatherThanClaimingItIsEmpty(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("GridPanel")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	month := currentMonthForTest()
 	s.settleOneRequest(1, headID, 400000, "4000.00", "settled", month+"-02")
 
 	s.seedProbeUser("gridonly@example.test", "Grid Only", "GridOnlyPass1", "grid-only",
 		[]store.Grant{{Resource: "grid", Action: "view"}}, nil)
 	s.login("gridonly@example.test", "GridOnlyPass1")
-	body := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
+	body := s.get("/grid?month=" + month)
 	if !strings.Contains(body, "4,000.00") {
 		t.Fatal("the grid lost the head's actual")
 	}
@@ -118,9 +115,9 @@ func TestGridFiltersSwapOverHTMXAndStillWorkWithoutIt(t *testing.T) {
 	if err := s.st.SetBudget(s.ctx, actor, swapHead, currentMonthForTest(), 10000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	page := responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
+	page := s.get("/grid")
 	form := cut(page, `<form class="toolbar"`, ">")
 	for _, want := range []string{`method="get"`, `action="/grid"`, `hx-get="/grid"`, `hx-push-url="true"`, `hx-target="#grid-body"`, `hx-select="#grid-body"`} {
 		if !strings.Contains(form, want) {
@@ -171,9 +168,9 @@ func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 	if err := s.st.SetBudget(s.ctx, actor, soloHead, currentMonthForTest(), 10000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	month := currentMonthForTest()
-	grid := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
+	grid := s.get("/grid?month=" + month)
 	if !strings.Contains(grid, `<span class="project-count">1 head</span>`) {
 		t.Fatalf("a one-head project is not counted as \"1 head\": %s", cut(grid, `class="project-count"`, "</span>"))
 	}
@@ -184,7 +181,7 @@ func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 		t.Fatalf("the month close sentence is not pluralised: %s", cut(grid, "<h2>Month Close</h2>", "</p>"))
 	}
 	requireStatus(t, s.postForm("/months", url.Values{"target_month": {month}}), http.StatusSeeOther)
-	months := responseBody(t, s.request(http.MethodGet, "/months", nil, ""))
+	months := s.get("/months")
 	if !strings.Contains(months, "<small>1 head</small>") {
 		t.Fatalf("/months does not say \"1 head\": %s", cut(months, `data-label="Month"`, "</td>"))
 	}
@@ -196,7 +193,7 @@ func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 // roles still in place. The password is deliberately never echoed into HTML.
 func TestAddUserValidationKeepsTheDrawerAndTheInput(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm("/users", url.Values{"email": {"nora@example.test"}, "name": {"Nora Test"}, "password": {"NoraPassword123"}, "active": {"on"}})
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
@@ -230,9 +227,9 @@ func TestAddUserValidationKeepsTheDrawerAndTheInput(t *testing.T) {
 // blank stripe in the total card. The spacers are desktop-only.
 func TestTCardsTotalRowsCarryNoEmptyMobileCells(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, path := range []string{"/recoverables/list", "/vendors"} {
-		body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+		body := s.get(path)
 		tfoot := cut(body, "<tfoot>", "</tfoot>")
 		if tfoot == "" {
 			t.Fatalf("%s has no total row", path)

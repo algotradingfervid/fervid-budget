@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -38,19 +37,19 @@ func floodAudit(t *testing.T, s *appTestServer, n int) {
 // Every filter now runs in SQL over the whole log, and the rest is paged.
 func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	floodAudit(t, s, 1100)
 
 	// Action and actor reach a row older than any 1000-row window.
 	for _, path := range []string{"/audit?action=create", "/audit?actor=test+admin&action=create"} {
-		body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+		body := s.get(path)
 		if !strings.Contains(body, "Created project Facilities") {
 			t.Fatalf("%s cannot reach the old create row", path)
 		}
 	}
 
 	// The unfiltered view says what it is not showing and offers the next page.
-	first := responseBody(t, s.request(http.MethodGet, "/audit", nil, ""))
+	first := s.get("/audit")
 	if got := strings.Count(first, "Failed login attempt"); got != auditPageSize {
 		t.Fatalf("first page rows = %d, want %d", got, auditPageSize)
 	}
@@ -62,7 +61,7 @@ func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 		t.Fatal("first page offers no way to the older rows")
 	}
 	// Walking the pages reaches every row, the oldest included.
-	last := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/audit?offset=%d", (total-1)/auditPageSize*auditPageSize), nil, ""))
+	last := s.get(fmt.Sprintf("/audit?offset=%d", (total-1)/auditPageSize*auditPageSize))
 	if !strings.Contains(last, "Created project Facilities") {
 		t.Fatal("the last page does not carry the oldest row")
 	}
@@ -72,7 +71,7 @@ func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 	// An offset past the end — a stale or hand-edited URL — lands on that same
 	// last page, not on "Showing 0 of N" with a Newer link to another empty
 	// page (audit-1 review).
-	past := responseBody(t, s.request(http.MethodGet, "/audit?offset=5000", nil, ""))
+	past := s.get("/audit?offset=5000")
 	lastOffset := (total - 1) / auditPageSize * auditPageSize
 	if !strings.Contains(past, "Created project Facilities") ||
 		!strings.Contains(past, fmt.Sprintf("Showing %d–%d of %d", lastOffset+1, total, total)) {
@@ -83,7 +82,7 @@ func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 	}
 
 	// Page links keep every filter, so a page boundary never widens the set.
-	filtered := responseBody(t, s.request(http.MethodGet, "/audit?action=login_failed&actor=flood&from=2020-01-01&to=2100-12-31", nil, ""))
+	filtered := s.get("/audit?action=login_failed&actor=flood&from=2020-01-01&to=2100-12-31")
 	for _, want := range []string{"action=login_failed", "actor=flood", "from=2020-01-01", "to=2100-12-31"} {
 		if !strings.Contains(filtered, want+"&amp;offset=") && !strings.Contains(filtered, want+"&amp;") {
 			t.Errorf("page link drops %s", want)
@@ -113,10 +112,10 @@ func TestPageAuditEntriesClampsAnOffsetPastTheEnd(t *testing.T) {
 
 func TestAuditLogFiltersByDate(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	floodAudit(t, s, 3)
 
-	form := responseBody(t, s.request(http.MethodGet, "/audit", nil, ""))
+	form := s.get("/audit")
 	for _, want := range []string{`type="date" name="from"`, `type="date" name="to"`} {
 		if !strings.Contains(form, want) {
 			t.Fatalf("the filter form has no %s control", want)
@@ -125,18 +124,18 @@ func TestAuditLogFiltersByDate(t *testing.T) {
 
 	// Timestamps are stored in UTC and shown in local time, so the day bounds
 	// are local days: pick the day the Facilities row falls on locally.
-	day := responseBody(t, s.request(http.MethodGet, "/audit?from="+facilitiesLocalDay(t, s)+"&to="+facilitiesLocalDay(t, s), nil, ""))
+	day := s.get("/audit?from=" + facilitiesLocalDay(t, s) + "&to=" + facilitiesLocalDay(t, s))
 	if !strings.Contains(day, "Created project Facilities") || strings.Contains(day, "Failed login attempt") {
 		t.Fatal("a one-day range does not select exactly that day's rows")
 	}
 	if !strings.Contains(day, `value="`+facilitiesLocalDay(t, s)+`"`) {
 		t.Fatal("the chosen dates are not kept in the form")
 	}
-	after := responseBody(t, s.request(http.MethodGet, "/audit?from=2026-02-01", nil, ""))
+	after := s.get("/audit?from=2026-02-01")
 	if strings.Contains(after, "Created project Facilities") || !strings.Contains(after, "Failed login attempt") {
 		t.Fatal("from= does not exclude earlier rows")
 	}
-	before := responseBody(t, s.request(http.MethodGet, "/audit?to=2026-01-31", nil, ""))
+	before := s.get("/audit?to=2026-01-31")
 	if !strings.Contains(before, "Created project Facilities") || strings.Contains(before, "Failed login attempt") {
 		t.Fatal("to= does not exclude later rows")
 	}

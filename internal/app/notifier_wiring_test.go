@@ -26,10 +26,7 @@ func TestNewWithNotifierSharesTheAppMailerAndAllowlist(t *testing.T) {
 		t.Fatal("NewWithNotifier returned no notification service")
 	}
 
-	actor, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actor := s.admin()
 	// Port 2525 is refused by the transport before any network access, after
 	// the allowlist check has passed, so the error tells us which check ran.
 	if err := s.st.SetMailSettings(s.ctx, actor, store.MailSettings{SMTPHost: "smtp.example.test", SMTPPort: 2525, SMTPFromAddr: "noreply@example.test"}); err != nil {

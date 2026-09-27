@@ -9,7 +9,7 @@ import (
 
 func TestConfigurationNumberWidthRejectsValuesTheNumberGeneratorWouldIgnore(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, raw := range []string{"0", "-1", "13", "1.5", "invalid", ""} {
 		resp := s.postForm("/configuration", url.Values{"number_width": {raw}, "number_prefix": {"Must not save"}})
 		requireStatus(t, resp, http.StatusBadRequest)

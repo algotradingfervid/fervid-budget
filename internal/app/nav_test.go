@@ -315,7 +315,7 @@ func TestNavItemsHaveKeysIconsAndReachableHrefs(t *testing.T) {
 // the phase that does build the screen to drop the flag.
 func TestEveryLinkedNavItemResolves(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	// Iterate the built shell, not navSpec: buildShell is where Soon is derived
 	// from unbuiltPrefixes, so this checks what a user is actually shown.
@@ -328,7 +328,7 @@ func TestEveryLinkedNavItemResolves(t *testing.T) {
 			body := responseBody(t, resp)
 			if resp.StatusCode != http.StatusOK {
 				t.Errorf("nav item %q links to %s, which returns %d (mark it Soon until the screen exists)\n%s",
-					item.Label, item.Href, resp.StatusCode, truncateForLog(body))
+					item.Label, item.Href, resp.StatusCode, firstLines(body))
 			}
 		}
 	}

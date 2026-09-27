@@ -15,9 +15,9 @@ func TestInstallmentHTTPFlowExplicitChoiceAndRemainingBalance(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, head := s.seedHead("Installments")
 	id := s.seedApprovedRequest(1, admin.ID, admin.ID, head, 1200000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
-	entry := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", id), nil, ""))
+	entry := s.get(fmt.Sprintf("/payments/new?request=%d", id))
 	token := regexp.MustCompile(`name="submission_key" value="([^"]+)"`).FindStringSubmatch(entry)
 	if len(token) != 2 {
 		t.Fatal("missing confirmation idempotency key")
@@ -41,7 +41,7 @@ func TestInstallmentHTTPFlowExplicitChoiceAndRemainingBalance(t *testing.T) {
 	if retry.Header.Get("Location") != firstLocation {
 		t.Fatal("retry did not resolve original payment")
 	}
-	entry = responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", id), nil, ""))
+	entry = s.get(fmt.Sprintf("/payments/new?request=%d", id))
 	if !strings.Contains(entry, `data-approved="500000"`) {
 		t.Fatal("entry ceiling is not remaining 5000")
 	}
@@ -57,7 +57,7 @@ func TestInstallmentHTTPFlowExplicitChoiceAndRemainingBalance(t *testing.T) {
 	}
 	form.Set("amount", "5000")
 	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""))
+	body := s.get(fmt.Sprintf("/requests/%d", id))
 	for _, want := range []string{"2 linked payments", "Total paid to date", "12,000.00", "7,000.00", "5,000.00"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s", want)
@@ -70,12 +70,12 @@ func TestInstallmentHTTPFlowExplicitChoiceAndRemainingBalance(t *testing.T) {
 func TestPaymentOutcomeFollowsLifecycleWithoutRewritingHistory(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, head := s.seedHead("Outcome lifecycle")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	var issuedForm url.Values
 	pay := func(id int64, amount, disposition, reason string) string {
 		t.Helper()
 		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
-		entry := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", id), nil, ""))
+		entry := s.get(fmt.Sprintf("/payments/new?request=%d", id))
 		form := url.Values{"request_id": {strconvFormat(id)}, "amount": {amount}, "paid_on": {"2026-06-15"}, "reference_no": {"OUTCOME-REF"}, "settlement": {disposition}, "partial_reason": {reason}}
 		for _, name := range []string{"submission_key", "expected_paid"} {
 			field := regexp.MustCompile(`name="` + name + `" value="([^"]*)"`).FindStringSubmatch(entry)
@@ -164,7 +164,7 @@ func TestPaymentOutcomeFollowsLifecycleWithoutRewritingHistory(t *testing.T) {
 
 func TestRequestFieldErrorsCollectAllApplicableFields(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	form := url.Values{"type": {"employee_advance"}, "treatment": {"recoverable"}, "recoverable_category": {"employee_advance"}, "short_title": {"Return missing"}, "amount": {"123.00"}, "purpose": {"Travel"}, "advance_reason": {"Travel advance"}}
 	resp := s.postForm("/requests", form)
 	requireStatus(t, resp, http.StatusBadRequest)
@@ -187,19 +187,19 @@ func TestRequestFiltersSurviveBucketsAndExport(t *testing.T) {
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET type='reimbursement',status='cancelled' WHERE id=?`, two); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/requests?scope=own&bucket=all&type=vendor_invoice&treatment=budget", nil, ""))
+	s.loginAdmin()
+	body := s.get("/requests?scope=own&bucket=all&type=vendor_invoice&treatment=budget")
 	if !strings.Contains(body, `bucket=closed&amp;type=vendor_invoice&amp;project_id=0&amp;vendor_id=0&amp;treatment=budget`) {
 		t.Fatal("bucket drops filter")
 	}
 	if !strings.Contains(body, `/requests/export.csv?scope=own&amp;bucket=all&amp;type=vendor_invoice&amp;project_id=0&amp;vendor_id=0&amp;treatment=budget`) {
 		t.Fatal("export drops filter")
 	}
-	closed := responseBody(t, s.request(http.MethodGet, "/requests?scope=own&bucket=closed&type=vendor_invoice&treatment=budget", nil, ""))
+	closed := s.get("/requests?scope=own&bucket=closed&type=vendor_invoice&treatment=budget")
 	if !strings.Contains(closed, "PR-2026-000001") || strings.Contains(closed, "PR-2026-000002") {
 		t.Fatal("closed result widens filter")
 	}
-	csv := responseBody(t, s.request(http.MethodGet, "/requests/export.csv?scope=own&bucket=closed&type=vendor_invoice&treatment=budget", nil, ""))
+	csv := s.get("/requests/export.csv?scope=own&bucket=closed&type=vendor_invoice&treatment=budget")
 	if !strings.Contains(csv, "PR-2026-000001") || strings.Contains(csv, "PR-2026-000002") {
 		t.Fatal("export differs from filtered list")
 	}
@@ -209,7 +209,7 @@ func TestRejectedShortSettlementReturnsTypedEntryValues(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, head := s.seedHead("Preserved entry")
 	id := s.seedApprovedRequest(1, admin.ID, admin.ID, head, 1200000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
 	form := url.Values{"request_id": {strconvFormat(id)}, "amount": {"7000.00"}, "paid_on": {"2026-06-15"}, "payment_mode": {"upi"}, "reference_no": {"UXR-PAY-7000"}, "remarks": {"Retain this processing note"}, "settlement": {"settled"}}
 	failure := s.postForm("/payments", form)
@@ -245,16 +245,16 @@ func TestClosedIncludesCompletedAndClearFiltersRetainsContext(t *testing.T) {
 	if _, err := historicalSettlement(s.st, s.ctx, admin, id, store.PaymentInput{PaidOn: "2026-06-15", Amount: 1200000}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	closed := responseBody(t, s.request(http.MethodGet, "/requests?scope=own&bucket=closed&type=vendor_invoice&treatment=budget", nil, ""))
+	s.loginAdmin()
+	closed := s.get("/requests?scope=own&bucket=closed&type=vendor_invoice&treatment=budget")
 	if !strings.Contains(closed, "PR-2026-000001") {
 		t.Fatal("completed payment absent from Closed")
 	}
-	filtered := responseBody(t, s.request(http.MethodGet, "/requests?scope=own&bucket=closed&type=vendor_invoice&treatment=budget&q=no-such-invoice", nil, ""))
+	filtered := s.get("/requests?scope=own&bucket=closed&type=vendor_invoice&treatment=budget&q=no-such-invoice")
 	if !strings.Contains(filtered, `href="/requests?bucket=closed&amp;scope=own">Clear filters</a>`) {
 		t.Fatal("no visible functional reset")
 	}
-	reset := responseBody(t, s.request(http.MethodGet, "/requests?bucket=closed&scope=own", nil, ""))
+	reset := s.get("/requests?bucket=closed&scope=own")
 	if !strings.Contains(reset, "PR-2026-000001") {
 		t.Fatal("clear filters does not recover completed record")
 	}

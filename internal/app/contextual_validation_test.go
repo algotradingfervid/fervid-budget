@@ -11,7 +11,7 @@ import (
 
 func TestRoleCreateValidationPreservesDialogAndDoesNotCreateDuplicate(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	before, err := s.st.AllRoles(s.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 		}
 	}
 	// An unassigned approver cannot use validation to expose an actionable dialog.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm(endpoint, url.Values{"approved_amount": {"not money"}, "note": {note}})
 	requireStatus(t, resp, http.StatusNotFound)
 	if strings.Contains(responseBody(t, resp), `id="approve-sheet"`) {
