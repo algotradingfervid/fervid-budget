@@ -47,7 +47,7 @@ func (s *Store) SetAppSettings(ctx context.Context, actor User, values map[strin
 	if len(values) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}

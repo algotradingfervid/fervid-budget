@@ -44,33 +44,26 @@ func Open(path string) (*Store, error) {
 			return nil, err
 		}
 	}
-	// The pragmas ride on the DSN, not on a db.Exec: PRAGMA state is
-	// per-connection, and database/sql opens more connections on demand, so a
-	// single `db.Exec("PRAGMA …")` configures only whichever connection happened
-	// to serve it. Every later connection would then run with foreign keys off
-	// and no busy handler — the second is what makes concurrent reservations
-	// (ReserveRequest) fail with SQLITE_BUSY instead of waiting their turn.
-	// modernc.org/sqlite applies every _pragma query parameter to each new
-	// connection; without a "file:" prefix it strips the query before opening,
-	// so a path containing spaces still opens correctly.
-	// journal_mode(WAL) is the third pragma for a reason of its own. In the
-	// default rollback-journal mode a COMMIT needs EXCLUSIVE, so it waits on
-	// every reader — and when it gives up with SQLITE_BUSY, SQLite leaves that
-	// transaction open. database/sql has already marked the Tx done by then, so
-	// `defer tx.Rollback()` returns ErrTxDone without rolling anything back, and
-	// the connection returns to the pool still holding the write lock: every
-	// later writer then failed with SQLITE_BUSY and every later BEGIN on that
-	// connection with "cannot start a transaction within a transaction", until
-	// the process was restarted. Two people recording payments at the same time
-	// was enough. Under WAL, readers and the writer no longer exclude each other,
-	// so the COMMIT that sprang the trap does not happen.
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
+	// Connection settings ride on the DSN so that every pooled connection gets
+	// them, not just the one that happened to run a db.Exec("PRAGMA ...").
+	//
+	// _txlock=immediate is the store's one transaction rule: every write
+	// transaction takes the write lock at BEGIN and waits on busy_timeout for it,
+	// so two writers queue instead of the second failing with SQLITE_BUSY. A
+	// transaction that only reads must say so (beginReadTx), or it would take the
+	// write lock too.
+	//
+	// journal_mode(WAL) lets readers and the writer run side by side. In the
+	// default rollback-journal mode a COMMIT that gave up waiting for readers left
+	// its transaction open on a pooled connection and the whole app stopped
+	// writing until a restart.
+	db, err := sql.Open("sqlite", path+"?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, err
 	}
-	// Defence in depth for the same trap: should a connection ever be poisoned
-	// this way again, retiring it bounds the damage to this lifetime rather than
-	// until the next restart. Closing the connection rolls its transaction back.
+	// Should a connection ever be left holding a transaction again, retiring it
+	// after a while bounds the damage. Closing a connection rolls its transaction
+	// back.
 	db.SetConnMaxLifetime(5 * time.Minute)
 	if _, err := db.Exec(schemaSQL); err != nil {
 		db.Close()
@@ -358,9 +351,6 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 		roleIDs = append(roleIDs, id)
 	}
 
-	// beginWriteTx takes the write lock with the transaction's first statement,
-	// which is what keeps a read-then-write like this one out of the SQLITE_BUSY
-	// races the audit closed elsewhere.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
@@ -494,7 +484,7 @@ func (s *Store) LoginLocked(ctx context.Context, email string) (bool, time.Time,
 // returns no signal for unknown email addresses to avoid account enumeration.
 func (s *Store) RecordFailedLogin(ctx context.Context, email string) (time.Time, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -792,14 +782,11 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 	if locked {
 		return ErrLockedMonth
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET month=month WHERE month=?`, month); err != nil {
-		return err
-	}
 	if locked, err := isLocked(ctx, tx, month); err != nil {
 		return err
 	} else if locked {
@@ -921,14 +908,11 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 		return ErrLockedMonth
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET month=month WHERE month=?`, targetMonth); err != nil {
-		return err
-	}
 	if locked, err := isLocked(ctx, tx, targetMonth); err != nil {
 		return err
 	} else if locked {
@@ -1081,7 +1065,7 @@ func (s *Store) createPayment(ctx context.Context, actor User, in PaymentInput, 
 			return 0, err
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -1359,7 +1343,7 @@ func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason
 	if reason == "" {
 		return fmt.Errorf("%w: a reason is required so the requester and approver know why", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -1400,7 +1384,7 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 	if reason == "" {
 		return fmt.Errorf("%w: a reason is required when a reservation changes hands", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -1487,11 +1471,6 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 			return 0, err
 		}
 	}
-	// beginWriteTx, not BeginTx: this reads the request and then writes it, the
-	// exact read-then-upgrade shape SQLite refuses to promote while another
-	// writer is active — and refuses without consulting the busy handler, so the
-	// loser of two simultaneous settlements failed instantly. Every writer in
-	// requests.go was converted for this reason; the payment writers were missed.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
@@ -1656,8 +1635,6 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 // paid. note is optional and joins the trail the requester reads.
 func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note string) error {
 	note = strings.TrimSpace(note)
-	// Reads the request, then writes it — beginWriteTx for the same reason
-	// RecordPaymentForRequest needs it.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
@@ -1742,7 +1719,7 @@ func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason st
 	if reason == "" {
 		return fmt.Errorf("%w: a hold reason is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -1765,7 +1742,7 @@ func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason st
 // UnholdRequest lifts a hold. The route gate (payment.hold) restricts this to
 // Accounts (L7).
 func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -2344,18 +2321,27 @@ func (s *Store) LockMonth(ctx context.Context, actor User, month, reason string)
 	if !validMonth(month) || strings.TrimSpace(reason) == "" {
 		return fmt.Errorf("%w: month and reason are required", ErrValidation)
 	}
-	if err := s.ensureMonthPlan(ctx, actor, month, ""); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO month_locks(month,locked_by,reason) VALUES(?,?,?)
-		ON CONFLICT(month) DO UPDATE SET locked_by=excluded.locked_by, locked_at=CURRENT_TIMESTAMP, reason=excluded.reason`, month, actor.ID, reason)
+	// One transaction: the lock row, the month status and the audit entry are
+	// written together or not at all.
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE budget_months SET status='locked', updated_at=CURRENT_TIMESTAMP WHERE month=?`, month); err != nil {
+	defer tx.Rollback()
+	if err := ensureMonthPlan(ctx, tx, actor, month, ""); err != nil {
 		return err
 	}
-	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "lock", EntityType: "month_lock", Summary: "Locked " + month + ": " + reason, After: map[string]string{"month": month, "reason": reason}})
+	if _, err := tx.ExecContext(ctx, `INSERT INTO month_locks(month,locked_by,reason) VALUES(?,?,?)
+		ON CONFLICT(month) DO UPDATE SET locked_by=excluded.locked_by, locked_at=CURRENT_TIMESTAMP, reason=excluded.reason`, month, actor.ID, reason); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET status='locked', updated_at=CURRENT_TIMESTAMP WHERE month=?`, month); err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "lock", EntityType: "month_lock", Summary: "Locked " + month + ": " + reason, After: map[string]string{"month": month, "reason": reason}}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UnlockMonth(ctx context.Context, actor User, month, reason string) error {
@@ -2363,17 +2349,24 @@ func (s *Store) UnlockMonth(ctx context.Context, actor User, month, reason strin
 		return fmt.Errorf("%w: month and reason are required", ErrValidation)
 	}
 	before := map[string]string{"month": month}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM month_locks WHERE month=?`, month)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
-	if err := s.ensureMonthPlan(ctx, actor, month, ""); err != nil {
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM month_locks WHERE month=?`, month); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE budget_months SET status='open', updated_at=CURRENT_TIMESTAMP WHERE month=?`, month); err != nil {
+	if err := ensureMonthPlan(ctx, tx, actor, month, ""); err != nil {
 		return err
 	}
-	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unlock", EntityType: "month_lock", Summary: "Unlocked " + month + ": " + reason, Before: before, After: map[string]string{"reason": reason}})
+	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET status='open', updated_at=CURRENT_TIMESTAMP WHERE month=?`, month); err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unlock", EntityType: "month_lock", Summary: "Unlocked " + month + ": " + reason, Before: before, After: map[string]string{"reason": reason}}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // rowQuerier is the read surface *sql.DB and *sql.Tx have in common, so a
@@ -2425,7 +2418,9 @@ func (s *Store) MonthLock(ctx context.Context, month string) (MonthLock, error) 
 	return lock, err
 }
 
-func (s *Store) ensureMonthPlan(ctx context.Context, actor User, month, sourceMonth string) error {
+// ensureMonthPlan makes sure the month has a budget_months row, inside the
+// caller's write transaction.
+func ensureMonthPlan(ctx context.Context, tx *sql.Tx, actor User, month, sourceMonth string) error {
 	if !validMonth(month) {
 		return fmt.Errorf("%w: valid month is required", ErrValidation)
 	}
@@ -2437,7 +2432,7 @@ func (s *Store) ensureMonthPlan(ctx context.Context, actor User, month, sourceMo
 	if actor.ID != 0 {
 		actorID = actor.ID
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO budget_months(month,status,source_month,created_by) VALUES(?,'open',?,?)
+	_, err := tx.ExecContext(ctx, `INSERT INTO budget_months(month,status,source_month,created_by) VALUES(?,'open',?,?)
 		ON CONFLICT(month) DO UPDATE SET updated_at=CURRENT_TIMESTAMP`, month, source, actorID)
 	return classify(err)
 }

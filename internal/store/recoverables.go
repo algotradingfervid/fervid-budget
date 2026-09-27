@@ -186,7 +186,7 @@ func (s *Store) UpsertRecoverableCategory(ctx context.Context, actor User, id in
 	if name == "" {
 		return 0, fmt.Errorf("%w: recoverable category name is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -258,9 +258,6 @@ func (s *Store) UpsertRecoverableCategory(ctx context.Context, actor User, id in
 // this makes the permission honest without softening it: delete is for a
 // category added by mistake, before anything has named it.
 func (s *Store) DeleteRecoverableCategory(ctx context.Context, actor User, id int64) error {
-	// beginWriteTx takes the write lock with the transaction's first statement:
-	// this is a read-then-write, the shape that hands the loser SQLITE_BUSY when
-	// the transaction starts as a reader.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err

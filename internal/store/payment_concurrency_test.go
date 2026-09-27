@@ -24,9 +24,10 @@ import (
 // — including the write that login performs, so nobody could sign in until the
 // process was restarted.
 //
-// The fix is three-part: WAL so a COMMIT no longer waits on readers, beginWriteTx
-// so the transaction is a writer from its first statement, and validating on the
-// caller's own transaction instead of a second pooled connection.
+// The fix is three-part: WAL so a COMMIT no longer waits on readers, write
+// transactions that take the write lock at BEGIN (_txlock=immediate on the DSN),
+// and validating on the caller's own transaction instead of a second pooled
+// connection.
 //
 // This test asserts both halves: every concurrent settlement succeeds, AND the
 // database is still writable afterwards.
