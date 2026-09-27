@@ -1,5 +1,10 @@
 package app
 
+// HTTP middleware that wraps every request: request ids and structured
+// request logging with panic recovery, and clearing the cached nav badge
+// counts after any write. The security middleware (headers, cross-origin
+// check, login rate limit) lives in security.go.
+
 import (
 	"context"
 	"crypto/rand"
@@ -13,8 +18,11 @@ import (
 	"time"
 )
 
+// requestIDContextKey is the context key the request id is stored under.
 type requestIDContextKey struct{}
 
+// observedResponse wraps a ResponseWriter to remember the status code and
+// the number of body bytes written, for the completion log line.
 type observedResponse struct {
 	http.ResponseWriter
 	status int
@@ -22,6 +30,8 @@ type observedResponse struct {
 	wrote  bool
 }
 
+// WriteHeader records the status and passes it on. Only the first call
+// counts, as with net/http itself.
 func (w *observedResponse) WriteHeader(status int) {
 	if w.wrote {
 		return
@@ -31,6 +41,7 @@ func (w *observedResponse) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+// Write sends body bytes, writing a 200 header first if none was written.
 func (w *observedResponse) Write(p []byte) (int, error) {
 	if !w.wrote {
 		w.WriteHeader(http.StatusOK)
@@ -40,9 +51,10 @@ func (w *observedResponse) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// httpObservability is deliberately kept as a small package-private boundary:
-// it gives every request a correlation ID, records one structured completion
-// event, and converts panics into a safe response without exposing internals.
+// httpObservability gives every request an id (returned in X-Request-ID and
+// shown on error pages), logs one "http request completed" line per request,
+// and turns a panic into the generic error page instead of a dropped
+// connection, logging the stack but never showing it to the user.
 func (a *App) httpObservability(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
@@ -89,6 +101,8 @@ func (a *App) httpObservability(next http.Handler) http.Handler {
 	})
 }
 
+// requestID returns the id httpObservability gave this request, or
+// "unavailable" outside that middleware (for example in unit tests).
 func requestID(r *http.Request) string {
 	id, _ := r.Context().Value(requestIDContextKey{}).(string)
 	if id == "" {
@@ -97,6 +111,8 @@ func requestID(r *http.Request) string {
 	return id
 }
 
+// newRequestID returns 32 random hex characters, or a time-based id in the
+// unlikely case the random source fails.
 func newRequestID() string {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err == nil {
@@ -105,6 +121,8 @@ func newRequestID() string {
 	return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
 }
 
+// remoteIP strips the port from a "host:port" connection address. An address
+// without a port is returned trimmed.
 func remoteIP(addr string) string {
 	host, _, err := net.SplitHostPort(addr)
 	if err == nil {
@@ -113,8 +131,10 @@ func remoteIP(addr string) string {
 	return strings.TrimSpace(addr)
 }
 
-// Shell counts may be memoised between reads, but must reflect a user's writes
-// immediately on the redirected receipt or ledger rather than after a TTL.
+// refreshBadgesAfterMutation clears the cached nav badge counts after every
+// request that may change data (anything but GET, HEAD and OPTIONS). Counts
+// may be cached between reads, but the page a user lands on after their own
+// change must show the new numbers straight away.
 func (a *App) refreshBadgesAfterMutation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

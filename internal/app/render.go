@@ -1,22 +1,33 @@
 package app
 
+// Page rendering and error responses. Every HTML answer the app sends goes
+// through renderStatus, which fills in what every page needs (user, CSRF
+// token, permissions, navigation shell) before executing the template. Error
+// pages are ordinary renders of the "error_page" template.
+
 import (
 	"bytes"
 	"errors"
-	"fervidbudget/internal/auth"
-	"fervidbudget/internal/store"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
 )
 
+// renderStatus renders the named template with the given HTTP status. It adds
+// the fields every page shares, builds the navigation shell for full pages,
+// and renders into a buffer first so a template error becomes a clean 500
+// instead of half a page.
 func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, name string, data PageData) {
-	data.AttachmentMaxMB = normalizedAttachmentLimit(data.Settings["attachment_max_mb"])
-	if data.Settings == nil {
-		if limit, err := a.attachmentLimitMB(r); err == nil {
-			data.AttachmentMaxMB = limit
-		}
+	if data.Settings != nil {
+		data.AttachmentMaxMB = normalizedAttachmentLimit(data.Settings["attachment_max_mb"])
+	} else if limit, err := a.attachmentLimitMB(r); err == nil {
+		data.AttachmentMaxMB = limit
+	} else {
+		data.AttachmentMaxMB = normalizedAttachmentLimit("")
 	}
 	data.User = auth.CurrentUser(r)
 	data.CSRF = a.auth.EnsureCSRF(w, r)
@@ -24,30 +35,23 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 	if data.Month == "" {
 		data.Month = time.Now().Format("2006-01")
 	}
-	// renderStatus is the single place where the signed-in user is known, so it
-	// is the single place permissions are resolved and the shell is built. The
-	// page body gates on the same set the nav does, so a control can never be
-	// visible on a screen its own nav entry is hidden from.
+	// Permissions are resolved once here, and both the page body and the nav
+	// use this same set, so a control is never shown on a screen whose own nav
+	// entry is hidden.
 	data.Perms = a.auth.Permissions(data.User)
 	data.ContextBackHref, data.ContextBackLabel = contextReturn(r, data.Perms)
-	// htmx asks for a fragment, not a page: skip the nav, the tab bar and the
-	// badge query entirely. The permission set still applies — a fragment gates
-	// its controls exactly as the full page would.
-	//
-	// The error page is chrome-less for a different reason: a sidebar invites
-	// the reader to click deeper into an app that has just failed, and the
-	// badge queries behind that sidebar are more work that could fail the same
-	// way. It offers its own two ways out instead.
+	// An htmx fragment only replaces part of a page, so it gets no nav, tab bar
+	// or badge queries (its controls are still gated by data.Perms). The error
+	// page also has no chrome: after a failure it offers its own two ways out
+	// rather than a sidebar, and skips badge queries that could fail too.
 	if isFragmentRequest(r) || name == "error_page" {
 		data.Shell = Shell{Chrome: chromeNone}
 	} else {
 		data.Shell = a.buildPageShell(r, data.User, data.Perms, data.Title)
-		// The caption under the signed-in person's name, filled here rather than
-		// in buildPageShell so that navigation stays purely permission-driven —
-		// nav.go must not read roles at all, and a test enforces it. There is
-		// deliberately no fallback to the superseded column on the user row: a
-		// caption that is merely absent is honest, and one naming a role the
-		// reader does not hold is not.
+		// The caption under the user's name lists the roles they hold. It is
+		// filled here, not in nav.go, because the navigation must depend on
+		// permissions only (a test checks nav.go never mentions roles). If the
+		// roles cannot be read the caption is simply left empty.
 		if roles, err := a.st.UserRoles(r.Context(), data.User.ID); err == nil {
 			names := make([]string, 0, len(roles))
 			for _, role := range roles {
@@ -79,22 +83,23 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 }
 
 // isFragmentRequest reports whether htmx is swapping part of a page rather
-// than loading a whole one. htmx sets HX-Request on every request it makes.
+// than loading a whole one. htmx sets HX-Request on every request it makes,
+// but a history restore (Back to a page htmx no longer has cached) replaces
+// the whole body, so it needs the full page and is not a fragment.
 func isFragmentRequest(r *http.Request) bool {
-	// htmx 2 marks a history restore (Back to a pushed URL whose snapshot is
-	// no longer cached) as an HX-Request too, but it replaces the whole body
-	// with the answer, so it needs the full page, shell and all.
 	return r.Header.Get("HX-Request") != "" && r.Header.Get("HX-History-Restore-Request") == ""
 }
 
-// notFound answers every URL the app does not serve. It exists because the
-// dashboard used to be registered at "GET /", which in ServeMux matches
-// everything unclaimed — so an unbuilt screen rendered the dashboard rather
-// than admitting it was missing.
+// notFound answers every URL no other route claims. It is registered on the
+// catch-all "GET /" pattern (the dashboard has "GET /{$}"), so an unknown
+// path shows a 404 page instead of the dashboard.
 func (a *App) notFound(w http.ResponseWriter, r *http.Request) {
 	a.respondError(w, r, http.StatusNotFound, "That page does not exist. It may have moved, or it may not be built yet.", nil)
 }
 
+// respondError renders the error page with the given status and message.
+// When cause is set it is logged (as a warning, or an error for 5xx) with the
+// request id, so the id shown on the page leads to the log line.
 func (a *App) respondError(w http.ResponseWriter, r *http.Request, status int, message string, cause error) {
 	if cause != nil {
 		level := slog.LevelWarn
@@ -116,31 +121,19 @@ func (a *App) respondError(w http.ResponseWriter, r *http.Request, status int, m
 	})
 }
 
+// respondStoreError answers a store error with the status storeErrorStatus
+// picks and the sentence friendly gives it. A missing record always gets the
+// same fixed sentence, whatever the store said.
 func (a *App) respondStoreError(w http.ResponseWriter, r *http.Request, err error) {
-	status := storeErrorStatus(err)
-	message := "Something went wrong while processing your request."
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		status, message = http.StatusNotFound, "The requested record was not found."
-	case errors.Is(err, store.ErrLockedMonth):
-		// Same sentence as app.go's in-place version and the banner on the budgets
-		// screen. One condition should not be explained three different ways, and
-		// this is the wording that says what to do about it.
-		status, message = http.StatusConflict, "This month is locked. Unlock it with a reason before changing budgets or payments."
-	case errors.Is(err, store.ErrForbidden):
-		// friendly, not a fixed sentence: a refusal that carries its own reason
-		// keeps it. "This request is on hold" and "reserve this request before
-		// recording its payment" are state conflicts, and telling the caller they
-		// lack a permission they hold sends them to an administrator for a grant
-		// they already have (F-D-02, F-G-023). A bare ErrForbidden still reads as
-		// the permission refusal, because that is what friendly answers for it.
-		status, message = http.StatusForbidden, friendly(err)
-	case errors.Is(err, store.ErrValidation), errors.Is(err, store.ErrDuplicate), errors.Is(err, store.ErrInactiveHead):
-		status, message = http.StatusBadRequest, friendly(err)
+	status, message := storeErrorStatus(err), friendly(err)
+	if status == http.StatusNotFound {
+		message = "The requested record was not found."
 	}
 	a.respondError(w, r, status, message, err)
 }
 
+// storeErrorStatus maps a store error to its HTTP status: not found 404,
+// locked month 409, refusal 403, invalid input 400, anything else 500.
 func storeErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
