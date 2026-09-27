@@ -1,9 +1,9 @@
 package app
 
 import (
-	"fervidbudget/internal/store"
 	"strings"
-	"time"
+
+	"fervidbudget/internal/store"
 )
 
 // Per-field error messages for the request form.
@@ -20,7 +20,7 @@ func requestFieldErrors(in store.RequestInput) map[string]string {
 		}
 	}
 	date := func(id, value, message string) {
-		if _, err := time.Parse("2006-01-02", value); err != nil {
+		if !validDateInput(value) {
 			out[id] = message
 		}
 	}
