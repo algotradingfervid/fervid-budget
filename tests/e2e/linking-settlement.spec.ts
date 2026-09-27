@@ -55,7 +55,7 @@ test.describe('payment linking and settlement', () => {
     // confirm submit — the sheet opens and then nothing happens. Paid on is
     // prefilled with today; the mode and the reference are not.
     await adminPage.getByLabel('Paid on').fill('2026-07-24');
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-${request.id}`);
 
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -80,7 +80,7 @@ test.describe('payment linking and settlement', () => {
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     await expect(adminPage.getByLabel('Amount actually paid')).toHaveValue('4,000.00');
     await expect(adminPage.getByLabel('Paid on')).toHaveValue('2026-07-24');
-    await expect(adminPage.getByLabel('Payment mode')).toHaveValue('bank_transfer');
+    await expect(adminPage.getByLabel('Payment mode')).toHaveValue('neft');
     await expect(adminPage.getByLabel('Transaction / UTR reference')).toHaveValue(`UTR-${request.id}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     await expect(sheet.locator('input[name="settlement"]:checked')).toHaveCount(0);

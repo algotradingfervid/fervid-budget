@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fervidbudget/internal/money"
@@ -17,7 +18,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db            *sql.DB
+	badgeRevision atomic.Uint64
 }
 
 func Open(path string) (*Store, error) {
@@ -341,18 +343,10 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 		}
 	}
 	var approver any
+	if err := requireDefaultApproverTx(ctx, tx, in.ID, in.DefaultApproverID); err != nil {
+		return err
+	}
 	if in.DefaultApproverID != 0 {
-		var active int
-		err := tx.QueryRowContext(ctx, `SELECT active FROM users WHERE id=?`, in.DefaultApproverID).Scan(&active)
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("%w: the chosen approver does not exist", ErrValidation)
-		}
-		if err != nil {
-			return err
-		}
-		if active != 1 {
-			return fmt.Errorf("%w: the chosen approver is not an active user", ErrValidation)
-		}
 		approver = in.DefaultApproverID
 	}
 
@@ -657,6 +651,14 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET month=month WHERE month=?`, month); err != nil {
+		return err
+	}
+	if locked, err := isLocked(ctx, tx, month); err != nil {
+		return err
+	} else if locked {
+		return ErrLockedMonth
+	}
 	var actorID any
 	if actor.ID != 0 {
 		actorID = actor.ID
@@ -693,6 +695,13 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 		// user never touched.
 		if (before != nil && before.Amount == input.Amount) || (before == nil && input.Amount == 0) {
 			continue
+		}
+		var detailed int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM budget_lines l JOIN budgets b ON b.id=l.budget_id WHERE b.head_id=? AND b.month=?`, input.HeadID, month).Scan(&detailed); err != nil {
+			return err
+		}
+		if detailed > 0 {
+			return fmt.Errorf("%w: %s has detailed budget lines; use Edit budget lines to change its amount", ErrValidation, label)
 		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO budgets(head_id,month,amount) VALUES(?,?,?) ON CONFLICT(head_id,month) DO UPDATE SET amount=excluded.amount, updated_at=CURRENT_TIMESTAMP`, input.HeadID, month, input.Amount)
 		if err != nil {
@@ -771,6 +780,14 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET month=month WHERE month=?`, targetMonth); err != nil {
+		return err
+	}
+	if locked, err := isLocked(ctx, tx, targetMonth); err != nil {
+		return err
+	} else if locked {
+		return ErrLockedMonth
+	}
 	if sourceMonth != "" {
 		var sourceBudgets int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM budgets WHERE month=? AND amount>0`, sourceMonth).Scan(&sourceBudgets); err != nil {
@@ -793,27 +810,51 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 
 	var copied int64
 	if sourceMonth != "" {
-		res, err := tx.ExecContext(ctx, `INSERT INTO budgets(head_id,month,amount)
-			SELECT h.id, ?, sb.amount
-			FROM heads h
-			JOIN projects p ON p.id=h.project_id
-			JOIN budgets sb ON sb.head_id=h.id AND sb.month=?
-			WHERE h.active=1 AND p.active=1 AND sb.amount > 0
-			ON CONFLICT(head_id,month) DO NOTHING`, targetMonth, sourceMonth)
+		rows, err := tx.QueryContext(ctx, `INSERT INTO budgets(head_id,month,amount)
+		 SELECT h.id, ?, sb.amount FROM heads h JOIN projects p ON p.id=h.project_id
+		 JOIN budgets sb ON sb.head_id=h.id AND sb.month=?
+		 WHERE h.active=1 AND p.active=1 AND sb.amount>0
+		 ON CONFLICT(head_id,month) DO NOTHING RETURNING id`, targetMonth, sourceMonth)
 		if err != nil {
 			return classify(err)
 		}
-		copied, _ = res.RowsAffected()
+		var created []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			created = append(created, id)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		copied = int64(len(created))
+		for _, id := range created {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO budget_lines(budget_id,description,amount,sort_order)
+		 SELECT target.id,l.description,l.amount,l.sort_order FROM budgets target
+		 JOIN budgets source ON source.head_id=target.head_id AND source.month=?
+		 JOIN budget_lines l ON l.budget_id=source.id WHERE target.id=?`, sourceMonth, id); err != nil {
+				return err
+			}
+		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
 	summary := "Created monthly plan " + targetMonth
 	if sourceMonth != "" {
 		summary = fmt.Sprintf("%s from %s with %d copied budgets", summary, sourceMonth, copied)
 	}
-	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "budget_month", Summary: summary, After: map[string]any{"month": targetMonth, "source_month": sourceMonth, "copied_budgets": copied}})
+	after, err := json.Marshal(map[string]any{"month": targetMonth, "source_month": sourceMonth, "copied_budgets": copied})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,summary,after_json) VALUES(?,?,'create','budget_month',?,?)`, actor.ID, actor.Name, summary, string(after)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListMonthPlans(ctx context.Context) ([]MonthPlan, error) {
@@ -862,7 +903,9 @@ func (s *Store) ListMonthPlans(ctx context.Context) ([]MonthPlan, error) {
 		plan.Actual = grid.Total.Actual
 		plan.Variance = grid.Total.Variance
 		plan.HeadCount = len(grid.Rows)
-		if plan.Budget <= 0 || plan.Actual <= 0 {
+		if plan.Budget <= 0 && plan.Actual > 0 {
+			plan.UsedPercent = "No budget"
+		} else if plan.Budget <= 0 || plan.Actual <= 0 {
 			plan.UsedPercent = "0%"
 		} else {
 			plan.UsedPercent = fmt.Sprintf("%.0f%%", (float64(plan.Actual)/float64(plan.Budget))*100)
@@ -1270,6 +1313,15 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 // its payment is written with head_id NULL, which the grid and the monthly
 // report never match because they join payments on head_id.
 func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, requestID int64, in PaymentInput, settlement, partialReason string, attachment *AttachmentInput) (int64, error) {
+	// Electronic and instrument payments need a usable bank/payment reference.
+	// Untyped historical store callers retain their compatibility behavior; the HTTP boundary requires a reference for every linked submission.
+	switch strings.ToLower(strings.TrimSpace(in.PaymentMode)) {
+	case "neft", "rtgs", "upi", "cheque", "card", "dd", "bank_transfer", "cash":
+		if strings.TrimSpace(in.ReferenceNo) == "" {
+			return 0, fmt.Errorf("%w: enter a transaction or payment reference; spaces alone are not a reference", ErrValidation)
+		}
+	}
+
 	settlement = strings.TrimSpace(settlement)
 	partialReason = strings.TrimSpace(partialReason)
 	if settlement != "settled" && settlement != "partial" && settlement != "installment" {

@@ -7,13 +7,13 @@ export default page({
   summary: 'Opening a month, closing it, and what a locked month refuses.',
   blocks: [
     prose(
-      'Budgets live per month, so every month has to be opened before anything can be budgeted in it. ' +
-      'A month is opened here, reviewed here, and — once the figures are settled and reported — ' +
-      'locked, which stops anybody writing into it by accident.',
+      'Budgets live per month. Use **Create budget** to build and save a monthly plan, then use this ' +
+      'list to review its totals and open related screens. Once the figures are settled and reported, ' +
+      'lock the month from its variance grid to stop accidental changes.',
     ),
 
     section('The monthly plans screen'),
-    shot('admin/months', 'Every month the product knows about, newest first, with a row of shortcuts each.'),
+    shot('admin/months', 'An earlier monthly plans capture, showing the month list and shortcuts. New plans now start with Create budget.'),
     table(
       ['Column', 'What it shows'],
       [
@@ -23,7 +23,7 @@ export default page({
         ['Budget', 'The total budgeted across every head in the month.'],
         ['Actual', 'The total actually paid in the month.'],
         ['Remaining', 'Budget minus actual.'],
-        ['Used', 'Actual as a percentage of budget.'],
+        ['Used', 'Actual as a percentage of budget, or No budget when actual spending is positive and budget is zero.'],
         ['Created', 'When the plan was opened.'],
         ['Actions', '**Grid**, **Budget**, **Payments** and **Report** — the same month, on four different screens.'],
       ],
@@ -31,28 +31,29 @@ export default page({
 
     section('Opening a month'),
     steps([
-      { text: 'Pick the month in **New month**.' },
+      { text: 'Select **Create budget** to open the guided planner.' },
       {
-        text: 'Choose a **Plan type**.',
-        note: '`Copy from month` brings last month’s budget figures over as a starting point. `Start blank` opens the month with no figures at all.',
+        text: 'Choose **Budget month**, then **Start with a blank budget** or **Copy an existing budget**.',
+        note: 'Blank starts with no projects, heads, or lines. For a copy, choose a saved source in **Copy from**. The copy includes active projects, heads, lines, and amounts; it excludes retired items and does not copy payments.',
       },
       {
-        text: 'If you are copying, pick the **Source month**.',
-        note: 'The source has to have budgets in it. Copying from a month with none is refused with `source month has no budgets to copy`.',
+        text: 'Select **Continue to amounts →** and build or adjust the plan.',
+        note: 'Add existing or new projects and expense heads, then add described budget lines. Projects and heads start collapsed. Expand them as needed; the totals update while you type.',
       },
       {
-        text: 'Select **Create Month**.',
-        note: 'The month appears at the top of the table as `Open`, and you can go straight to **Budget** to adjust the figures.',
+        text: 'Select **Review budget →**, check the month and totals, then **Create budget**.',
+        note: 'Only this final save creates the month, any new projects and heads, and its budget lines. They are saved together; an invalid plan does not partially create the month. The saved month is Open.',
       },
     ]),
     tip(
-      'Copying is almost always right. Most heads carry the same figure month after month, and ' +
-      'adjusting a dozen of them on [Budgets](page:admin/budgets) is quicker than typing 229 from ' +
-      'scratch.',
+      'Use a copy when the next month has similar planned spending. You can change its lines before ' +
+      'saving without changing the source. A locked source can still be copied into a different ' +
+      'month. See [Budgets](page:admin/budgets) for the complete creation and editing workflow.',
     ),
     note(
-      'A month that is already locked cannot be recreated — the create is refused with the locked-month ' +
-      'message. Unlock it first if you genuinely need to rebuild its plan.',
+      'A month that already exists cannot be created again. Open its budget and select **Edit budget ' +
+      'lines** instead. If that month is locked, an authorized user must unlock it with a reason ' +
+      'before any budget changes can be saved.',
     ),
 
     section('Locking a month'),

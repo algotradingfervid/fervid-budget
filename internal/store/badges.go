@@ -46,9 +46,10 @@ var badgeSpecs = []badgeSpec{
 }
 
 type badgeCacheKey struct {
-	db    *sql.DB
-	user  int64
-	specs string
+	db       *sql.DB
+	user     int64
+	specs    string
+	revision uint64
 }
 
 type badgeCacheEntry struct {
@@ -60,6 +61,18 @@ type badgeCacheEntry struct {
 // again and callers always receive a copy, so concurrent shell renders share
 // it without locking beyond the sync.Map itself.
 var badgeCache sync.Map
+
+// InvalidateBadgeCounts makes the next shell reflect a completed mutation.
+// The revision prevents an in-flight reader from restoring an older snapshot.
+func (s *Store) InvalidateBadgeCounts() {
+	s.badgeRevision.Add(1)
+	badgeCache.Range(func(key, _ any) bool {
+		if k, ok := key.(badgeCacheKey); ok && k.db == s.db {
+			badgeCache.Delete(key)
+		}
+		return true
+	})
+}
 
 // BadgeCounts returns the nav badge counts the caller is entitled to see.
 //
@@ -80,7 +93,7 @@ func (s *Store) BadgeCounts(ctx context.Context, userID int64, perms PermissionS
 		return map[string]int{}, nil
 	}
 
-	key := badgeCacheKey{db: s.db, user: userID, specs: badgeFingerprint(specs)}
+	key := badgeCacheKey{db: s.db, user: userID, specs: badgeFingerprint(specs), revision: s.badgeRevision.Load()}
 	if cached, ok := badgeCache.Load(key); ok {
 		if entry, ok := cached.(badgeCacheEntry); ok && time.Since(entry.at) < badgeCacheTTL {
 			return copyCounts(entry.counts), nil
@@ -115,7 +128,9 @@ func (s *Store) BadgeCounts(ctx context.Context, userID int64, perms PermissionS
 	for i, spec := range specs {
 		counts[spec.Key] = values[i]
 	}
-	badgeCache.Store(key, badgeCacheEntry{at: time.Now(), counts: counts})
+	if key.revision == s.badgeRevision.Load() {
+		badgeCache.Store(key, badgeCacheEntry{at: time.Now(), counts: counts})
+	}
 	return copyCounts(counts), nil
 }
 

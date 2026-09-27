@@ -192,7 +192,7 @@ func (a *App) recordRecovery(w http.ResponseWriter, r *http.Request) {
 		in.Amount = amount
 		_, err = a.st.RecordRecovery(r.Context(), auth.CurrentUser(r), parseID(r.PathValue("id")), in)
 	} else {
-		err = fmt.Errorf("%w: enter a valid recovery amount", store.ErrValidation)
+		err = fmt.Errorf("%w: enter a positive recovery amount with up to two decimal places", store.ErrValidation)
 	}
 	if err != nil {
 		if errors.Is(err, store.ErrValidation) {

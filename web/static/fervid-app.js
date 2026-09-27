@@ -99,6 +99,33 @@
 
   /* Stack so a sheet opened from a sheet closes in the right order. */
   var openDialogs = [];
+  var dialogBackground = [];
+  var dialogBodyOverflow = null;
+  var dialogTitleCounter = 0;
+
+  function syncDialogBackground() {
+    dialogBackground.forEach(function (node) { node.inert = false; });
+    dialogBackground = [];
+    var dialog = topDialog();
+    if (!dialog) {
+      if (dialogBodyOverflow !== null) document.body.style.overflow = dialogBodyOverflow;
+      dialogBodyOverflow = null;
+      return;
+    }
+    if (dialogBodyOverflow === null) dialogBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // Recompute from the top sheet so nested dialogs do not leave their own
+    // ancestors inert. Preserve any inert state not imposed by this helper.
+    for (var branch = dialog; branch.parentElement; branch = branch.parentElement) {
+      Array.prototype.forEach.call(branch.parentElement.children, function (sibling) {
+        if (sibling !== branch && !sibling.inert) {
+          sibling.inert = true;
+          dialogBackground.push(sibling);
+        }
+      });
+      if (branch.parentElement === document.body) break;
+    }
+  }
 
   function focusables(root) {
     return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE), function (node) {
@@ -180,8 +207,24 @@
   function openDialog(el, opener) {
     if (!el || dialogIndex(el) !== -1) return;
     fillApproverPicker(el);
+    var sheet = el.querySelector(".sheet") || el;
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-modal", "true");
+    if (!sheet.hasAttribute("aria-label") && !sheet.hasAttribute("aria-labelledby")) {
+      var title = sheet.querySelector("h2, h1, h3, .sh-head b");
+      if (title) {
+        if (!title.id) title.id = "dialog-title-" + (++dialogTitleCounter);
+        sheet.setAttribute("aria-labelledby", title.id);
+      }
+    }
+    Array.prototype.forEach.call(sheet.querySelectorAll(".sh-close:not([aria-label])"), function (close) {
+      close.setAttribute("aria-label", "Close");
+    });
     el.hidden = false;
-    openDialogs.push({ el: el, opener: opener || null });
+    var record = { el: el, opener: opener || null };
+    if (opener && opener.hasAttribute("aria-expanded")) opener.setAttribute("aria-expanded", "true");
+    openDialogs.push(record);
+    syncDialogBackground();
 
     var list = focusables(el);
     if (list.length) {
@@ -198,6 +241,8 @@
     var idx = dialogIndex(el);
     if (idx === -1) return;
     var record = openDialogs.splice(idx, 1)[0];
+    syncDialogBackground();
+    if (record.opener && record.opener.hasAttribute("aria-expanded")) record.opener.setAttribute("aria-expanded", "false");
     /* Focus goes back where the user left it, never to the top of the page. */
     if (record.opener && document.contains(record.opener)) record.opener.focus();
   }
@@ -205,6 +250,30 @@
   function topDialog() {
     return openDialogs.length ? openDialogs[openDialogs.length - 1].el : null;
   }
+
+  // Native focus scrolling does not account for our sticky action/navigation
+  // bars. Keep keyboard-focused fields in the unobscured part of the page.
+  document.addEventListener("focusin", function (event) {
+    var field = event.target;
+    if (!field.matches || !field.matches("main input, main select, main textarea, main button, main a")) return;
+    if (field.closest(".action-bar, .overlay") || topDialog()) return;
+    requestAnimationFrame(function () {
+      if (document.activeElement !== field || !field.isConnected) return;
+      var top = 0;
+      var bottom = window.innerHeight;
+      Array.prototype.forEach.call(document.querySelectorAll(".m-topbar, .tabbar, .page .action-bar"), function (bar) {
+        var style = getComputedStyle(bar);
+        var rect = bar.getBoundingClientRect();
+        if (!rect.width || !rect.height || (style.position !== "sticky" && style.position !== "fixed")) return;
+        if (bar.matches(".m-topbar")) top = Math.max(top, rect.bottom);
+        else if (rect.top > top && rect.top < bottom) bottom = rect.top;
+      });
+      var rect = field.getBoundingClientRect();
+      if (bottom > top && (rect.top < top + 8 || rect.bottom > bottom - 8)) {
+        window.scrollBy(0, (rect.top + rect.bottom) / 2 - (top + bottom) / 2);
+      }
+    });
+  });
 
   /* Escape closes; Tab cycles within the sheet instead of escaping behind it.
      The mockup had neither — a modal you can tab out of is not a modal. */
@@ -272,6 +341,12 @@
       if (value === null) return;
 
       node.hidden = wanted.indexOf(value) === -1;
+      // Opt-in only: urgency reason is required when its own branch is shown.
+      // Other aria-required fields keep their existing custom/server rules.
+      Array.prototype.forEach.call(node.querySelectorAll("[data-required-when-visible]"), function (field) {
+        field.required = !node.hidden;
+        field.setAttribute("aria-required", field.required ? "true" : "false");
+      });
     });
   }
 
@@ -280,24 +355,56 @@
   /* ---------------------------------------------------------------- */
 
   function moneyInputs(root) {
-    return Array.prototype.filter.call(root.querySelectorAll(".money-field input"), function (input) {
+    return Array.prototype.filter.call(root.querySelectorAll(".money-field input, input[data-money]"), function (input) {
       var type = (input.getAttribute("type") || "text").toLowerCase();
       return type === "text" || type === "tel" || type === "search" || type === "number";
     });
   }
 
-  /* Only digits and a single decimal point survive. */
+  /* Remove display decoration only. Signs, extra decimals and other invalid
+     characters must remain available for the user to correct. */
   function rawAmount(value) {
-    var cleaned = String(value == null ? "" : value).replace(/[^\d.]/g, "");
-    var dot = cleaned.indexOf(".");
-    if (dot === -1) return cleaned;
-    return cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, "");
+    return String(value == null ? "" : value).trim().replace(/^₹\s*/, "").replace(/,/g, "");
+  }
+
+  // Use decimal strings throughout, matching Go's integer-paise parser. A
+  // floating-point conversion would lose paise before we could validate them.
+  function moneyValue(value) {
+    var raw = rawAmount(value);
+    var result = { raw: raw, error: "", paise: "", decimal: "" };
+    if (!raw) result.error = "Enter an amount.";
+    else if (/^[-−]/.test(raw)) result.error = "Enter a positive amount; negative amounts are not supported.";
+    var match = /^\+?(\d*\.?\d*)(?:[eE]([+-]?\d+))?$/.exec(raw);
+    if (!result.error && (!match || !/\d/.test(match[1]))) result.error = "Enter a valid amount using digits and up to two decimal places.";
+    if (result.error) return result;
+    var parts = match[1].split(".");
+    var fraction = parts[1] || "";
+    var digits = (parts[0] + fraction).replace(/^0+/, "");
+    var exponent = Number(match[2] || "0");
+    if (!digits) result.error = "Enter an amount greater than zero.";
+    else if (exponent < fraction.length - 2) result.error = "Use no more than two decimal places; the amount has not been rounded.";
+    else if (exponent > fraction.length + 19 || !Number.isSafeInteger(exponent)) result.error = "This amount is too large.";
+    if (result.error) return result;
+    var zeros = 2 - (fraction.length - exponent);
+    if (digits.length + zeros > 19) {
+      result.error = "This amount is too large.";
+      return result;
+    }
+    var paise = digits + "0".repeat(zeros);
+    if (paise.length === 19 && paise > "9223372036854775807") {
+      result.error = "This amount is too large.";
+      return result;
+    }
+    result.paise = paise;
+    var padded = paise.padStart(3, "0");
+    result.decimal = padded.slice(0, -2) + "." + padded.slice(-2);
+    return result;
   }
 
   function indianGroup(raw) {
     var parts = raw.split(".");
     var whole = parts[0].replace(/^0+(?=\d)/, "");
-    var frac = parts.length > 1 ? parts[1].slice(0, 2) : null;
+    var frac = parts.length > 1 ? parts[1] : null;
     var grouped = whole;
     if (whole.length > 3) {
       var last3 = whole.slice(-3);
@@ -320,12 +427,24 @@
     var crore = Math.floor(n / 10000000); n %= 10000000;
     var lakh = Math.floor(n / 100000); n %= 100000;
     var thousand = Math.floor(n / 1000); n %= 1000;
-    if (crore) out.push(three(crore) + " crore");
+    if (crore) out.push(inWords(crore).toLowerCase() + " crore");
     if (lakh) out.push(three(lakh) + " lakh");
     if (thousand) out.push(three(thousand) + " thousand");
     if (n) out.push(three(n));
     var s = out.join(" ");
     return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  // Split the displayed decimal string instead of multiplying a floating-point
+  // amount: 400.13 must always say thirteen paise, including while typing.
+  function amountInWords(raw) {
+    var parts = raw.split(".");
+    var rupees = Number(parts[0] || "0");
+    var paise = Number(((parts[1] || "") + "00").slice(0, 2));
+    if (!Number.isSafeInteger(rupees)) return "Amount too large to display in words";
+    var words = inWords(rupees) + (rupees === 1 ? " rupee" : " rupees");
+    if (paise) words += " and " + inWords(paise).toLowerCase() + (paise === 1 ? " paisa" : " paise");
+    return words + " only";
   }
 
   /* Grouping is inserted while typing, so the caret has to be re-anchored to
@@ -362,19 +481,21 @@
     var field = input.closest(".money-field");
     var out = field ? field.querySelector(".in-words") : null;
     var before = input.value;
-    var raw = rawAmount(before);
-    var amount = parseFloat(raw);
+    var value = moneyValue(before);
+    input.setCustomValidity(value.raw && !input.readOnly && !input.disabled ? value.error : "");
 
-    if (!raw || isNaN(amount)) {
-      if (input.value !== raw) input.value = raw;
+    if (value.error) {
       if (out) {
-        out.textContent = EMPTY_WORDS;
-        out.classList.add("empty");
+        out.textContent = value.raw ? value.error : EMPTY_WORDS;
+        out.classList.toggle("empty", !value.raw);
       }
       return;
     }
 
-    var grouped = indianGroup(raw);
+    // Preserve exponent notation while typing and never put grouping commas
+    // into number inputs, where the browser would erase the entire value.
+    var grouped = /[eE]/.test(value.raw) || input.type === "number"
+      ? value.raw : indianGroup(value.raw.replace(/^\+/, ""));
     if (grouped !== before) {
       var caret = keepCaret && input.selectionStart != null
         ? significantBefore(before, input.selectionStart)
@@ -383,7 +504,7 @@
       if (caret !== -1) setCaret(input, offsetAfterSignificant(grouped, caret));
     }
     if (out) {
-      out.textContent = inWords(amount) + " rupees only";
+      out.textContent = amountInWords(value.decimal);
       out.classList.remove("empty");
     }
   }
@@ -405,10 +526,248 @@
   document.addEventListener("submit", function (event) {
     var form = event.target;
     if (!form || typeof form.querySelectorAll !== "function") return;
-    moneyInputs(form).forEach(function (input) {
-      input.value = rawAmount(input.value);
+    var inputs = moneyInputs(form);
+    var invalid = false;
+    inputs.forEach(function (input) {
+      formatMoney(input, false);
+      if (input.willValidate && !input.validity.valid) invalid = true;
+    });
+    if (invalid) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      form.reportValidity();
+      return;
+    }
+    inputs.forEach(function (input) {
+      if (!moneyValue(input.value).error) input.value = rawAmount(input.value);
     });
   }, true);
+
+  /* App-owned presentation of the browser's constraint validation. The native
+     validation gate stays enabled; preventing `invalid` only suppresses its
+     small tooltip. Without JavaScript the browser's normal feedback remains. */
+  var validationStates = new WeakMap();
+  var validationLabels = new WeakMap();
+  var validationID = 0;
+
+  function validationLabel(field) {
+    if (validationLabels.has(field)) return validationLabels.get(field);
+    var label = field.getAttribute("aria-label");
+    if (!label && field.labels && field.labels.length) {
+      var copy = field.labels[0].cloneNode(true);
+      Array.prototype.forEach.call(copy.querySelectorAll("input, select, textarea, .field-error-message, [aria-hidden]"), function (node) { node.remove(); });
+      label = copy.textContent;
+    }
+    if (field.type === "radio") {
+      var group = field.closest("fieldset");
+      var legend = group && group.querySelector("legend");
+      label = legend ? legend.textContent : (field.name || "an option").replace(/_/g, " ");
+    }
+    label = (label || field.name || "This field").replace(/\s+/g, " ").replace(/\s*(?:optional|required)\s*$/i, "").replace(/\s*\*\s*$/, "").trim();
+    validationLabels.set(field, label);
+    return label;
+  }
+
+  function validationMessage(field) {
+    var v = field.validity;
+    var label = validationLabel(field);
+    if (v.valueMissing) {
+      if (field.getAttribute("data-validation-required-message")) return field.getAttribute("data-validation-required-message");
+      if (label === "What needs correcting") return "Explain what needs correcting.";
+      if (field.type === "checkbox") return "Confirm “" + label + "” to continue.";
+      if (field.type === "radio" || field.tagName === "SELECT") return "Choose " + label + ".";
+      if (field.type === "file") return "Choose a file for " + label + ".";
+      return "Enter " + label + ".";
+    }
+    if (v.typeMismatch && field.type === "email") return "Enter a valid email address, such as name@example.com.";
+    if (v.typeMismatch && field.type === "url") return "Enter a complete web address, such as https://example.com.";
+    if (v.badInput) return "Enter a valid " + (field.type === "number" ? "number" : "value") + " for " + label + ".";
+    if (v.rangeUnderflow) return "Enter " + label + (field.type === "number" || field.type === "range" ? " of at least " : " on or after ") + field.min + ".";
+    if (v.rangeOverflow) return "Enter " + label + (field.type === "number" || field.type === "range" ? " of no more than " : " no later than ") + field.max + ".";
+    if (v.tooShort) return "Use at least " + field.minLength + " characters for " + label + ".";
+    if (v.tooLong) return "Use no more than " + field.maxLength + " characters for " + label + ".";
+    if (v.patternMismatch) return "Enter " + label + " in the required format." + (field.title ? " " + field.title : "");
+    if (v.stepMismatch) return "Enter " + label + " in increments of " + (field.step || "1") + (field.min ? " starting at " + field.min : "") + ".";
+    if (v.customError) return field.validationMessage;
+    return "Check " + label + " and try again.";
+  }
+
+  function validationState(form) {
+    if (!validationStates.has(form)) validationStates.set(form, { fields: new Map(), summary: null, pending: false });
+    return validationStates.get(form);
+  }
+
+  function clearValidationField(state, field) {
+    var record = state.fields.get(field);
+    if (!record) return;
+    record.message.remove();
+    if (record.moneyWords) record.moneyWords.hidden = false;
+    var described = (field.getAttribute("aria-describedby") || "").split(/\s+/).filter(function (id) { return id && id !== record.message.id; });
+    if (described.length) field.setAttribute("aria-describedby", described.join(" "));
+    else field.removeAttribute("aria-describedby");
+    if (record.invalid === null) field.removeAttribute("aria-invalid");
+    else field.setAttribute("aria-invalid", record.invalid);
+    state.fields.delete(field);
+  }
+
+  function showValidationField(state, field) {
+    var record = state.fields.get(field);
+    if (!record) {
+      if (!field.id) field.id = "validation-field-" + (++validationID);
+      var message = document.createElement("span");
+      message.className = "field-error-message client-field-error";
+      message.id = "validation-message-" + (++validationID);
+      var label = field.closest("label");
+      var moneyField = field.closest(".money-field");
+      var moneyWords = moneyField && moneyField.querySelector(".in-words");
+      // Keep one inline message inside the money field's column. Inserting a
+      // sibling of that column creates a narrow extra cell in form grids.
+      if (moneyField) moneyField.appendChild(message);
+      else (label || field).insertAdjacentElement("afterend", message);
+      if (moneyWords) moneyWords.hidden = true;
+      record = { message: message, moneyWords: moneyWords, invalid: field.getAttribute("aria-invalid") };
+      state.fields.set(field, record);
+      field.setAttribute("aria-describedby", ((field.getAttribute("aria-describedby") || "") + " " + message.id).trim());
+    }
+    record.message.textContent = validationMessage(field);
+    field.setAttribute("aria-invalid", "true");
+  }
+
+  function renderValidationSummary(form, focus) {
+    var state = validationState(form);
+    state.fields.forEach(function (record, field) {
+      if (!field.isConnected || !field.willValidate || field.validity.valid) clearValidationField(state, field);
+      else record.message.textContent = validationMessage(field);
+    });
+    if (!state.fields.size) {
+      if (state.summary) state.summary.remove();
+      state.summary = null;
+      return;
+    }
+    if (!state.summary) {
+      state.summary = document.createElement("div");
+      state.summary.className = "error-summary client-error-summary";
+      state.summary.setAttribute("role", "region");
+      state.summary.setAttribute("tabindex", "-1");
+      state.summary.setAttribute("aria-label", "Form needs attention");
+      var first = state.fields.keys().next().value;
+      // Row editors have inputs outside their tiny form in the action cell.
+      // Their summary belongs above the table, not inside that narrow cell.
+      var table = !form.contains(first) && first.closest("table");
+      if (table) table.parentNode.insertBefore(state.summary, table);
+      else {
+        var dialog = first.closest('[role="dialog"], dialog, .overlay');
+        var container = dialog && !dialog.contains(form) ? dialog : form;
+        container.insertBefore(state.summary, container.firstChild);
+      }
+    }
+    state.summary.replaceChildren();
+    var heading = document.createElement("h2");
+    heading.textContent = "Check the highlighted fields";
+    var intro = document.createElement("p");
+    intro.textContent = "Nothing was submitted. Correct the following to continue.";
+    var list = document.createElement("ul");
+    var radioNames = new Set();
+    state.fields.forEach(function (record, field) {
+      if (field.type === "radio" && radioNames.has(field.name)) return;
+      if (field.type === "radio") radioNames.add(field.name);
+      var item = document.createElement("li");
+      var link = document.createElement("a");
+      link.href = "#" + field.id;
+      link.textContent = record.message.textContent;
+      link.addEventListener("click", function (event) {
+        event.preventDefault();
+        // A required field inside a collapsed accordion remains required.
+        // Open only its accordion; do not remove or weaken its constraints.
+        var section = field.closest(".acc-item, .pa-item");
+        if (section) { var head = section.querySelector(HEAD_SELECTOR); if (head) setAccordion(head, true); }
+        field.focus();
+        field.scrollIntoView({ block: "center" });
+      });
+      item.appendChild(link); list.appendChild(item);
+    });
+    state.summary.appendChild(heading); state.summary.appendChild(intro); state.summary.appendChild(list);
+    if (focus) { state.summary.focus(); state.summary.scrollIntoView({ block: "center" }); }
+  }
+
+  // htmx preview requests must pass the same validation gate as a submission.
+  function validatePaymentEntry(form) {
+    if (!form || !form.matches("[data-payment-entry]")) return true;
+    var amount = form.querySelector('[name="amount"]');
+    var reference = form.querySelector("[data-payment-reference]");
+    if (amount) {
+      var value = moneyValue(amount.value);
+      var approved = form.querySelector("[data-approved]");
+      var error = value.error || "";
+      if (!error && approved && BigInt(value.paise) > BigInt(approved.getAttribute("data-approved"))) {
+        error = "Enter an amount no greater than the remaining approved balance.";
+      }
+      amount.setCustomValidity(error);
+    }
+    if (reference) reference.setCustomValidity(reference.value.trim() ? "" : "Enter a transaction or payment reference; spaces alone are not a reference.");
+    // Dismissed previews retain their controls until the next htmx swap.
+    // Validate entry fields only; an unchosen old settlement is not an entry error.
+    var valid = true;
+    Array.prototype.forEach.call(form.elements, function (field) {
+      if (!field.closest("#settle-mount") && typeof field.checkValidity === "function" && !field.checkValidity()) valid = false;
+    });
+    return valid;
+  }
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest('button[formaction*="/settlement-preview"]');
+    if (button && !validatePaymentEntry(button.form)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
+  document.addEventListener("invalid", function (event) {
+    var field = event.target;
+    if (!field.form || !field.willValidate) return;
+    event.preventDefault();
+    var form = field.form;
+    // Expose entry errors even if a stale/programmatic confirmation finds one.
+    var sheet = form.querySelector("#settle-sheet");
+    if (sheet && !sheet.contains(field)) closeDialog(sheet);
+    var state = validationState(form);
+    // Save the name before an inline error is inserted into a wrapping label.
+    validationLabel(field);
+    if (field.type === "radio" && Array.from(state.fields.keys()).some(function (other) {
+      return other.type === "radio" && other.name === field.name;
+    })) return;
+    showValidationField(state, field);
+    if (!state.pending) {
+      state.pending = true;
+      setTimeout(function () { state.pending = false; if (form.isConnected) renderValidationSummary(form, true); }, 0);
+    }
+  }, true);
+
+  function updateValidation(event) {
+    var field = event.target;
+    if (!field.form) return;
+    var form = field.form;
+    if (field.matches("[data-payment-reference]")) field.setCustomValidity(field.value.trim() ? "" : "Enter a transaction or payment reference; spaces alone are not a reference.");
+    // Run after conditional handlers have disabled irrelevant controls. Only
+    // revisit reported errors; untouched fields stay quiet while typing.
+    setTimeout(function () {
+      if (!form.isConnected) return;
+      if (validationStates.has(form) && validationState(form).fields.size) renderValidationSummary(form, false);
+      var urgency = form.querySelector('[name="urgency_reason"][data-required-when-visible]');
+      if (urgency && (!urgency.required || urgency.value.trim())) {
+        Array.prototype.forEach.call(document.querySelectorAll('[data-server-error-for="urgency_reason"]'), function (banner) { banner.remove(); });
+      }
+    }, 0);
+  }
+  document.addEventListener("input", updateValidation);
+  document.addEventListener("change", updateValidation);
+  document.addEventListener("reset", function (event) {
+    var state = validationStates.get(event.target);
+    if (!state) return;
+    state.fields.forEach(function (record, field) { clearValidationField(state, field); });
+    if (state.summary) state.summary.remove();
+    state.summary = null;
+  });
 
   /* ---------------------------------------------------------------- */
   /* Delegated clicks                                                  */
@@ -609,7 +968,7 @@
   function initDifferenceBanner(root) {
     Array.prototype.forEach.call(root.querySelectorAll("[data-approved]"), function (source) {
       if (source.getAttribute("data-diff-bound") === "1") return;
-      var approved = Math.round(parseFloat(rawAmount(source.getAttribute("data-approved")) || "0"));
+      var approved = BigInt(source.getAttribute("data-approved") || "0");
       var paid = document.getElementById("amount");
       var banner = document.getElementById("diff-banner");
       var text = document.getElementById("diff-text");
@@ -617,15 +976,17 @@
       source.setAttribute("data-diff-bound", "1");
 
       function sync() {
-        var entered = parseFloat(rawAmount(paid.value));
-        var paise = isNaN(entered) ? 0 : Math.round(entered * 100);
-        var diff = approved - paise;
-        banner.className = "banner " + (diff === 0 ? "good" : diff > 0 ? "warn" : "bad");
-        if (diff === 0) {
+        var value = moneyValue(paid.value);
+        if (value.error) { banner.hidden = true; return; }
+        banner.hidden = false;
+        var diff = approved - BigInt(value.paise);
+        banner.className = "banner " + (diff === 0n ? "good" : diff > 0n ? "warn" : "bad");
+        if (diff === 0n) {
           text.textContent = "Matches the approved amount exactly";
         } else {
-          var rupees = indianGroup((Math.abs(diff) / 100).toFixed(2));
-          text.textContent = diff > 0
+          var absolute = diff < 0n ? -diff : diff;
+          var rupees = indianGroup((absolute / 100n).toString() + "." + (absolute % 100n).toString().padStart(2, "0"));
+          text.textContent = diff > 0n
             ? "₹" + rupees + " less than approved"
             : "₹" + rupees + " more than approved — not allowed";
         }
@@ -680,7 +1041,7 @@
   }
 
   function focusErrorSummary(root) {
-    var summary = root.querySelector(".error-summary:not([data-focused])");
+    var summary = root.querySelector(".error-summary:not(.client-error-summary):not([data-focused])");
     if (!summary || !summary.getClientRects().length) return;
     summary.setAttribute("data-focused", "true");
     summary.setAttribute("tabindex", "-1");
@@ -690,6 +1051,9 @@
   function init() {
     initAccordions(document);
     syncConditionals(document);
+    Array.prototype.forEach.call(document.forms, function (form) {
+      if (validationStates.has(form)) renderValidationSummary(form, false);
+    });
     initMoneyFields(document);
     initDifferenceBanner(document);
     initRoleMatrix(document);
@@ -735,6 +1099,11 @@
   });
   document.addEventListener("htmx:historyRestore", function () { lastFilters = new WeakMap(); });
 
+  document.addEventListener("htmx:afterSettle", function () {
+    Array.prototype.forEach.call(document.forms, function (form) {
+      if (validationStates.has(form)) renderValidationSummary(form, false);
+    });
+  });
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:load", function () { init(); });
 

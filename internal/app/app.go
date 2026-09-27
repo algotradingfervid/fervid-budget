@@ -49,6 +49,7 @@ type Warning struct {
 }
 
 type PageData struct {
+	AttachmentMaxMB    int64
 	PaymentModeChoices []PaymentModeChoice
 	ContextBackHref    string
 	ContextBackLabel   string
@@ -86,6 +87,7 @@ type PageData struct {
 	RequestProjectID     int64
 	RequestVendorID      int64
 	RequestRawAmount     string
+	RequestRevision      string
 	DuplicateReason      string
 	Attachments          []store.Attachment
 	MonthPlans           []store.MonthPlan
@@ -121,6 +123,8 @@ type PageData struct {
 	AuditPage            store.AuditPage
 	CloseGrid            store.GridData
 	Locked               bool
+	BudgetPlannerJSON    template.JS
+	BudgetLineHeads      map[int64]bool
 	BudgetInputs         map[int64]string
 	BudgetErrors         map[int64]string
 	BudgetSaved          int
@@ -423,6 +427,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"roleAuditChanges":   roleAuditChanges,
 		"vendorAuditChanges": vendorAuditChanges,
 		"paymentModes":       paymentModes,
+		"approverAvailable":  approverAvailable,
 		"queueTabs":          func() []queueTab { return queueTabs },
 		// Configuration. The screen is a rendering of this table, so a later
 		// phase adds a section by appending to it and nothing else.
@@ -446,23 +451,32 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		"card": func(r store.Request, viewerID int64) requestCardData {
 			return requestCardData{Req: r, ViewerID: viewerID}
 		},
-	}).Parse(templates))
+	}).Parse(templates + budgetPlannerTemplate))
 
 	ctx := contextWithTimeout()
 	defer ctx.cancel()
-	adminHash, err := auth.HashPassword(cfg.AdminPassword)
+	hasUsers, err := st.HasUsers(ctx.ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := st.EnsureUser(ctx.ctx, cfg.AdminEmail, cfg.AdminName, adminHash, "admin"); err != nil {
-		return nil, err
+	// Bootstrap configuration applies only to a new, empty installation.
+	// Restores and ordinary restarts keep their existing accounts untouched,
+	// even if the configured email or password differs from those accounts.
+	if !hasUsers {
+		adminHash, err := auth.HashPassword(cfg.AdminPassword)
+		if err != nil {
+			return nil, err
+		}
+		if err := st.BootstrapAdminIfEmpty(ctx.ctx, cfg.AdminEmail, cfg.AdminName, adminHash); err != nil {
+			return nil, err
+		}
 	}
 
 	mux := http.NewServeMux()
 	a.routes(mux)
 	return &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           a.httpObservability(am.Middleware(mux)),
+		Handler:           a.httpObservability(am.Middleware(a.refreshBadgesAfterMutation(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      2 * time.Minute,
@@ -587,14 +601,18 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/notifications/smtp", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationsSMTP))))
 	mux.Handle("POST /admin/notifications/events/{event}", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationEventSave))))
 	mux.Handle("POST /admin/notifications/test", a.auth.RequirePermission("notification", "edit", http.HandlerFunc(a.withCSRF(a.adminNotificationsTest))))
+	mux.Handle("GET /budgets/new", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.budgetPlannerNew)))
+	mux.Handle("GET /budgets/plan", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.budgetPlannerEdit)))
+	mux.Handle("GET /budgets/plan-data", a.auth.RequirePermission("budget", "view", http.HandlerFunc(a.budgetPlannerData)))
+	mux.Handle("POST /budgets/plan", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.withCSRF(a.budgetPlannerSave))))
 	mux.Handle("GET /budgets", a.auth.RequirePermission("budget", "view", http.HandlerFunc(a.budgets)))
 	mux.Handle("POST /budgets", a.auth.RequirePermission("budget", "edit", http.HandlerFunc(a.withCSRF(a.budgetSave))))
 	mux.Handle("POST /months/{month}/lock", a.auth.RequirePermission("month", "lock", http.HandlerFunc(a.withCSRF(a.lockMonth))))
 	mux.Handle("POST /months/{month}/unlock", a.auth.RequirePermission("month", "lock", http.HandlerFunc(a.withCSRF(a.unlockMonth))))
 	mux.Handle("GET /projects", a.auth.RequirePermission("project", "view", http.HandlerFunc(a.projects)))
-	mux.Handle("POST /projects", a.auth.RequirePermission("project", "edit", http.HandlerFunc(a.withCSRF(a.projectSave))))
+	mux.Handle("POST /projects", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.projectSave))))
 	mux.Handle("GET /heads", a.auth.RequirePermission("head", "view", http.HandlerFunc(a.heads)))
-	mux.Handle("POST /heads", a.auth.RequirePermission("head", "edit", http.HandlerFunc(a.withCSRF(a.headSave))))
+	mux.Handle("POST /heads", a.auth.RequireLogin(http.HandlerFunc(a.withCSRF(a.headSave))))
 	// Literal segments beat the {id} wildcard in ServeMux's specificity rules,
 	// so /vendors/new is the form and never a vendor whose id parses to zero.
 	mux.Handle("GET /vendors", a.auth.RequirePermission("vendor", "view", http.HandlerFunc(a.vendorsList)))
@@ -1372,18 +1390,33 @@ func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, 
 	if strings.TrimSpace(header.Filename) == "" {
 		return nil, "", nil
 	}
-	name := fmt.Sprintf("%d-%s", time.Now().UnixNano(), filepath.Base(header.Filename))
-	stored := filepath.Join(a.cfg.AttachmentDir, name)
-	out, err := os.OpenFile(stored, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	limitMB, err := a.attachmentLimitMB(r)
+	if err != nil {
+		return nil, "", err
+	}
+	limit := limitMB << 20
+	if header.Size > limit {
+		return nil, "", fmt.Errorf("%w: files must be %d MiB or smaller. Choose the attachment again after correcting it", store.ErrValidation, limitMB)
+	}
+	mimeType, err := validatedAttachmentType(file, header.Filename)
+	if err != nil {
+		return nil, "", err
+	}
+	// Keep the user's filename in metadata only. Prefixing it on disk can
+	// exceed the filesystem's component limit, even when the original filename
+	// is valid. CreateTemp also reserves a distinct 0600 file atomically for
+	// concurrent uploads with the same original name.
+	out, err := os.CreateTemp(a.cfg.AttachmentDir, "attachment-*")
 	if err != nil {
 		return nil, "", fmt.Errorf("create attachment: %w", err)
 	}
+	stored := out.Name()
 	cleanup := func() {
 		if removeErr := os.Remove(stored); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			a.log.ErrorContext(r.Context(), "attachment cleanup failed", "request_id", requestID(r), "path", stored, "error", removeErr)
 		}
 	}
-	size, copyErr := io.Copy(out, io.LimitReader(file, maxAttachmentBytes+1))
+	size, copyErr := io.Copy(out, io.LimitReader(file, limit+1))
 	cerr := out.Close()
 	if copyErr != nil {
 		cleanup()
@@ -1393,14 +1426,14 @@ func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, 
 		cleanup()
 		return nil, "", fmt.Errorf("close attachment: %w", cerr)
 	}
-	if size > maxAttachmentBytes {
+	if size > limit {
 		cleanup()
-		return nil, "", fmt.Errorf("%w: files must be 20 MiB or smaller", store.ErrValidation)
+		return nil, "", fmt.Errorf("%w: files must be %d MiB or smaller", store.ErrValidation, limitMB)
 	}
 	return &store.AttachmentInput{
 		OriginalName: filepath.Base(header.Filename),
 		StoredPath:   stored,
-		MimeType:     header.Header.Get("Content-Type"),
+		MimeType:     mimeType,
 		SizeBytes:    size,
 	}, stored, nil
 }
@@ -1420,7 +1453,16 @@ func (a *App) monthCreate(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimSpace(r.FormValue("target_month"))
 	source := ""
 	if r.FormValue("source_mode") == "copy" {
+		perms := a.auth.Permissions(auth.CurrentUser(r))
+		if !perms.Can("budget", "view") || !perms.Can("budget", "edit") {
+			a.respondStoreError(w, r, store.ErrForbidden)
+			return
+		}
 		source = strings.TrimSpace(r.FormValue("source_month"))
+		if source == "" {
+			a.respondError(w, r, http.StatusBadRequest, "Choose a source month to copy.", nil)
+			return
+		}
 	}
 	if err := a.st.CreateMonthPlan(r.Context(), auth.CurrentUser(r), target, source); err != nil {
 		plans, listErr := a.st.ListMonthPlans(r.Context())
@@ -1448,7 +1490,12 @@ func (a *App) budgets(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.render(w, r, "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads})
+	lineHeads, err := a.st.DetailedBudgetHeads(r.Context(), month)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetLineHeads: lineHeads})
 }
 
 func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
@@ -1497,6 +1544,11 @@ func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, errors.Join(gridErr, headsErr))
 			return
 		}
+		lineHeads, lineErr := a.st.DetailedBudgetHeads(r.Context(), month)
+		if lineErr != nil {
+			a.respondStoreError(w, r, lineErr)
+			return
+		}
 		message := friendly(saveErr)
 		if saveErr == nil {
 			// The wording keeps "invalid budget amount" from the message this
@@ -1507,7 +1559,7 @@ func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 				len(updates), plural(len(updates), "amount", "amounts"), len(fieldErrors), plural(len(fieldErrors), "amount was", "amounts were"))
 		}
 		// reRenderStatus keeps a locked month a 409 here too (F-G-026).
-		a.renderStatus(w, r, reRenderStatus(saveErr), "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, BudgetErrors: fieldErrors, BudgetSaved: len(updates), BudgetSaveFailed: saveErr != nil, Error: message})
+		a.renderStatus(w, r, reRenderStatus(saveErr), "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, BudgetErrors: fieldErrors, BudgetSaved: len(updates), BudgetSaveFailed: saveErr != nil, Error: message, BudgetLineHeads: lineHeads})
 		return
 	}
 	http.Redirect(w, r, "/budgets?month="+month, http.StatusSeeOther)
@@ -1596,6 +1648,14 @@ func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) projectSave(w http.ResponseWriter, r *http.Request) {
 	id := parseID(r.FormValue("id"))
+	action := "edit"
+	if id == 0 {
+		action = "create"
+	}
+	if !a.auth.Can(auth.CurrentUser(r), "project", action) {
+		a.respondStoreError(w, r, store.ErrForbidden)
+		return
+	}
 	sortOrder, _ := strconv.Atoi(r.FormValue("sort_order"))
 	pid, err := a.st.UpsertProject(r.Context(), id, r.FormValue("name"), r.FormValue("active") == "on", sortOrder)
 	if err == nil {
@@ -1651,6 +1711,14 @@ func (a *App) headsPageData(ctx context.Context) (PageData, error) {
 
 func (a *App) headSave(w http.ResponseWriter, r *http.Request) {
 	id := parseID(r.FormValue("id"))
+	action := "edit"
+	if id == 0 {
+		action = "create"
+	}
+	if !a.auth.Can(auth.CurrentUser(r), "head", action) {
+		a.respondStoreError(w, r, store.ErrForbidden)
+		return
+	}
 	projectID := parseID(r.FormValue("project_id"))
 	sortOrder, _ := strconv.Atoi(r.FormValue("sort_order"))
 	if asked, err := a.headDeactivationNeedsConfirm(w, r, id); err != nil {
@@ -1725,12 +1793,12 @@ func (a *App) usersPageData(r *http.Request) (PageData, error) {
 	}
 	assigned := map[int64]map[int64]bool{}
 	names := map[int64]string{}
-	var approvers []store.User
+	approvers, err := a.st.ListApprovers(r.Context(), 0)
+	if err != nil {
+		return PageData{}, err
+	}
 	for _, u := range users {
 		names[u.ID] = u.Name
-		if u.Active {
-			approvers = append(approvers, u)
-		}
 		urs, err := a.st.UserRoles(r.Context(), u.ID)
 		if err != nil {
 			return PageData{}, err
@@ -1840,6 +1908,10 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 		savedID = id
 	}
 	if err != nil {
+		if id == 0 && errors.Is(err, store.ErrDuplicate) {
+			a.refuseNewUser(w, r, "A user with this email address already exists. Use a different email or edit the existing user.", roleIDs)
+			return
+		}
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -2461,7 +2533,7 @@ func paymentInput(r *http.Request) (store.PaymentInput, error) {
 		VendorPayee:   r.FormValue("vendor_payee"),
 		PaymentMode:   r.FormValue("payment_mode"),
 		InvoiceNo:     r.FormValue("invoice_no"),
-		ReferenceNo:   r.FormValue("reference_no"),
+		ReferenceNo:   strings.TrimSpace(r.FormValue("reference_no")),
 		Remarks:       r.FormValue("remarks"),
 	}
 	if raw := r.FormValue("expected_paid"); raw != "" {
@@ -2475,6 +2547,9 @@ func paymentInput(r *http.Request) (store.PaymentInput, error) {
 	in.Amount = amount
 	if err != nil {
 		return in, fmt.Errorf("%w: invalid amount; enter a valid payment amount", store.ErrValidation)
+	}
+	if parseID(r.FormValue("request_id")) > 0 && in.ReferenceNo == "" {
+		return in, fmt.Errorf("%w: enter a transaction or payment reference; spaces alone are not a reference", store.ErrValidation)
 	}
 	return in, err
 }
@@ -2664,6 +2739,9 @@ func usedPct(budget, actual int64) string {
 }
 
 func usedText(budget, actual int64) string {
+	if budget <= 0 && actual > 0 {
+		return "No budget"
+	}
 	if budget <= 0 || actual <= 0 {
 		return "0%"
 	}
@@ -2844,7 +2922,13 @@ func roleText(role string) string {
 }
 
 func paymentModeText(mode string) string {
-	switch mode {
+	switch canonicalPaymentMode(mode) {
+	case "neft":
+		return "NEFT"
+	case "rtgs":
+		return "RTGS"
+	case "dd":
+		return "Demand draft"
 	case "bank_transfer":
 		return "Bank transfer"
 	case "cash":

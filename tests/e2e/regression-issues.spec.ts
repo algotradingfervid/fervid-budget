@@ -52,7 +52,7 @@ async function fillPaymentEntry(
   await expect(amount).toHaveAttribute('data-money-bound', '1');
   await amount.fill(values.amount);
   await page.getByLabel('Paid on').fill(values.paidOn);
-  await page.getByLabel('Payment mode').selectOption(values.mode ?? 'bank_transfer');
+  await page.getByLabel('Payment mode').selectOption(values.mode ?? 'neft');
   await page.getByLabel('Transaction / UTR reference').fill(values.reference ?? 'UTR-REGRESSION');
   if (values.note) await page.getByLabel('Processing note').fill(values.note);
 }
@@ -279,13 +279,13 @@ test.describe('documented issue regression guards', () => {
   // recorded. The guard moves to that moment; it does not disappear.
   test('ISS-005 stores an attachment selected while the payment is recorded', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '50.00' });
-    const proof = proofFile(testInfo, 'recorded-proof.txt', 'recorded proof');
+    const proof = proofFile(testInfo, 'recorded-proof.pdf', '%PDF-1.4\nrecorded proof\n%%EOF');
     await settlePayment(adminPage, request.id, {
       amount: '50.00',
       paidOn: '2025-11-15',
       attachment: proof
     });
-    const file = adminPage.locator('.file-row', { hasText: 'recorded-proof.txt' });
+    const file = adminPage.locator('.file-row', { hasText: 'recorded-proof.pdf' });
     await expect(file).toBeVisible();
     await expect(file.getByRole('link', { name: 'Download' })).toBeVisible();
   });
@@ -307,32 +307,27 @@ test.describe('documented issue regression guards', () => {
     await fillPaymentEntry(adminPage, {
       amount: '6000.00',
       paidOn: '2025-12-19',
-      mode: 'bank_transfer',
+      mode: 'neft',
       reference: `REF-${runId}`,
       note: `Remark ${runId}`
     });
     await expect(adminPage.locator('#diff-banner')).toHaveClass(/bad/);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
-    const sheet = adminPage.locator('.overlay .sheet');
-    await expect(sheet).toBeVisible();
-    await expect(sheet.locator('input[name="settlement"]:checked')).toHaveCount(0);
-    await sheet.locator('input[name="settlement"][value="settled"]').check();
-    await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
-
-    await expect(adminPage.getByRole('alert')).toContainText(/more than the approved/i);
-    // Every value comes back on the confirmation, both as the fields the next
-    // attempt will post and as the figures the accountant can read.
-    const carried = adminPage.locator('form[action="/payments"]');
-    await expect(carried.locator('input[name="amount"]')).toHaveValue(/^6,?000\.00$/);
-    await expect(carried.locator('input[name="paid_on"]')).toHaveValue('2025-12-19');
-    await expect(carried.locator('input[name="payment_mode"]')).toHaveValue('bank_transfer');
-    await expect(carried.locator('input[name="reference_no"]')).toHaveValue(`REF-${runId}`);
-    await expect(carried.locator('input[name="remarks"]')).toHaveValue(`Remark ${runId}`);
-    const readable = adminPage.locator('.card .dl');
-    await expect(readable).toContainText('2025-12-19');
-    await expect(readable).toContainText('Bank transfer');
-    await expect(readable).toContainText(`REF-${runId}`);
-    await expect(readable).toContainText(`Remark ${runId}`);
+    await expect(adminPage.locator('.overlay.open')).toHaveCount(0);
+    await expect(adminPage.locator('.client-error-summary')).toContainText('remaining approved balance');
+    // Preflight now rejects the amount before opening confirmation; every
+    // original entry remains available for correction in the same form.
+    await expect(adminPage.getByRole('textbox', { name: 'Amount actually paid', exact: true })).toHaveValue(/^6,?000\.00$/);
+    await expect(adminPage.getByRole('textbox', { name: 'Paid on', exact: true })).toHaveValue('2025-12-19');
+    await expect(adminPage.getByRole('combobox', { name: 'Payment mode', exact: true })).toHaveValue('neft');
+    await expect(adminPage.getByRole('textbox', { name: 'Transaction / UTR reference', exact: true })).toHaveValue(`REF-${runId}`);
+    await expect(adminPage.getByRole('textbox', { name: 'Processing note', exact: true })).toHaveValue(`Remark ${runId}`);
+    await adminPage.getByRole('textbox', { name: 'Amount actually paid', exact: true }).fill('5000.00');
+    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+    await expect(adminPage.locator('.overlay .sheet')).toBeVisible();
+    await adminPage.getByRole('button', { name: 'Confirm and save payment', exact: true }).click();
+    await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
+    await expect(adminPage.locator('main')).toContainText(`REF-${runId}`);
   });
 
   test('ISS-007 hides administrator navigation and payment mutations from data entry', async ({ page, runId }) => {
@@ -481,11 +476,23 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-019 rejects copying from a nonexistent source month', async ({ adminPage }) => {
     await adminPage.goto('/months');
-    await adminPage.getByLabel('New month').fill('2030-02');
-    await adminPage.getByLabel('Plan type').selectOption('copy');
-    await adminPage.getByLabel('Source month').fill('2030-01');
-    await adminPage.getByRole('button', { name: 'Create Month' }).click();
-    await expect(adminPage.getByRole('alert')).toContainText(/source month has no budgets/i);
+    // The guided creator offers only existing source plans. Keep the server
+    // guard covered independently of that UI restriction: a stale or tampered
+    // legacy request must still refuse an absent source without creating a plan.
+    const target = adminPage.locator('a[href="/budgets?month=2030-02"]');
+    await expect(target).toHaveCount(0);
+    const response = await adminPage.request.post('/months', {
+      form: {
+        csrf: await csrf(adminPage),
+        target_month: '2030-02',
+        source_mode: 'copy',
+        source_month: '2030-01'
+      }
+    });
+    expect(response.status()).toBe(400);
+    expect(await response.text()).toMatch(/source month has no budgets/i);
+    await adminPage.reload();
+    await expect(target, 'invalid copying must not create the target plan').toHaveCount(0);
   });
 
   test('ISS-020 validates due days in HTML and on the server', async ({ adminPage, runId }) => {
@@ -534,7 +541,7 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-023 downloads authenticated attachment bytes', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
-    const proof = proofFile(testInfo, 'download-proof.txt', 'download proof');
+    const proof = proofFile(testInfo, 'download-proof.pdf', '%PDF-1.4\ndownload proof\n%%EOF');
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
       paidOn: '2024-03-15',
@@ -543,11 +550,11 @@ test.describe('documented issue regression guards', () => {
     // The proof list is .file-row with its own Download link; the old detail
     // screen's bare filename link belongs to a payment with no request behind
     // it, and this product no longer creates one.
-    const file = adminPage.locator('.file-row', { hasText: 'download-proof.txt' });
+    const file = adminPage.locator('.file-row', { hasText: 'download-proof.pdf' });
     await expect(file).toBeVisible();
     const pending = adminPage.waitForEvent('download');
     await file.getByRole('link', { name: 'Download' }).click();
-    expect((await pending).suggestedFilename()).toBe('download-proof.txt');
+    expect((await pending).suggestedFilename()).toBe('download-proof.pdf');
   });
 
   // The upload moved with the rest of payment entry: a linked payment is
@@ -558,14 +565,14 @@ test.describe('documented issue regression guards', () => {
   // request and the payment together.
   test('ISS-024 includes attachment uploads in the payment trail', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
-    const proof = proofFile(testInfo, 'timeline-proof.txt', 'timeline');
+    const proof = proofFile(testInfo, 'timeline-proof.pdf', '%PDF-1.4\ntimeline\n%%EOF');
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
       paidOn: '2024-04-15',
       attachment: proof
     });
     const trail = adminPage.locator('ol.thread');
-    await expect(trail).toContainText('Uploaded attachment timeline-proof.txt');
+    await expect(trail).toContainText('Uploaded attachment timeline-proof.pdf');
     await expect(trail).toContainText('attached proof of payment');
   });
 
@@ -661,9 +668,9 @@ test.describe('documented issue regression guards', () => {
     await settlePayment(adminPage, request.id, {
       amount: '10.00',
       paidOn: '2024-07-15',
-      mode: 'bank_transfer'
+      mode: 'neft'
     });
-    await expect(adminPage.locator('dd', { hasText: 'Bank transfer' }).first()).toBeVisible();
+    await expect(adminPage.locator('dd', { hasText: 'NEFT' }).first()).toBeVisible();
   });
 
   test('ISS-029 gives project subtotal bars their utilization status', async ({ adminPage, runId }) => {
@@ -769,11 +776,11 @@ test.describe('responsive and visual smoke', () => {
     // on this screen. setInputFiles works on a hidden input.
     const file = adminPage.locator('input[name="attachment"]');
     await file.setInputFiles({
-      name: 'receipt.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('receipt')
+      name: 'receipt.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4\nreceipt\n%%EOF')
     });
-    await expect(file).toHaveValue(/receipt\.txt$/);
+    await expect(file).toHaveValue(/receipt\.pdf$/);
     await adminPage.screenshot({ path: testInfo.outputPath('payment-upload-form.png'), fullPage: true });
   });
 });

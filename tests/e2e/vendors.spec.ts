@@ -55,6 +55,24 @@ async function createVendor(page: Page, name: string) {
 }
 
 test.describe('vendor master', () => {
+  test('vendor filters remain available and preserve their scope on every viewport', async ({ adminPage }) => {
+    await adminPage.goto('/vendors?gap=gstin&type=company&status=inactive&q=UIR');
+    const filters = adminPage.locator('.vendor-filters');
+    await expect(filters.getByLabel('Search', { exact: true })).toHaveValue('UIR');
+    await expect(filters.getByLabel('Type', { exact: true })).toBeVisible();
+    await expect(filters.getByLabel('Category', { exact: true })).toBeVisible();
+    await expect(filters.getByLabel('Status', { exact: true })).toBeVisible();
+    await expect(filters.getByLabel('Type', { exact: true })).toHaveValue('company');
+    await expect(filters.getByLabel('Status', { exact: true })).toHaveValue('inactive');
+    await filters.getByLabel('Status', { exact: true }).selectOption('all');
+    await filters.getByRole('button', { name: 'Apply', exact: true }).click();
+    const url = new URL(adminPage.url());
+    expect(url.searchParams.get('gap')).toBe('gstin');
+    expect(url.searchParams.get('type')).toBe('company');
+    expect(url.searchParams.get('status')).toBe('all');
+    expect(url.searchParams.get('q')).toBe('UIR');
+  });
+
   test('admin creates a vendor, finds it in the list and edits it', async ({ adminPage, runId }) => {
     const name = `Sundaram Electricals ${runId}`;
     await createVendor(adminPage, name);
@@ -76,7 +94,7 @@ test.describe('vendor master', () => {
     await expect(adminPage.locator('table.t-cards thead')).toBeVisible({ visible: !mobile });
 
     // Open it from the list and edit the contact person.
-    await row.getByRole('link', { name }).click();
+    await row.getByRole('link', { name: 'Sundaram Elec', exact: true }).click();
     await expect(adminPage).toHaveURL(/\/vendors\/\d+$/);
     await adminPage.getByLabel('Contact person').fill('B. Krishnan');
     await adminPage.getByRole('button', { name: 'Save vendor' }).click();
@@ -118,7 +136,7 @@ test.describe('vendor master', () => {
     await adminPage.goto('/vendors');
     const row = adminPage.locator('table.t-cards tbody tr').filter({ hasText: name });
     await expect(row).toHaveCount(1);
-    await row.getByRole('link', { name }).click();
+    await row.getByRole('link', { name: 'Sundaram Elec', exact: true }).click();
     await expect(adminPage).toHaveURL(/\/vendors\/\d+$/);
 
     // The record is readable…

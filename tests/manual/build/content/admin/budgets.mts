@@ -4,106 +4,147 @@ export default page({
   section: 'admin',
   slug: 'budgets',
   title: 'Budgets',
-  summary: 'Setting the figures each head is allowed, month by month.',
+  summary: 'Build a monthly plan from projects, expense heads, and budget lines, then review and save it.',
   blocks: [
     prose(
-      'A budget is one number: what a single expense head is allowed to spend in a single month. ' +
-      'There is no annual figure and no project-level figure — the project total on the variance grid ' +
-      'is the sum of its heads, and the year is the sum of its months. This screen is where those ' +
-      'numbers are typed.',
+      'A monthly budget groups planned spending by project and expense head. Each head can contain ' +
+      'several named budget lines: for example, a Travel head can contain train fares, accommodation, ' +
+      'and local transport. Line amounts add up to the head total, heads add up to their project, ' +
+      'and projects add up to the monthly budget. There is no separate annual budget to enter.',
+    ),
+    note(
+      'Budget lines explain the plan. Payments and actual spending are recorded against expense ' +
+      'heads, not against individual budget lines. You can compare the head total with its actual ' +
+      'spending, but the application does not allocate that spending among the lines.',
+      'Planning detail and actual spending',
     ),
 
-    section('The screen'),
-    shot('admin/budgets', 'The budget editor for one month. Every active head gets a row and a box to type in.'),
+    section('Create a monthly budget'),
+    steps([
+      {
+        text: 'Select **Create budget** on Budgets or [Monthly plans](page:admin/monthly-plans-and-locking).',
+        note: 'Creating a month requires permission to create monthly plans and edit budgets. Creating a new project or expense head also requires the corresponding permission; otherwise choose an existing item.',
+      },
+      {
+        text: 'In **1. Choose month**, set **Budget month** and choose your starting point.',
+        note: '**Start with a blank budget** starts with no projects, heads, or lines, even if the application already has projects. **Copy an existing budget** lets you choose a saved month in **Copy from**. Copying brings its active projects, heads, budget lines, and amounts into the draft. Payments are not copied, and retired projects and heads are excluded.',
+      },
+      {
+        text: 'Select **Continue to amounts →**, then **＋ Add project**.',
+        note: 'Choose an existing project, or choose **＋ Create a new project** and enter its name. Adding a project does not automatically add all its heads. Expand the project and select **＋ Add expense head** to choose or create the heads you need.',
+      },
+      {
+        text: 'Expand an expense head and select **＋ Add line** for each part of its budget.',
+        note: 'Give every line a description and an amount in rupees, such as 1250.50. Enter zero or a positive number with up to two decimal places, without a rupee symbol or commas. Blank amounts, negative numbers, and extra decimal places are refused. **Remove** removes a line from the draft.',
+      },
+      {
+        text: 'Select **Review budget →** and check the month, starting point, lines, and totals.',
+        note: 'The review also lists any new projects and heads that will be created. Expand groups to inspect their lines. Use **← Edit amounts** to make corrections.',
+      },
+      {
+        text: 'Select **Create budget** to save the reviewed plan.',
+        note: 'The month, new projects and heads, budget lines, and totals are saved together. The saved plan opens with a confirmation. Nothing in the draft creates a project, head, or monthly budget before this final submission.',
+      },
+    ]),
+    note(
+      'Projects and expense heads start collapsed, with their totals visible. Expand just the item ' +
+      'you need, or use **Expand all** and **Collapse all**. Adding a new project or head leaves it ' +
+      'collapsed too. Amount edits update the head, project, and monthly totals immediately in the draft.',
+      'Work with a short outline',
+    ),
+    warning(
+      'Drafts are not auto-saved. Finish with **Create budget** or **Save budget changes**. Leaving ' +
+      'a changed draft prompts a warning, but the draft is not a saved budget. Changing the starting ' +
+      'point asks before discarding the unsaved project, head, and line changes.',
+      'Save before leaving',
+    ),
+    note(
+      'The guided planner saves the whole reviewed plan in one transaction. If validation or saving ' +
+      'fails, it does not save only some of the lines or leave newly created projects behind. Correct ' +
+      'the reported problem and review again. At least one project, one head, and one described line ' +
+      'are required; a blank starting point is an empty draft, not a completed budget.',
+      'One complete save',
+    ),
+
+    section('Change an existing budget'),
+    steps([
+      { text: 'Open the month on **Budgets** and select **Edit budget lines**.' },
+      {
+        text: 'Expand the relevant project and head, then adjust descriptions or amounts, add lines, or remove lines.',
+        note: 'You can add more projects and heads too. The month of an existing plan is fixed. Unsaved projects and heads can be removed from the draft; populated groups ask for confirmation. This does not delete master records. Already-saved groups cannot be removed; retain a described zero-value line if an existing head no longer needs an allocation.',
+      },
+      {
+        text: 'Select **Review budget →**, inspect the changes, then **Save budget changes**.',
+        note: 'If another editor changed the plan after you opened it, saving is refused so their work is not overwritten. Note your intended changes, reopen the latest saved plan, and apply them to that version.',
+      },
+    ]),
+    tip(
+      'For a similar next month, use **Create budget** and **Copy an existing budget**. Change the ' +
+      'copied lines before saving. The source month stays unchanged, and only the target month gets ' +
+      'the revised plan. A locked source month can still be read and copied into a different month.',
+    ),
+
+    section('Budget overview'),
+    shot('admin/budgets', 'The budget overview: one aggregate row per expense head. This earlier capture does not show the guided planner.'),
     prose(
-      'The toolbar at the top holds the month and three ways out of it. **Open** loads the month you ' +
-      'picked. **Month history** goes to [Monthly plans](page:admin/monthly-plans-and-locking). ' +
-      '**View grid** goes to the variance grid for the same month.',
+      'The overview remains useful for comparing each head’s total budget with actual spending. ' +
+      '**Open** loads the selected month; **Month history** opens monthly plans, and **View grid** ' +
+      'opens its variance grid. Heads with saved budget lines show a read-only total and an **Edit ' +
+      'lines** link to the relevant head in the planner. Older budgets without a line breakdown can ' +
+      'still be edited as aggregate amounts in this overview with **Save Budgets**. Opening an older ' +
+      'budget in the planner presents its amount as a **Monthly allocation** line.',
     ),
     table(
       ['Column', 'What it shows'],
       [
-        ['Project', 'The project the head belongs to.'],
-        ['Head', 'The head being budgeted.'],
-        ['Status', '`Active`, or `Retired` for a head that has been switched off but still carries figures for this month.'],
-        ['Budget', 'The editable figure. This is the only column you can change here.'],
-        ['Actual', 'What has actually been paid against the head in this month, so far.'],
-        ['Used', 'Actual as a percentage of budget.'],
+        ['Project / Head', 'The project and expense head for the row.'],
+        ['Status', 'Active, or Retired for an item retained for history.'],
+        ['Budget', 'The head’s total planned amount. Detailed budgets are changed through Edit lines.'],
+        ['Actual', 'Actual spending recorded against the head for the selected month.'],
+        ['Used', 'Actual as a percentage of budget. Positive actual spending against a zero budget is labelled No budget.'],
       ],
     ),
-    note(
-      'Actual and Used are read-only and they update themselves. A head that has been overspent shows ' +
-      'a percentage above 100 — the capture above has one at 486%, which is a real thing the screen ' +
-      'will show you rather than an error.',
-    ),
 
-    section('Setting the figures'),
-    steps([
-      { text: 'Pick the month in **Month** and select **Open**.' },
-      {
-        text: 'Type the figures into the **Budget** boxes.',
-        note: 'Amounts are shown the way the product writes money everywhere else — ₹2,23,300.00. The rupee sign and the grouping commas are both optional when you type. An empty box means no budget; a negative figure is refused with `a budget cannot be negative`, and anything that is not a number with `enter a number, or leave it empty for no budget`.',
-      },
-      {
-        text: 'Select **Save Budgets** at the foot of the table.',
-        note: 'One press saves the whole month. Every figure you changed is written, and each write leaves its own audit row.',
-      },
-    ]),
-    note(
-      'If one box cannot be read, only that box is rejected. Everything else on the page is still ' +
-      'saved, and the screen comes back naming the fields it could not understand with your typing ' +
-      'still in them. A single stray character does not cost you the whole month.',
-      'One bad box does not lose the rest',
-    ),
-    tip(
-      'A month that already has budgets is easier to copy than to retype. Create the next month with ' +
-      '**Copy from month** on [Monthly plans](page:admin/monthly-plans-and-locking), then come here ' +
-      'and adjust the handful of heads that changed.',
-    ),
-
-    section('What you cannot edit'),
+    section('Limits on changes'),
     table(
-      ['Situation', 'What the screen does'],
+      ['Situation', 'What happens'],
       [
-        ['The month is locked', 'A `Locked` pill sits beside the heading, a bar reads "This month is locked. Unlock it before changing budgets.", every box is disabled and **Save Budgets** is disabled with them.'],
-        ['The head is retired', 'The row keeps its figure, the box is disabled, and the hint under it reads "Retired: kept for history, not editable."'],
-        ['The month has no active heads', 'The table reads "No active heads for this month." with a link to the heads screen.'],
+        ['The month is locked', 'The saved plan can be expanded and read, but its amounts and structure cannot be changed. An authorized user must unlock it first.'],
+        ['A project or head is retired', 'Its saved lines remain visible and read-only in the existing month. They are excluded when copying to a new month.'],
+        ['The target month already exists', 'Create is refused. Open that month and edit its existing budget instead.'],
+        ['The user cannot create projects or heads', 'Existing items can be chosen when available; the corresponding new-item option is not offered.'],
       ],
     ),
     warning(
-      'Unlocking a month to change a budget reopens it for payments as well, and the unlock needs a ' +
-      'reason that goes on the record. Think about whether the figure genuinely has to change ' +
-      'retrospectively before you reopen a closed period — see ' +
-      '[Monthly plans and locking](page:admin/monthly-plans-and-locking).',
+      'Unlocking a month to change a budget reopens it for payments as well, and requires a recorded ' +
+      'reason. See [Monthly plans and locking](page:admin/monthly-plans-and-locking) before reopening ' +
+      'a closed period.',
       'Editing a closed month',
     ),
 
     section('How budgets are used'),
     prose(
-      'The figure you type here does not block anything on its own. Nothing refuses a request or a ' +
-      'payment for being over budget; the product records the overspend and shows it. Where the ' +
-      'number does its work is in what people see:\n\n' +
-      'The variance grid colours each head by how much of its budget is used and totals the ' +
-      'difference. The reports break the same comparison down by month, by project and by head. The ' +
-      'monthly plan list shows a budget, an actual and a remaining figure for the whole month at once.',
+      'Budgets show planned versus actual spending; they do not block requests or payments just ' +
+      'because an amount is over budget. The variance grid and reports compare actual spending with ' +
+      'the summed head budgets, and monthly plans show budget, actual, and remaining amounts for the ' +
+      'whole month. Overspending can show more than 100% used and a negative remaining amount.',
     ),
-
     faq([
       {
-        q: 'I typed a figure and the total did not move.',
-        a: 'Check that you selected **Save Budgets**. Typing in the boxes changes nothing until the form is submitted, and there is no auto-save.',
+        q: 'Why is a blank budget empty when projects already exist?',
+        a: 'Blank means start from scratch. Use **＋ Add project** and then **＋ Add expense head** to include only the existing or new items you need.',
       },
       {
-        q: 'A head I need is not in the list.',
-        a: 'Either it does not exist yet or it has been retired. Add it or reactivate it on [Expense heads](page:admin/expense-heads), then come back and reload the month.',
+        q: 'Can I split a head into several budget lines?',
+        a: 'Yes. Expand the head and use **＋ Add line** repeatedly. Each line has its own description and amount, and the head total is their sum.',
       },
       {
-        q: 'Can I budget for a month that does not exist yet?',
-        a: 'Open the month first on [Monthly plans](page:admin/monthly-plans-and-locking). Saving budgets does create the month plan if it is missing, but opening it deliberately is clearer and lets you copy last month’s figures in one step.',
+        q: 'Why is a copied total smaller than the source total?',
+        a: 'Retired projects and heads are excluded. The source preview names the original month’s total; check the copied draft’s total and review before saving.',
       },
       {
-        q: 'What happens if spending goes past the budget?',
-        a: 'Nothing is refused. The head shows over 100% used and the variance goes negative, which is what the grid and the reports are there to surface.',
+        q: 'Do the live totals mean my changes have been saved?',
+        a: 'No. They calculate the draft. Review and select **Create budget** or **Save budget changes** to persist the plan.',
       },
     ]),
   ],

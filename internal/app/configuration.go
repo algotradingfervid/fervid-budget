@@ -26,6 +26,7 @@ import (
 // Span is its width in the twelve-column .form-grid.
 type ConfigField struct {
 	Key, Label, Hint, Kind string
+	Min, Max               string
 	Options                []ConfigOption
 	Span                   int
 }
@@ -50,13 +51,13 @@ var configSections = []ConfigSection{
 			{Value: "calendar", Label: "Calendar year"},
 			{Value: "financial", Label: "Financial year"},
 			{Value: "none", Label: "None"}}},
-		{Key: "number_width", Label: "Number width", Kind: "number", Span: 4,
-			Hint: "How many digits the running number is padded to."},
+		{Key: "number_width", Label: "Number width", Kind: "number", Span: 4, Min: "1", Max: "12",
+			Hint: "How many digits the running number is padded to. Whole numbers from 1 to 12."},
 	}},
 	{Title: "Attachments", Fields: []ConfigField{
 		{Key: "require_attachments", Label: "Require a supporting document on every request", Kind: "toggle", Span: 12,
 			Hint: "Turning it on does not block submission — it asks for an exception reason when no document is attached, because legitimate documents are sometimes genuinely unavailable."},
-		{Key: "attachment_max_mb", Label: "Maximum file size (MB)", Kind: "number", Span: 6},
+		{Key: "attachment_max_mb", Label: "Maximum file size (MiB)", Kind: "number", Span: 6, Hint: "Whole numbers from 1 to 20. One MiB is 1,048,576 bytes."},
 	}},
 	{Title: "Urgency", Fields: []ConfigField{
 		{Key: "urgency_mode", Label: "Marking a request urgent", Kind: "select", Span: 6, Options: []ConfigOption{
@@ -194,6 +195,20 @@ func (a *App) configurationSave(w http.ResponseWriter, r *http.Request) {
 			if _, posted := r.Form[field.Key]; posted {
 				values[field.Key] = strings.TrimSpace(r.FormValue(field.Key))
 			}
+		}
+	}
+	if raw, posted := values["attachment_max_mb"]; posted {
+		limit, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || limit < 1 || limit > maxAttachmentMB {
+			a.renderConfiguration(w, r, http.StatusBadRequest, "Maximum file size must be a whole number from 1 to 20 MiB.")
+			return
+		}
+	}
+	if raw, posted := values["number_width"]; posted {
+		width, err := strconv.Atoi(raw)
+		if err != nil || width < 1 || width > 12 {
+			a.renderConfiguration(w, r, http.StatusBadRequest, "Number width must be a whole number from 1 to 12.")
+			return
 		}
 	}
 	if err := a.st.SetAppSettings(r.Context(), auth.CurrentUser(r), values); err != nil {

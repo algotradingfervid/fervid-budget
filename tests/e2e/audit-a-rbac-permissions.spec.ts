@@ -1944,9 +1944,9 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
           multipart: {
             csrf: token,
             attachment: {
-              name: `planted-${W.runId}.txt`,
-              mimeType: 'text/plain',
-              buffer: Buffer.from('an attempt to append to a settled payment’s evidence')
+              name: `planted-${W.runId}.pdf`,
+              mimeType: 'application/pdf',
+              buffer: Buffer.from('%PDF-1.4\nan attempt to append to a settled payment’s evidence\n%%EOF')
             }
           },
           maxRedirects: 0,
@@ -1966,7 +1966,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // Reproduced a second way: the evidence on the payment is untouched.
     await W.a2.page.goto(`/payments/${W.payId}`);
     await expect(
-      W.a2.page.getByText(`planted-${W.runId}.txt`),
+      W.a2.page.getByText(`planted-${W.runId}.pdf`),
       'no attempt left a trace on the payment'
     ).toHaveCount(0);
     const after = await W.a2.page.request.get(new URL(`/payments/${W.payId}`, W.baseURL).toString());
@@ -2334,7 +2334,7 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   // `fixtures.settlePayment` offers the same `attachment` option through the
   // screen; this is that request hand-rolled, because the world is built over
   // HTTP rather than through the UI.
-  const advice = `bank-advice-${runId}.txt`;
+  const advice = `bank-advice-${runId}.pdf`;
   const paid = await expectStatus(settleWithAttachment(a2.page, {
     request_id: String(world.tPaid), amount: '104.00', paid_on: today, head_id: world.headId,
     payment_mode: 'bank_transfer', reference_no: `UTR-${runId}-paid`, settlement: 'settled'
@@ -2359,7 +2359,7 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   });
   await expectStatus(probePost(m2.page, `/requests/${world.ownApproved}/approve`, { approved_amount: '107.00' }), 303,
     'approving the requester’s own request');
-  world.ownReqAttId = await requestAttachmentId(callers['C-req'].page, world.ownPending, `invoice-${runId}.txt`);
+  world.ownReqAttId = await requestAttachmentId(callers['C-req'].page, world.ownPending, `invoice-${runId}.pdf`);
 
   return world;
 }
@@ -2489,7 +2489,7 @@ async function settleWithAttachment(
     multipart: {
       ...form,
       csrf: await csrfToken(page.context()),
-      attachment: { name: filename, mimeType: 'text/plain', buffer: Buffer.from(`advice body ${filename}`) }
+      attachment: { name: filename, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4\nadvice body ${filename}\n%%EOF`) }
     },
     maxRedirects: 0,
     failOnStatusCode: false
@@ -2533,7 +2533,7 @@ async function requestAttachmentId(page: Page, requestId: number, filename: stri
   // The uploader's input is nameless to a screen reader beyond its own label, so
   // it is addressed by name attribute the way fixtures.settlePayment does.
   await page.locator('input[name="attachment"]').setInputFiles({
-    name: filename, mimeType: 'text/plain', buffer: Buffer.from(`invoice body ${filename}`)
+    name: filename, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4\ninvoice body ${filename}\n%%EOF`)
   });
   await page.getByRole('button', { name: /^Save and notify/ }).click();
   await page.waitForURL(new RegExp(`/requests/${requestId}$`));

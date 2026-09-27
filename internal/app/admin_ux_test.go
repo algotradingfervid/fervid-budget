@@ -193,7 +193,7 @@ func TestPaymentEntryUsesConfiguredVendorDefaultAndProtectsDestination(t *testin
 	}
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	body := responseBody(t, s.request("GET", strconvPath("/payments/new?request=%d", reqID), nil, ""))
-	for _, want := range []string{`value="upi" selected>UPI`, `value="bank_transfer" >NEFT`, `private-supplier@upi`, `654321123`} {
+	for _, want := range []string{`value="upi" selected>UPI`, `value="neft" >NEFT`, `private-supplier@upi`, `654321123`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q", want)
 		}

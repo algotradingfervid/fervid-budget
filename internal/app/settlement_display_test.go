@@ -210,7 +210,7 @@ func TestRequestDetailOffersRecordPaymentToAccounts(t *testing.T) {
 	mustNotContain(t, "requester detail", body, "record-payment")
 }
 
-// settlement-5: "Payment saved … have been notified" is the confirmation of a
+// settlement-5: "Payment saved" is the confirmation of a
 // write, so it appears once, on the redirect from the confirming POST. A later
 // visit shows the payment; a refused repeat and a blocked edit say what really
 // happened.
@@ -231,7 +231,8 @@ func TestPaymentSavedBannerAppearsOnlyAfterTheConfirmingPost(t *testing.T) {
 		t.Fatalf("the confirming POST must land on the payment itself, got %q", loc)
 	}
 	saved := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
-	mustContain(t, "just-saved screen", saved, "Payment saved", "have been notified")
+	mustContain(t, "just-saved screen", saved, "Payment saved", "The payment is recorded against this request.")
+	mustNotContain(t, "just-saved screen", saved, "have been notified")
 
 	later := responseBody(t, s.request(http.MethodGet, loc, nil, ""))
 	mustNotContain(t, "a later visit", later, "Payment saved", "have been notified")

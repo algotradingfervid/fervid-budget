@@ -32,7 +32,7 @@ func TestPaymentReservationDoesNotSurviveRevokedRequestScope(t *testing.T) {
 			t.Errorf("revoked scope GET %s status=%d body bytes=%d, want404", path, resp.StatusCode, len(body))
 		}
 	}
-	form := url.Values{"request_id": {fmt.Sprint(id)}, "paid_on": {"2026-06-15"}, "amount": {"7000"}, "settlement": {"installment"}, "submission_key": {"revoked-scope-form"}, "expected_paid": {"0"}}
+	form := url.Values{"request_id": {fmt.Sprint(id)}, "paid_on": {"2026-06-15"}, "amount": {"7000"}, "settlement": {"installment"}, "submission_key": {"revoked-scope-form"}, "reference_no": {"RESTORED-SCOPE-REF"}, "expected_paid": {"0"}}
 	preview := s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", id), form)
 	requireStatus(t, preview, http.StatusNotFound)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusNotFound)

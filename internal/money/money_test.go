@@ -1,6 +1,9 @@
 package money
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestParsePaise(t *testing.T) {
 	tests := []struct {
@@ -11,7 +14,7 @@ func TestParsePaise(t *testing.T) {
 	}{
 		{name: "plain rupees", input: "1234.56", want: 123456},
 		{name: "rupee symbol and commas", input: " ₹12,34,567.89 ", want: 123456789},
-		{name: "rounds to nearest paise", input: "10.235", want: 1024},
+		{name: "rejects excess precision instead of rounding", input: "10.235", wantErr: true},
 		{name: "indian grouped digits from the browser", input: "1,00,000", want: 10000000},
 		{name: "rupee symbol grouping and paise", input: "₹1,00,000.50", want: 10000050},
 		{name: "surrounding whitespace", input: " 1,00,000 ", want: 10000000},
@@ -29,7 +32,24 @@ func TestParsePaise(t *testing.T) {
 		{name: "overflow 9e18 rupees", input: "9e18", wantErr: true},
 		{name: "overflow 1e19 rupees", input: "1e19", wantErr: true},
 		{name: "overflow plain digits", input: "100000000000000000", wantErr: true},
-		{name: "overflow just past the paise boundary", input: "92233720368547758.07", wantErr: true},
+		{name: "exact int64 paise boundary", input: "92233720368547758.07", want: math.MaxInt64},
+		{name: "one paisa above int64 boundary", input: "92233720368547758.08", wantErr: true},
+		{name: "beyond float safe precision remains exact", input: "90071992547409.91", want: 9007199254740991},
+		{name: "next paisa remains exact", input: "90071992547409.93", want: 9007199254740993},
+		{name: "leading decimal point", input: ".5", want: 50},
+		{name: "trailing decimal point", input: "1.", want: 100},
+		{name: "exact decimal exponent", input: "1e1", want: 1000},
+		{name: "exponent one paisa", input: "1e-2", want: 1},
+		{name: "exponent decimal shift", input: "1.001e3", want: 100100},
+		{name: "reject subpaise exponent", input: "1e-3", wantErr: true},
+		{name: "reject audit recovery fraction", input: "1.001", wantErr: true},
+		{name: "reject audit request fraction", input: "2.999", wantErr: true},
+		{name: "reject unicode minus", input: "−88.90", wantErr: true},
+		{name: "reject multiple dots", input: "1.2.3", wantErr: true},
+		{name: "reject stripped letters", input: "1abc2", wantErr: true},
+		{name: "reject hex float", input: "0x1p2", wantErr: true},
+		{name: "reject huge negative exponent", input: "1e-9223372036854775808", wantErr: true},
+		{name: "reject huge positive exponent", input: "1e9223372036854775807", wantErr: true},
 		{name: "very large but representable", input: "10000000000000000", want: 1000000000000000000},
 	}
 
@@ -156,11 +176,11 @@ func FuzzParsePaiseNeverPanics(f *testing.F) {
 }
 
 func FuzzFormatParsePositiveRoundTrip(f *testing.F) {
-	for _, seed := range []int64{1, 105, 9999999, 123456789} {
+	for _, seed := range []int64{1, 105, 9999999, 123456789, 9007199254740993, math.MaxInt64} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, paise int64) {
-		if paise <= 0 || paise > 9_000_000_000_000 {
+		if paise <= 0 {
 			t.Skip()
 		}
 		got, err := ParsePaise(FormatPaise(paise))

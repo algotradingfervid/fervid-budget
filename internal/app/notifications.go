@@ -122,6 +122,10 @@ func (a *App) adminNotificationEventSave(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if err := a.st.SetNotificationSetting(r.Context(), auth.CurrentUser(r), in); err != nil {
+		if storeErrorStatus(err) == http.StatusBadRequest {
+			a.renderAdminNotificationsPage(w, r, http.StatusBadRequest, PageData{NotifDraft: &in, NotifDraftError: friendly(err)})
+			return
+		}
 		a.respondStoreError(w, r, err)
 		return
 	}

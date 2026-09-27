@@ -22,7 +22,7 @@ func TestInstallmentHTTPFlowExplicitChoiceAndRemainingBalance(t *testing.T) {
 	if len(token) != 2 {
 		t.Fatal("missing confirmation idempotency key")
 	}
-	form := url.Values{"request_id": {strconvFormat(id)}, "amount": {"7000"}, "paid_on": {"2026-06-15"}, "submission_key": {token[1]}}
+	form := url.Values{"request_id": {strconvFormat(id)}, "amount": {"7000"}, "paid_on": {"2026-06-15"}, "reference_no": {"INSTALLMENT-REF"}, "submission_key": {token[1]}}
 	preview := responseBody(t, s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", id), form))
 	if regexp.MustCompile(`name="settlement"[^>]*checked`).MatchString(preview) {
 		t.Fatal("short payment has a default disposition")
@@ -76,7 +76,7 @@ func TestPaymentOutcomeFollowsLifecycleWithoutRewritingHistory(t *testing.T) {
 		t.Helper()
 		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
 		entry := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", id), nil, ""))
-		form := url.Values{"request_id": {strconvFormat(id)}, "amount": {amount}, "paid_on": {"2026-06-15"}, "settlement": {disposition}, "partial_reason": {reason}}
+		form := url.Values{"request_id": {strconvFormat(id)}, "amount": {amount}, "paid_on": {"2026-06-15"}, "reference_no": {"OUTCOME-REF"}, "settlement": {disposition}, "partial_reason": {reason}}
 		for _, name := range []string{"submission_key", "expected_paid"} {
 			field := regexp.MustCompile(`name="` + name + `" value="([^"]*)"`).FindStringSubmatch(entry)
 			if len(field) != 2 {

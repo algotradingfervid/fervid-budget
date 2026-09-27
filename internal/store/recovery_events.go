@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 // RecoveryInput records an already-completed return or documented accounting
@@ -99,8 +100,15 @@ func (s *Store) RecordRecovery(ctx context.Context, actor User, requestID int64,
 	if in.Reference == "" || in.Note == "" {
 		return 0, fmt.Errorf("%w: a bank or accounting reference and an explanatory note are required", ErrValidation)
 	}
-	if len(in.Reference) > 240 || len(in.Note) > 4000 || len(in.Token) < 16 || len(in.Token) > 128 {
-		return 0, fmt.Errorf("%w: reference or note is too long, or the form has expired; reload and try again", ErrValidation)
+	// HTML maxlength counts UTF-16 code units, not UTF-8 bytes.
+	if len(utf16.Encode([]rune(in.Reference))) > 240 {
+		return 0, fmt.Errorf("%w: keep the bank or accounting reference within 240 characters", ErrValidation)
+	}
+	if len(utf16.Encode([]rune(in.Note))) > 4000 {
+		return 0, fmt.Errorf("%w: keep the evidence and explanation within 4000 characters", ErrValidation)
+	}
+	if len(in.Token) < 16 || len(in.Token) > 128 {
+		return 0, fmt.Errorf("%w: the form has expired; reload and try again", ErrValidation)
 	}
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {

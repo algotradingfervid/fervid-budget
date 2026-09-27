@@ -158,7 +158,7 @@ async function fillEntry(
 ) {
   await page.getByLabel('Amount actually paid').fill(opts.amount);
   await page.getByLabel('Paid on').fill(opts.paidOn ?? PAID_ON);
-  await page.getByLabel('Payment mode').selectOption(opts.mode ?? 'bank_transfer');
+  await page.getByLabel('Payment mode').selectOption(opts.mode ?? 'neft');
   await page.getByLabel('Transaction / UTR reference').fill(opts.reference);
   if (opts.note) await page.getByLabel('Processing note').fill(opts.note);
 }
@@ -1691,7 +1691,7 @@ test.describe('D · the settlement preview writes nothing', () => {
     // ("Go back returns to the form with everything you typed still there").
     await expect(adminPage.locator('#settle-mount .overlay'), 'the sheet is dismissed in place').toBeHidden();
     await expect(adminPage.getByLabel('Amount actually paid'), 'the amount survives').toHaveValue('5,000.00');
-    await expect(adminPage.getByLabel('Payment mode'), 'the mode survives').toHaveValue('bank_transfer');
+    await expect(adminPage.getByLabel('Payment mode'), 'the mode survives').toHaveValue('neft');
     await expect(adminPage.getByLabel('Transaction / UTR reference'), 'the reference survives').toHaveValue(
       `UTR-SHEET-${runId}`
     );

@@ -154,7 +154,7 @@ test('recoverables-1/-2, grid-2, grid-1 — a recoverable never reaches the grid
 
   await adminPage.getByLabel('Amount actually paid').fill(amount);
   await adminPage.getByLabel('Paid on').fill(today());
-  await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+  await adminPage.getByLabel('Payment mode').selectOption('neft');
   await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR${id}`);
   await adminPage.getByRole('button', { name: /Payment settled/ }).click();
   const sheet = adminPage.locator('.overlay .sheet');

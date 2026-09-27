@@ -455,6 +455,17 @@ func TestSetUserDefaultApproverRejectsSelfAndUnknownUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	roleID, err := s.CreateRole(ctx, actor, "Default Approvers", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateRolePermissions(ctx, actor, roleID, []Grant{{Resource: "approval", Action: "approve"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetUserRoles(ctx, actor, approverID, []int64{roleID}); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := s.SetUserDefaultApprover(ctx, actor, uid, approverID); err != nil {
 		t.Fatalf("SetUserDefaultApprover: %v", err)
 	}

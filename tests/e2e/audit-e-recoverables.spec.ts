@@ -1402,6 +1402,16 @@ test.describe('TC-E — Recoverables', () => {
       await page.getByLabel('Recovery date').fill(fields.occurred_on);
       await page.getByLabel('Bank / accounting reference').fill(fields.reference);
       await page.getByLabel('Evidence and explanation').fill(fields.note);
+      await page.getByLabel('Amount received or reconciled').fill('8000');
+      page.once('dialog', dialog => dialog.accept());
+      await page.getByRole('button', { name: 'Record recovery', exact: true }).click();
+      const recoveryError = page.locator('#recovery-error');
+      await expect(recoveryError).toBeFocused();
+      await expect(recoveryError).toBeInViewport();
+      await expect(page.getByLabel('Bank / accounting reference')).toHaveValue(fields.reference);
+      await expect(page.getByLabel('Evidence and explanation')).toHaveValue(fields.note);
+      expect(parseRupees(await balance().innerText())).toBe(700000);
+      await page.getByLabel('Amount received or reconciled').fill(fields.amount);
       page.once('dialog', dialog => dialog.accept());
       await page.getByRole('button', { name: 'Record recovery', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/recoverables/${id}\\?saved=1#recovery-history$`));

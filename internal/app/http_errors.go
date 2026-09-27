@@ -20,7 +20,7 @@ import (
 )
 
 const maxRequestBodyBytes int64 = 21 << 20
-const maxAttachmentBytes int64 = 20 << 20
+const maxAttachmentMB int64 = 20
 
 type requestIDContextKey struct{}
 
@@ -99,6 +99,12 @@ func (a *App) httpObservability(next http.Handler) http.Handler {
 }
 
 func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, name string, data PageData) {
+	data.AttachmentMaxMB = normalizedAttachmentLimit(data.Settings["attachment_max_mb"])
+	if data.Settings == nil {
+		if limit, err := a.attachmentLimitMB(r); err == nil {
+			data.AttachmentMaxMB = limit
+		}
+	}
 	data.User = auth.CurrentUser(r)
 	data.CSRF = a.auth.EnsureCSRF(w, r)
 	data.RequestID = requestID(r)

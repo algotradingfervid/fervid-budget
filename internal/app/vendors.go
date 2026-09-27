@@ -286,7 +286,9 @@ type PaymentModeChoice struct{ Value, Label string }
 
 func canonicalPaymentMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "neft", "bank transfer", "bank_transfer":
+	case "neft":
+		return "neft"
+	case "bank transfer", "bank_transfer":
 		return "bank_transfer"
 	case "rtgs":
 		return "rtgs"

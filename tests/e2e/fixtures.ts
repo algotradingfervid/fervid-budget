@@ -301,7 +301,7 @@ export async function settlePayment(
 
   await page.getByLabel('Amount actually paid').fill(opts.amount);
   await page.getByLabel('Paid on').fill(opts.paidOn);
-  await page.getByLabel('Payment mode').selectOption(opts.mode ?? 'bank_transfer');
+  await page.getByLabel('Payment mode').selectOption(opts.mode ?? 'neft');
   await page.getByLabel('Transaction / UTR reference').fill(opts.reference ?? `UTR${requestId}`);
   if (opts.remarks) await page.getByLabel('Processing note').fill(opts.remarks);
   // The uploader is a hidden <input type="file"> inside <label class="uploader">

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -911,9 +912,31 @@ func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in Requ
 // fields, an optional document that arrived with them, and whether the press was
 // "Save corrections" or "Save and resubmit".
 type RequestEdit struct {
+	Revision   string // optional for trusted store callers; required by the HTTP correction form
 	Input      RequestInput
 	Attachment *AttachmentInput // nil when the form carried no file
 	Resubmit   bool
+}
+
+// RequestEditRevision binds an editor to its snapshot and audit generation.
+// The audit ID prevents same-second changes (including change-and-revert) from
+// making an old form current again. The snapshot keeps separate reads safe.
+func (s *Store) RequestEditRevision(ctx context.Context, req Request) (string, error) {
+	return requestEditRevision(ctx, s.db, req)
+}
+
+func requestEditRevision(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, req Request) (string, error) {
+	var generation int64
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM audit_log WHERE entity_type='payment_request' AND entity_id=?`, req.ID).Scan(&generation); err != nil {
+		return "", err
+	}
+	snapshot, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x-%d", sha256.Sum256(snapshot), generation), nil
 }
 
 // EditRequest applies one press of the correction form as a single transaction
@@ -948,6 +971,19 @@ func (s *Store) EditRequest(ctx context.Context, actor User, id int64, e Request
 		return err
 	}
 	defer tx.Rollback()
+	if e.Revision != "" {
+		current, err := requestInTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		revision, err := requestEditRevision(ctx, tx, current)
+		if err != nil {
+			return err
+		}
+		if revision != e.Revision {
+			return fmt.Errorf("%w: this request changed since you opened it. Your corrections have not been saved. Open the latest request and review its changes before editing again", ErrValidation)
+		}
+	}
 	if err := s.updateRequestTx(ctx, tx, actor, id, in, categoryID); err != nil {
 		return err
 	}
@@ -1789,6 +1825,33 @@ func auditFieldKey(column string) string {
 	return key
 }
 
+// RequestAuditNote reads the note recorded by this decision, never the request's
+// current decision_reason, which later decisions can overwrite. Other actions
+// already include their reason in the audit summary. A direct cancellation uses
+// cancel_reason and must not accidentally repeat an earlier approval note.
+func RequestAuditNote(a AuditEntry) string {
+	if a.EntityType != "payment_request" || (a.Action != "approve" && a.Action != "cancel") {
+		return ""
+	}
+	var after struct{ DecisionReason string }
+	if json.Unmarshal([]byte(a.AfterJSON), &after) != nil {
+		return ""
+	}
+	if a.Action == "cancel" {
+		// Both cancellation paths share an action. The acceptance writer has
+		// always used this summary suffix; a direct cancellation may start from
+		// the same status but leaves decision_reason untouched.
+		if !strings.HasSuffix(a.Summary, " at the requester's asking") {
+			return ""
+		}
+		var before struct{ Status string }
+		if json.Unmarshal([]byte(a.BeforeJSON), &before) != nil || before.Status != "cancellation_requested" {
+			return ""
+		}
+	}
+	return strings.TrimSpace(after.DecisionReason)
+}
+
 // RequestThread merges the audit trail, the conversation and the file uploads
 // into one chronological stream — the single "History and conversation" list
 // the design renders as `.thread` (UI/UX §9).
@@ -1836,7 +1899,7 @@ func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEnt
 		}
 		out = append(out, ThreadEntry{Kind: "event", Action: a.Action, ActorID: actorID,
 			ActorName: a.ActorName, Initials: initials(a.ActorName), Title: a.Summary,
-			Changes: changes, CreatedAt: a.CreatedAt})
+			Body: RequestAuditNote(a), Changes: changes, CreatedAt: a.CreatedAt})
 	}
 	for _, c := range comments {
 		out = append(out, ThreadEntry{Kind: "comment", ActorID: c.AuthorID, ActorName: c.AuthorName,

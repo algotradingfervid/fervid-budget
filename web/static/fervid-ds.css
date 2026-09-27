@@ -1819,6 +1819,12 @@ tr.total .pctxt {
   font-size: 30px;
 }
 
+/* Request titles in edit subtitles must shrink inside the banner's flex row. */
+.page-banner > div:not(.pb-actions) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* The banner's action cluster. Without this the buttons stretch to the
    banner's own align-items and wrap onto separate lines. */
 .page-banner .pb-actions {
@@ -2761,6 +2767,11 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   line-height: 1.3;
 }
 
+.banner > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .banner b { font-weight: 750; }
 
 .banner p {
@@ -3143,6 +3154,7 @@ legend {
 
 .file-row {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 10px;
   padding: 9px 11px;
@@ -3169,6 +3181,13 @@ legend {
   font-weight: 700;
 }
 
+/* Keep the full original filename readable without pushing Download offscreen. */
+.file-row > span:not(.f-ico):not(.f-actions) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .file-row small {
   display: block;
   color: var(--muted);
@@ -3177,6 +3196,7 @@ legend {
 
 .file-row .f-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   margin-left: auto;
 }
@@ -3212,6 +3232,7 @@ legend {
 
 .req-card {
   display: block;
+  min-width: 0;
   padding: 12px 13px;
   color: inherit;
   background: var(--surface);
@@ -3250,6 +3271,7 @@ legend {
 
 .req-card .rc-title {
   display: block;
+  overflow-wrap: anywhere;
   margin-top: 3px;
   font-size: 14px;
   font-weight: 720;
@@ -3276,11 +3298,20 @@ legend {
   border-top: 1px solid var(--line);
 }
 
+/* Category and workflow labels can exceed a narrow request card. */
+.req-card .pill {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .req-card.is-urgent { border-left: 3px solid var(--bad); }
 .req-card.is-mine { border-left: 3px solid var(--brand); }
 
 /* Request header block */
 .req-head {
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 14px;
   margin-bottom: 14px;
   background: var(--surface);
@@ -3291,6 +3322,7 @@ legend {
 
 .req-head .rh-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
@@ -3304,6 +3336,8 @@ legend {
 }
 
 .req-head .rh-amt {
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: 27px;
   font-weight: 780;
   font-variant-numeric: tabular-nums;
@@ -3311,6 +3345,7 @@ legend {
 }
 
 .req-head h1 {
+  overflow-wrap: anywhere;
   margin: 6px 0 0;
   font-size: 19px;
 }
@@ -3380,12 +3415,15 @@ legend {
 
 .thread .tl-head {
   display: flex;
+  min-width: 0;
+  overflow-wrap: anywhere;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
 }
 
 .thread .tl-head b {
+  min-width: 0;
   font-size: 13.5px;
   font-weight: 750;
 }
@@ -3396,6 +3434,8 @@ legend {
 }
 
 .thread .tl-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin-top: 2px;
   color: var(--ink-2);
   font-size: 13px;
@@ -3433,6 +3473,9 @@ legend {
 
 .thread .tl-file {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   align-items: center;
   gap: 6px;
   padding: 5px 9px;
@@ -3675,9 +3718,14 @@ legend {
 }
 
 .dl dd {
+  overflow-wrap: anywhere;
   margin: 3px 0 0;
   font-size: 13.5px;
   font-weight: 650;
+}
+
+#payment-history li {
+  overflow-wrap: anywhere;
 }
 
 .dl dd.big {
@@ -4390,7 +4438,9 @@ td .t-sub {
      mockup's 14px padding, and -14px pushes the document 14px wide. */
   .action-bar {
     position: sticky;
-    bottom: 0;
+    /* Match the page's mobile navigation reserve, including the raised
+       primary tab and device safe area, throughout the form's scroll. */
+    bottom: calc(100px + env(safe-area-inset-bottom));
     z-index: 15;
     padding: 11px 14px;
     margin: 16px 0 0;
@@ -4402,6 +4452,19 @@ td .t-sub {
 
   .action-bar .btn { flex: 1 1 auto; }
   .action-bar .btn.wide { flex-basis: 100%; }
+
+  /* Keep the same labelled vendor filters on touch layouts. A separate
+     search-only form hid status/type/category and discarded their values. */
+  .toolbar.vendor-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .vendor-filters .field { min-width: 0; }
+  .vendor-filters .search { grid-column: 1 / -1; }
+  .vendor-filters .row-end { display: none; }
+  .vendor-filters input,
+  .vendor-filters select { width: 100%; min-width: 0; }
 
   /* Some actions carry a person's name ("Save and notify …"), so a label has
      no length a template can promise. A button that refused to wrap was as
@@ -4956,3 +5019,9 @@ main.page:focus { outline: none; box-shadow: none; }
 
 /* Contact links embedded in explanatory text remain identifiable without color. */
 a[href^="mailto:"] { text-decoration: underline; }
+
+/* Constraint errors use the same layout on native, HTMX and row-edit forms. */
+.client-error-summary { margin-top: 6px; flex: 0 0 100%; grid-column: 1 / -1; width: 100%; box-sizing: border-box; }
+.client-error-summary p { margin: 0 0 8px; }
+.client-error-summary:focus { outline: 3px solid var(--fb-danger); outline-offset: 3px; }
+.client-field-error { display: block; color: var(--fb-danger); font-size: 13px; line-height: 1.45; white-space: normal; }

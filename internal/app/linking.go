@@ -508,6 +508,7 @@ func (a *App) renderSettlement(w http.ResponseWriter, r *http.Request, status in
 	}
 	a.renderStatus(w, r, status, name, PageData{
 		Title: "Confirm the payment", Request2: a.withHolderName(r, req), Settlement: p, Error: errMsg,
+		ReserveMine: heldByCaller(req, auth.CurrentUser(r).ID),
 	})
 }
 
@@ -524,6 +525,10 @@ func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID i
 	req, ok := a.loadPaymentRequest(w, r, linkedID)
 	if !ok {
 		return
+	}
+	if !heldByCaller(req, auth.CurrentUser(r).ID) {
+		status = http.StatusConflict
+		cause = fmt.Errorf("%w: this request is no longer reserved by you. Your payment was not saved", store.ErrForbidden)
 	}
 	approved := approvedOf(req) - req.PaidAmount
 	// The typed amount is echoed back even when it is what was rejected: a
@@ -1169,16 +1174,19 @@ func auditPhrase(action string) string {
 // when the summary genuinely opens with it — payment-side summaries ("Recorded
 // payment ₹98,000.00") never do, and come through untouched.
 func trailBody(e store.AuditEntry) string {
-	if e.ActorName == "" {
-		return e.Summary
+	body := e.Summary
+	if e.ActorName != "" {
+		rest := strings.TrimPrefix(body, e.ActorName+" ")
+		if rest != body && rest != "" {
+			letters := []rune(rest)
+			letters[0] = unicode.ToUpper(letters[0])
+			body = string(letters)
+		}
 	}
-	rest := strings.TrimPrefix(e.Summary, e.ActorName+" ")
-	if rest == e.Summary || rest == "" {
-		return e.Summary
+	if note := store.RequestAuditNote(e); note != "" {
+		body += " — Note: " + note
 	}
-	letters := []rune(rest)
-	letters[0] = unicode.ToUpper(letters[0])
-	return string(letters)
+	return body
 }
 
 // initials is the two-letter avatar a comment's `.tl-dot` shows.
@@ -1202,7 +1210,7 @@ func initials(name string) string {
 // paymentModes is the stored vocabulary of payment modes, in the order the form
 // offers them. paymentMode() spells each one for a person.
 func paymentModes() []string {
-	return []string{"bank_transfer", "cheque", "upi", "cash", "card", "other"}
+	return []string{"neft", "rtgs", "bank_transfer", "cheque", "upi", "cash", "card", "dd", "other"}
 }
 
 // mergedTrail is the request-to-payment history the settlement screens render.

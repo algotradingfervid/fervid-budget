@@ -147,92 +147,36 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     expect(errors).toEqual([]);
   });
 
-  /**
-   * Retargeted at the reserved entry screen, where payment entry now lives.
-   *
-   * The old test typed "not-money" into a plain text Amount on the free-entry
-   * form and read the refusal off a role="alert". Two things changed underneath
-   * it, and the first is the reason this test cannot simply be pointed at the
-   * new URL:
-   *
-   *  1. "Amount actually paid" is a `.money-field`. fervid-app.js binds every
-   *     one of them and rewrites the value on each keystroke, keeping only
-   *     digits and a decimal point — so a browser with JavaScript can no longer
-   *     put "not-money" into the field at all, let alone post it. The first leg
-   *     below pins that guard, because it is what retired the old premise.
-   *  2. The rejection this test is really about — "nothing you typed is lost" —
-   *     therefore has to come from the server. The refusal that a person can
-   *     actually reach is G13: the approved amount is a hard ceiling, and paying
-   *     over it is not a settlement decision but a different obligation. The
-   *     preview is pure (D8) and enforces nothing, so the store meets it at the
-   *     confirm — which is an ordinary form POST, so its 400 is a rendered
-   *     confirmation page carrying every figure back.
-   *
-   * The store's own "invalid amount" is exercised by its Go twin,
-   * TestPaymentErrorRetainsInputAndUsesHumanModes, which posts past the field.
-   */
-  test('a settlement the store refuses comes back with every typed value intact', async ({ adminPage, runId }) => {
+  test('payment validation retains every typed value and recovers before confirmation', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '5000.00' });
-    await adminPage.goto('/accounts-queue');
-    await adminPage.locator('tr', { hasText: request.number })
-      .getByRole('button', { name: 'Take for processing' }).click();
-    await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
-
-    // initMoneyFields stamps data-money-bound on each field it takes over.
-    // Waiting for it is waiting for the guard to be live: filling before the
-    // boot would land in an unguarded input and prove nothing.
+    await adminPage.goto(`/requests/${request.id}`);
+    await adminPage.getByRole('button', { name: 'Record payment', exact: true }).click();
     const amount = adminPage.getByLabel('Amount actually paid');
-    await expect(amount).toHaveAttribute('data-money-bound', '1');
     await amount.fill('not-money');
-    await expect(amount).toHaveValue('');
-
-    // A figure over the approved 5,000.00. The field accepts it and groups it;
-    // the banner says the refusal is coming, which is all the client does.
+    await expect(amount).toHaveValue('not-money');
+    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+    await expect(adminPage.locator('.client-error-summary')).toBeVisible();
+    await expect(amount).toHaveAttribute('aria-invalid', 'true');
     await amount.fill('6000.00');
-    await expect(amount).toHaveValue('6,000.00');
     await expect(adminPage.locator('#diff-banner')).toHaveClass(/bad/);
-    await expect(adminPage.locator('#diff-text')).toContainText('more than approved');
-
     await adminPage.getByLabel('Paid on').fill('2026-06-15');
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-${runId}`);
     await adminPage.getByLabel('Processing note').fill(`Retain this note ${runId}`);
-
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
-    await expect(adminPage.locator('.overlay .sheet')).toBeVisible();
-    await expect(adminPage.locator('.overlay .sheet input[name="settlement"]:checked')).toHaveCount(0);
-    await adminPage.locator('.overlay .sheet input[name="settlement"][value="settled"]').check();
-    await adminPage.locator('.overlay .sheet')
-      .getByRole('button', { name: 'Confirm and save payment' }).click();
-
-    // No payment was created, so the URL is the collection and not /payments/{id}.
-    await expect(adminPage).toHaveURL(/\/payments$/);
-    const sheet = adminPage.locator('.overlay .sheet');
-    await expect(sheet.locator('.banner.bad')).toContainText('more than the approved');
-    await expect(sheet.locator('.banner.bad')).toContainText('Nothing has been saved');
-
-    // Every typed value is posted back, so confirming again costs one correction
-    // rather than a retyped form. The money field strips its own grouping on
-    // submit, which is why the amount returns as plain digits.
-    await expect(adminPage.locator('input[name="amount"]')).toHaveValue('6000.00');
-    await expect(adminPage.locator('input[name="paid_on"]')).toHaveValue('2026-06-15');
-    await expect(adminPage.locator('input[name="payment_mode"]')).toHaveValue('bank_transfer');
-    await expect(adminPage.locator('input[name="reference_no"]')).toHaveValue(`UTR-${runId}`);
-    await expect(adminPage.locator('input[name="remarks"]')).toHaveValue(`Retain this note ${runId}`);
-    // And the ones a person reads are on the page, spelled for a person.
-    await expect(adminPage.locator('.card .dl')).toContainText('Bank transfer');
-    await expect(adminPage.locator('.card .dl')).toContainText(`Retain this note ${runId}`);
-
-    // The reservation survived the refusal, so correcting the figure is one
-    // click away — the accountant never has to fight for the request again.
-    await sheet.getByRole('button', { name: 'Go back' }).click();
-    await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
-    await expect(adminPage.locator('.reserve-bar')).toContainText('Reserved by you');
-    await expect(adminPage.getByLabel('Amount actually paid')).toHaveValue('6,000.00');
+    await expect(adminPage.locator('.client-error-summary')).toContainText('remaining approved balance');
+    await expect(adminPage.locator('#settle-sheet')).not.toBeVisible();
+    await expect(amount).toHaveValue('6,000.00');
     await expect(adminPage.getByLabel('Paid on')).toHaveValue('2026-06-15');
-    await expect(adminPage.getByLabel('Payment mode')).toHaveValue('bank_transfer');
+    await expect(adminPage.getByLabel('Payment mode')).toHaveValue('neft');
     await expect(adminPage.getByLabel('Transaction / UTR reference')).toHaveValue(`UTR-${runId}`);
     await expect(adminPage.getByLabel('Processing note')).toHaveValue(`Retain this note ${runId}`);
+    await amount.fill('5000.00');
+    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+    await expect(adminPage.locator('#settle-sheet')).toBeVisible();
+    await adminPage.getByRole('button', { name: 'Confirm and save payment' }).click();
+    await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
+    await expect(adminPage.getByText(`UTR-${runId}`, { exact: true })).toBeVisible();
   });
 
   test('the primary grid is keyboard reachable and has no detectable axe violations', async ({ adminPage }) => {

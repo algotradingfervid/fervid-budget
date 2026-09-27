@@ -7,11 +7,10 @@ import (
 	"strings"
 )
 
-// ParsePaise converts a user-supplied rupee amount into paise. The browser
-// writes Indian-grouped digits back into the money field, so grouped input
-// ("1,00,000"), a leading rupee symbol with or without a space ("₹ 1,00,000.50")
-// and surrounding whitespace are all accepted. Non-numeric, empty and
-// non-positive amounts are rejected.
+// ParsePaise converts a user-supplied rupee amount into exact integer paise.
+// Grouped digits, a leading rupee symbol and surrounding whitespace are accepted.
+// Decimal scientific notation remains supported when its value has at most two
+// decimal places. Invalid precision is rejected, never rounded or truncated.
 func ParsePaise(input string) (int64, error) {
 	s := strings.TrimSpace(input)
 	s = strings.TrimSpace(strings.TrimPrefix(s, "₹"))
@@ -19,27 +18,50 @@ func ParsePaise(input string) (int64, error) {
 	if s == "" {
 		return 0, fmt.Errorf("amount is required")
 	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
+	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "−") {
+		return 0, fmt.Errorf("amount must be positive")
+	}
+	s = strings.TrimPrefix(s, "+")
+	var exponent int64
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		var err error
+		exponent, err = strconv.ParseInt(s[i+1:], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid amount")
+		}
+		s = s[:i]
+	}
+	whole, fraction, _ := strings.Cut(s, ".")
+	digits := whole + fraction
+	if digits == "" {
 		return 0, fmt.Errorf("invalid amount")
 	}
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, fmt.Errorf("invalid amount")
+	for _, digit := range digits {
+		if digit < '0' || digit > '9' {
+			return 0, fmt.Errorf("invalid amount")
+		}
 	}
-	// Guard before the int64 conversion: Go's float→int conversion saturates,
-	// so an amount whose paise exceed int64 would silently become MaxInt64 —
-	// a different number from the one submitted — and the <= 0 guard below
-	// would never fire (F-B-01). float64(math.MaxInt64) is exactly 2^63, and
-	// every representable float below it converts to a valid int64, so >= is
-	// the precise boundary. Too-negative values saturate to MinInt64 and are
-	// caught by the positivity check.
-	rounded := math.Round(f * 100)
-	if rounded >= float64(math.MaxInt64) {
+	digits = strings.TrimLeft(digits, "0")
+	if digits == "" {
+		return 0, fmt.Errorf("amount must be positive")
+	}
+
+	// Bound the exponent before subtracting or allocating. At most nineteen
+	// digits fit in positive int64 paise, including the two decimal places.
+	fractionDigits := int64(len(fraction))
+	if exponent < fractionDigits-2 {
+		return 0, fmt.Errorf("amount must have at most two decimal places")
+	}
+	if exponent > fractionDigits+19 {
 		return 0, fmt.Errorf("amount is too large")
 	}
-	paise := int64(rounded)
-	if paise <= 0 {
-		return 0, fmt.Errorf("amount must be positive")
+	zeros := 2 - (fractionDigits - exponent)
+	if int64(len(digits))+zeros > 19 {
+		return 0, fmt.Errorf("amount is too large")
+	}
+	paise, err := strconv.ParseInt(digits+strings.Repeat("0", int(zeros)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("amount is too large")
 	}
 	return paise, nil
 }

@@ -242,7 +242,7 @@ func TestDetailThreadNamesTheActorForAccountsEvents(t *testing.T) {
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", settledID), url.Values{}), http.StatusSeeOther)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", settledID), url.Values{}), http.StatusSeeOther)
 	requireStatus(t, s.postForm("/payments", url.Values{"request_id": {strconvFormat(settledID)}, "head_id": {strconvFormat(headID)},
-		"paid_on": {"2026-07-23"}, "amount": {"1000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}}), http.StatusSeeOther)
+		"paid_on": {"2026-07-23"}, "amount": {"1000.00"}, "vendor_payee": {"Acme Landlord"}, "settlement": {"settled"}, "reference_no": {"ACTOR-PAYMENT-REF"}}), http.StatusSeeOther)
 	s.seedPartialReview(partialID, headID, "Vendor short-shipped")
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", partialID), url.Values{"note": {"fine"}}), http.StatusSeeOther)
@@ -351,7 +351,7 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := part.Write([]byte("receipt")); err != nil {
+		if _, err := part.Write([]byte("%PDF-1.4\n%%EOF\n")); err != nil {
 			t.Fatal(err)
 		}
 		if err := mw.Close(); err != nil {

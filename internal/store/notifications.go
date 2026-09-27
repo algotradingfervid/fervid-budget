@@ -118,6 +118,12 @@ func (s *Store) AllNotificationSettings(ctx context.Context) ([]NotificationSett
 // UPDATE (not an upsert) means an unknown event is rejected rather than
 // silently creating a rule nothing will ever fire.
 func (s *Store) SetNotificationSetting(ctx context.Context, actor User, in NotificationSetting) error {
+	if err := validateRecipientList("Always also send To", in.ToRecipients); err != nil {
+		return err
+	}
+	if err := validateRecipientList("Always copy (Cc)", in.CcRecipients); err != nil {
+		return err
+	}
 	if strings.TrimSpace(in.Event) == "" {
 		return fmt.Errorf("%w: an event is required", ErrValidation)
 	}

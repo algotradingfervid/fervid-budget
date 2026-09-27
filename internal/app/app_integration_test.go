@@ -139,6 +139,20 @@ func (s *appTestServer) postForm(path string, form url.Values) *http.Response {
 	if form == nil {
 		form = url.Values{}
 	}
+	// Existing form helpers represent a freshly opened correction screen. Clone
+	// first so repeated calls do not accidentally retain a prior screen revision.
+	copyForm := url.Values{}
+	for key, values := range form {
+		copyForm[key] = append([]string(nil), values...)
+	}
+	form = copyForm
+	if strings.HasPrefix(path, "/requests/") && strings.HasSuffix(path, "/edit") && !form.Has("revision") {
+		page := responseBody(s.t, s.request(http.MethodGet, path, nil, ""))
+		matches := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)
+		if len(matches) == 2 {
+			form.Set("revision", matches[1])
+		}
+	}
 	form.Set("csrf", s.csrf())
 	return s.request(http.MethodPost, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
 }
@@ -1367,7 +1381,7 @@ func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
 	for _, want := range []string{
 		`class="page-banner"`, `class="pb-actions"`,
 		`class="banner warn"`, `class="b-ico"`, `class="b-actions"`,
-		`class="toolbar"`, `class="m-filters"`, `class="m-search"`, `class="btn filter-btn"`,
+		`class="toolbar vendor-filters"`, `name="type"`, `name="category"`, `name="status"`,
 		`class="table-wrap"`, `class="t-cards"`,
 		`class="t-lead" data-label="Vendor"`, `class="t-sub"`,
 		`data-label="Type"`, `data-label="GSTIN"`, `data-label="City"`,
@@ -1969,7 +1983,7 @@ func TestSettlementWriteNeedsSettleAndPartialNeedsMarkPartial(t *testing.T) {
 	form := url.Values{
 		"request_id": {strconvFormat(reqID)}, "head_id": {strconvFormat(headID)},
 		"paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme Landlord"},
-		"settlement": {"settled"},
+		"settlement": {"settled"}, "reference_no": {"SETTLE-GATE-REF"},
 	}
 	resp := s.postForm("/payments", form)
 	requireStatus(t, resp, http.StatusForbidden)

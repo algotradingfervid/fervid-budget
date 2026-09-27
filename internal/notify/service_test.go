@@ -648,7 +648,7 @@ func TestSettlementNotificationsNameTheAmountActuallyPaid(t *testing.T) {
 		treatment='recoverable', type='employee_advance', recoverable_category='other' WHERE id=?`, manager, reqID)
 	must(t, err)
 	must(t, st.ReserveRequest(ctx, acc, reqID))
-	_, err = st.RecordPaymentForRequest(ctx, acc, reqID, store.PaymentInput{PaidOn: "2026-07-20", Amount: 800000, VendorPayee: "Acme", PaymentMode: "bank_transfer"}, "partial", "Retention held back", nil)
+	_, err = st.RecordPaymentForRequest(ctx, acc, reqID, store.PaymentInput{PaidOn: "2026-07-20", Amount: 800000, VendorPayee: "Acme", PaymentMode: "bank_transfer", ReferenceNo: "NOTIFY-SETTLEMENT-8000"}, "partial", "Retention held back", nil)
 	must(t, err)
 
 	svc := NewService(st, &fakeMailer{})

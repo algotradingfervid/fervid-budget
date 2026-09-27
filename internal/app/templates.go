@@ -48,7 +48,7 @@ const templates = `
 <main class="page" id="main-content" tabindex="-1">
 <div class="page-inner">
 {{if .ContextBackHref}}<p class="context-back"><a href="{{.ContextBackHref}}">← {{.ContextBackLabel}}</a></p>{{end}}
-{{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive">{{.Error}}</div>{{end}}
+{{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive"{{if eq .Error "say why this is urgent"}} data-server-error-for="urgency_reason"{{end}}>{{.Error}}</div>{{end}}
 {{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
 {{end}}
 
@@ -80,10 +80,10 @@ const templates = `
 {{define "shell_tabbar"}}<nav class="tabbar" aria-label="Primary">
   {{$shell := .Shell}}{{range .Shell.Tabs.Left}}<a href="{{.Href}}" class="{{if eq $shell.Active .Key}}active{{end}}"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{end}}
   <a class="fab-wrap" href="{{.Shell.Tabs.Fab.Href}}"><span class="fab">{{.Shell.Tabs.Fab.Icon}}</span>{{.Shell.Tabs.Fab.Label}}</a>
-  {{range .Shell.Tabs.Right}}{{if eq .Key "more"}}<a href="{{.Href}}" class="js-more"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{else}}<a href="{{.Href}}" class="{{if eq $shell.Active .Key}}active{{end}}"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{end}}{{end}}
+  {{range .Shell.Tabs.Right}}{{if eq .Key "more"}}<a href="{{.Href}}" class="js-more" aria-haspopup="dialog" aria-controls="more-navigation" aria-expanded="false"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{else}}<a href="{{.Href}}" class="{{if eq $shell.Active .Key}}active{{end}}"><span class="ti">{{.Icon}}</span>{{.Label}}</a>{{end}}{{end}}
 </nav>{{end}}
 
-{{define "shell_more"}}<div class="more-sheet" hidden>
+{{define "shell_more"}}<div class="more-sheet" id="more-navigation" role="dialog" aria-modal="true" aria-label="More navigation" hidden>
   <div class="ms-head"><b>{{.User.Name}}</b><button type="button" class="ms-close" aria-label="Close">✕</button></div>
   {{range .Shell.Groups}}<div class="ms-group">{{if .Title}}{{.Title}}{{else}}Overview{{end}}</div>
   <div class="ms-list">{{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a href="{{.Href}}"{{if eq $.Shell.Active .Key}} class="active" aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}</div>
@@ -95,7 +95,7 @@ const templates = `
 {{define "login"}}
 {{template "login_top" .}}<h1>Fervid Budget</h1>{{template "login_flash" .}}<form method="post" action="/login" class="stack"><input type="hidden" name="next" value="{{.LoginNext}}"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Login</button></form><p><a href="/login/help">Can't sign in?</a></p>{{template "login_bottom" .}}
 {{end}}
-{{define "login_top"}}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} - Fervid Budget</title><link rel="stylesheet" href="/static/fervid-ds.css"></head><body class="login-body"><main class="login-card">{{end}}
+{{define "login_top"}}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} - Fervid Budget</title><link rel="stylesheet" href="/static/fervid-ds.css"><script src="/static/fervid-app.js" defer></script></head><body class="login-body"><main class="login-card">{{end}}
 {{define "login_bottom"}}</main></body></html>{{end}}
 {{define "login_flash"}}{{if .Error}}<div class="alert error" role="alert" aria-live="assertive">{{.Error}}</div>{{end}}{{if .Notice}}<div class="alert success" role="status">{{.Notice}}</div>{{end}}{{end}}
 {{define "login_help"}}{{template "login_top" .}}<h1>Can't sign in?</h1>{{template "login_flash" .}}
@@ -253,7 +253,7 @@ const templates = `
     <label class="field span-2">Reference No<input name="reference_no" value="{{.Payment.ReferenceNo}}"></label>
   </div></fieldset>
   <fieldset class="payment-section payment-proof" {{if .Locked}}disabled{{end}}><legend>Proof and notes</legend><div class="form-grid">
-    <label class="field span-5">Attachment<input type="file" name="attachment"><small class="hint">Optional bill, receipt, or payment proof.</small></label>
+    <label class="field span-5">Attachment<input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png"><small class="hint">Optional bill, receipt, or payment proof. PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB.</small></label>
     <label class="field span-7">Remarks<textarea name="remarks">{{.Payment.Remarks}}</textarea></label>
   </div></fieldset>
   <div class="form-actions"><button class="primary" name="submit_action" value="save" {{if .Locked}}disabled{{end}}>Save Payment</button>{{if not .Payment.ID}}<button name="submit_action" value="add_another" {{if .Locked}}disabled{{end}}>Save and add another</button>{{end}}</div>
@@ -297,7 +297,7 @@ const templates = `
   <span class="b-ico" aria-hidden="true">✓</span>
   <div>
     <b>Payment saved. The request is {{if eq .Request2.Status "partial_review"}}with the manager{{else if eq .Request2.Status "approved"}}still payable for the remaining balance{{else}}completed{{end}}.</b>
-    <p>{{if ne .Request2.Status "approved"}}{{.Request2.RequesterName}} and {{.Request2.ManagerName}} have been notified. {{else}}The remaining balance stays on the same approval. {{end}}This payment can no longer be edited or cancelled.</p>
+    <p>{{if ne .Request2.Status "approved"}}The payment is recorded against this request. {{else}}The remaining balance stays on the same approval. {{end}}This payment can no longer be edited or cancelled.</p>
   </div>
 </div>
 {{else if eq .Outcome "duplicate"}}
@@ -428,7 +428,7 @@ const templates = `
 <section class="page-banner"><div><div class="eyebrow">Payment record</div><h1>Payment #{{.Payment.ID}}</h1><p class="sub muted">{{.Payment.Project}} / {{.Payment.Head}} · {{money .Payment.Amount}}</p></div>{{if voided .Payment}}<span class="pill bad">Voided</span>{{else if .Locked}}<span class="pill warn">Locked</span>{{else if .Perms.Can "payment" "edit"}}<a class="btn outline" href="/payments/{{.Payment.ID}}/edit">Edit</a>{{end}}</section>
 {{if voided .Payment}}<div class="locked">Voided payment. Reason: {{.Payment.VoidReason}}</div>{{else if .Locked}}<div class="locked">This payment belongs to a locked month and is read-only.</div>{{end}}
 <dl class="details detail-grid"><div><dt>Project / Head</dt><dd>{{.Payment.Project}} / {{.Payment.Head}}</dd></div><div><dt>Date</dt><dd>{{.Payment.PaidOn}}</dd></div><div><dt>Amount</dt><dd>{{money .Payment.Amount}}</dd></div><div><dt>Payee</dt><dd>{{.Payment.VendorPayee}}</dd></div><div><dt>Mode</dt><dd>{{paymentMode .Payment.PaymentMode}}</dd></div><div><dt>Invoice</dt><dd>{{.Payment.InvoiceNo}}</dd></div><div><dt>Reference</dt><dd>{{.Payment.ReferenceNo}}</dd></div><div><dt>Entered by</dt><dd>{{.Payment.EnteredByName}} at {{date .Payment.CreatedAt}}</dd></div><div><dt>Remarks</dt><dd>{{.Payment.Remarks}}</dd></div></dl>
-<section class="split"><div><h2>Attachments</h2>{{if and (not .Locked) (not (voided .Payment))}}<form class="cluster" method="post" enctype="multipart/form-data" action="/payments/{{.Payment.ID}}/attachments"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="file" name="attachment" aria-label="Attachment" required><button>Upload</button></form>{{end}}<ul class="file-list">{{range .Attachments}}<li><a href="/attachments/{{.ID}}">{{.OriginalName}}</a><small>{{fileSize .SizeBytes}}</small></li>{{else}}<li class="muted">No attachments.</li>{{end}}</ul></div>{{if and (.Perms.Can "payment" "void") (not .Locked) (not (voided .Payment))}}<div class="danger-zone"><h2>Void Payment</h2><p class="muted">Voiding keeps the audit trail but excludes this payment from actual totals.</p><form method="post" action="/payments/{{.Payment.ID}}/void" onsubmit="return confirm('Void payment #{{.Payment.ID}}? This cannot be undone without a new correction.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Reason<input name="reason" required></label><button class="danger">Void</button></form></div>{{end}}</section>
+<section class="split"><div><h2>Attachments</h2>{{if and (not .Locked) (not (voided .Payment))}}<form class="cluster" method="post" enctype="multipart/form-data" action="/payments/{{.Payment.ID}}/attachments"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" aria-label="Attachment" required><small class="hint">PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small><button>Upload</button></form>{{end}}<ul class="file-list">{{range .Attachments}}<li><a href="/attachments/{{.ID}}">{{.OriginalName}}</a><small>{{fileSize .SizeBytes}}</small></li>{{else}}<li class="muted">No attachments.</li>{{end}}</ul></div>{{if and (.Perms.Can "payment" "void") (not .Locked) (not (voided .Payment))}}<div class="danger-zone"><h2>Void Payment</h2><p class="muted">Voiding keeps the audit trail but excludes this payment from actual totals.</p><form method="post" action="/payments/{{.Payment.ID}}/void" onsubmit="return confirm('Void payment #{{.Payment.ID}}? This cannot be undone without a new correction.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Reason<input name="reason" required></label><button class="danger">Void</button></form></div>{{end}}</section>
 <h2>Transaction Audit Trail</h2><ol class="timeline">{{range .Audit}}<li class="timeline-item {{actionClass .Action}}"><div class="audit-meta"><strong>{{actionText .Action}}</strong><span>{{date .CreatedAt}}</span><span>{{.ActorName}}</span></div><p>{{.Summary}}</p>{{if or (hasText .BeforeJSON) (hasText .AfterJSON)}}<details><summary>Before / after</summary>{{if hasText .BeforeJSON}}<pre>{{jsonPretty .BeforeJSON}}</pre>{{end}}{{if hasText .AfterJSON}}<pre>{{jsonPretty .AfterJSON}}</pre>{{end}}</details>{{end}}</li>{{else}}<li class="muted">No audit entries.</li>{{end}}</ol>
 {{end}}
 
@@ -478,7 +478,7 @@ const templates = `
   </dl>
 </div>
 
-<form method="post" action="/payments" enctype="multipart/form-data">
+<form method="post" action="/payments" enctype="multipart/form-data" data-payment-entry>
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="request_id" value="{{.Request2.ID}}">
   <input type="hidden" name="submission_key" value="{{.SubmissionKey}}">
@@ -527,7 +527,7 @@ const templates = `
           {{range .PaymentModeChoices}}<option value="{{.Value}}" {{select .Value $.Payment.PaymentMode}}>{{.Label}}</option>{{end}}
         </select>
       </div>
-      <div class="field span-4"><label for="reference_no">Transaction / UTR reference <span class="req" aria-hidden="true">*</span></label><input id="reference_no" name="reference_no" class="num" value="{{.Payment.ReferenceNo}}" required></div>
+      <div class="field span-4"><label for="reference_no">Transaction / UTR reference <span class="req" aria-hidden="true">*</span></label><input id="reference_no" name="reference_no" data-payment-reference class="num" value="{{.Payment.ReferenceNo}}" required></div>
     </div>
   </fieldset>
 
@@ -536,7 +536,7 @@ const templates = `
     <div class="form-grid">
       <div class="field span-12">
         <span class="flabel">Payment advice or proof</span>
-        <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Add the bank advice</b><small>PDF, JPG or PNG up to 10 MB</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+        <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Add the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
       </div>
       <div class="field span-12">
         <label for="remarks">Processing note <span class="opt" aria-hidden="true">optional</span></label>
@@ -594,10 +594,11 @@ const templates = `
            dismiss it in place and the typed amount, mode and reference survive
            (settlement-6). Anchors, not buttons: a button here would submit the
            form it sits in, and without JavaScript the href is the way back. */}}
-      {{if .Settlement.Fragment}}<a class="sh-close" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet" aria-label="Close">✕</a>{{else}}<button class="sh-close" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate aria-label="Close">✕</button>{{end}}
+      {{if not .ReserveMine}}<a class="sh-close" href="/requests/{{.Request2.ID}}" aria-label="Close">✕</a>{{else if .Settlement.Fragment}}<a class="sh-close" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet" aria-label="Close">✕</a>{{else}}<button class="sh-close" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate aria-label="Close">✕</button>{{end}}
     </div>
     <div class="sh-body stack-12">
-      {{if .Error}}<div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">✕</span><div><b>{{.Error}}</b><p>Nothing has been saved. Correct it and confirm again.</p></div></div>{{end}}
+      {{if .Error}}<div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">✕</span><div><b>{{.Error}}</b><p>{{if .ReserveMine}}Nothing has been saved. Correct it and confirm again.{{else}}Your entered figures are shown below for reference. Open the request to see its current status.{{end}}</p></div></div>{{end}}
+      {{if not .ReserveMine}}<div class="banner warn" role="status"><div><b>{{if and (eq .Request2.Status "processing") .Request2.ProcessingBy}}Reserved by {{.Request2.ProcessingByName}}{{else}}This request is not available for you to pay{{end}}</b><p>Confirmation is disabled because you no longer hold an active reservation.</p></div></div>{{end}}
       <div class="compare">
         <div class="cmp-row"><span class="l">Remaining before this payment</span><span class="v">{{money .Settlement.Approved}}</span></div>
         <div class="cmp-row"><span class="l">Actually paid</span><span class="v">{{money .Settlement.Paid}}</span></div>
@@ -608,8 +609,9 @@ const templates = `
         {{end}}
       </div>
 
+      <fieldset style="border:0;padding:0;margin:0;min-width:0" {{if not .ReserveMine}}disabled{{end}}>
       <div>
-        <span class="flabel" style="margin-bottom:6px">{{if .Settlement.Match}}This matches the approved amount. Confirm to close the request.{{else if lt .Settlement.Difference 0}}Reduce the payment amount to the remaining approved balance.{{else}}Choose what happens to the remaining balance.{{end}}</span>
+        <span class="flabel" style="margin-bottom:6px">{{if not .ReserveMine}}Your previous settlement choices (not saved).{{else if .Settlement.Match}}This matches the approved amount. Confirm to close the request.{{else if lt .Settlement.Difference 0}}Reduce the payment amount to the remaining approved balance.{{else}}Choose what happens to the remaining balance.{{end}}</span>
         <div class="choice">
           {{if gt .Settlement.Difference 0}}<label><input type="radio" name="settlement" value="installment" required {{if eq .Settlement.Settlement "installment"}}checked{{end}}><span><b>Installment — pay the balance later</b><small>{{money .Settlement.Difference}} remains approved on this request. Record the next payment here.</small></span><span class="outcome warn">Keep payable</span></label>{{end}}
           <label>
@@ -632,18 +634,20 @@ const templates = `
         <textarea id="partial_reason" name="partial_reason" aria-required="true" placeholder="Required for a short payment that closes the obligation or asks for a writeoff. Explain the deduction or agreed adjustment.">{{.Settlement.PartialReason}}</textarea>
       </div>
 
-      <div class="banner info" style="margin:0">
+      </fieldset>
+      {{if .ReserveMine}}<div class="banner info" style="margin:0">
         <span class="b-ico" aria-hidden="true">i</span>
         <div>
           <b>Confirming saves the payment</b>
           <p>It cannot be edited or cancelled afterwards. Choose an installment to keep the remaining approved balance payable.</p>
         </div>
       </div>
+      {{end}}
     </div>
     <div class="sh-foot">
-      {{if .Settlement.Fragment}}<a class="btn outline" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet">Go back</a>{{else}}<button class="btn outline" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate>Go back</button>{{end}}
+      {{if not .ReserveMine}}<a class="btn outline" href="/requests/{{.Request2.ID}}">View request</a><a class="btn outline" href="/accounts-queue">Back to the queue</a>{{else if .Settlement.Fragment}}<a class="btn outline" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet">Go back</a>{{else}}<button class="btn outline" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate>Go back</button>{{end}}
       <span class="row-end"></span>
-      <button class="btn primary" type="submit" formaction="/payments" formmethod="post">Confirm and save payment</button>
+      {{if .ReserveMine}}<button class="btn primary" type="submit" formaction="/payments" formmethod="post">Confirm and save payment</button>{{end}}
     </div>
   </div>
 </div>
@@ -653,12 +657,12 @@ const templates = `
 {{template "top" .}}
 <div class="reserve-bar">
   <span class="rb-dot" aria-hidden="true"></span>
-  <b>Reserved by you</b>
+  <b>{{if .ReserveMine}}Reserved by you{{else if and (eq .Request2.Status "processing") .Request2.ProcessingBy}}Reserved by {{.Request2.ProcessingByName}}{{else}}Reservation no longer active{{end}}</b>
   <span class="rb-meta">since {{hhmm .Request2.ProcessingAt}}</span>
 </div>
 
 <div class="card">
-  <div class="card-head"><h2>Payment about to be saved</h2><span class="pill neutral no-dot">Not saved yet</span></div>
+  <div class="card-head"><h2>{{if .ReserveMine}}Payment about to be saved{{else}}Your unsaved payment details{{end}}</h2><span class="pill neutral no-dot">Not saved yet</span></div>
   <dl class="dl">
     <div><dt>Paid on</dt><dd>{{index .Settlement.Fields "paid_on"}}</dd></div>
     <div><dt>Mode</dt><dd>{{paymentMode (index .Settlement.Fields "payment_mode")}}</dd></div>
@@ -671,10 +675,11 @@ const templates = `
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="request_id" value="{{.Request2.ID}}">
   {{range $k, $v := .Settlement.Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
-  <div class="field">
+  {{if .ReserveMine}}<div class="field">
     <span class="flabel">Payment advice or proof <span class="opt" aria-hidden="true">optional</span></span>
-    <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Attach the bank advice</b><small>Attach it here — it is uploaded once, when you confirm.</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+    <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Attach the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB. Uploaded once, when you confirm.</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
   </div>
+  {{end}}
   {{template "settlement_sheet" .}}
 </form>
 {{template "bottom" .}}
@@ -903,7 +908,7 @@ const templates = `
                which answers a conflict, because the request is no longer
                approved. Once it is paid, the useful destination is the request. */}}
           {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID) (eq .Status "processing")}}<a class="btn small" href="{{if stale .ProcessingAt}}/requests/{{.ID}}/reservation/stale{{else}}/payments/new?request={{.ID}}{{end}}">Resume</a>
-          {{else if and .ProcessingBy ($.Perms.Can "reservation" "reassign")}}<a class="btn small outline" href="/requests/{{.ID}}/reservation">Reassign</a>
+          {{else if and (eq .Status "processing") .ProcessingBy ($.Perms.Can "reservation" "reassign")}}<a class="btn small outline" href="/requests/{{.ID}}/reservation">Reassign</a>
           {{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}
         </td>
       </tr>
@@ -1410,32 +1415,35 @@ const templates = `
 {{define "months"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Month control</div><h1>Monthly Plans</h1><p class="sub muted">Create each month, review prior months, and open locked history whenever needed.</p></div><a class="btn outline" href="/reports/monthly">Reports</a></section>
-<form class="toolbar setup-form" method="post" action="/months"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>New month<input type="month" name="target_month" value="{{.TargetMonth}}" required></label><label>Plan type<select name="source_mode"><option value="copy">Copy from month</option><option value="blank">Start blank</option></select></label><label>Source month<input type="month" name="source_month" value="{{.SourceMonth}}"></label><button class="primary">Create Month</button></form>
+{{if and (.Perms.Can "month" "create") (.Perms.Can "budget" "edit")}}<div class="card" style="padding:24px;margin-bottom:24px"><h2>Create a monthly budget</h2><p>Start blank or copy an existing month, add projects and expense heads, then review your budget lines before saving.</p><a class="btn primary" href="/budgets/new">Create budget</a></div>{{end}}
+{{if .Error}}<form class="toolbar setup-form" method="post" action="/months"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>New month<input type="month" name="target_month" value="{{.TargetMonth}}" required></label><label>Plan type<select name="source_mode"><option value="copy">Copy from month</option><option value="blank">Start blank</option></select></label><label>Source month<input type="month" name="source_month" value="{{.SourceMonth}}"></label><button class="primary">Create Month</button></form>{{end}}
+
 <div class="table-wrap"><table class="t-cards"><thead><tr><th>Month</th><th>Status</th><th>Source</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th><th>Created</th><th>Actions</th></tr></thead><tbody>{{range .MonthPlans}}<tr><td class="t-lead" data-label="Month"><strong>{{.Month}}</strong><br><small>{{.HeadCount}} {{plural .HeadCount "head" "heads"}}</small></td><td data-label="Status"><span><span class="pill {{.Status}}">{{planStatusText .Status}}</span>{{if .LockedAt}}<br><small>{{datep .LockedAt}}</small>{{end}}</span></td><td data-label="Source">{{if .SourceMonth}}{{.SourceMonth}}{{else}}<span class="muted">Manual</span>{{end}}</td><td class="num" data-label="Budget">{{money .Budget}}</td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td><td class="num" data-label="Used">{{.UsedPercent}}</td><td data-label="Created">{{if .CreatedAt}}{{datep .CreatedAt}}{{else}}<span class="muted">Imported history</span>{{end}}</td><td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/grid?month={{.Month}}">Grid</a><a class="btn small outline" href="/budgets?month={{.Month}}">Budget</a><a class="btn small outline" href="/payments?month={{.Month}}">Payments</a><a class="btn small outline" href="/reports/heads?from={{.Month}}&to={{.Month}}">Report</a></span></td></tr>{{else}}<tr><td colspan="9" class="empty" data-label="">No monthly plans yet. <a href="/months">Open a month</a> to start one.</td></tr>{{end}}</tbody></table></div>
 {{template "bottom" .}}
 {{end}}
 
 {{define "budgets"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Monthly plan</div><h1>Budgets</h1><p class="sub muted">Edit planned spend per head for the selected month.</p></div>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</section>
+<section class="page-banner"><div><div class="eyebrow">Monthly plan</div><h1>Budgets</h1><p class="sub muted">Review monthly spending or create a budget with projects, expense heads, and detailed lines.</p></div>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</section>
+{{if .Perms.Can "budget" "edit"}}<div class="toolbar">{{if .Perms.Can "month" "create"}}<a class="btn primary" href="/budgets/new">Create budget</a>{{end}}<a class="btn outline" href="/budgets/plan?month={{.Month}}">Edit budget lines</a></div>{{end}}
 <form class="toolbar" method="get"><label>Month<input type="month" name="month" value="{{.Month}}"></label><button>Open</button><a class="btn outline" href="/months">Month history</a><a class="btn outline" href="/grid?month={{.Month}}">View grid</a></form>{{if .Grid.Locked}}<div class="locked">This month is locked. Unlock it with a reason before changing budgets or payments.</div>{{end}}
 {{if .BudgetErrors}}<div class="budget-error-summary" role="region" aria-labelledby="budget-errors-heading" tabindex="-1"><h2 id="budget-errors-heading">Correct the unsaved budgets</h2><ul>{{range .Grid.Rows}}{{$row := .}}{{with index $.BudgetErrors .HeadID}}<li><a href="#budget_{{$row.HeadID}}">{{$row.Project}} / {{$row.Head}}: {{.}}</a></li>{{end}}{{end}}</ul></div>{{end}}
-<form class="budget-editor" method="post" action="/budgets"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="month" value="{{.Month}}"><table class="t-cards"><thead><tr><th>Project</th><th>Head</th><th>Status</th><th>Budget</th><th class="num">Actual</th><th class="num">Used</th></tr></thead><tbody>{{range .Grid.Rows}}{{$row := .}}<tr><td data-label="Project">{{.Project}}</td><td class="t-lead" data-label="Head">{{.Head}}</td><td data-label="Status">{{if .Active}}<span class="pill good">Active</span>{{else}}<span class="pill neutral">Retired</span>{{end}}</td><td data-label="Budget"><span><input id="budget_{{.HeadID}}" name="budget_{{.HeadID}}" inputmode="decimal" {{if index $.BudgetErrors .HeadID}}aria-invalid="true" aria-describedby="budget_error_{{.HeadID}}"{{end}} aria-label="Budget for {{.Project}} / {{.Head}}" value="{{budgetInputValue $.BudgetInputs .HeadID .Budget}}" {{if or $.Grid.Locked (not .Active)}}disabled{{end}}>{{with index $.BudgetErrors .HeadID}}<span class="field-error" id="budget_error_{{$row.HeadID}}">Not saved: {{.}}</span>{{else}}{{if and $.BudgetInputs (not $.BudgetSaveFailed)}}<span class="budget-saved">Saved</span>{{end}}{{end}}{{if not .Active}}<span class="hint">Retired: kept for history, not editable.</span>{{end}}</span></td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No active heads for this month. <a href="/heads">Add a head</a> first.</td></tr>{{end}}</tbody></table><div class="form-actions"><button class="primary" {{if .Grid.Locked}}disabled{{end}}>Save Budgets</button></div></form>
+<form class="budget-editor" method="post" action="/budgets"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="month" value="{{.Month}}"><table class="t-cards"><thead><tr><th>Project</th><th>Head</th><th>Status</th><th>Budget</th><th class="num">Actual</th><th class="num">Used</th></tr></thead><tbody>{{range .Grid.Rows}}{{$row := .}}<tr><td data-label="Project">{{.Project}}</td><td class="t-lead" data-label="Head">{{.Head}}</td><td data-label="Status">{{if .Active}}<span class="pill good">Active</span>{{else}}<span class="pill neutral">Retired</span>{{end}}</td><td data-label="Budget"><span><input id="budget_{{.HeadID}}" name="budget_{{.HeadID}}" inputmode="decimal" {{if index $.BudgetErrors .HeadID}}aria-invalid="true" aria-describedby="budget_error_{{.HeadID}}"{{end}} aria-label="Budget for {{.Project}} / {{.Head}}" value="{{budgetInputValue $.BudgetInputs .HeadID .Budget}}" {{if or (not ($.Perms.Can "budget" "edit")) $.Grid.Locked (not .Active) (index $.BudgetLineHeads .HeadID)}}disabled{{end}}>{{if index $.BudgetLineHeads .HeadID}}{{if $.Perms.Can "budget" "edit"}}<a class="hint" href="/budgets/plan?month={{$.Month}}#head-{{.HeadID}}">Edit lines</a>{{else}}<span class="hint">Total of saved budget lines.</span>{{end}}{{end}}{{with index $.BudgetErrors .HeadID}}<span class="field-error" id="budget_error_{{$row.HeadID}}">Not saved: {{.}}</span>{{else}}{{if and $.BudgetInputs (not $.BudgetSaveFailed)}}<span class="budget-saved">Saved</span>{{end}}{{end}}{{if not .Active}}<span class="hint">Retired: kept for history, not editable.</span>{{end}}</span></td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No active heads for this month.{{if .Perms.Can "head" "create"}} <a href="/heads">Add a head</a> first.{{end}}</td></tr>{{end}}</tbody></table>{{if .Perms.Can "budget" "edit"}}<div class="form-actions"><button class="primary" {{if .Grid.Locked}}disabled{{end}}>Save Budgets</button></div>{{end}}</form>
 {{template "bottom" .}}
 {{end}}
 
 {{define "projects"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Setup</div><h1>Projects</h1><p class="sub muted">Manage project buckets used by the grid and payment entry.</p></div></section>
-<form class="toolbar setup-form" method="post" action="/projects"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project name<input name="name" required></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Project</button></form>
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Name</th><th>Status</th><th>Order</th><th>Update</th></tr></thead><tbody>{{range .Projects}}<tr><td class="t-lead" data-label="Name"><input form="project-{{.ID}}" name="name" aria-label="Name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Status"><label class="checkline"><input form="project-{{.ID}}" type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="project-{{.ID}}" name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update"><span><form id="project-{{.ID}}" method="post" action="/projects"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="project-{{.ID}}">Save</button></span></td></tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No projects yet. Add the first one above.</td></tr>{{end}}</tbody></table></div>
+{{if .Perms.Can "project" "create"}}<form class="toolbar setup-form" method="post" action="/projects"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project name<input name="name" required></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Project</button></form>{{end}}
+<div class="table-wrap"><table class="t-cards"><thead><tr><th>Name</th><th>Status</th><th>Order</th><th>Update</th></tr></thead><tbody>{{range .Projects}}<tr><td class="t-lead" data-label="Name"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} name="name" aria-label="Name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Status"><label class="checkline"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update">{{if $.Perms.Can "project" "edit"}}<span><form id="project-{{.ID}}" method="post" action="/projects"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="project-{{.ID}}">Save</button></span>{{else}}<span class="muted">Read only</span>{{end}}</td></tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No projects yet.{{if .Perms.Can "project" "create"}} Add the first one above.{{end}}</td></tr>{{end}}</tbody></table></div>
 {{template "bottom" .}}
 {{end}}
 
 {{define "heads"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Setup</div><h1>Heads</h1><p class="sub muted">Maintain spend heads, due days, and sort order.</p></div></section>
-<form class="toolbar setup-form heads-setup-form" method="post" action="/heads"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project<select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label><label>Head name<input name="name" required></label><label>Due day<input name="due_day" type="number" min="1" max="31" placeholder="5"></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Head</button></form>
+{{if .Perms.Can "head" "create"}}<form class="toolbar setup-form heads-setup-form" method="post" action="/heads"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project<select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label><label>Head name<input name="name" required></label><label>Due day<input name="due_day" type="number" min="1" max="31" placeholder="5"></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Head</button></form>{{end}}
 <div class="table-wrap"><table class="t-cards heads-editor"><thead><tr><th>Project</th><th>Head</th><th>Due</th><th>Status</th><th>Order</th><th>Update</th></tr></thead><tbody>{{range .Heads}}{{$head := .}}<tr><td data-label="Project">{{/* $.AllProjects, not $.Projects. This screen lists every head, retired
      projects included (T12), and the row select used to be populated from the
      active set only — so a head whose project had been retired had no matching
@@ -1450,7 +1458,7 @@ const templates = `
      229 x 24 option elements and 470 KB, of which a reader ever reads one. The
      one option that is rendered is looked up rather than taken from the head, so
      it keeps its "(retired)" marker: which project a head is filed under is the
-     whole point of the column. */}}<select form="head-{{.ID}}" name="project_id" aria-label="Project for {{.Name}}" title="{{.Project}}" data-project-select data-chosen="{{$head.ProjectID}}">{{range $.AllProjects}}{{if eq .ID $head.ProjectID}}<option value="{{.ID}}" selected>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}</select></td><td class="t-lead" data-label="Head"><input form="head-{{.ID}}" name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Due"><input form="head-{{.ID}}" name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td><td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="head-{{.ID}}" name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update"><span><form id="head-{{.ID}}" method="post" action="/heads"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="head-{{.ID}}">Save</button></span></td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No heads yet. Add the first one above.</td></tr>{{end}}</tbody></table></div>
+     whole point of the column. */}}<select form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="project_id" aria-label="Project for {{.Name}}" title="{{.Project}}" data-project-select data-chosen="{{$head.ProjectID}}">{{range $.AllProjects}}{{if eq .ID $head.ProjectID}}<option value="{{.ID}}" selected>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}</select></td><td class="t-lead" data-label="Head"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Due"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td><td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update">{{if $.Perms.Can "head" "edit"}}<span><form id="head-{{.ID}}" method="post" action="/heads"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="head-{{.ID}}">Save</button></span>{{else}}<span class="muted">Read only</span>{{end}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No heads yet.{{if .Perms.Can "head" "create"}} Add the first one above.{{end}}</td></tr>{{end}}</tbody></table></div>
 {{/* Every project, once, for the row pickers above. Retired ones are included
      and marked, because a head already filed under a retired project must keep
      showing it — only the Add form above is restricted to the active set. */}}
@@ -1541,7 +1549,7 @@ const templates = `
                   data-approver-select data-self="{{.ID}}" data-chosen="{{.DefaultApproverID}}">
             <option value="0">None</option>
           </select>
-          <span class="hint">Self-approval is not allowed, so they never appear in their own list.</span>
+          <span class="hint">Only active users with permission to approve requests are offered. Self-approval is not allowed.</span>{{if and .DefaultApproverID (not (approverAvailable .DefaultApproverID $.Approvers))}}<span class="field-error-message">The saved default approver can no longer approve requests. Choose an eligible approver before saving.</span>{{end}}
         </div>
         <div class="field"><label for="u-pw-{{.ID}}">Reset password</label><input id="u-pw-{{.ID}}" name="password" type="password" minlength="12" placeholder="Leave blank to keep the current one"></div>
         <input type="hidden" name="role" value="{{.Role}}">
@@ -1625,7 +1633,7 @@ const templates = `
 </div>
 {{end}}
 
-<form class="toolbar" method="get" action="/vendors">
+<form class="toolbar vendor-filters" method="get" action="/vendors">
   {{if .VendorGap}}<input type="hidden" name="gap" value="{{.VendorGap}}">{{end}}
   <div class="field search"><label for="q">Search</label><input id="q" name="q" value="{{.Query}}" placeholder="Name, GSTIN, PAN, city"></div>
   <div class="field"><label for="ty">Type</label><select id="ty" name="type">
@@ -1646,19 +1654,13 @@ const templates = `
   <span class="row-end"></span><button class="btn">Apply</button>
 </form>
 
-<form class="m-filters" method="get" action="/vendors">
-  <input type="hidden" name="status" value="{{.Status}}">
-  <span class="m-search"><input name="q" value="{{.Query}}" placeholder="Search vendors…" aria-label="Search vendors"></span>
-  <button class="btn filter-btn" type="submit">Filters</button>
-</form>
-
 <div class="table-wrap">
   <table class="t-cards">
     <thead><tr><th>Vendor</th><th>Type</th><th>GSTIN</th><th>City</th><th class="num">Paid this year</th><th class="c">Open requests</th><th class="c">Status</th></tr></thead>
     <tbody>
       {{range .Vendors}}
       <tr>
-        <td class="t-lead" data-label="Vendor"><a href="/vendors/{{.ID}}">{{.Name}}</a>{{if .Categories}}<span class="t-sub">{{categories .Categories}}</span>{{end}}</td>
+        <td class="t-lead" data-label="Vendor"><a href="/vendors/{{.ID}}">{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</a>{{if and .DisplayName (ne .DisplayName .Name)}}<span class="t-sub">{{.Name}}</span>{{end}}{{if .Categories}}<span class="t-sub">{{categories .Categories}}</span>{{end}}</td>
         <td data-label="Type">{{vendorType .VendorType}}</td>
         <td class="num" data-label="GSTIN">{{if .GSTIN}}{{.GSTIN}}{{else}}<span class="pill warn no-dot">Missing</span>{{end}}</td>
         <td data-label="City">{{if .City}}{{.City}}{{else}}—{{end}}</td>
@@ -1691,7 +1693,7 @@ const templates = `
      add-a-vendor row is offered only to a caller who could actually complete
      it, because an affordance that 403s is worse than no affordance. */}}
 {{define "vendor_combo_options"}}<div class="combo-list" role="listbox" aria-label="Vendor results">
-{{range .Vendors}}<a class="co" role="option" href="/vendors/{{.ID}}" data-id="{{.ID}}" data-name="{{.Name}}"><span class="co-main"><b>{{.Name}}</b><small>{{if .GSTIN}}{{.GSTIN}}{{else}}No GSTIN{{end}}{{if .City}} · {{.City}}{{end}}</small></span></a>
+{{range .Vendors}}<a class="co" role="option" href="/vendors/{{.ID}}" data-id="{{.ID}}" data-name="{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}"><span class="co-main"><b>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</b><small>{{if and .DisplayName (ne .DisplayName .Name)}}{{.Name}} · {{end}}{{if .GSTIN}}{{.GSTIN}}{{else}}No GSTIN{{end}}{{if .City}} · {{.City}}{{end}}</small></span></a>
 {{else}}<span class="co"><span class="co-main"><b>{{if .Query}}No vendor matches “{{.Query}}”{{else}}Type a name, GSTIN or city{{end}}</b><small>Only active vendors can be picked.</small></span></span>
 {{end}}{{if .Perms.Can "vendor" "create"}}<a class="co co-add" href="/vendors/new">＋ Add a new vendor</a>{{end}}
 </div>{{end}}
@@ -2275,7 +2277,7 @@ const templates = `
       {{if eq (index .Settings "urgency_mode") "reason"}}
       <div class="field span-12" data-when="urgent:on" {{if not .Request2.Urgent}}hidden{{end}}>
         <label for="urgency-reason">Why is it urgent <span class="req" aria-hidden="true">*</span></label>
-        <input id="urgency-reason" name="urgency_reason" aria-required="true" value="{{.Request2.UrgencyReason}}"
+        <input id="urgency-reason" name="urgency_reason" aria-required="true" data-required-when-visible data-validation-required-message="Explain why this is urgent." value="{{.Request2.UrgencyReason}}"
                placeholder="Supply stops if this is not cleared by Monday">
       </div>
       {{end}}
@@ -2306,7 +2308,7 @@ const templates = `
           <label for="vendor-plain">Or pick from the list</label>
           <select id="vendor-plain" name="vendor_id">
             <option value="">Choose a vendor</option>
-            {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+            {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
           </select>
         </noscript>
         {{/* Last, so that with scripting off the <noscript> select above is the
@@ -2316,7 +2318,7 @@ const templates = `
         {{else}}
         <select id="vendor" name="vendor_id" aria-required="true" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
           <option value="">Choose a vendor</option>
-          {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+          {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
         </select>
         <span class="hint">Bank details stay in the vendor record — never on this form.</span>
         {{end}}
@@ -2388,8 +2390,8 @@ const templates = `
           <div class="uploader">
             <div class="up-ico" aria-hidden="true">⇪</div>
             <label for="attachment"><b>Add invoice, receipt or proof</b></label>
-            <small>PDF, JPG or PNG up to {{index .Settings "attachment_max_mb"}} MB</small>
-            <input type="file" id="attachment" name="attachment">
+            <small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small>
+            <input type="file" id="attachment" name="attachment" accept=".pdf,.jpg,.jpeg,.png">
           </div>
         </div>
       </div>
@@ -2404,6 +2406,8 @@ const templates = `
     </div>
   </fieldset>
 
+  {{$routingUnavailable := and (eq (index .Settings "allow_approver_choice") "0") (not (approverAvailable .Request2.ManagerID .Approvers))}}
+  {{if $routingUnavailable}}<div class="banner warn" role="alert"><div><strong>Your default approver is unavailable.</strong><p>Ask an administrator to set an active default approver with permission to approve requests on your user record. Your organisation requires its assigned approver, so you cannot submit until this is corrected.</p>{{if .Perms.Can "user" "edit"}}<a href="/users">Open Users to correct the default approver</a>{{end}}</div></div>{{end}}
   <fieldset>
     <legend>Who approves it</legend>
     <div class="form-grid">
@@ -2440,7 +2444,7 @@ const templates = `
     <span class="ab-note d-only">Submitting sends it to your approver and creates the request number.</span>
     <span class="row-end"></span>
     <a class="btn outline" href="/">Cancel</a>
-    <button class="btn primary" type="submit">Submit request</button>
+    <button class="btn primary" type="submit" {{if $routingUnavailable}}disabled{{end}}>Submit request</button>
   </div>
 </form>
 {{template "bottom" .}}
@@ -2623,7 +2627,7 @@ const templates = `
     <span class="tl-dot {{threadDot .}}" aria-hidden="true">{{threadGlyph .}}</span>
     <div class="tl-head"><b>{{if eq .Kind "comment"}}{{.ActorName}}{{else}}{{.Title}}{{end}}</b><time>{{date .CreatedAt}}</time></div>
     <div class="tl-body">
-      {{if eq .Kind "comment"}}<p>{{.Body}}</p>{{end}}
+      {{with .Body}}<p>{{.}}</p>{{end}}
       {{if eq .Kind "attachment"}}<span class="tl-file">📎 {{.FileName}} · {{fileSize .FileSize}}</span>{{end}}
       {{if .Changes}}<div class="tl-change">{{range .Changes}}{{threadField .Field}} <span class="was">{{threadValue .Field .Was}}</span> → <span class="now">{{threadValue .Field .Now}}</span><br>{{end}}</div>{{end}}
     </div>
@@ -2758,7 +2762,7 @@ const templates = `
     {{if and (eq .Request2.RequesterID .User.ID) (.Perms.Can "attachment" "create")}}
     <form class="cluster" method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/attachments" style="margin-top:8px">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <label class="field" for="hold-attachment" style="margin:0"><span class="flabel">Add a document</span><input type="file" id="hold-attachment" name="attachment" required></label>
+      <label class="field" for="hold-attachment" style="margin:0"><span class="flabel">Add a document</span><input type="file" id="hold-attachment" name="attachment" accept=".pdf,.jpg,.jpeg,.png" required><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small></label>
       <button class="btn small primary" type="submit">Attach it</button>
     </form>
     {{end}}
@@ -3023,7 +3027,7 @@ const templates = `
     <label for="vendor-plain">Or pick from the list</label>
     <select id="vendor-plain" name="vendor_id">
       <option value="">Choose a vendor</option>
-      {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+      {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
     </select>
   </noscript>
   <input type="hidden" name="vendor_id" id="vendor-id" data-combo-value value="{{deref .Request2.VendorID}}">
@@ -3031,7 +3035,7 @@ const templates = `
   {{else}}
   <select id="vendor" name="vendor_id" aria-required="true" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
     <option value="">Choose a vendor</option>
-    {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+    {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
   </select>
   <span class="hint">Bank details stay in the vendor record — never on this form.</span>
   {{end}}
@@ -3096,6 +3100,7 @@ const templates = `
 {{template "form_warnings" .}}
 
 <form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
+<input type="hidden" name="revision" value="{{.RequestRevision}}">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="type" value="{{.FormType}}">
   <input type="hidden" name="treatment" value="{{.Request2.Treatment}}">
@@ -3135,7 +3140,7 @@ const templates = `
       {{if eq (index .Settings "urgency_mode") "reason"}}
       <div class="field span-12" data-when="urgent:on" {{if not .Request2.Urgent}}hidden{{end}}>
         <label for="ureason">Why is it urgent <span class="req" aria-hidden="true">*</span></label>
-        <input id="ureason" name="urgency_reason" aria-required="true" value="{{.Request2.UrgencyReason}}">
+        <input id="ureason" name="urgency_reason" aria-required="true" data-required-when-visible data-validation-required-message="Explain why this is urgent." value="{{.Request2.UrgencyReason}}">
       </div>
       {{end}}
       {{end}}
@@ -3188,8 +3193,8 @@ const templates = `
           <div class="uploader">
             <div class="up-ico" aria-hidden="true">⇪</div>
             <label for="attachment"><b>Add another document</b></label>
-            <small>PDF, JPG or PNG up to {{index .Settings "attachment_max_mb"}} MB</small>
-            <input type="file" id="attachment" name="attachment">
+            <small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small>
+            <input type="file" id="attachment" name="attachment" accept=".pdf,.jpg,.jpeg,.png">
           </div>
         </div>
       </div>
@@ -3268,6 +3273,7 @@ const templates = `
 {{template "form_warnings" .}}
 
 <form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
+<input type="hidden" name="revision" value="{{.RequestRevision}}">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="type" value="{{.FormType}}">
   <input type="hidden" name="treatment" value="{{.Request2.Treatment}}">
@@ -3321,8 +3327,8 @@ const templates = `
           <div class="uploader">
             <div class="up-ico" aria-hidden="true">⇪</div>
             <label for="rt-attachment"><b>Attach the corrected document</b></label>
-            <small>PDF, JPG or PNG up to {{index .Settings "attachment_max_mb"}} MB</small>
-            <input type="file" id="rt-attachment" name="attachment">
+            <small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small>
+            <input type="file" id="rt-attachment" name="attachment" accept=".pdf,.jpg,.jpeg,.png">
           </div>
         </div>
       </div>
@@ -3374,8 +3380,8 @@ const templates = `
   <span class="b-ico" aria-hidden="true">⏸</span>
   <div>
     <b>Payment freezes the moment you ask</b>
-    <p>Accounts cannot reserve or pay this request while a cancellation is pending. If an accountant
-      has already reserved it, they are told immediately.</p>
+    <p>Accounts cannot reserve or pay this request while a cancellation is pending. If Accounts
+      has already reserved a request, ask them to release it before requesting cancellation.</p>
   </div>
 </div>
 
@@ -3577,7 +3583,7 @@ const templates = `
         <span class="rc-meta">{{.Vendor}}{{if .InvoiceNo}} · invoice {{.InvoiceNo}}{{end}} · raised {{date .CreatedAt}}</span>
         <span class="rc-foot">
           {{$p := statusPill . $.User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
-          <span class="waiting">{{if eq .Status "approved"}}Waiting on Accounts{{else}}Waiting on {{.ManagerName}}{{end}}</span>
+          {{$w := waitingOn . $.User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
         </span>
       </a>
       {{end}}
@@ -3684,7 +3690,7 @@ const templates = `
           </select>
         {{else}}
           <label for="cf-{{.Key}}">{{.Label}}</label>
-          <input id="cf-{{.Key}}" name="{{.Key}}" {{if eq .Kind "number"}}type="number" inputmode="numeric"{{end}} value="{{index $.Config .Key}}">
+          <input id="cf-{{.Key}}" name="{{.Key}}" {{if eq .Kind "number"}}type="number" inputmode="numeric"{{end}} {{if .Min}}min="{{.Min}}" required{{end}} {{if .Max}}max="{{.Max}}"{{end}} value="{{index $.Config .Key}}">
         {{end}}
         {{if .Hint}}<span class="hint">{{.Hint}}</span>{{end}}
       </div>
@@ -4038,8 +4044,8 @@ const templates = `
         <label class="checkline"><input type="checkbox" name="include_manager" {{check $d.IncludeManager}}> The approver</label>
         <label class="checkline"><input type="checkbox" name="include_accounts" {{check $d.IncludeAccounts}}> The Accounts group</label>
       </div>
-      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{$d.ToRecipients}}" placeholder="one@example.com, two@example.com"></div>
-      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{$d.CcRecipients}}"></div>
+      <div class="field"><label for="to-{{.Event}}" class="flabel">Always also send To</label><input id="to-{{.Event}}" name="to_recipients" value="{{$d.ToRecipients}}" placeholder="one@example.com, two@example.com"><span class="hint">Email addresses separated by commas; no display names.</span></div>
+      <div class="field"><label for="cc-{{.Event}}" class="flabel">Always copy (Cc)</label><input id="cc-{{.Event}}" name="cc_recipients" value="{{$d.CcRecipients}}"><span class="hint">Email addresses separated by commas; no display names.</span></div>
       <div class="field"><label for="sub-{{.Event}}" class="flabel">Subject</label><input id="sub-{{.Event}}" name="subject_template" value="{{$d.SubjectTemplate}}"></div>
       <div class="field"><label for="body-{{.Event}}" class="flabel">Message</label><textarea id="body-{{.Event}}" name="body_template" rows="6">{{$d.BodyTemplate}}</textarea></div>
       <p class="hint">Available fields: {{range $i, $f := $.NotifFields}}{{if $i}}, {{end}}&#123;&#123;{{$f}}&#125;&#125;{{end}}. Anything else is rejected when you save, so a typo cannot reach an inbox.</p>
@@ -4128,7 +4134,7 @@ const templates = `
   <div>
     <div class="eyebrow">Money we expect back</div>
     <h1>Recoverable payments</h1>
-    <p class="sub">{{money .RecMetrics.OutstandingAmount}} outstanding across {{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "payment" "payments"}} · none of it counts as budget spend</p>
+    <p class="sub">{{money .RecMetrics.OutstandingAmount}} outstanding across {{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "recoverable" "recoverables"}} · none of it counts as budget spend</p>
   </div>
   <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?ageing=outstanding">⤓ Export CSV</a>{{end}}</div>
 </section>
@@ -4142,9 +4148,9 @@ const templates = `
 </div>
 
 <div class="metric-strip">
-  <a class="metric" href="/recoverables/list?ageing=outstanding"><span class="metric-label">Outstanding</span><span class="metric-value">{{short .RecMetrics.OutstandingAmount}}</span><span class="metric-foot">{{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "payment" "payments"}}</span></a>
+  <a class="metric" href="/recoverables/list?ageing=outstanding"><span class="metric-label">Outstanding</span><span class="metric-value">{{short .RecMetrics.OutstandingAmount}}</span><span class="metric-foot">{{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "recoverable" "recoverables"}}</span></a>
   <a class="metric warn" href="/recoverables/list?ageing=overdue"><span class="metric-label">Past expected return</span><span class="metric-value">{{short .RecMetrics.OverdueAmount}}</span><span class="metric-foot">{{.RecMetrics.OverdueCount}} overdue</span></a>
-  <a class="metric" href="/recoverables/list?ageing=due30"><span class="metric-label">Due in 30 days</span><span class="metric-value">{{short .RecMetrics.DueIn30Amount}}</span><span class="metric-foot">{{.RecMetrics.DueIn30Count}} {{plural .RecMetrics.DueIn30Count "payment" "payments"}}</span></a>
+  <a class="metric" href="/recoverables/list?ageing=due30"><span class="metric-label">Due in 30 days</span><span class="metric-value">{{short .RecMetrics.DueIn30Amount}}</span><span class="metric-foot">{{.RecMetrics.DueIn30Count}} {{plural .RecMetrics.DueIn30Count "recoverable" "recoverables"}}</span></a>
   <div class="metric"><span class="metric-label">Paid out this month</span><span class="metric-value">{{short .RecMetrics.PaidThisMonthAmount}}</span><span class="metric-foot">{{.RecMetrics.PaidThisMonthCount}} {{plural .RecMetrics.PaidThisMonthCount "payment" "payments"}}</span></div>
 </div>
 
@@ -4338,12 +4344,12 @@ const templates = `
 {{if .CanRecordRecovery}}
 <section class="card" id="record-recovery">
  <div class="card-head"><h2>Record recovery</h2></div>
- {{if .RecoveryError}}<div id="recovery-error" class="banner warn" role="alert"><div><b>Recovery was not saved</b><p>{{.RecoveryError}}</p><a href="#recovery-amount">Review the recovery details</a></div></div>{{end}}
+ {{if .RecoveryError}}<div id="recovery-error" class="banner warn error-summary" role="alert" tabindex="-1"><div><h2>Recovery was not saved</h2><p>{{.RecoveryError}}</p><a href="#recovery-amount">Review the recovery details</a></div></div>{{end}}
  <form method="post" action="/recoverables/{{.Request2.ID}}/events" class="stack-12" onsubmit="return confirm('Record this recovery permanently? Check the amount, date, and evidence before continuing.')">
   <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="token" value="{{.RecoveryInput.Token}}">
   <div class="form-grid">
    <div class="field span-6"><label for="recovery-kind">Recovery type</label><select id="recovery-kind" name="kind" required><option value="">Choose a type</option><option value="return" {{select .RecoveryInput.Kind "return"}}>Money returned</option><option value="expense" {{select .RecoveryInput.Kind "expense"}}>Expense reconciled</option><option value="adjustment" {{select .RecoveryInput.Kind "adjustment"}}>Balance adjustment</option></select></div>
-   <div class="field span-6"><label for="recovery-amount">Amount received or reconciled (₹)</label><input id="recovery-amount" name="amount" inputmode="decimal" value="{{.RecoveryInput.AmountText}}" required aria-describedby="recovery-amount-help{{if .RecoveryError}} recovery-error{{end}}"><span id="recovery-amount-help" class="hint">Up to {{money .Recoverable.Amount}} outstanding. Each entry is permanent.</span></div>
+   <div class="field span-6"><label for="recovery-amount">Amount received or reconciled (₹)</label><input id="recovery-amount" name="amount" data-money inputmode="decimal" value="{{.RecoveryInput.AmountText}}" required aria-describedby="recovery-amount-help{{if .RecoveryError}} recovery-error{{end}}"><span id="recovery-amount-help" class="hint">Up to {{money .Recoverable.Amount}} outstanding. Each entry is permanent.</span></div>
    <div class="field span-6"><label for="recovery-date">Recovery date</label><input id="recovery-date" type="date" name="occurred_on" value="{{.RecoveryInput.OccurredOn}}" required></div>
    <div class="field span-6"><label for="recovery-ref">Bank / accounting reference</label><input id="recovery-ref" name="reference" value="{{.RecoveryInput.Reference}}" maxlength="240" required></div>
    <div class="field span-12"><label for="recovery-note">Evidence and explanation</label><textarea id="recovery-note" name="note" rows="3" maxlength="4000" required aria-describedby="recovery-note-help">{{.RecoveryInput.Note}}</textarea><span id="recovery-note-help" class="hint">State what happened and where the receipt or approved expense/journal is kept. For an adjustment, include who authorised it and why.</span></div>
@@ -4360,7 +4366,7 @@ const templates = `
     <span class="tl-dot {{threadDot .}}" aria-hidden="true">{{threadGlyph .}}</span>
     <div class="tl-head"><b>{{if eq .Kind "comment"}}{{.ActorName}}{{else}}{{.Title}}{{end}}</b><time>{{date .CreatedAt}}</time></div>
     <div class="tl-body">
-      {{if eq .Kind "comment"}}<p>{{.Body}}</p>{{end}}
+      {{with .Body}}<p>{{.}}</p>{{end}}
       {{if eq .Kind "attachment"}}<span class="tl-file">📎 {{.FileName}} · {{fileSize .FileSize}}</span>{{end}}
       {{if .Changes}}<div class="tl-change">{{range .Changes}}{{threadField .Field}} <span class="was">{{threadValue .Field .Was}}</span> → <span class="now">{{threadValue .Field .Now}}</span><br>{{end}}</div>{{end}}
     </div>

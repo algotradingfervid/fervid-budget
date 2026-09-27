@@ -1215,7 +1215,7 @@ func TestVendorListTotalsCountRealWorkAndSurviveARename(t *testing.T) {
 	settle := url.Values{
 		"request_id": {itoa64(reqID)}, "head_id": {itoa64(headID)},
 		"paid_on": {time.Now().Format("2006-01-02")}, "amount": {"9100.00"},
-		"settlement": {"settled"},
+		"settlement": {"settled"}, "reference_no": {"VENDOR-TOTALS-REF"},
 	}
 	resp := s.postForm("/payments", settle)
 	requireStatus(t, resp, http.StatusSeeOther)

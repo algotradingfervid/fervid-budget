@@ -627,7 +627,7 @@ test.describe('G · the money trail', () => {
 
     // Hop 10 — the settlement sheet compares approved against paid.
     await adminPage.getByLabel('Paid on').fill('2024-09-15');
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-T1-${runId}`);
     await adminPage.getByLabel('Processing note').fill(`Trail one ${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -761,12 +761,11 @@ test.describe('G · the money trail', () => {
     await adminPage.goto(`/requests/${raised.id}`);
     await expectMoney(adminPage, '.dl div:has(dt:text-is("Approved")) dd', MONEY, 'request Approved row');
 
-    // `paymentModes()` (internal/app/linking.go:993) offers bank_transfer,
-    // cheque, upi, cash, card and other — there is no NEFT/RTGS split.
+    // The configured NEFT payment mode remains distinct from RTGS in the payment.
     const paymentPath = await settlePayment(adminPage, raised.id, {
       amount: '1234567.89',
       paidOn: '2024-10-15',
-      mode: 'bank_transfer',
+      mode: 'neft',
       reference: `UTR-T2-${runId}`,
       remarks: `Trail paise ${runId}`
     });
@@ -971,7 +970,7 @@ test.describe('G · the money trail', () => {
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     await adminPage.getByLabel('Amount actually paid').fill('9000.00');
     await adminPage.getByLabel('Paid on').fill('2024-12-15');
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-OVER-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const sheet = adminPage.locator('.overlay .sheet');
@@ -1090,7 +1089,7 @@ test.describe('G · payee, project, head, invoice', () => {
     // Hop 5 — the settlement sheet's sub-line.
     await adminPage.getByLabel('Amount actually paid').fill('6400.00');
     await adminPage.getByLabel('Paid on').fill('2025-01-12');
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-P1-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const sheet = adminPage.locator('.overlay .sheet');
@@ -2291,7 +2290,7 @@ test.describe('G · the same fact in several places', () => {
 
     await adminPage.getByLabel('Amount actually paid').fill('45000.00');
     await adminPage.getByLabel('Paid on').fill('2025-07-20');
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-RC-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const sheet = adminPage.locator('.overlay .sheet');
@@ -3975,7 +3974,7 @@ test.describe('G · a locked month', () => {
 
     await adminPage.getByLabel('Amount actually paid').fill('5100.00');
     await adminPage.getByLabel('Paid on').fill(`${MONTH}-15`);
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-LK-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const sheet = adminPage.locator('.overlay .sheet');
@@ -4076,7 +4075,7 @@ test.describe('G · a locked month', () => {
     );
     await adminPage.getByLabel('Amount actually paid').fill('5100.00');
     await adminPage.getByLabel('Paid on').fill(`${MONTH}-15`);
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-LK2-${runId}`);
     await adminPage.getByLabel('Processing note').fill(`Unlocked ${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -4287,7 +4286,7 @@ test.describe('G · referential integrity', () => {
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${raised.id}$`));
     await adminPage.getByLabel('Amount actually paid').fill('6600.00');
     await adminPage.getByLabel('Paid on').fill('2025-11-11');
-    await adminPage.getByLabel('Payment mode').selectOption('bank_transfer');
+    await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-RI-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
     const sheet = adminPage.locator('.overlay .sheet');

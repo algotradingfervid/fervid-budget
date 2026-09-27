@@ -599,13 +599,13 @@ func (s *Store) UserRoles(ctx context.Context, userID int64) ([]Role, error) {
 // also rewrite the profile and clear the role assignment, so using it to set one
 // column means restating four others. It is the function the D9 rules are pinned
 // against (approvers_test.go, permissions_test.go), and SaveUser enforces the
-// identical three refusals — self, unknown, inactive — so the two must stay in
-// step; if one gains a rule the other needs it too.
+// identical refusals — self, unknown, inactive, or lacking approval permission.
+// The two must stay in step; if one gains a rule the other needs it too.
 func (s *Store) SetUserDefaultApprover(ctx context.Context, actor User, userID, approverID int64) error {
 	if approverID != 0 && approverID == userID {
 		return fmt.Errorf("%w: a user cannot be their own default approver", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -619,20 +619,13 @@ func (s *Store) SetUserDefaultApprover(ctx context.Context, actor User, userID, 
 		return err
 	}
 	var approver any
+	if err := requireDefaultApproverTx(ctx, tx, userID, approverID); err != nil {
+		return err
+	}
 	if approverID != 0 {
-		var active int
-		err := tx.QueryRowContext(ctx, `SELECT active FROM users WHERE id=?`, approverID).Scan(&active)
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("%w: the chosen approver does not exist", ErrValidation)
-		}
-		if err != nil {
-			return err
-		}
-		if active != 1 {
-			return fmt.Errorf("%w: the chosen approver is not an active user", ErrValidation)
-		}
 		approver = approverID
 	}
+
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET default_approver_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, approver, userID); err != nil {
 		return classify(err)
 	}

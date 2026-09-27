@@ -67,14 +67,13 @@ func TestDefaultApproverPreselectsAnOfferedApprover(t *testing.T) {
 		t.Fatalf("a rejected update changed the stored approver to %d", u.DefaultApproverID)
 	}
 
-	// A nominee who holds no approval:approve grant is never offered by
-	// ListApprovers, so the form has nothing to pre-select for them. That
-	// permission check lives in ListApprovers, not in the writer — Phase 1's
-	// SetUserDefaultApprover deliberately validates only existence, activeness
-	// and self (see TestSetUserDefaultApproverRejectsSelfAndUnknownUsers).
+	// A nominee without approval:approve is neither offered nor accepted as a default.
 	nobodyID, err := s.CreateUser(ctx, "nobody@example.com", "No Body", "hash", "data_entry", true)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := s.SetUserDefaultApprover(ctx, admin, req.ID, nobodyID); !errors.Is(err, ErrValidation) {
+		t.Fatalf("ineligible default accepted: %v", err)
 	}
 	fresh, err := s.ListApprovers(ctx, req.ID)
 	if err != nil {

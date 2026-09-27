@@ -849,6 +849,10 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 		return PageData{}, err
 	}
 	data.Request2 = req
+	data.RequestRevision, err = a.st.RequestEditRevision(r.Context(), req)
+	if err != nil {
+		return PageData{}, err
+	}
 	data.FormType = req.Type
 	data.Categories = categoriesForType(req.Type, data.Categories)
 	data.RecCategory = resolveRecoverableCategory(req.RecoverableCategory, data.Categories)
@@ -1015,6 +1019,10 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	resubmitting := r.FormValue("submit_action") == "resubmit"
 	in, err := requestInput(r)
+	revision := strings.TrimSpace(r.FormValue("revision"))
+	if err == nil && revision == "" {
+		err = fmt.Errorf("%w: this edit form has expired. Reload the request before saving corrections", store.ErrValidation)
+	}
 	var attachment *store.AttachmentInput
 	var stagedPath string
 	if err == nil {
@@ -1028,7 +1036,7 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 	// the edited row rather than the row as it was on entry.
 	if err == nil {
 		err = a.st.EditRequest(r.Context(), u, req.ID, store.RequestEdit{
-			Input: in, Attachment: attachment, Resubmit: resubmitting})
+			Input: in, Attachment: attachment, Resubmit: resubmitting, Revision: revision})
 	}
 	if err != nil {
 		removeStagedAttachment(a.log, r, stagedPath)
@@ -1070,6 +1078,7 @@ func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored 
 	// does must not vanish because one field was refused.
 	noteLegacyDeposit(&data, stored)
 	data.Error = message
+	data.RequestRevision = r.FormValue("revision") // Never bless a stale retry with the latest revision.
 	data.RequestRawAmount = r.FormValue("amount")
 	data.RequestFieldErrors = requestFieldErrors(in)
 	data.DuplicateReason = in.DuplicateReason
