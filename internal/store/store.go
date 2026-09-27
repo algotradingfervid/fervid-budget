@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,7 +25,11 @@ import (
 
 // Store is an open database. It is safe for concurrent use.
 type Store struct {
-	db            *sql.DB
+	db *sql.DB
+	// badgeCache memoises nav badge counts per user (see BadgeCounts), and
+	// badgeRevision is bumped on every write so an older snapshot is never
+	// stored over a newer one.
+	badgeCache    sync.Map
 	badgeRevision atomic.Uint64
 }
 
