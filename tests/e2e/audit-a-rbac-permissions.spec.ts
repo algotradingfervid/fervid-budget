@@ -57,7 +57,7 @@
  * docs/qa/uml/05-route-permission-matrix.md. TC IDs are in
  * docs/qa/test-cases/TC-A-rbac-permissions.md.
  */
-import { test, expect, admin, login } from './fixtures';
+import { test, expect, admin, login, pdfUpload } from './fixtures';
 import {
   asRole,
   createUserWithExactRoles,
@@ -66,12 +66,15 @@ import {
   csrfToken,
   probeGet,
   probePost,
+  requestRevision,
   fixturePassword,
   type Probe,
   type RoleName,
   type Subject
 } from './audit-support';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // The five callers of the matrix, plus the two probes that sharpen it.
@@ -168,6 +171,13 @@ interface Row {
   /** Per-caller overrides where an ownership rule refuses a permitted caller. */
   over?: Partial<Record<CallerId, Expected>>;
   note?: string;
+  /**
+   * POST with the caller's real CSRF token and this form. Only for routes that
+   * check their verb inside the handler, after the CSRF check: probed without a
+   * token, every signed-in caller would get the same CSRF refusal. The form
+   * must be one the handler refuses as invalid, so nothing is written.
+   */
+  withToken?: Record<string, string>;
 }
 
 function expectedFor(row: Row, caller: CallerId): Expected {
@@ -276,6 +286,12 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
    */
   test.beforeEach(async ({ browser, baseURL }, testInfo) => {
     testInfo.skip(testInfo.project.name !== 'chromium', 'the permission matrix runs once, on desktop');
+    // Playwright starts a fresh worker after every failed test, which forgets
+    // `worldError`. The failure is therefore also written next to the run's
+    // results, so a broken world fails every later test at once instead of
+    // being rebuilt (minutes each) by every one of them.
+    const failedMarker = join(testInfo.project.outputDir, 'rbac-world-build-failed.txt');
+    worldError ??= existsSync(failedMarker) ? readFileSync(failedMarker, 'utf8') : null;
     if (W || worldError) {
       expect(worldError, 'the fixture world must be built before any cell is probed').toBeNull();
       return;
@@ -287,6 +303,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       W = await buildWorld(browser, baseURL!);
     } catch (error) {
       worldError = error instanceof Error ? `${error.message}\n${error.stack}` : String(error);
+      mkdirSync(dirname(failedMarker), { recursive: true });
+      writeFileSync(failedMarker, worldError);
       throw error;
     }
   });
@@ -455,9 +473,32 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   matrixTest('TC-A-M23', 'budget:view', () => [{ id: 'RT-37', method: 'GET', path: () => '/budgets', gate: 'budget:view' }]);
   matrixTest('TC-A-M24', 'budget:edit', () => [{ id: 'RT-38', method: 'POST', path: () => '/budgets', gate: 'budget:edit' }]);
   matrixTest('TC-A-M25', 'project:view', () => [{ id: 'RT-41', method: 'GET', path: () => '/projects', gate: 'project:view' }]);
-  matrixTest('TC-A-M26', 'project:edit', () => [{ id: 'RT-42', method: 'POST', path: () => '/projects', gate: 'project:edit' }]);
+  // Saving a project or a head is one route for two verbs: `projectSave` and
+  // `headSave` ask for :create when the form has no id and :edit when it has
+  // one, after the CSRF check. So these rows post a real token and a form with
+  // no name: a caller without the verb is refused with the permission sentence,
+  // and the Admin, who holds both, gets the "name is required" refusal (400).
+  matrixTest('TC-A-M26', 'project:create / project:edit', () => [
+    {
+      id: 'RT-42', method: 'POST', path: () => '/projects', gate: 'project:create',
+      withToken: { id: '0', name: '', active: 'on' }, over: { 'C-adm': 400 }
+    },
+    {
+      id: 'RT-42', method: 'POST', path: () => '/projects', gate: 'project:edit',
+      withToken: { id: W.projectId, name: '', active: 'on' }, over: { 'C-adm': 400 }
+    }
+  ]);
   matrixTest('TC-A-M27', 'head:view', () => [{ id: 'RT-43', method: 'GET', path: () => '/heads', gate: 'head:view' }]);
-  matrixTest('TC-A-M28', 'head:edit', () => [{ id: 'RT-44', method: 'POST', path: () => '/heads', gate: 'head:edit' }]);
+  matrixTest('TC-A-M28', 'head:create / head:edit', () => [
+    {
+      id: 'RT-44', method: 'POST', path: () => '/heads', gate: 'head:create',
+      withToken: { id: '0', project_id: W.projectId, name: '', active: 'on' }, over: { 'C-adm': 400 }
+    },
+    {
+      id: 'RT-44', method: 'POST', path: () => '/heads', gate: 'head:edit',
+      withToken: { id: W.headId, project_id: W.projectId, name: '', active: 'on' }, over: { 'C-adm': 400 }
+    }
+  ]);
 
   matrixTest('TC-A-M29', 'vendor:view', () => [
     { id: 'RT-45', method: 'GET', path: () => '/vendors', gate: 'vendor:view' },
@@ -835,8 +876,13 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'but /approvals lists only what is theirs to decide'
     ).toHaveCount(0);
 
-    const decide = await probePost(mgr.page, `/requests/${W.tPending}/approve`, { approved_amount: '100.00' });
-    expect(decide.status, 'and the decision itself is refused: ManagerID != actor (store/requests.go:687)').toBe(403);
+    // The decision carries the request's current revision, so the only thing
+    // wrong with it is who sends it. Approving answers 404 to anyone who is not
+    // the request's approver, even a reader who can open the request.
+    const decide = await probePost(mgr.page, `/requests/${W.tPending}/approve`, {
+      approved_amount: '100.00', revision: await requestRevision(W.m2.page, W.tPending)
+    });
+    expect(decide.status, 'and the decision itself is refused: only the request’s approver may approve it').toBe(404);
   });
 
   test('TC-A-69 — Accounts with payment=all sees every payment', async () => {
@@ -953,18 +999,23 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       const raised = await raiseRequest(session.page, {
         title: `SelfLater ${W.runId}`, managerId: await userIdOf(W.adminPage, W.m2.subject.email), amount: '111.00'
       });
-      const approve = await probePost(session.page, `/requests/${raised}/approve`, { approved_amount: '111.00' });
-      expect(approve.status, 'and ApproveRequest is the last line of defence for G8').toBe(403);
+      // Approving answers 404 to anyone who is not the request's approver.
+      const approve = await probePost(session.page, `/requests/${raised}/approve`, {
+        approved_amount: '111.00', revision: await requestRevision(W.m2.page, raised)
+      });
+      expect(approve.status, 'and the raiser cannot approve it through the route either').toBe(404);
     } finally {
       await session.close();
     }
   });
 
   test('TC-A-74 — a Manager cannot approve a request assigned to a different manager', async () => {
+    // Approving answers 404 to anyone who is not the request's approver, so the
+    // route does not confirm the request exists to a manager it was not sent to.
     const probe = await probePost(W.callers['C-mgr'].page, `/requests/${W.tPending}/approve`, {
-      approved_amount: '100.00'
+      approved_amount: '100.00', revision: await requestRevision(W.m2.page, W.tPending)
     });
-    expect(probe.status, 'approval:approve says you may decide; manager_id says which requests are yours').toBe(403);
+    expect(probe.status, 'approval:approve says you may decide; manager_id says which requests are yours').toBe(404);
     // Reproduced a second way: the request is not in this manager's queue either.
     await W.callers['C-mgr'].page.goto('/approvals');
     await expect(
@@ -1399,9 +1450,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // id must not create a payment against it (X5).
     const probe = await probePost(W.a2.page, '/payments', {
       request_id: String(W.tApproved), amount: '10.00', paid_on: W.today,
-      head_id: W.headId, payment_mode: 'bank_transfer', settlement: 'settled'
+      head_id: W.headId, payment_mode: 'bank_transfer', reference_no: `UTR-${W.runId}-swap`, settlement: 'settled'
     });
-    expect(probe.status, 'RecordPaymentForRequest demands status=processing AND processing_by=actor').toBe(403);
+    // A settlement for a request the caller does not hold answers 409 with the
+    // confirmation sheet, saying the payment was not saved.
+    expect(probe.status, 'a payment is recorded only against a request this accountant has reserved').toBe(409);
     expect(
       probe.body.includes(GATE_REFUSAL),
       'and the refusal is the store’s reservation check, not the route gate — payment:create was held'
@@ -1416,8 +1469,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // accountant who simply has not reserved the request is told to reserve it,
     // instead of being sent to an administrator for a grant they already hold.
     expect(
-      probe.body.includes('Reserve this request before recording its payment'),
-      'the state conflict says what to do about it, not "something went wrong" — F-A-09'
+      probe.body.includes('no longer reserved by you. Your payment was not saved'),
+      'the state conflict says what happened to the payment, not "something went wrong" — F-A-09'
     ).toBe(true);
     expect(
       probe.body.includes('Something went wrong while processing your request'),
@@ -1428,7 +1481,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   test('TC-A-103 — a forged settlement value is refused', async () => {
     const probe = await probePost(W.a2.page, '/payments', {
       request_id: String(W.tProc), amount: '10.00', paid_on: W.today,
-      head_id: W.headId, payment_mode: 'bank_transfer', settlement: 'written-off'
+      head_id: W.headId, payment_mode: 'bank_transfer', reference_no: `UTR-${W.runId}-forged`, settlement: 'written-off'
     });
     expect(probe.status, 'settlement is an explicit disposition vocabulary checked in the store').toBe(400);
     expect(probe.body.includes('choose how the remaining balance should be handled'), 'and named').toBe(true);
@@ -1437,7 +1490,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   test('TC-A-104 — an amount above the approved ceiling is refused (G13)', async () => {
     const probe = await probePost(W.a2.page, '/payments', {
       request_id: String(W.tProc), amount: '9999999.00', paid_on: W.today,
-      head_id: W.headId, payment_mode: 'bank_transfer', settlement: 'settled'
+      head_id: W.headId, payment_mode: 'bank_transfer', reference_no: `UTR-${W.runId}-ceiling`, settlement: 'settled'
     });
     expect(probe.status, 'the approved amount is a hard ceiling, not a suggestion').toBe(400);
     expect(probe.body.includes('more than the approved'), 'and the refusal explains the ceiling').toBe(true);
@@ -1525,13 +1578,15 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   test('TC-A-111 — a Requester cannot withdraw or re-raise somebody else’s request', async () => {
     for (const path of [`/requests/${W.tPending}/withdraw`, `/requests/${W.tPending}/reraise`]) {
       const probe = await probePost(W.callers['C-req'].page, path, {});
-      expect.soft(probe.status, `${path}: the store checks RequesterID != actor`).toBe(403);
+      // A Requester sees only their own requests, and a request a user may not
+      // see answers 404, so the raiser check behind it is never reached.
+      expect.soft(probe.status, `${path}: somebody else's request is not found for a Requester`).toBe(404);
     }
   });
 
   test('TC-A-112 — a Manager cannot cancel a request routed to another manager', async () => {
     const probe = await probePost(W.callers['C-mgr'].page, `/requests/${W.tApproved}/cancel`, {
-      reason: 'Cancelled by a bystander'
+      reason: 'Cancelled by a bystander', revision: await requestRevision(W.m2.page, W.tApproved)
     });
     expect(probe.status, 'CancelRequest checks ManagerID != actor (store/requests.go:976)').toBe(403);
   });
@@ -1809,8 +1864,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       W.callers['C-mgr'].page.locator(`a.req-card[href="/requests/${target}"]`),
       'and the request is in the new approver’s queue'
     ).toHaveCount(1);
-    const oldApprover = await probePost(W.m2.page, `/requests/${target}/approve`, { approved_amount: '121.00' });
-    expect(oldApprover.status, 'while the approver it was taken from can no longer decide it').toBe(403);
+    // Approving answers 404 to anyone who is not the request's approver.
+    const oldApprover = await probePost(W.m2.page, `/requests/${target}/approve`, {
+      approved_amount: '121.00', revision: await requestRevision(W.callers['C-mgr'].page, target)
+    });
+    expect(oldApprover.status, 'while the approver it was taken from can no longer decide it').toBe(404);
 
     // Two verbs, two routes, and they are not the same verb: the reservation's
     // /reassign is gated on reservation:reassign, which a Manager does not hold.
@@ -1855,9 +1913,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       // roles now: the old two-value field could not name a requester or an
       // approver, and its innocuous option was mapped to the role that settles
       // and voids payments.
+      // A user who is not an administrator may only hand out roles whose grants
+      // are all within their own, so the new user gets the creator's own role.
       const probe = await probePost(session.page, '/users', {
         id: '0', email: created, name: 'Late', password: fixturePassword, active: 'on',
-        role_ids: W.systemRoleIds.Requester
+        role_ids: roleId
       });
       expect(
         probe.status,
@@ -1943,11 +2003,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
         {
           multipart: {
             csrf: token,
-            attachment: {
-              name: `planted-${W.runId}.pdf`,
-              mimeType: 'application/pdf',
-              buffer: Buffer.from('%PDF-1.4\nan attempt to append to a settled payment’s evidence\n%%EOF')
-            }
+            // A well-formed PDF, so the refusal is about the payment, not the file.
+            attachment: pdfUpload(`planted-${W.runId}.pdf`)
           },
           maxRedirects: 0,
           failOnStatusCode: false
@@ -2074,7 +2131,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // (store/requests.go:915-918). `tPending` is R2's own pending request, so R2
     // may edit it — and this edit is refused, so it stays exactly as it was.
     const reroute = await probePost(requester.page, `/requests/${W.tPending}/edit`, requestForm({
-      title: W.foreignTitle, managerId: strandedManager, amount: '101.00'
+      title: W.foreignTitle, managerId: strandedManager, amount: '101.00',
+      extra: { revision: await requestRevision(requester.page, W.tPending) }
     }));
     expect(reroute.status, 'and rerouting an existing request to a non-approver is refused too').toBe(400);
     expect(
@@ -2225,7 +2283,7 @@ function matrixTest(tc: string, gateLabel: string, rows: () => Row[]) {
       const path = row.path();
       for (const caller of callers) {
         const expected = expectedFor(row, caller);
-        const probe = await probeCell(caller, row.method, path);
+        const probe = await probeCell(caller, row.method, path, row.withToken);
         const failure = cellFailure(probe, expected);
         expect
           .soft(
@@ -2239,13 +2297,20 @@ function matrixTest(tc: string, gateLabel: string, rows: () => Row[]) {
   });
 }
 
-async function probeCell(caller: CallerId, method: 'GET' | 'POST', path: string): Promise<Probe> {
+async function probeCell(
+  caller: CallerId,
+  method: 'GET' | 'POST',
+  path: string,
+  withToken?: Record<string, string>
+): Promise<Probe> {
   const page = caller === 'C-anon' ? W.anonPage : W.callers[caller].page;
   const url = new URL(path, W.baseURL).toString();
   // Every POST cell is probed with NO csrf field on purpose: the CSRF check sits
   // inside the permission gate, so a permitted caller is refused by withCSRF and
   // nothing is written. See the file header.
-  return method === 'GET' ? probeGet(page, url) : probePost(page, url, {}, { csrf: 'omit' });
+  if (method === 'GET') return probeGet(page, url);
+  if (withToken && caller !== 'C-anon') return probePost(page, url, withToken);
+  return probePost(page, url, {}, { csrf: 'omit' });
 }
 
 // ---------------------------------------------------------------------------
@@ -2311,8 +2376,7 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   for (const [id, amount] of [
     [world.tApproved, '102.00'], [world.tProc, '103.00'], [world.tPaid, '104.00'], [world.tPartial, '105.00']
   ] as Array<[number, string]>) {
-    await expectStatus(probePost(m2.page, `/requests/${id}/approve`, { approved_amount: amount }), 303,
-      `approving request ${id}`);
+    await expectStatus(approveAs(m2.page, id, amount), 303, `approving request ${id}`);
   }
 
   // A2 reserves all three payable requests, settles one, part-pays another, and
@@ -2357,8 +2421,7 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   world.ownApproved = await raiseRequest(callers['C-req'].page, {
     title: `MineApproved ${runId}`, managerId: cReqManagerId, amount: '107.00'
   });
-  await expectStatus(probePost(m2.page, `/requests/${world.ownApproved}/approve`, { approved_amount: '107.00' }), 303,
-    'approving the requester’s own request');
+  await expectStatus(approveAs(m2.page, world.ownApproved, '107.00'), 303, 'approving the requester’s own request');
   world.ownReqAttId = await requestAttachmentId(callers['C-req'].page, world.ownPending, `invoice-${runId}.pdf`);
 
   return world;
@@ -2439,6 +2502,17 @@ function requestForm(opts: RaiseOpts): Record<string, string> {
   };
 }
 
+/**
+ * Approves a request in full as `page` (its approver). The decision must carry
+ * the request's current revision, read by the approver just before the POST.
+ */
+async function approveAs(page: Page, requestId: number, amount: string): Promise<Probe> {
+  return probePost(page, `/requests/${requestId}/approve`, {
+    approved_amount: amount,
+    revision: await requestRevision(page, requestId)
+  });
+}
+
 /** Raises a reimbursement request through POST /requests and returns its id. */
 async function raiseRequest(page: Page, opts: RaiseOpts): Promise<number> {
   const probe = await expectStatus(probePost(page, '/requests', requestForm(opts)), 303, `raising "${opts.title}"`);
@@ -2458,8 +2532,7 @@ async function freshReservedRequest(tag: string): Promise<number> {
   const id = await raiseRequest(W.r2.page, {
     title: `${tag} ${W.runId}-${Date.now()}`, managerId, amount: '120.00'
   });
-  await expectStatus(probePost(W.m2.page, `/requests/${id}/approve`, { approved_amount: '120.00' }), 303,
-    `approving ${tag} request ${id}`);
+  await expectStatus(approveAs(W.m2.page, id, '120.00'), 303, `approving ${tag} request ${id}`);
   await expectStatus(probePost(W.a2.page, `/requests/${id}/record-payment`, {}), 303,
     `reserving ${tag} request ${id}`);
   return id;
@@ -2489,7 +2562,7 @@ async function settleWithAttachment(
     multipart: {
       ...form,
       csrf: await csrfToken(page.context()),
-      attachment: { name: filename, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4\nadvice body ${filename}\n%%EOF`) }
+      attachment: pdfUpload(filename)
     },
     maxRedirects: 0,
     failOnStatusCode: false
@@ -2532,9 +2605,7 @@ async function requestAttachmentId(page: Page, requestId: number, filename: stri
   await page.goto(`/requests/${requestId}/edit`);
   // The uploader's input is nameless to a screen reader beyond its own label, so
   // it is addressed by name attribute the way fixtures.settlePayment does.
-  await page.locator('input[name="attachment"]').setInputFiles({
-    name: filename, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4\ninvoice body ${filename}\n%%EOF`)
-  });
+  await page.locator('input[name="attachment"]').setInputFiles(pdfUpload(filename));
   await page.getByRole('button', { name: /^Save and notify/ }).click();
   await page.waitForURL(new RegExp(`/requests/${requestId}$`));
   const href = await page
