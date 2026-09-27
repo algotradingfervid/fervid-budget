@@ -8,19 +8,46 @@ import (
 	"time"
 )
 
-func recordAuditTx(ctx context.Context, tx *sql.Tx, in AuditInput) error {
+// execer is what *sql.DB and *sql.Tx have in common for writing, so the audit
+// writer works both inside a caller's transaction and on its own.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// writeAudit appends one row to the audit log. Before and After are stored as
+// JSON; a nil value is stored as SQL NULL rather than the text "null".
+func writeAudit(ctx context.Context, db execer, in AuditInput) error {
 	before, _ := json.Marshal(in.Before)
 	after, _ := json.Marshal(in.After)
-	_, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json,ip) VALUES(?,?,?,?,?,?,?,?,?)`, in.ActorID, in.ActorName, in.Action, in.EntityType, in.EntityID, in.Summary, nullJSON(before), nullJSON(after), in.IP)
+	_, err := db.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json,ip) VALUES(?,?,?,?,?,?,?,?,?)`,
+		in.ActorID, in.ActorName, in.Action, in.EntityType, in.EntityID, in.Summary, nullJSON(before), nullJSON(after), in.IP)
 	return err
 }
 
+// recordAuditTx writes an audit row inside tx, so it commits or rolls back with
+// the change it describes. Every store writer uses this.
+func recordAuditTx(ctx context.Context, tx *sql.Tx, in AuditInput) error {
+	return writeAudit(ctx, tx, in)
+}
+
+// RecordAudit writes an audit row on its own, for callers outside the store
+// whose change is not part of a store transaction.
 func (s *Store) RecordAudit(ctx context.Context, in AuditInput) error {
-	before, _ := json.Marshal(in.Before)
-	after, _ := json.Marshal(in.After)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json,ip) VALUES(?,?,?,?,?,?,?,?,?)`,
-		in.ActorID, in.ActorName, in.Action, in.EntityType, in.EntityID, in.Summary, nullJSON(before), nullJSON(after), in.IP)
-	return err
+	return writeAudit(ctx, s.db, in)
+}
+
+// auditBy starts an audit entry made by actor. The actor id is always recorded,
+// even when it is 0: audit_log.actor_id references users, so a write without a
+// real actor fails instead of silently recording nobody. entityID may be nil
+// for entries that name no single row.
+func auditBy(actor User, action, entityType string, entityID *int64, summary string) AuditInput {
+	return AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: action, EntityType: entityType, EntityID: entityID, Summary: summary}
+}
+
+// withChange attaches the before and after snapshots to an audit entry.
+func (in AuditInput) withChange(before, after any) AuditInput {
+	in.Before, in.After = before, after
+	return in
 }
 
 func (s *Store) Audit(ctx context.Context, entityType string, entityID int64, limit int) ([]AuditEntry, error) {

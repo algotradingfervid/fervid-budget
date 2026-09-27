@@ -332,12 +332,10 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 			return classify(err)
 		}
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
-		Action: "update", EntityType: "user", EntityID: &in.ID,
-		Summary: "Updated user " + name,
-		Before:  map[string]any{"name": currentName, "role": currentRole, "active": currentActive == 1},
-		After: map[string]any{"name": name, "role": in.Role, "active": in.Active,
-			"role_ids": roleIDs, "default_approver_id": in.DefaultApproverID}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "update", "user", &in.ID, "Updated user "+name).withChange(
+		map[string]any{"name": currentName, "role": currentRole, "active": currentActive == 1},
+		map[string]any{"name": name, "role": in.Role, "active": in.Active,
+			"role_ids": roleIDs, "default_approver_id": in.DefaultApproverID})); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -73,9 +73,8 @@ func (s *Store) SetAppSettings(ctx context.Context, actor User, values map[strin
 			return classify(err)
 		}
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "settings",
-		EntityType: "app_setting", Summary: "Updated configuration: " + strings.Join(keys, ", "),
-		Before: before, After: after}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "settings", "app_setting", nil,
+		"Updated configuration: "+strings.Join(keys, ", ")).withChange(before, after)); err != nil {
 		return err
 	}
 	return tx.Commit()

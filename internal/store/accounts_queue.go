@@ -75,7 +75,7 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 	// as the request-module ones do: the detail thread shows the summary as the
 	// line's whole title, so a summary that leaves the name out is a line that
 	// says what happened and not who did it (L7–L10).
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "process", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " reserved the request for processing", After: map[string]any{"processing_by": actor.ID}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "process", "payment_request", &id, actor.Name+" reserved the request for processing").withChange(nil, map[string]any{"processing_by": actor.ID})); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -117,7 +117,7 @@ func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason
 	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='approved', processing_by=NULL, processing_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing'`, id); err != nil {
 		return err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "release", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " released the reservation: " + reason, Before: map[string]any{"processing_by": processingBy.Int64}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "release", "payment_request", &id, actor.Name+" released the reservation: "+reason).withChange(map[string]any{"processing_by": processingBy.Int64}, nil)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -177,10 +177,10 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 	} else if n == 0 {
 		return fmt.Errorf("%w: the reservation changed while you were deciding", ErrForbidden)
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "reassign", EntityType: "payment_request", EntityID: &id,
-		Summary: actor.Name + " reassigned the reservation to " + toName + ": " + reason,
-		Before:  map[string]any{"processing_by": processingBy.Int64},
-		After:   map[string]any{"processing_by": toUserID}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "reassign", "payment_request", &id,
+		actor.Name+" reassigned the reservation to "+toName+": "+reason).withChange(
+		map[string]any{"processing_by": processingBy.Int64},
+		map[string]any{"processing_by": toUserID})); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -356,7 +356,7 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	after.RequestID = &requestID
 	after.Settlement = storedSettlement
 	after.PartialReason = partialReason
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment", EntityID: &id, Summary: "Recorded payment " + money.FormatPaise(in.Amount), After: after}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "create", "payment", &id, "Recorded payment "+money.FormatPaise(in.Amount)).withChange(nil, after)); err != nil {
 		return 0, err
 	}
 	reqAction, reqSummary := "settle", actor.Name+" settled the request as completed"
@@ -366,7 +366,7 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if settlement == "installment" {
 		reqAction, reqSummary = "installment", actor.Name+" recorded an installment; "+money.FormatPaise(remaining-in.Amount)+" remains approved for payment"
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: reqAction, EntityType: "payment_request", EntityID: &requestID, Summary: reqSummary, After: map[string]any{"status": newStatus, "payment_id": id}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, reqAction, "payment_request", &requestID, reqSummary).withChange(nil, map[string]any{"status": newStatus, "payment_id": id})); err != nil {
 		return 0, err
 	}
 	if attachment != nil {
@@ -418,7 +418,7 @@ func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note st
 	if note != "" {
 		summary += ": " + note
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "accept_partial", EntityType: "payment_request", EntityID: &id, Summary: summary, After: map[string]any{"status": "completed_partial"}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "accept_partial", "payment_request", &id, summary).withChange(nil, map[string]any{"status": "completed_partial"})); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -459,7 +459,7 @@ func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment 
 	if _, err := tx.ExecContext(ctx, `UPDATE payment_requests SET concern_open=1, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
 		return err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "concern", EntityType: "payment_request", EntityID: &id, Summary: "Raised concern: " + comment}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "concern", "payment_request", &id, "Raised concern: "+comment)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -485,7 +485,7 @@ func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason st
 	} else if n == 0 {
 		return fmt.Errorf("%w: only an approved, not-already-held request can be held", ErrForbidden)
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "hold", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " put the request on hold: " + reason}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "hold", "payment_request", &id, actor.Name+" put the request on hold: "+reason)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -508,7 +508,7 @@ func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
 	} else if n == 0 {
 		return fmt.Errorf("%w: request is not on hold", ErrForbidden)
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unhold", EntityType: "payment_request", EntityID: &id, Summary: actor.Name + " lifted the hold"}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "unhold", "payment_request", &id, actor.Name+" lifted the hold")); err != nil {
 		return err
 	}
 	return tx.Commit()

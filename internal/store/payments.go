@@ -44,7 +44,7 @@ func (s *Store) createPayment(ctx context.Context, actor User, in PaymentInput, 
 		return 0, err
 	}
 	after := paymentFromInput(id, actor, in)
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "create", EntityType: "payment", EntityID: &id, Summary: "Recorded payment " + money.FormatPaise(in.Amount), After: after}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "create", "payment", &id, "Recorded payment "+money.FormatPaise(in.Amount)).withChange(nil, after)); err != nil {
 		return 0, err
 	}
 	if attachment != nil {
@@ -110,7 +110,7 @@ func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id 
 	after := paymentFromInput(id, actor, in)
 	after.EnteredBy, after.EnteredByName = before.EnteredBy, before.EnteredByName
 	after.UpdatedBy = &actor.ID
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "payment", EntityID: &id, Summary: "Edited payment " + money.FormatPaise(in.Amount), Before: before, After: after}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "update", "payment", &id, "Edited payment "+money.FormatPaise(in.Amount)).withChange(before, after)); err != nil {
 		return err
 	}
 	if attachment != nil {
@@ -160,7 +160,7 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 	after.VoidedBy, after.VoidReason = &actor.ID, reason
 	now := time.Now().UTC()
 	after.VoidedAt = &now
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "void", EntityType: "payment", EntityID: &id, Summary: "Voided payment " + money.FormatPaise(before.Amount), Before: before, After: after}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "void", "payment", &id, "Voided payment "+money.FormatPaise(before.Amount)).withChange(before, after)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -354,7 +354,7 @@ func addAttachmentTx(ctx context.Context, tx *sql.Tx, actor User, paymentID int6
 	if err != nil {
 		return 0, err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "attach", EntityType: "payment", EntityID: &paymentID, Summary: "Uploaded attachment " + attachment.OriginalName, After: map[string]any{"id": id, "name": attachment.OriginalName}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "attach", "payment", &paymentID, "Uploaded attachment "+attachment.OriginalName).withChange(nil, map[string]any{"id": id, "name": attachment.OriginalName})); err != nil {
 		return 0, err
 	}
 	return id, nil

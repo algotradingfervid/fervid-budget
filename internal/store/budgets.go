@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fervidbudget/internal/money"
 	"fmt"
 	"strings"
@@ -107,9 +106,7 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 			action, after.ID = "update", before.ID
 			summary = label + " " + month + ": " + money.FormatPaise(before.Amount) + " → " + money.FormatPaise(input.Amount)
 		}
-		beforeJSON, _ := json.Marshal(before)
-		afterJSON, _ := json.Marshal(after)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,entity_id,summary,before_json,after_json) VALUES(?,?,?,?,?,?,?,?)`, &actor.ID, actor.Name, action, "budget", after.ID, summary, nullJSON(beforeJSON), nullJSON(afterJSON)); err != nil {
+		if err := recordAuditTx(ctx, tx, auditBy(actor, action, "budget", &after.ID, summary).withChange(before, after)); err != nil {
 			return err
 		}
 	}
@@ -212,11 +209,8 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 	if sourceMonth != "" {
 		summary = fmt.Sprintf("%s from %s with %d copied budgets", summary, sourceMonth, copied)
 	}
-	after, err := json.Marshal(map[string]any{"month": targetMonth, "source_month": sourceMonth, "copied_budgets": copied})
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(actor_id,actor_name,action,entity_type,summary,after_json) VALUES(?,?,'create','budget_month',?,?)`, actor.ID, actor.Name, summary, string(after)); err != nil {
+	after := map[string]any{"month": targetMonth, "source_month": sourceMonth, "copied_budgets": copied}
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "create", "budget_month", nil, summary).withChange(nil, after)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -301,7 +295,7 @@ func (s *Store) LockMonth(ctx context.Context, actor User, month, reason string)
 	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET status='locked', updated_at=CURRENT_TIMESTAMP WHERE month=?`, month); err != nil {
 		return err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "lock", EntityType: "month_lock", Summary: "Locked " + month + ": " + reason, After: map[string]string{"month": month, "reason": reason}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "lock", "month_lock", nil, "Locked "+month+": "+reason).withChange(nil, map[string]string{"month": month, "reason": reason})); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -326,7 +320,7 @@ func (s *Store) UnlockMonth(ctx context.Context, actor User, month, reason strin
 	if _, err := tx.ExecContext(ctx, `UPDATE budget_months SET status='open', updated_at=CURRENT_TIMESTAMP WHERE month=?`, month); err != nil {
 		return err
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "unlock", EntityType: "month_lock", Summary: "Unlocked " + month + ": " + reason, Before: before, After: map[string]string{"reason": reason}}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "unlock", "month_lock", nil, "Unlocked "+month+": "+reason).withChange(before, map[string]string{"reason": reason})); err != nil {
 		return err
 	}
 	return tx.Commit()
