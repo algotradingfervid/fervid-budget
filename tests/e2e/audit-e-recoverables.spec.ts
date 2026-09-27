@@ -6,7 +6,9 @@ import {
   approveInFull,
   createApprovedRequest,
   settlePayment,
-  capturePageErrors
+  capturePageErrors,
+  today,
+  thisMonth
 } from './fixtures';
 import { asRole, probeGet, probePost, probeAnonymous, expectOutcome } from './audit-support';
 
@@ -868,8 +870,8 @@ test.describe('TC-E — Recoverables', () => {
   // -------------------------------------------------------------------------
 
   const HEAD = 'Office Rent';
-  const currentMonth = () => new Date().toISOString().slice(0, 7);
-  const today = () => new Date().toISOString().slice(0, 10);
+  // The server's local day and month, like every settlement it accepts.
+  const currentMonth = thisMonth;
 
   test('TC-E-027 — Baseline: grid and per-head report agree before any change', async ({ adminPage }) => {
     const month = currentMonth();
