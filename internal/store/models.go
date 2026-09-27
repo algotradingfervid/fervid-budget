@@ -28,7 +28,20 @@ type User struct {
 	// says otherwise (G9); 0 means none. A user is never their own default —
 	// SetUserDefaultApprover enforces it.
 	DefaultApproverID int64
+	// requestCache is an opaque value the auth layer attaches to the signed-in
+	// user for the length of one request (its permission cache). The store
+	// never reads it; users loaded from the database never carry one.
+	requestCache any
 }
+
+// WithRequestCache returns a copy of u carrying c. See User.requestCache.
+func (u User) WithRequestCache(c any) User {
+	u.requestCache = c
+	return u
+}
+
+// RequestCache returns the value WithRequestCache attached, or nil.
+func (u User) RequestCache() any { return u.requestCache }
 
 type Project struct {
 	ID        int64

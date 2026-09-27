@@ -251,7 +251,7 @@ func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, err)
 			return
 		}
-		a.renderRejectedRequestForm(w, r, status, in, friendly(err))
+		a.renderRejectedRequestForm(w, r, status, in, err)
 		return
 	}
 	a.fire(r, notify.EventRequestSubmitted, id)
@@ -261,7 +261,8 @@ func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
 // renderRejectedRequestForm puts the form back with the message and everything
 // the requester had typed still in it. Losing a page of typing to one bad field
 // is the cruellest thing a form can do.
-func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, status int, in store.RequestInput, message string) {
+func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, status int, in store.RequestInput, refusal error) {
+	message := friendly(refusal)
 	label, known := requestTypeLabels[in.Type]
 	if !known {
 		// A type the *store* does not recognise is a client error about the type,
@@ -291,6 +292,7 @@ func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	data.Error = message
+	data.UrgencyReasonError = errors.Is(refusal, store.ErrUrgencyReasonRequired)
 	data.DuplicateReason = in.DuplicateReason
 	data.RequestRawAmount = r.FormValue("amount")
 	data.RequestFieldErrors = requestFieldErrors(in)
@@ -1049,7 +1051,7 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, err)
 			return
 		}
-		a.renderRejectedEdit(w, r, req, in, status, friendly(err))
+		a.renderRejectedEdit(w, r, req, in, status, err)
 		return
 	}
 	// Not unconditionally. The seeded template for this event says the request
@@ -1071,7 +1073,7 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 // renderRejectedEdit puts the correction screen back with the message and
 // everything that was typed still in it, re-read from the row only for the
 // parts the form does not own.
-func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored store.Request, in store.RequestInput, status int, message string) {
+func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored store.Request, in store.RequestInput, status int, refusal error) {
 	data, err := a.requestEditData(r, editedRequest(stored, in))
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -1081,7 +1083,8 @@ func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored 
 	// legacy — but the stored one still is, and the notice about what saving
 	// does must not vanish because one field was refused.
 	noteLegacyDeposit(&data, stored)
-	data.Error = message
+	data.Error = friendly(refusal)
+	data.UrgencyReasonError = errors.Is(refusal, store.ErrUrgencyReasonRequired)
 	data.RequestRevision = r.FormValue("revision") // Never bless a stale retry with the latest revision.
 	data.RequestRawAmount = r.FormValue("amount")
 	data.RequestFieldErrors = requestFieldErrors(in)
@@ -1136,7 +1139,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 			locked+" is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.", nil)
 		return
 	}
-	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
+	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note")); err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			a.refuseRequestApproval(w, r, friendly(err))
 			return
@@ -1398,7 +1401,7 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 	}
 	id := pathID(r)
 	accept := r.FormValue("decision") == "accept"
-	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note")); err != nil {
+	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -1418,7 +1421,7 @@ func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := pathID(r)
-	if err := a.st.CancelRequest(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
+	if err := a.st.CancelRequest(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}

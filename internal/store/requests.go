@@ -796,6 +796,11 @@ func (s *Store) urgencyMode(ctx context.Context) (string, error) {
 	}
 }
 
+// ErrUrgencyReasonRequired refuses an urgent request with no reason when the
+// configuration asks for one. It is a sentinel so the request form can tie the
+// message to the reason field with errors.Is instead of matching its wording.
+var ErrUrgencyReasonRequired = fmt.Errorf("%w: say why this is urgent", ErrValidation)
+
 // validateUrgency enforces G7. It is separate from validateRequestInput because
 // the rule is configuration-driven and validateRequestInput stays pure.
 func validateUrgency(in RequestInput, mode string) error {
@@ -809,7 +814,7 @@ func validateUrgency(in RequestInput, mode string) error {
 		return nil
 	default:
 		if strings.TrimSpace(in.UrgencyReason) == "" {
-			return fmt.Errorf("%w: say why this is urgent", ErrValidation)
+			return ErrUrgencyReasonRequired
 		}
 	}
 	return nil
@@ -1458,7 +1463,7 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 // DecideCancellation is the approver's answer to G1. Accepting closes the
 // request permanently; declining unfreezes it back to approved and requires a
 // written reason, because Accounts and the requester both read it.
-func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, accept bool, note string) error {
+func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, accept bool, note string, revisions ...string) error {
 	note = strings.TrimSpace(note)
 	if !accept && note == "" {
 		return fmt.Errorf("%w: say why it should still be paid", ErrValidation)
@@ -1503,6 +1508,12 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 	if accept && before.PaidAmount > 0 {
 		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
 	}
+	// Like approve/return/reject, the decision holds only for the request the
+	// approver was looking at: an edit, comment or other change since the
+	// screen was drawn refuses it.
+	if err := checkDecisionRevision(ctx, tx, before, revisions); err != nil {
+		return err
+	}
 
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?`+holdSQL+`, updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status='cancellation_requested' AND manager_id=?`, to, note, id, actor.ID)
@@ -1530,7 +1541,7 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 
 // CancelRequest is G2: the approver cancels an approved request outright,
 // without the requester having asked. A reason is always required.
-func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason string) error {
+func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason string, revisions ...string) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return fmt.Errorf("%w: a reason is required to cancel a request", ErrValidation)
@@ -1554,6 +1565,10 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 	// must never hide that paid obligation or its recoverable balance.
 	if before.PaidAmount > 0 {
 		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	}
+	// Bound to the revision the approver saw, as approve/return/reject are.
+	if err := checkDecisionRevision(ctx, tx, before, revisions); err != nil {
+		return err
 	}
 
 	// A cancelled request is dead, so nothing may still be "on hold" on it: the

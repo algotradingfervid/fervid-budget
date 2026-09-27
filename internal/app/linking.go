@@ -353,7 +353,7 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 		a.respondStoreError(w, r, err)
 		return
 	}
-	choices := configuredPaymentChoices(settings)
+	choices := paymentModeChoices(settings, "")
 	vendor := store.Vendor{}
 	defaultMode := ""
 	if req.VendorID != nil {
@@ -1202,10 +1202,39 @@ func initials(name string) string {
 	return string(out)
 }
 
-// paymentModes is the stored vocabulary of payment modes, in the order the form
-// offers them. paymentMode() spells each one for a person.
-func paymentModes() []string {
-	return []string{"neft", "rtgs", "bank_transfer", "cheque", "upi", "cash", "card", "dd", "other"}
+// paymentModes is the stored vocabulary of payment modes (store.PaymentModes,
+// the one list the server also validates against). paymentMode() spells each
+// one for a person.
+func paymentModes() []string { return store.PaymentModes() }
+
+// paymentModeChoices is the option list of every payment form — settlement
+// entry and the historical payment edit alike — so the two can never offer
+// different modes. It follows the "Payment modes offered" setting (order and
+// labels), keeping only modes in the vocabulary, since the server refuses the
+// rest. With nothing usable configured it offers the whole vocabulary. The
+// payment's current mode is always kept, so an edit never silently drops it.
+func paymentModeChoices(settings map[string]string, current string) []PaymentModeChoice {
+	out := []PaymentModeChoice{}
+	seen := map[string]bool{}
+	add := func(value, label string) {
+		if store.IsPaymentMode(value) && !seen[value] {
+			seen[value] = true
+			out = append(out, PaymentModeChoice{Value: value, Label: label})
+		}
+	}
+	for _, label := range strings.Split(settings["payment_modes"], ",") {
+		label = strings.TrimSpace(label)
+		add(canonicalPaymentMode(label), label)
+	}
+	if len(out) == 0 {
+		for _, mode := range paymentModes() {
+			add(mode, paymentModeText(mode))
+		}
+	}
+	if mode := canonicalPaymentMode(current); mode != "" {
+		add(mode, paymentModeText(mode))
+	}
+	return out
 }
 
 // mergedTrail is the request-to-payment history the settlement screens render.

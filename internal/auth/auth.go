@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fervidbudget/internal/config"
@@ -31,10 +32,13 @@ type Manager struct {
 	cfg     config.Config
 	store   *store.Store
 	onError func(http.ResponseWriter, *http.Request, int, string)
+	// loadPerms reads one user's permission set from the database. It is a field
+	// only so a test can count how often the database is actually asked.
+	loadPerms func(ctx context.Context, userID int64) (store.PermissionSet, error)
 }
 
 func New(cfg config.Config, st *store.Store) (*Manager, error) {
-	return &Manager{cfg: cfg, store: st}, nil
+	return &Manager{cfg: cfg, store: st, loadPerms: st.EffectivePermissions}, nil
 }
 
 func HashPassword(password string) (string, error) {
@@ -68,6 +72,9 @@ func (m *Manager) Logout(w http.ResponseWriter) {
 func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, ok := m.userFromRequest(r); ok {
+			// The signed-in user carries this request's permission cache, so
+			// every Can/Scope/Permissions call made with CurrentUser(r) shares it.
+			u = u.WithRequestCache(newPermissionCache(r.Context()))
 			r = r.WithContext(context.WithValue(r.Context(), userKey, u))
 		}
 		next.ServeHTTP(w, r)
@@ -88,14 +95,51 @@ func (m *Manager) RequireLogin(next http.Handler) http.Handler {
 	})
 }
 
-// permsFor loads the caller's effective permission set from the roles tables.
-// Correctness-first: it queries per request (a short-TTL cache keyed by user id
-// is a later option).
+// permissionCache remembers the permission sets already read during one
+// request, keyed by user id. A single page asks Can/Scope/Permissions many
+// times (the route gate, the navigation, the dashboard cards, the rendered
+// buttons), and each answer used to cost two SQL queries.
+//
+// Middleware creates one per request and attaches it to the signed-in user it
+// puts in the request context, so it dies with the request: a role or grant an
+// admin changes applies on the very next request (the role and user screens
+// redirect after a successful save). A user loaded from the database — some
+// handlers ask about people other than the signed-in one — carries no cache
+// and is always read fresh.
+type permissionCache struct {
+	ctx  context.Context // the request's context, used for the queries
+	mu   sync.Mutex
+	sets map[int64]store.PermissionSet
+}
+
+func newPermissionCache(ctx context.Context) *permissionCache {
+	return &permissionCache{ctx: ctx, sets: map[int64]store.PermissionSet{}}
+}
+
+// permsFor returns a user's effective permission set: from the request's cache
+// when this request has already read it, otherwise from the roles tables. A
+// failed read is never cached, so the next call tries the database again.
 func (m *Manager) permsFor(u store.User) (store.PermissionSet, error) {
 	if u.ID == 0 {
 		return store.EmptyPermissions(), nil
 	}
-	return m.store.EffectivePermissions(context.Background(), u.ID)
+	cache, _ := u.RequestCache().(*permissionCache)
+	// A cache whose request has finished is ignored rather than trusted: the
+	// user value has outlived its request, so it reads fresh as before.
+	if cache == nil || cache.ctx.Err() != nil {
+		return m.loadPerms(context.Background(), u.ID)
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if ps, ok := cache.sets[u.ID]; ok {
+		return ps, nil
+	}
+	ps, err := m.loadPerms(cache.ctx, u.ID)
+	if err != nil {
+		return ps, err
+	}
+	cache.sets[u.ID] = ps
+	return ps, nil
 }
 
 // Permissions returns the caller's effective permission set for template use;

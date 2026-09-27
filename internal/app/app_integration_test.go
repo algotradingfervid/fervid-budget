@@ -154,10 +154,15 @@ func (s *appTestServer) postForm(path string, form url.Values) *http.Response {
 		}
 	}
 
-	if strings.HasPrefix(path, "/requests/") && (strings.HasSuffix(path, "/edit") || strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/return") || strings.HasSuffix(path, "/reject")) && !form.Has("revision") {
+	if strings.HasPrefix(path, "/requests/") && (strings.HasSuffix(path, "/edit") || strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/return") || strings.HasSuffix(path, "/reject") || strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation")) && !form.Has("revision") {
 		pagePath := path
 		if !strings.HasSuffix(path, "/edit") {
 			pagePath = path[:strings.LastIndex(path, "/")]
+		}
+		// Both cancellation decisions are posted from the approver's
+		// cancellation screen.
+		if strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation") {
+			pagePath += "/cancellation"
 		}
 		page := responseBody(s.t, s.request(http.MethodGet, pagePath, nil, ""))
 		matches := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)

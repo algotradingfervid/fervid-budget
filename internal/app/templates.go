@@ -49,7 +49,7 @@ const templates = `
 <main class="page" id="main-content" tabindex="-1">
 <div class="page-inner">
 {{if .ContextBackHref}}<p class="context-back"><a href="{{.ContextBackHref}}">← {{.ContextBackLabel}}</a></p>{{end}}
-{{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive"{{if eq .Error "say why this is urgent"}} data-server-error-for="urgency_reason"{{end}}>{{.Error}}</div>{{end}}
+{{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive"{{if .UrgencyReasonError}} data-server-error-for="urgency_reason"{{end}}>{{.Error}}</div>{{end}}
 {{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
 {{end}}
 
@@ -249,7 +249,7 @@ const templates = `
   </div></fieldset>
   <fieldset class="payment-section payment-reference" {{if .Locked}}disabled{{end}}><legend>Vendor and reference</legend><div class="form-grid">
     <label class="field span-4">Vendor / Payee<input name="vendor_payee" value="{{.Payment.VendorPayee}}"></label>
-    <label class="field span-3">Payment mode<select name="payment_mode"><option value="">Select</option><option value="cash" {{select .Payment.PaymentMode "cash"}}>Cash</option><option value="bank_transfer" {{select .Payment.PaymentMode "bank_transfer"}}>Bank transfer</option><option value="cheque" {{select .Payment.PaymentMode "cheque"}}>Cheque</option><option value="card" {{select .Payment.PaymentMode "card"}}>Card</option><option value="upi" {{select .Payment.PaymentMode "upi"}}>UPI</option><option value="other" {{select .Payment.PaymentMode "other"}}>Other</option></select></label>
+    <label class="field span-3">Payment mode<select name="payment_mode"><option value="">Select</option>{{range .PaymentModeChoices}}<option value="{{.Value}}" {{select .Value $.Payment.PaymentMode}}>{{.Label}}</option>{{end}}</select></label>
     <label class="field span-3">Invoice / Bill No<input name="invoice_no" value="{{.Payment.InvoiceNo}}"></label>
     <label class="field span-2">Reference No<input name="reference_no" value="{{.Payment.ReferenceNo}}"></label>
   </div></fieldset>
@@ -3481,6 +3481,7 @@ const templates = `
 <div class="overlay" id="accept-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/cancellation">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="revision" value="{{.RequestRevision}}">
     <input type="hidden" name="decision" value="accept">
     <div class="sh-head"><div><h2>Cancel {{.Request2.Number}}?</h2><p class="sh-sub">{{money .Request2.Amount}} to {{.Request2.Vendor}}</p></div><button class="sh-close" type="button" data-close="accept-sheet" aria-label="Close">✕</button></div>
     <div class="sh-body stack-12">
@@ -3494,6 +3495,7 @@ const templates = `
 <div class="overlay" id="decline-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/cancellation">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="revision" value="{{.RequestRevision}}">
     <input type="hidden" name="decision" value="decline">
     <div class="sh-head"><div><h2>Decline the cancellation</h2><p class="sh-sub">The request returns to Approved — awaiting payment.</p></div><button class="sh-close" type="button" data-close="decline-sheet" aria-label="Close">✕</button></div>
     <div class="sh-body stack-12">
@@ -3506,6 +3508,7 @@ const templates = `
 <div class="overlay" id="outright-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/cancel">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="revision" value="{{.RequestRevision}}">
     <div class="sh-head"><div><h2>Cancel {{.Request2.Number}}?</h2><p class="sh-sub">{{.Request2.RequesterName}} did not ask for this.</p></div><button class="sh-close" type="button" data-close="outright-sheet" aria-label="Close">✕</button></div>
     <div class="sh-body stack-12">
       <div class="field"><label for="oc-reason">Reason <span class="req" aria-hidden="true">*</span></label><textarea id="oc-reason" name="reason" required placeholder="{{.Request2.RequesterName}} and Accounts both see this."></textarea></div>
