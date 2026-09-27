@@ -15,10 +15,14 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// friendly turns a store error into the sentence a person reads. The
-// `validation failed: ` sentinel is stripped: it is how the code recognises the
-// class of error, never something anybody wants to find at the top of a form
-// (F-B-08).
+// friendly turns a store error into the sentence a person reads.
+//
+// A validation error shows the store's own sentence without the "validation
+// failed: " prefix, with its first letter left as the store wrote it (screens
+// also embed these sentences mid-line). A refusal (ErrForbidden) that carries
+// a reason, such as "this request is on hold", shows that reason with a
+// capital first letter; a bare refusal gets the generic permission sentence.
+// Anything unrecognised gets a generic sentence.
 func friendly(err error) string {
 	switch {
 	case errors.Is(err, store.ErrLockedMonth):
@@ -28,19 +32,8 @@ func friendly(err error) string {
 	case errors.Is(err, store.ErrInactiveHead):
 		return "This project/head is inactive."
 	case errors.Is(err, store.ErrValidation):
-		// The sentence only, never the sentinel. The case of the first letter is
-		// left exactly as the store wrote it: these strings are sentence
-		// fragments the screens embed as well as show ("Correct it and confirm
-		// again"), and a great many of them are asserted verbatim.
 		return strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": ")
 	case errors.Is(err, store.ErrForbidden):
-		// A refusal that carries a reason keeps it. The state conflicts on the
-		// settlement path — "reserve this request before recording its payment",
-		// "this request is on hold" — are rules, not faults, and fell through to
-		// the generic sentence that also covers a genuine server error (F-A-09).
-		// The sentinel prefix is trimmed because "forbidden: …" is not a sentence
-		// a person reads; ErrForbidden alone, with nothing wrapped, still gets the
-		// permission wording.
 		if msg := strings.TrimPrefix(err.Error(), store.ErrForbidden.Error()+": "); msg != err.Error() {
 			return upperFirst(msg)
 		}
@@ -50,6 +43,7 @@ func friendly(err error) string {
 	}
 }
 
+// upperFirst capitalises the first byte of s (the store's messages are ASCII).
 func upperFirst(s string) string {
 	if s == "" {
 		return s
@@ -57,6 +51,8 @@ func upperFirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// usedPct is the width of a budget bar: actual as a percentage of budget,
+// capped at 118% so an overspent bar still fits its track.
 func usedPct(budget, actual int64) string {
 	if budget <= 0 || actual <= 0 {
 		return "0%"
@@ -68,6 +64,8 @@ func usedPct(budget, actual int64) string {
 	return fmt.Sprintf("%.1f%%", pct)
 }
 
+// usedText is actual as a whole percentage of budget, or "No budget" when
+// money was spent against no budget.
 func usedText(budget, actual int64) string {
 	if budget <= 0 && actual > 0 {
 		return "No budget"
@@ -79,6 +77,8 @@ func usedText(budget, actual int64) string {
 	return fmt.Sprintf("%.0f%%", pct)
 }
 
+// remainingText is what is left of the budget as a whole percentage (negative
+// when overspent), or "N/A" without a budget.
 func remainingText(budget, actual int64) string {
 	if budget <= 0 {
 		return "N/A"
@@ -88,21 +88,18 @@ func remainingText(budget, actual int64) string {
 	return fmt.Sprintf("%.0f%%", pct)
 }
 
-func barClass(status string) string {
-	switch status {
-	case "over":
-		return "is-over"
-	case "under":
-		return "is-under"
-	case "on-track":
-		return "is-ontrack"
-	case "unbudgeted":
-		return "is-unbudgeted"
-	default:
-		return ""
-	}
+// barClasses is the CSS class of a budget bar for each grid status.
+var barClasses = map[string]string{
+	"over":       "is-over",
+	"under":      "is-under",
+	"on-track":   "is-ontrack",
+	"unbudgeted": "is-unbudgeted",
 }
 
+// barClass is the CSS class of a budget bar ("" for other statuses).
+func barClass(status string) string { return barClasses[status] }
+
+// varClass colours a variance: positive (under budget), negative or zero.
 func varClass(variance int64) string {
 	switch {
 	case variance > 0:
@@ -114,36 +111,33 @@ func varClass(variance int64) string {
 	}
 }
 
-func statusText(status string) string {
-	switch status {
-	case "no-activity":
-		return "No activity"
-	case "over":
-		return "Over budget"
-	case "under":
-		return "Under budget"
-	case "on-track":
-		return "On track"
-	case "not-paid":
-		return "Not paid"
-	case "unbudgeted":
-		return "Unbudgeted spend"
-	default:
-		return status
+// labelOr returns labels[value], or value itself when it has no label.
+func labelOr(labels map[string]string, value string) string {
+	if label, ok := labels[value]; ok {
+		return label
 	}
+	return value
 }
 
+// gridStatusLabels are the words for each grid status (see statusForView).
+var gridStatusLabels = map[string]string{
+	"no-activity": "No activity",
+	"over":        "Over budget",
+	"under":       "Under budget",
+	"on-track":    "On track",
+	"not-paid":    "Not paid",
+	"unbudgeted":  "Unbudgeted spend",
+}
+
+// statusText is the label of a grid status.
+func statusText(status string) string { return labelOr(gridStatusLabels, status) }
+
+// planStatusText is the label of a month plan's status.
 func planStatusText(status string) string {
-	switch status {
-	case "locked":
-		return "Locked"
-	case "open":
-		return "Open"
-	default:
-		return status
-	}
+	return labelOr(map[string]string{"locked": "Locked", "open": "Open"}, status)
 }
 
+// statusForView is a head's grid status from its budget and actual spend.
 func statusForView(budget, actual int64) string {
 	switch {
 	case budget == 0 && actual == 0:
@@ -161,20 +155,21 @@ func statusForView(budget, actual int64) string {
 	}
 }
 
+// dueClass says where a head's usual payment day stands in the grid's month:
+// "overdue", "today" or "upcoming" while its budget is still unpaid,
+// "recorded" once spend is recorded, and "none" when there is nothing to say
+// (no activity, or no usable day or month).
 func dueClass(dueDay, month, status string) string {
 	if status == "no-activity" {
 		return "none"
 	}
-	// Grid status is budget utilization, not the settlement state of its requests.
+	// The grid status is about budget use, not about the requests' settlement.
 	if status != "not-paid" {
 		return "recorded"
 	}
 	day, ok := dueDayNumber(dueDay)
-	if !ok || !validMonthInput(month) {
-		return "none"
-	}
 	start, err := time.Parse(monthLayout, month)
-	if err != nil {
+	if !ok || err != nil {
 		return "none"
 	}
 	last := start.AddDate(0, 1, -1).Day()
@@ -199,6 +194,7 @@ func dueClass(dueDay, month, status string) string {
 	}
 }
 
+// dueText is the words for dueClass.
 func dueText(dueDay, month, status string) string {
 	if status == "no-activity" {
 		if strings.TrimSpace(dueDay) != "" {
@@ -206,8 +202,7 @@ func dueText(dueDay, month, status string) string {
 		}
 		return "No planned spend"
 	}
-	class := dueClass(dueDay, month, status)
-	switch class {
+	switch dueClass(dueDay, month, status) {
 	case "recorded":
 		return "Payment recorded"
 	case "overdue":
@@ -224,6 +219,8 @@ func dueText(dueDay, month, status string) string {
 	}
 }
 
+// dueDayNumber reads the first number in a free-text due day ("5th",
+// "day 12") and reports whether it is a day of the month (1 to 31).
 func dueDayNumber(dueDay string) (int, bool) {
 	digits := ""
 	for _, r := range dueDay {
@@ -240,59 +237,41 @@ func dueDayNumber(dueDay string) (int, bool) {
 	return n, err == nil && n >= 1 && n <= 31
 }
 
+// paymentModeLabels are the words for each payment mode key.
+var paymentModeLabels = map[string]string{
+	"neft":          "NEFT",
+	"rtgs":          "RTGS",
+	"dd":            "Demand draft",
+	"bank_transfer": "Bank transfer",
+	"cash":          "Cash",
+	"cheque":        "Cheque",
+	"card":          "Card",
+	"upi":           "UPI",
+	"other":         "Other",
+}
+
+// paymentModeText is the label of a payment mode. Older rows may store a
+// label ("Bank transfer") rather than a key, so the mode is first turned into
+// its key; a mode with no label is shown exactly as stored.
 func paymentModeText(mode string) string {
-	switch canonicalPaymentMode(mode) {
-	case "neft":
-		return "NEFT"
-	case "rtgs":
-		return "RTGS"
-	case "dd":
-		return "Demand draft"
-	case "bank_transfer":
-		return "Bank transfer"
-	case "cash":
-		return "Cash"
-	case "cheque":
-		return "Cheque"
-	case "card":
-		return "Card"
-	case "upi":
-		return "UPI"
-	case "other":
-		return "Other"
-	default:
-		return mode
+	if label, ok := paymentModeLabels[canonicalPaymentMode(mode)]; ok {
+		return label
 	}
+	return mode
 }
 
+// vendorTypeText is the label of a vendor type.
 func vendorTypeText(t string) string {
-	switch t {
-	case "company":
-		return "Company"
-	case "proprietor":
-		return "Proprietor"
-	case "individual":
-		return "Individual"
-	default:
-		return t
-	}
+	return labelOr(map[string]string{"company": "Company", "proprietor": "Proprietor", "individual": "Individual"}, t)
 }
 
+// vendorStatusText is the label of a vendor status.
 func vendorStatusText(status string) string {
-	switch status {
-	case "active":
-		return "Active"
-	case "inactive":
-		return "Inactive"
-	default:
-		return status
-	}
+	return labelOr(map[string]string{"active": "Active", "inactive": "Inactive"}, status)
 }
 
-// categoryChain renders the stored comma-separated categories the way the
-// approved list screen does, as a "·" chain. store.SplitCategories is what
-// decides the boundaries, so the filter's option list and this reading can
-// never disagree about what a category is.
+// categoryChain shows stored comma-separated categories as a
+// "·" chain, split the same way the category filter splits them.
 func categoryChain(raw string) string {
 	return strings.Join(store.SplitCategories(raw), " · ")
 }
@@ -306,6 +285,7 @@ func plural(n int, one, many string) string {
 	return many
 }
 
+// boolText shows an active flag as "Active" or "Inactive".
 func boolText(v bool) string {
 	if v {
 		return "Active"
@@ -313,10 +293,14 @@ func boolText(v bool) string {
 	return "Inactive"
 }
 
+// hasText reports whether s has content: not blank and not the JSON "null".
 func hasText(s string) bool {
-	return strings.TrimSpace(s) != "" && strings.TrimSpace(s) != "null"
+	s = strings.TrimSpace(s)
+	return s != "" && s != "null"
 }
 
+// jsonPretty indents a JSON document for display; text that is not JSON is
+// returned unchanged, and an empty or "null" value becomes "".
 func jsonPretty(s string) string {
 	if !hasText(s) {
 		return ""
@@ -332,6 +316,7 @@ func jsonPretty(s string) string {
 	return string(out)
 }
 
+// fileSize shows a byte count as B, KB or MB (1024-based, one decimal).
 func fileSize(size int64) string {
 	switch {
 	case size >= 1024*1024:

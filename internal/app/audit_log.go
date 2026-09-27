@@ -1,23 +1,23 @@
 package app
 
 // The audit log screen: filtering, paging, hiding rows the reader may not
-// see, and the labels for audit actions and entities.
+// see, and the labels and filter options for audit actions and entities.
 
 import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
 )
 
+// auditLog shows the audit log, newest first, one page of auditPageSize
+// rows at a time. The filters (entity type and id, action, actor, and a
+// from/to range of local days, both inclusive) all run in SQL over the whole
+// log. An offset past the last page shows the last page instead.
 func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
-	// Every filter, the dates included, runs in SQL over the whole log and the
-	// result is paged (audit-1). It used to read the newest 1000 rows, filter
-	// action and actor in Go, and cut the list at 200 without a word, so older
-	// rows could not be reached at all. from/to are local days, inclusive, as
-	// the When column shows local time.
 	qs := r.URL.Query()
 	q := store.AuditQuery{
 		EntityType: strings.TrimSpace(qs.Get("entity")),
@@ -27,20 +27,19 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 		Offset:     int(parseID(qs.Get("offset"))),
 	}
 	from, to := auditDay(qs.Get("from")), auditDay(qs.Get("to"))
-	if !from.IsZero() {
-		q.From = from
-	}
+	q.From = from
 	if !to.IsZero() {
-		q.To = to.AddDate(0, 0, 1)
+		q.To = to.AddDate(0, 0, 1) // up to the end of the "to" day
 	}
+	seesAll := a.seesWholeAudit(auth.CurrentUser(r))
 	fetch := func(offset int) (store.AuditPage, error) {
-		if a.auth.Scope(auth.CurrentUser(r), "request") == store.ScopeAll && a.auth.Scope(auth.CurrentUser(r), "payment") == store.ScopeAll && a.auth.Can(auth.CurrentUser(r), "request", "view") && a.auth.Can(auth.CurrentUser(r), "payment", "view") {
+		if seesAll {
 			q.Limit, q.Offset = auditPageSize, offset
 			return a.st.AuditPage(r.Context(), q)
 		}
-		// A scoped reader's request rows are withheld in Go (below), so the
-		// page is cut after that, over every matching row, to keep the count
-		// and the pages honest. No seeded holder of audit:view takes this path.
+		// For a reader with a narrower scope, rows are filtered in Go, so every
+		// matching row is read and the page is cut afterwards; that keeps the
+		// total and the paging right.
 		page, err := a.st.AuditPage(r.Context(), store.AuditQuery{EntityType: q.EntityType, EntityID: q.EntityID,
 			Action: q.Action, Actor: q.Actor, From: q.From, To: q.To})
 		if err != nil {
@@ -49,9 +48,6 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 		return pageAuditEntries(a.auditWithinRequestScope(r, page.Entries), offset), nil
 	}
 	page, err := fetch(q.Offset)
-	// An offset past the end — a stale or hand-edited URL — used to show the
-	// empty state as "Showing 0 of N" with a Newer link to a page that was
-	// just as empty (audit-1 review). It lands on the last real page instead.
 	if err == nil && len(page.Entries) == 0 && page.Total > 0 && q.Offset > 0 {
 		page, err = fetch(lastAuditPageOffset(page.Total))
 	}
@@ -68,6 +64,13 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 		data.AuditTo = to.Format(time.DateOnly)
 	}
 	a.render(w, r, "audit", data)
+}
+
+// seesWholeAudit reports whether u may read every request and every payment,
+// in which case no audit row needs hiding.
+func (a *App) seesWholeAudit(u store.User) bool {
+	return a.auth.Scope(u, "request") == store.ScopeAll && a.auth.Scope(u, "payment") == store.ScopeAll &&
+		a.auth.Can(u, "request", "view") && a.auth.Can(u, "payment", "view")
 }
 
 // auditPageSize is how many audit rows one /audit page shows.
@@ -103,42 +106,30 @@ func pageAuditEntries(entries []store.AuditEntry, offset int) store.AuditPage {
 	if offset >= len(entries) {
 		offset = lastAuditPageOffset(len(entries))
 	}
-	end := offset + auditPageSize
-	if end > len(entries) {
-		end = len(entries)
-	}
+	end := min(offset+auditPageSize, len(entries))
 	page.Offset, page.Entries = offset, entries[offset:end]
 	page.Truncated = end < len(entries)
 	return page
 }
 
-// auditWithinRequestScope applies the request row scope to the audit log.
+// auditWithinRequestScope removes the audit rows the reader may not see. Rows
+// are hidden, not blanked: an audit row about a request or payment carries
+// the whole record (number, people, amounts), so showing it would reveal
+// exactly what the record's own page refuses to show.
 //
-// The decision (F-G-017): the log is **scoped**, not redacted. C2 requires an
-// audit history for request mutations, and a history whose evidence has been
-// blanked out is not one — the whole value of `before_json`/`after_json` is that
-// a reviewer can see what actually changed. But `before_json` for a
-// payment_request row is the entire Request struct: number, purpose, requester,
-// approver, amount, every date. Rendering that to a caller who is answered 403
-// on /requests/{id} makes audit:view a way around Q5/R6, and it carries strictly
-// more data than the screens that do check. So the rows themselves are withheld
-// from a reader whose scope does not reach the request, exactly as
-// loadViewableRequest withholds the request.
+//   - A payment row stays when canReadPayment allows that payment.
+//   - A request row stays when the reader has request:view and their request
+//     scope reaches that request. A request row without an id is dropped.
+//   - Every other row (budgets, users, settings …) always stays.
 //
-// Nothing else is touched: a payment, a budget or a user row is unaffected, and
-// a caller with request=all — which is every seeded holder of audit:view — sees
-// precisely what they saw before.
-//
-// The lookup is one query per distinct request id, memoised, and it runs only
-// for a caller whose scope is narrower than "all". That is the same trade
-// reassignCandidates makes; if it ever costs anything the fix is a batched read
-// in the store, not a looser rule.
+// A reader who sees everything gets the list back unchanged. Otherwise each
+// distinct request is looked up once.
 func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntry) []store.AuditEntry {
 	u := auth.CurrentUser(r)
-	scope := a.auth.Scope(u, "request")
-	if scope == store.ScopeAll && a.auth.Scope(u, "payment") == store.ScopeAll && a.auth.Can(u, "request", "view") && a.auth.Can(u, "payment", "view") {
+	if a.seesWholeAudit(u) {
 		return entries
 	}
+	scope := a.auth.Scope(u, "request")
 	visible := map[int64]bool{}
 	out := entries[:0]
 	for _, entry := range entries {
@@ -155,8 +146,6 @@ func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntr
 			out = append(out, entry)
 			continue
 		}
-		// A payment_request row with no id names no request, so there is no scope
-		// to check it against and no way to prove it may be read.
 		if entry.EntityID == nil {
 			continue
 		}
@@ -172,121 +161,92 @@ func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntr
 	return out
 }
 
-// actionText spells an audit action for a person. It covers every action string
-// the store writes, because an action with no case renders its raw lower-case
-// identifier in the audit pill — which is what `settings` did on every
-// configuration save (F-G-004). auditActions below is built from the same list,
-// so the filter can never offer an action this cannot name.
+// auditActionInfo is how one audit action is shown on the audit log: its
+// label and the colour class of its pill. InFilter says whether the Action
+// filter offers it.
+type auditActionInfo struct {
+	Value, Label, Class string
+	InFilter            bool
+}
+
+// auditActionTable lists every action the store writes to the audit log, in
+// the order the Action filter offers them (the request workflow reads as a
+// workflow, not as an alphabet). The last three are older or rarely written
+// names that still need a label but are not offered as filters.
+var auditActionTable = []auditActionInfo{
+	{"create", "Created", "good", true},
+	{"update", "Updated", "info", true},
+	{"delete", "Deleted", "neutral", true},
+	{"attach", "Attached", "info", true},
+	{"comment", "Commented", "info", true},
+	{"submit", "Submitted", "good", true},
+	{"approve", "Approved", "good", true},
+	{"return", "Returned", "warn", true},
+	{"reject", "Rejected", "bad", true},
+	{"withdraw", "Withdrawn", "warn", true},
+	{"reraise", "Raised again", "info", true},
+	{"cancel_request", "Cancellation asked", "neutral", true},
+	{"cancel", "Cancelled", "bad", true},
+	{"approval_reassign", "Approval reassigned", "info", true},
+	{"process", "Reserved", "info", true},
+	{"release", "Released", "info", true},
+	{"reassign", "Reservation reassigned", "info", true},
+	{"hold", "Put on hold", "warn", true},
+	{"unhold", "Taken off hold", "good", true},
+	{"settle", "Settled", "good", true},
+	{"mark_partial", "Marked partial", "warn", true},
+	{"accept_partial", "Partial accepted", "good", true},
+	{"concern", "Concern raised", "bad", true},
+	{"remind", "Reminder sent", "info", true},
+	{"recovery", "Recovery recorded", "neutral", true},
+	{"void", "Voided", "bad", true},
+	{"lock", "Locked", "warn", true},
+	{"unlock", "Unlocked", "warn", true},
+	{"settings", "Settings saved", "info", true},
+	{"export", "Exported", "neutral", true},
+	{"login", "Logged in", "neutral", true},
+	{"logout", "Logged out", "neutral", true},
+	{"login_failed", "Login failed", "bad", true},
+	{"edit", "Updated", "info", false},
+	{"reserve", "Reserved", "info", false},
+	{"view", "Viewed", "neutral", false},
+}
+
+// auditActionByValue indexes auditActionTable by action.
+var auditActionByValue = func() map[string]auditActionInfo {
+	m := make(map[string]auditActionInfo, len(auditActionTable))
+	for _, info := range auditActionTable {
+		m[info.Value] = info
+	}
+	return m
+}()
+
+// actionText is an audit action's label; an unknown action shows as itself.
 func actionText(action string) string {
-	switch action {
-	case "recovery":
-		return "Recovery recorded"
-	case "create":
-		return "Created"
-	case "update", "edit":
-		return "Updated"
-	case "delete":
-		return "Deleted"
-	case "void":
-		return "Voided"
-	case "lock":
-		return "Locked"
-	case "unlock":
-		return "Unlocked"
-	case "login":
-		return "Logged in"
-	case "logout":
-		return "Logged out"
-	case "export":
-		return "Exported"
-	case "attach":
-		return "Attached"
-	case "login_failed":
-		return "Login failed"
-	case "settings":
-		return "Settings saved"
-	// The request workflow (Phase 2) and the settlement flow (Phase 3). Every one
-	// of these is written against entity_type 'payment_request'.
-	case "submit":
-		return "Submitted"
-	case "approve":
-		return "Approved"
-	case "return":
-		return "Returned"
-	case "reject":
-		return "Rejected"
-	case "withdraw":
-		return "Withdrawn"
-	case "reraise":
-		return "Raised again"
-	case "comment":
-		return "Commented"
-	case "cancel":
-		return "Cancelled"
-	case "cancel_request":
-		return "Cancellation asked"
-	case "approval_reassign":
-		return "Approval reassigned"
-	case "process":
-		return "Reserved"
-	case "reserve":
-		return "Reserved"
-	case "release":
-		return "Released"
-	case "reassign":
-		return "Reservation reassigned"
-	case "hold":
-		return "Put on hold"
-	case "unhold":
-		return "Taken off hold"
-	case "settle":
-		return "Settled"
-	case "mark_partial":
-		return "Marked partial"
-	case "accept_partial":
-		return "Partial accepted"
-	case "concern":
-		return "Concern raised"
-	case "remind":
-		return "Reminder sent"
-	case "view":
-		return "Viewed"
-	default:
-		return action
+	if info, ok := auditActionByValue[action]; ok {
+		return info.Label
 	}
+	return action
 }
 
+// actionClass is the colour class of an audit action's pill ("neutral" for
+// an unknown action).
 func actionClass(action string) string {
-	switch action {
-	case "void", "login_failed", "reject", "cancel", "concern":
-		return "bad"
-	case "lock", "unlock", "hold", "return", "withdraw", "mark_partial":
-		return "warn"
-	case "create", "submit", "approve", "settle", "accept_partial", "unhold":
-		return "good"
-	case "update", "edit", "settings", "comment", "attach", "process", "reserve",
-		"release", "reassign", "approval_reassign", "reraise", "remind":
-		return "info"
-	default:
-		return "neutral"
+	if info, ok := auditActionByValue[action]; ok {
+		return info.Class
 	}
+	return "neutral"
 }
 
-// auditOption is one <option> of the audit screen's Entity and Action filters.
-// Both lists live here rather than as literals in the template because the
-// template's hand-maintained copy had drifted so far that `payment_request` —
-// the entity every request, approval, reservation and settlement is filed under
-// — could not be asked for at all, and no request action was offered either
-// (F-G-004/F-C-06). Every value below is a string the store actually writes;
-// `remind` arrived with migration v9's reminder audit row.
+// auditOption is one <option> of the audit screen's Entity or Action filter.
 type auditOption struct {
 	Value string
 	Label string
 }
 
-// auditEntities are the entity_type values the store writes, in reading order:
-// the request workflow first, then the ledger, then masters, then
-// administration.
+// auditEntities are the entity types the store writes to the audit log, in
+// reading order: the request workflow first, then the ledger, then masters,
+// then administration.
 func auditEntities() []auditOption {
 	values := []string{
 		"payment_request", "payment", "budget", "budget_month", "month_lock",
@@ -300,25 +260,47 @@ func auditEntities() []auditOption {
 	return out
 }
 
-// auditActions are the action values the store writes, ordered so the request
-// workflow reads as a workflow rather than as an alphabet.
+// auditActions are the Action filter's options, from auditActionTable.
 func auditActions() []auditOption {
-	values := []string{
-		"create", "update", "delete", "attach", "comment",
-		"submit", "approve", "return", "reject", "withdraw", "reraise",
-		"cancel_request", "cancel", "approval_reassign",
-		"process", "release", "reassign", "hold", "unhold",
-		"settle", "mark_partial", "accept_partial", "concern", "remind",
-		"recovery", "void", "lock", "unlock", "settings", "export",
-		"login", "logout", "login_failed",
-	}
-	out := make([]auditOption, 0, len(values))
-	for _, v := range values {
-		out = append(out, auditOption{Value: v, Label: actionText(v)})
+	var out []auditOption
+	for _, info := range auditActionTable {
+		if info.InFilter {
+			out = append(out, auditOption{Value: info.Value, Label: info.Label})
+		}
 	}
 	return out
 }
 
+// entityText turns an identifier such as "payment_request" into a label such
+// as "Payment Request": underscores become spaces and every word starts with
+// a capital letter.
 func entityText(entity string) string {
-	return strings.Title(strings.ReplaceAll(entity, "_", " "))
+	return titleWords(strings.ReplaceAll(entity, "_", " "))
+}
+
+// titleWords capitalises the first letter of every word. A word starts at
+// the beginning of s and after any ASCII character other than a letter, digit
+// or underscore, or after Unicode white space. This is the rule of the
+// deprecated strings.Title, which this replaces.
+func titleWords(s string) string {
+	prev := ' '
+	return strings.Map(func(r rune) rune {
+		startsWord := wordSeparator(prev)
+		prev = r
+		if startsWord {
+			return unicode.ToTitle(r)
+		}
+		return r
+	}, s)
+}
+
+// wordSeparator reports whether r ends a word for titleWords.
+func wordSeparator(r rune) bool {
+	if r <= unicode.MaxASCII {
+		return !('0' <= r && r <= '9' || 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || r == '_')
+	}
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return false
+	}
+	return unicode.IsSpace(r)
 }
