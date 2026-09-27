@@ -263,25 +263,3 @@ func (a *App) vendorRelated(w http.ResponseWriter, r *http.Request) {
 	}
 	a.render(w, r, "vendor_related", data)
 }
-
-func vendorPaymentModes(settings map[string]string, current string) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, value := range strings.Split(settings["payment_modes"], ",") {
-		value = strings.TrimSpace(value)
-		if value != "" && !seen[value] {
-			out = append(out, value)
-			seen[value] = true
-		}
-	}
-	// Preserve an older/custom value on unrelated edits, even if configuration
-	// no longer offers it for new vendors.
-	if current != "" && !seen[current] {
-		out = append(out, current)
-	}
-	return out
-}
-
-type PaymentModeChoice struct{ Value, Label string }
-
-func canonicalPaymentMode(value string) string { return store.CanonicalPaymentMode(value) }
