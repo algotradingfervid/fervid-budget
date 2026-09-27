@@ -273,11 +273,14 @@ func (s *Store) UpdateRole(ctx context.Context, actor User, id int64, name, desc
 	if name == "" {
 		return fmt.Errorf("%w: role name is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := requireRoleCeiling(ctx, tx, actor.ID, []int64{id}); err != nil {
+		return err
+	}
 
 	var current string
 	var sys int
@@ -302,11 +305,14 @@ func (s *Store) UpdateRole(ctx context.Context, actor User, id int64, name, desc
 }
 
 func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := requireRoleCeiling(ctx, tx, actor.ID, []int64{id}); err != nil {
+		return err
+	}
 	var name string
 	var sys int
 	err = tx.QueryRowContext(ctx, `SELECT name,is_system FROM roles WHERE id=?`, id).Scan(&name, &sys)
@@ -396,11 +402,55 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 			return fmt.Errorf("%w: invalid data scope %s=%s", ErrValidation, sc.Resource, sc.Scope)
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	admin, err := adminMember(ctx, tx, actor.ID)
+	if err != nil {
+		return err
+	}
+	if !admin {
+		if err := requireRoleCeiling(ctx, tx, actor.ID, []int64{roleID}); err != nil {
+			return err
+		}
+		var system bool
+		if err := tx.QueryRowContext(ctx, `SELECT is_system FROM roles WHERE id=?`, roleID).Scan(&system); err != nil {
+			return err
+		}
+		if system {
+			return ErrForbidden
+		}
+		ps, err := effectivePermissionsQ(ctx, tx, actor.ID)
+		if err != nil {
+			return err
+		}
+		for _, g := range grants {
+			if !ps.Can(g.Resource, g.Action) {
+				return ErrForbidden
+			}
+		}
+		for _, sc := range scopes {
+			if scopeRank(sc.Scope) > scopeRank(ps.Scope(sc.Resource)) {
+				return ErrForbidden
+			}
+		}
+	}
+	var protected bool
+	if err := tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, roleID).Scan(&protected); err != nil {
+		return err
+	}
+	if protected {
+		next := NewPermissionSet(grants, scopes)
+		for _, g := range adminGrants() {
+			if g.Resource == "user" || g.Resource == "role" {
+				if !next.Can(g.Resource, g.Action) {
+					return fmt.Errorf("%w: administrator management permissions cannot be removed", ErrValidation)
+				}
+			}
+		}
+	}
 
 	var name string
 	if err := tx.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, roleID).Scan(&name); err != nil {
@@ -489,7 +539,7 @@ func (s *Store) CopyRole(ctx context.Context, actor User, srcID int64, name stri
 	if name == "" {
 		return 0, fmt.Errorf("%w: role name is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -502,6 +552,10 @@ func (s *Store) CopyRole(ctx context.Context, actor User, srcID int64, name stri
 		}
 		return 0, err
 	}
+	if err := requireRoleCeiling(ctx, tx, actor.ID, []int64{srcID}); err != nil {
+		return 0, err
+	}
+
 	res, err := tx.ExecContext(ctx, `INSERT INTO roles(name,description,is_system) SELECT ?, description, 0 FROM roles WHERE id=?`, name, srcID)
 	if err != nil {
 		return 0, classify(err)
@@ -542,11 +596,18 @@ func (s *Store) SetUserRoles(ctx context.Context, actor User, userID int64, role
 	for _, id := range roleIDs {
 		unique[id] = struct{}{}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT active FROM users WHERE id=?`, userID).Scan(&active); err != nil {
+		return err
+	}
+	if err := protectUserChange(ctx, tx, actor.ID, userID, roleIDs, active); err != nil {
+		return err
+	}
 
 	for id := range unique {
 		var exists int

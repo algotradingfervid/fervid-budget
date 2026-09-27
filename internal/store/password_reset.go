@@ -115,3 +115,14 @@ func UpSessionRevocation(tx *sql.Tx) error {
 	_, err = tx.Exec(`ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0`)
 	return err
 }
+
+// RevokeSessions makes every previously issued cookie for this user invalid.
+func (s *Store) RevokeSessions(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET session_version=session_version+1 WHERE id=?`, userID)
+	return err
+}
+func (s *Store) ValidPasswordReset(ctx context.Context, hash string, now time.Time) (bool, error) {
+	var valid bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM password_resets r JOIN users u ON u.id=r.user_id WHERE token_hash=? AND expires_at>? AND u.active=1)`, hash, now.Unix()).Scan(&valid)
+	return valid, err
+}

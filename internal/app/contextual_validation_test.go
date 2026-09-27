@@ -109,7 +109,7 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 	// An unassigned approver cannot use validation to expose an actionable dialog.
 	s.login(s.cfg.AdminEmail, testAdminPassword)
 	resp := s.postForm(endpoint, url.Values{"approved_amount": {"not money"}, "note": {note}})
-	requireStatus(t, resp, http.StatusForbidden)
+	requireStatus(t, resp, http.StatusNotFound)
 	if strings.Contains(responseBody(t, resp), `id="approve-sheet"`) {
 		t.Fatal("unassigned approver received approval editor")
 	}

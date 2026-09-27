@@ -45,7 +45,7 @@ func attachmentMultipart(t *testing.T, fields url.Values, name string, contents 
 func TestAttachmentValidationMatchesContentAndConfiguredLimit(t *testing.T) {
 	s := newAppTestServer(t)
 	a := s.probeApp()
-	pdf := []byte("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n")
+	pdf := []byte(validTestPDF)
 	var pngBody, jpgBody bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
 	if err := png.Encode(&pngBody, img); err != nil {
@@ -192,7 +192,7 @@ func TestAttachmentLimitConfigurationRejectsUnsupportedValues(t *testing.T) {
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	a := s.probeApp()
-	body, ct := attachmentMultipart(t, nil, "allowed.pdf", append([]byte("%PDF-1.4\n"), bytes.Repeat([]byte(" "), 11<<20)...))
+	body, ct := attachmentMultipart(t, nil, "allowed.pdf", append([]byte(validTestPDF), bytes.Repeat([]byte(" "), 11<<20)...))
 	r := httptest.NewRequest(http.MethodPost, "/requests", body)
 	r.Header.Set("Content-Type", ct)
 	att, path, err := a.stageUploadedAttachment(r)

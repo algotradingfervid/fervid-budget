@@ -1119,3 +1119,12 @@
     init();
   }
 })();
+
+// CSP-compatible confirmation and auto-submit behavior.
+document.addEventListener('submit', function (event) {
+  const message = event.target.dataset.confirm;
+  if (message && !window.confirm(message)) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);
+document.addEventListener('change', function (event) {
+  if (event.target.hasAttribute('data-auto-submit') && event.target.form) event.target.form.requestSubmit();
+});

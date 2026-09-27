@@ -92,7 +92,7 @@ test.describe('design system behaviours', () => {
     await expect(summary).toContainText('Enter a valid email address, such as name@example.com.');
     await page.getByLabel('Email', { exact: true }).fill('admin@fervid.local');
     await expect(page.getByLabel('Email', { exact: true })).not.toHaveAttribute('aria-invalid', 'true');
-    await page.getByLabel('Password', { exact: true }).fill('admin123');
+    await page.getByLabel('Password', { exact: true }).fill('TestAdmin12345');
     await expect(summary).toHaveCount(0);
     await page.getByRole('button', { name: 'Login', exact: true }).click();
     await expect(page).toHaveURL(/\/$/);

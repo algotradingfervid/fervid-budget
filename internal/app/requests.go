@@ -740,6 +740,10 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 		return PageData{}, err
 	}
 	data := PageData{Title: title, Request2: req, Thread: thread, RequestAtts: atts}
+	data.RequestRevision, err = a.st.RequestEditRevision(r.Context(), req)
+	if err != nil {
+		return PageData{}, err
+	}
 	data.RequestPayments, err = a.st.RequestPayments(r.Context(), req.ID)
 	if err != nil {
 		return PageData{}, err
@@ -1109,6 +1113,14 @@ func editedRequest(stored store.Request, in store.RequestInput) store.Request {
 // approver may approve less than was asked for; the store is what refuses a
 // requester approving themselves, whatever this handler is sent.
 func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
+	req, e := a.st.Request(r.Context(), pathID(r))
+	if e != nil || req.ManagerID != auth.CurrentUser(r).ID {
+		a.respondStoreError(w, r, store.ErrNotFound)
+		return
+	}
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
 	amount, err := money.ParsePaise(r.FormValue("approved_amount"))
 	if err != nil {
 		a.refuseRequestApproval(w, r, "Enter the amount you are approving.")
@@ -1124,7 +1136,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 			locked+" is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.", nil)
 		return
 	}
-	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note")); err != nil {
+	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			a.refuseRequestApproval(w, r, friendly(err))
 			return
@@ -1157,6 +1169,7 @@ func (a *App) refuseRequestApproval(w http.ResponseWriter, r *http.Request, mess
 		a.respondStoreError(w, r, err)
 		return
 	}
+	data.RequestRevision = r.FormValue("revision") // A refused submission never authorizes an unseen revision.
 	data.ApprovalError = message
 	data.ApprovalRawAmount = r.FormValue("approved_amount")
 	data.ApprovalNote = r.FormValue("note")
@@ -1195,7 +1208,10 @@ func (a *App) lockedApprovalMonth(r *http.Request) (string, error) {
 }
 
 func (a *App) requestReturn(w http.ResponseWriter, r *http.Request) {
-	if err := a.st.ReturnRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("comment")); err != nil {
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
+	if err := a.st.ReturnRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("comment"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -1204,7 +1220,10 @@ func (a *App) requestReturn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) requestReject(w http.ResponseWriter, r *http.Request) {
-	if err := a.st.RejectRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("reason")); err != nil {
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
+	if err := a.st.RejectRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("reason"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -1213,6 +1232,9 @@ func (a *App) requestReject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) requestWithdraw(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
 	if err := a.st.WithdrawRequest(r.Context(), auth.CurrentUser(r), pathID(r)); err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -1227,6 +1249,9 @@ func (a *App) requestWithdraw(w http.ResponseWriter, r *http.Request) {
 // it lands there for the *new* request: D1 makes a re-raise a fresh pending
 // request with its own number, not a draft copy of the rejected one.
 func (a *App) requestReraise(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
 	id, err := a.st.ReraiseRequest(r.Context(), auth.CurrentUser(r), pathID(r))
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -1333,6 +1358,9 @@ func (a *App) requestCancelForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) requestCancelAsk(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
 	id := pathID(r)
 	if err := a.st.RequestCancellation(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
 		a.respondStoreError(w, r, err)
@@ -1365,6 +1393,9 @@ func (a *App) requestCancellationForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
 	id := pathID(r)
 	accept := r.FormValue("decision") == "accept"
 	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note")); err != nil {
@@ -1383,6 +1414,9 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.loadViewableRequest(w, r); !ok {
+		return
+	}
 	id := pathID(r)
 	if err := a.st.CancelRequest(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
 		a.respondStoreError(w, r, err)
@@ -1497,8 +1531,8 @@ func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 		if req.ApprovedAmount != nil {
 			approved = csvAmount(*req.ApprovedAmount)
 		}
-		_ = cw.Write([]string{req.Number, requestStatusText(req.Status), typeLabel(req.Type), req.ShortTitle,
-			csvAmount(req.Amount), approved, req.Vendor, req.RequesterName, req.ManagerName,
+		_ = cw.Write([]string{csvText(req.Number), requestStatusText(csvText(req.Status)), typeLabel(req.Type), csvText(req.ShortTitle),
+			csvAmount(req.Amount), approved, csvText(req.Vendor), csvText(req.RequesterName), csvText(req.ManagerName),
 			req.CreatedAt.Format("2006-01-02")})
 	}
 	cw.Flush()

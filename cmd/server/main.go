@@ -18,9 +18,12 @@ import (
 	"fervidbudget/internal/store"
 )
 
+var version = "development"
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+	logger.Info("starting Fervid Budget", "version", version)
 
 	seed := flag.Bool("seed", false, "create admin and sample setup data if empty")
 	backup := flag.Bool("backup", false, "create a database + attachments backup and exit")

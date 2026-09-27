@@ -251,7 +251,7 @@ var recoverableCategoryRules = map[string]recoverableRule{
 // validateRequestInput stays pure: the caller supplies the recoverable rule set
 // so the rules can come from the database without this function reaching for it.
 func validateRequestInput(in RequestInput, rules map[string]recoverableRule) error {
-	if in.Amount <= 0 {
+	if in.Amount <= 0 || in.Amount > money.MaxAmount {
 		return fmt.Errorf("%w: a positive amount is required", ErrValidation)
 	}
 	if strings.TrimSpace(in.ShortTitle) == "" {
@@ -1128,7 +1128,7 @@ func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error
 // than the transition table alone: the decision is legal from 'pending' and from
 // nowhere else (F-C-03), and the approved amount — which is the ceiling Accounts
 // may pay to (G13) — may be reduced and never raised (F-C-01).
-func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmount int64, note string) error {
+func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmount int64, note string, revisions ...string) error {
 	if approvedAmount <= 0 {
 		return fmt.Errorf("%w: approved amount must be positive", ErrValidation)
 	}
@@ -1174,6 +1174,18 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 	if approvedAmount > before.Amount {
 		return fmt.Errorf("%w: you cannot approve more than the %s that was requested — approve up to that amount, or cancel this request and ask for a new one", ErrValidation, money.FormatPaise(before.Amount))
 	}
+	if err := checkDecisionRevision(ctx, tx, before, revisions); err != nil {
+		return err
+	}
+	if len(before.NeededBy) >= 7 {
+		locked, e := isLocked(ctx, tx, before.NeededBy[:7])
+		if e != nil {
+			return e
+		}
+		if locked {
+			return ErrLockedMonth
+		}
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='approved', approved_amount=?, approved_by=?, approved_at=CURRENT_TIMESTAMP, decision_reason=?, updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status='pending' AND manager_id=?`, approvedAmount, actor.ID, strings.TrimSpace(note), id, actor.ID)
 	if err != nil {
@@ -1195,7 +1207,7 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 	return tx.Commit()
 }
 
-func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, action, reason, missingMsg string) error {
+func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, action, reason, missingMsg string, revisions ...string) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return fmt.Errorf("%w: %s", ErrValidation, missingMsg)
@@ -1214,6 +1226,9 @@ func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, act
 	}
 	if !canTransition(before.Status, to) {
 		return fmt.Errorf("%w: %s cannot be %s", ErrValidation, statusPhrase(before.Status), to)
+	}
+	if err := checkDecisionRevision(ctx, tx, before, revisions); err != nil {
+		return err
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status=?, decision_reason=?, updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status=? AND manager_id=?`, to, reason, id, before.Status, actor.ID)
@@ -1237,12 +1252,12 @@ func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, act
 	return tx.Commit()
 }
 
-func (s *Store) ReturnRequest(ctx context.Context, actor User, id int64, comment string) error {
-	return s.decideRequest(ctx, actor, id, "returned", "return", comment, "a comment is required to return a request")
+func (s *Store) ReturnRequest(ctx context.Context, actor User, id int64, comment string, revisions ...string) error {
+	return s.decideRequest(ctx, actor, id, "returned", "return", comment, "a comment is required to return a request", revisions...)
 }
 
-func (s *Store) RejectRequest(ctx context.Context, actor User, id int64, reason string) error {
-	return s.decideRequest(ctx, actor, id, "rejected", "reject", reason, "a reason is required to reject a request")
+func (s *Store) RejectRequest(ctx context.Context, actor User, id int64, reason string, revisions ...string) error {
+	return s.decideRequest(ctx, actor, id, "rejected", "reject", reason, "a reason is required to reject a request", revisions...)
 }
 
 // reassignableStatuses are the states in which a request is somebody's to
@@ -2185,4 +2200,19 @@ func (s *Store) SimilarRequests(ctx context.Context, opt SimilarRequestOptions) 
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// HTTP decisions always supply the revision displayed on the reviewed form.
+func checkDecisionRevision(ctx context.Context, tx *sql.Tx, req Request, revisions []string) error {
+	if len(revisions) == 0 {
+		return nil
+	} // Trusted internal callers have no browser snapshot.
+	current, err := requestEditRevision(ctx, tx, req)
+	if err != nil {
+		return err
+	}
+	if revisions[0] == "" || revisions[0] != current {
+		return fmt.Errorf("%w: this request changed; reload and review it before deciding", ErrValidation)
+	}
+	return nil
 }

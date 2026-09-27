@@ -19,7 +19,7 @@ func TestSMTPMailerBuildsMessageAndUsesEnvPassword(t *testing.T) {
 		SMTPHost: "smtp.example.test", SMTPPort: 2525, SMTPUsername: "mailer@example.test",
 		SMTPFromName: "Fervid", SMTPFromAddr: "noreply@example.test",
 	}))
-	m := NewSMTPMailer(st, "s3cr3t-from-env")
+	m := NewSMTPMailer(st, "s3cr3t-from-env", "smtp.example.test")
 	var gotAddr, gotFrom string
 	var gotAuth smtp.Auth
 	var gotTo []string
@@ -54,7 +54,7 @@ func TestSMTPMailerBuildsMessageAndUsesEnvPassword(t *testing.T) {
 
 func TestSMTPMailerRequiresHost(t *testing.T) {
 	st := openTestStore(t)
-	m := NewSMTPMailer(st, "")
+	m := NewSMTPMailer(st, "", "smtp.example.test")
 	err := m.Send(context.Background(), Message{To: []string{"a@x.test"}, Subject: "x", Body: "y"})
 	if err == nil {
 		t.Fatal("expected error when smtp host is not configured")
@@ -68,7 +68,7 @@ func TestSMTPMailerOmitsAuthWithoutUsername(t *testing.T) {
 	st := openTestStore(t)
 	actor := testActor(t, st)
 	must(t, st.SetMailSettings(ctx, actor, store.MailSettings{SMTPHost: "smtp.example.test"}))
-	m := NewSMTPMailer(st, "")
+	m := NewSMTPMailer(st, "", "smtp.example.test")
 	var gotAuth smtp.Auth
 	var gotAddr string
 	m.sendMail = func(addr string, a smtp.Auth, _ string, _ []string, _ []byte) error {
@@ -90,7 +90,7 @@ func TestSMTPMailerSkipsEmptyRecipients(t *testing.T) {
 	st := openTestStore(t)
 	actor := testActor(t, st)
 	must(t, st.SetMailSettings(ctx, actor, store.MailSettings{SMTPHost: "smtp.example.test"}))
-	m := NewSMTPMailer(st, "")
+	m := NewSMTPMailer(st, "", "smtp.example.test")
 	called := false
 	m.sendMail = func(string, smtp.Auth, string, []string, []byte) error {
 		called = true

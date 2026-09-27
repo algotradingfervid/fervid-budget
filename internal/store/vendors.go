@@ -55,8 +55,10 @@ type Vendor struct {
 
 	// PaidThisYear and OpenRequests are list-screen context; only ListVendors
 	// fills them in and they are zero everywhere else.
-	PaidThisYear int64
-	OpenRequests int
+	PaidThisYear        int64
+	PaidTotalVisible    bool
+	RequestTotalVisible bool
+	OpenRequests        int
 }
 
 // VendorBank is the restricted block. Default payment mode and payment terms
@@ -254,8 +256,18 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 	// Both totals are sub-selects in the projection, so their parameters bind
 	// before any WHERE parameter — the year first, then the open-status list, in
 	// the order the SELECT list names them.
-	args := []any{time.Now().Format("2006")}
-	args = append(args, vendorOpenStatuses...)
+	var args []any
+	paidProjection, requestProjection := ",0", ",0"
+	paidVisible := perms != nil && perms.Can("payment", "view") && perms.Scope("payment") == ScopeAll
+	requestVisible := perms != nil && perms.Can("request", "view") && perms.Scope("request") == ScopeAll
+	if paidVisible {
+		paidProjection = vendorPaidThisYear
+		args = append(args, time.Now().Format("2006"))
+	}
+	if requestVisible {
+		requestProjection = vendorOpenRequests
+		args = append(args, vendorOpenStatuses...)
+	}
 	var where []string
 	switch strings.ToLower(strings.TrimSpace(opt.Status)) {
 	case "all":
@@ -282,7 +294,7 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 		where = append(where, `trim(gstin)=''`)
 	}
 
-	query := `SELECT ` + vendorSelect(withBank) + vendorPaidThisYear + vendorOpenRequests + ` FROM vendors v`
+	query := `SELECT ` + vendorSelect(withBank) + paidProjection + requestProjection + ` FROM vendors v`
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
@@ -300,6 +312,7 @@ func (s *Store) ListVendors(ctx context.Context, opt VendorListOptions, perms Pe
 		if err != nil {
 			return nil, err
 		}
+		v.PaidTotalVisible, v.RequestTotalVisible = paidVisible, requestVisible
 		out = append(out, v)
 	}
 	return out, rows.Err()

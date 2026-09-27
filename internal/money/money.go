@@ -3,9 +3,15 @@ package money
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// MaxAmount bounds an individual financial entry to 100 crore rupees.
+const MaxAmount int64 = 100_000_000_000
+
+var groupedAmount = regexp.MustCompile(`^[+]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,2}(?:,[0-9]{2})*,[0-9]{3})(?:\.[0-9]{1,2})?$`)
 
 // ParsePaise converts a user-supplied rupee amount into exact integer paise.
 // Grouped digits, a leading rupee symbol and surrounding whitespace are accepted.
@@ -14,6 +20,9 @@ import (
 func ParsePaise(input string) (int64, error) {
 	s := strings.TrimSpace(input)
 	s = strings.TrimSpace(strings.TrimPrefix(s, "₹"))
+	if strings.Contains(s, ",") && !groupedAmount.MatchString(s) {
+		return 0, fmt.Errorf("invalid digit grouping")
+	}
 	s = strings.ReplaceAll(s, ",", "")
 	if s == "" {
 		return 0, fmt.Errorf("amount is required")
@@ -60,8 +69,8 @@ func ParsePaise(input string) (int64, error) {
 		return 0, fmt.Errorf("amount is too large")
 	}
 	paise, err := strconv.ParseInt(digits+strings.Repeat("0", int(zeros)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("amount is too large")
+	if err != nil || paise > MaxAmount {
+		return 0, fmt.Errorf("amount is too large (maximum 100 crore rupees)")
 	}
 	return paise, nil
 }

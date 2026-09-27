@@ -56,7 +56,7 @@ func CreateBackup(ctx context.Context, opts BackupOptions) (BackupInfo, error) {
 		now = opts.Now
 	}
 	createdAt := now()
-	if err := os.MkdirAll(opts.BackupDir, 0755); err != nil {
+	if err := os.MkdirAll(opts.BackupDir, 0700); err != nil {
 		return BackupInfo{}, err
 	}
 
@@ -65,7 +65,7 @@ func CreateBackup(ctx context.Context, opts BackupOptions) (BackupInfo, error) {
 	if err := os.RemoveAll(tempPath); err != nil {
 		return BackupInfo{}, err
 	}
-	if err := os.MkdirAll(tempPath, 0755); err != nil {
+	if err := os.MkdirAll(tempPath, 0700); err != nil {
 		return BackupInfo{}, err
 	}
 	cleanup := true
@@ -127,10 +127,10 @@ func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 	if _, err := os.Stat(backupDB); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(opts.DBPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.DBPath), 0700); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(opts.AttachmentDir), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.AttachmentDir), 0700); err != nil {
 		return err
 	}
 
@@ -309,7 +309,7 @@ func backupSQLite(ctx context.Context, sourcePath, destPath string) error {
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0700); err != nil {
 		return err
 	}
 	// VACUUM INTO asks SQLite to create a transactionally consistent database
@@ -336,13 +336,16 @@ func backupSQLite(ctx context.Context, sourcePath, destPath string) error {
 	if closeErr != nil {
 		return closeErr
 	}
+	if err := os.Chmod(destPath, 0600); err != nil {
+		return err
+	}
 	complete = true
 	return nil
 }
 
 func writeBackupManifest(dir string, manifest backupManifest) error {
 	path := filepath.Join(dir, "manifest.json")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
@@ -371,11 +374,11 @@ func uniqueBackupPath(backupDir string, t time.Time) string {
 
 func copyTree(ctx context.Context, src, dst string) error {
 	if src == "" {
-		return os.MkdirAll(dst, 0755)
+		return os.MkdirAll(dst, 0700)
 	}
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if os.IsNotExist(err) {
-		return os.MkdirAll(dst, 0755)
+		return os.MkdirAll(dst, 0700)
 	}
 	if err != nil {
 		return err
@@ -400,40 +403,47 @@ func copyTree(ctx context.Context, src, dst string) error {
 			return err
 		}
 		if d.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm())
+			return os.MkdirAll(target, 0700)
 		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			linkTarget, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(linkTarget, target)
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%w: backups cannot include links or special files", ErrValidation)
 		}
+
 		return copyFileWithMode(ctx, path, target, info.Mode().Perm())
 	})
 }
 
 func copyFile(ctx context.Context, src, dst string) error {
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
-	return copyFileWithMode(ctx, src, dst, info.Mode().Perm())
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: backup source must be a regular file", ErrValidation)
+	}
+	return copyFileWithMode(ctx, src, dst, 0600)
 }
 
 func copyFileWithMode(ctx context.Context, src, dst string, mode fs.FileMode) error {
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return err
+	}
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: backup source must be a regular file", ErrValidation)
 	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}

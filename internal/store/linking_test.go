@@ -407,7 +407,7 @@ func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 400000, VendorPayee: "Acme Landlord"}, "settled", "Agreed deduction documented", nil)
+	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 400000, VendorPayee: "Acme Landlord"}, "settled", "Agreed deduction documented", nil)
 	if err != nil {
 		t.Fatalf("record settled: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
 		t.Fatalf("linked payment = %+v, err=%v", p, err)
 	}
 	// One payment per request: a second settlement is refused (S9).
-	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-16", Amount: 100000, VendorPayee: "Acme"}, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+	if _, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-16", Amount: 100000, VendorPayee: "Acme"}, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("second settlement = %v, want ErrForbidden", err)
 	}
 }
@@ -434,7 +434,7 @@ func TestRecordPaymentPartialNeedsReasonAndRoutesToReview(t *testing.T) {
 	}
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme Landlord"}
 	// Partial without reason → validation; nothing written; still processing (S13).
-	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, in, "partial", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(s, ctx, acc, reqID, in, "partial", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("partial without reason = %v, want ErrValidation", err)
 	}
 	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
@@ -444,7 +444,7 @@ func TestRecordPaymentPartialNeedsReasonAndRoutesToReview(t *testing.T) {
 		t.Fatalf("payment written despite rejected settlement: %v", err)
 	}
 	// Partial with reason → partial_review (L9).
-	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, in, "partial", "Balance pending vendor confirmation", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, reqID, in, "partial", "Balance pending vendor confirmation", nil); err != nil {
 		t.Fatalf("record partial: %v", err)
 	}
 	if got := requestStatus(t, s, ctx, reqID); got != "partial_review" {
@@ -468,7 +468,7 @@ func TestRecordPaymentRequiresActorReservation(t *testing.T) {
 	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}
 	// Not reserved at all → forbidden, no payment (store-level X5).
-	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+	if _, err := historicalSettlement(s, ctx, acc, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("record without reservation = %v, want ErrForbidden", err)
 	}
 	if got := paymentCount(t, s); got != 0 {
@@ -478,7 +478,7 @@ func TestRecordPaymentRequiresActorReservation(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, other, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+	if _, err := historicalSettlement(s, ctx, other, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("record by non-assignee = %v, want ErrForbidden", err)
 	}
 }
@@ -497,7 +497,7 @@ func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 	}
 	over := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 480001, VendorPayee: "Acme Landlord"}
 	for _, settlement := range []string{"settled", "partial"} {
-		_, err := s.RecordPaymentForRequest(ctx, acc, reqID, over, settlement, "reason", nil)
+		_, err := historicalSettlement(s, ctx, acc, reqID, over, settlement, "reason", nil)
 		if !errors.Is(err, ErrValidation) {
 			t.Fatalf("overpayment (%s) = %v, want ErrValidation", settlement, err)
 		}
@@ -513,7 +513,7 @@ func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 	}
 	// The approved amount itself is allowed; it is > that is refused.
 	exact := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 480000, VendorPayee: "Acme Landlord"}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, reqID, exact, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, reqID, exact, "settled", "", nil); err != nil {
 		t.Fatalf("payment of exactly the approved amount: %v", err)
 	}
 	if got := requestStatus(t, s, ctx, reqID); got != "completed" {
@@ -529,7 +529,7 @@ func TestLinkedPaymentIsImmutable(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := s.RecordPaymentForRequest(ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}, "settled", "", nil)
+	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}, "settled", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 		if err := s.ReserveRequest(ctx, acc, id); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
+		if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -587,7 +587,7 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, clean); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, clean, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme"}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, clean, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme"}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := requestStatus(t, s, ctx, clean); got != "completed" {
@@ -791,13 +791,13 @@ func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 		time.Date(2026, 7, 24, 12, 40, 0, 0, time.UTC).Format("2006-01-02 15:04:05"), stale); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, inReview, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "700 of 1000 copies delivered", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, inReview, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "700 of 1000 copies delivered", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, paidClean, PaymentInput{HeadID: headID, PaidOn: "2026-07-24", Amount: 41300, VendorPayee: "Nova"}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, paidClean, PaymentInput{HeadID: headID, PaidOn: "2026-07-24", Amount: 41300, VendorPayee: "Nova"}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, paidPartial, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "balance later", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, paidPartial, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "balance later", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AcceptPartial(ctx, mgr, paidPartial, ""); err != nil {

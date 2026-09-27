@@ -23,8 +23,26 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
+	}
+	if path != ":memory:" {
+		info, err := os.Lstat(path)
+		if err == nil && !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("database must be a regular file")
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, err
+		}
+		err = f.Chmod(0600)
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
 	// The pragmas ride on the DSN, not on a db.Exec: PRAGMA state is
 	// per-connection, and database/sql opens more connections on demand, so a
@@ -61,6 +79,16 @@ func Open(path string) (*Store, error) {
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if err := installFinancialLimits(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Chmod(path+suffix, 0600); err != nil && !os.IsNotExist(err) {
+			db.Close()
+			return nil, err
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -102,6 +130,17 @@ func (s *Store) CreateUser(ctx context.Context, email, name, hash, role string, 
 // the tests create users that way and their first role has to come from
 // somewhere.
 func (s *Store) CreateUserWithRoles(ctx context.Context, email, name, hash, role string, active bool, roleIDs []int64) (int64, error) {
+	return s.createUserWithRoles(ctx, 0, email, name, hash, role, active, roleIDs)
+}
+
+// CreateManagedUser enforces the actor's delegation ceiling in the insert transaction.
+func (s *Store) CreateManagedUser(ctx context.Context, actor User, email, name, hash string, active bool, roleIDs []int64) (int64, error) {
+	if len(roleIDs) == 0 {
+		return 0, ErrValidation
+	}
+	return s.createUserWithRoles(ctx, actor.ID, email, name, hash, "data_entry", active, roleIDs)
+}
+func (s *Store) createUserWithRoles(ctx context.Context, actorID int64, email, name, hash, role string, active bool, roleIDs []int64) (int64, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	name = strings.TrimSpace(name)
 	if err := validateUserFields(email, name, role); err != nil {
@@ -110,11 +149,28 @@ func (s *Store) CreateUserWithRoles(ctx context.Context, email, name, hash, role
 	if role == "" {
 		role = "data_entry"
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+	if actorID != 0 {
+		if err := requireRoleCeiling(ctx, tx, actorID, roleIDs); err != nil {
+			return 0, err
+		}
+	}
+	if actorID != 0 {
+		role = "data_entry"
+		for _, rid := range roleIDs {
+			var isAdmin bool
+			if err := tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, rid).Scan(&isAdmin); err != nil {
+				return 0, err
+			}
+			if isAdmin {
+				role = "admin"
+			}
+		}
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO users(email,name,password_hash,role,active) VALUES(?,?,?,?,?)`,
 		email, name, hash, role, boolInt(active))
 	if err != nil {
@@ -310,6 +366,19 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 		return err
 	}
 	defer tx.Rollback()
+	if err := protectUserChange(ctx, tx, actor.ID, in.ID, roleIDs, in.Active); err != nil {
+		return err
+	}
+	in.Role = "data_entry"
+	for _, rid := range roleIDs {
+		var admin bool
+		if err := tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, rid).Scan(&admin); err != nil {
+			return err
+		}
+		if admin {
+			in.Role = "admin"
+		}
+	}
 
 	// The last-active-administrator guard, re-asked inside the transaction. The
 	// exported RequireAnotherActiveAdmin reads through s.db, and a read on a
@@ -323,15 +392,6 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 			return ErrNotFound
 		}
 		return err
-	}
-	if currentRole == "admin" && currentActive == 1 && !(in.Role == "admin" && in.Active) {
-		var others int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND id<>?`, in.ID).Scan(&others); err != nil {
-			return err
-		}
-		if others == 0 {
-			return fmt.Errorf("%w: at least one active administrator is required", ErrValidation)
-		}
 	}
 	for _, id := range roleIDs {
 		var exists int
@@ -478,20 +538,56 @@ func (s *Store) ResetLoginFailures(ctx context.Context, email string) error {
 	return classify(err)
 }
 
-func (s *Store) UpsertProject(ctx context.Context, id int64, name string, active bool, sortOrder int) (int64, error) {
+func (s *Store) UpsertProject(ctx context.Context, id int64, name string, active bool, sortOrder int, actors ...User) (int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return 0, fmt.Errorf("%w: project name is required", ErrValidation)
 	}
-	if id == 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name,active,sort_order) VALUES(?,?,?)`, name, boolInt(active), sortOrder)
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var before map[string]any
+	if id != 0 {
+		var raw string
+		err = tx.QueryRowContext(ctx, `SELECT json_object('name',name,'active',active,'sort_order',sort_order) FROM projects WHERE id=?`, id).Scan(&raw)
 		if err != nil {
 			return 0, classify(err)
 		}
-		return res.LastInsertId()
+		if err = json.Unmarshal([]byte(raw), &before); err != nil {
+			return 0, err
+		}
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, active=?, sort_order=? WHERE id=?`, name, boolInt(active), sortOrder, id)
-	return id, classify(err)
+	action := "update"
+	if id == 0 {
+		res, e := tx.ExecContext(ctx, `INSERT INTO projects(name,active,sort_order) VALUES(?,?,?)`, name, boolInt(active), sortOrder)
+		if e != nil {
+			return 0, classify(e)
+		}
+		id, e = res.LastInsertId()
+		if e != nil {
+			return 0, e
+		}
+		action = "create"
+	} else {
+		if _, err = tx.ExecContext(ctx, `UPDATE projects SET name=?,active=?,sort_order=? WHERE id=?`, name, boolInt(active), sortOrder, id); err != nil {
+			return 0, classify(err)
+		}
+	}
+	actor := User{}
+	if len(actors) > 0 {
+		actor = actors[0]
+	}
+	var actorID *int64
+	if actor.ID != 0 {
+		actorID = &actor.ID
+	}
+	after := map[string]any{"name": name, "active": boolInt(active), "sort_order": sortOrder}
+	if err = recordAuditTx(ctx, tx, AuditInput{ActorID: actorID, ActorName: actor.Name, Action: action, EntityType: "project", EntityID: &id, Summary: "Updated project " + name, Before: before, After: after}); err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
 func (s *Store) ListProjects(ctx context.Context, activeOnly bool) ([]Project, error) {
@@ -518,7 +614,7 @@ func (s *Store) ListProjects(ctx context.Context, activeOnly bool) ([]Project, e
 	return out, rows.Err()
 }
 
-func (s *Store) UpsertHead(ctx context.Context, id, projectID int64, name, dueDay string, active bool, sortOrder int) (int64, error) {
+func (s *Store) UpsertHead(ctx context.Context, id, projectID int64, name, dueDay string, active bool, sortOrder int, actors ...User) (int64, error) {
 	name = strings.TrimSpace(name)
 	dueDay = strings.TrimSpace(dueDay)
 	if name == "" || projectID == 0 {
@@ -527,17 +623,67 @@ func (s *Store) UpsertHead(ctx context.Context, id, projectID int64, name, dueDa
 	if !validDueDay(dueDay) {
 		return 0, fmt.Errorf("%w: due day must be a day from 1 to 31", ErrValidation)
 	}
-	if id == 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO heads(project_id,name,due_day,active,sort_order) VALUES(?,?,?,?,?)`,
-			projectID, name, dueDay, boolInt(active), sortOrder)
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var before map[string]any
+	if id != 0 {
+		var raw string
+		err = tx.QueryRowContext(ctx, `SELECT json_object('project_id',project_id,'name',name,'due_day',due_day,'active',active,'sort_order',sort_order) FROM heads WHERE id=?`, id).Scan(&raw)
 		if err != nil {
 			return 0, classify(err)
 		}
-		return res.LastInsertId()
+		if err = json.Unmarshal([]byte(raw), &before); err != nil {
+			return 0, err
+		}
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE heads SET project_id=?, name=?, due_day=?, active=?, sort_order=? WHERE id=?`,
-		projectID, name, dueDay, boolInt(active), sortOrder, id)
-	return id, classify(err)
+	if id != 0 {
+		var oldParent int64
+		if err = tx.QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, id).Scan(&oldParent); err != nil {
+			return 0, err
+		}
+		if oldParent != projectID {
+			var used bool
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM budgets WHERE head_id=? UNION ALL SELECT 1 FROM payments WHERE head_id=? UNION ALL SELECT 1 FROM payment_requests WHERE head_id=?)`, id, id, id).Scan(&used)
+			if err != nil {
+				return 0, err
+			}
+			if used {
+				return 0, fmt.Errorf("%w: a head with financial history cannot move between projects; create a new head", ErrValidation)
+			}
+		}
+	}
+	action := "update"
+	if id == 0 {
+		res, e := tx.ExecContext(ctx, `INSERT INTO heads(project_id,name,due_day,active,sort_order) VALUES(?,?,?,?,?)`, projectID, name, dueDay, boolInt(active), sortOrder)
+		if e != nil {
+			return 0, classify(e)
+		}
+		id, e = res.LastInsertId()
+		if e != nil {
+			return 0, e
+		}
+		action = "create"
+	} else {
+		if _, err = tx.ExecContext(ctx, `UPDATE heads SET project_id=?,name=?,due_day=?,active=?,sort_order=? WHERE id=?`, projectID, name, dueDay, boolInt(active), sortOrder, id); err != nil {
+			return 0, classify(err)
+		}
+	}
+	actor := User{}
+	if len(actors) > 0 {
+		actor = actors[0]
+	}
+	var actorID *int64
+	if actor.ID != 0 {
+		actorID = &actor.ID
+	}
+	after := map[string]any{"project_id": projectID, "name": name, "due_day": dueDay, "active": boolInt(active), "sort_order": sortOrder}
+	if err = recordAuditTx(ctx, tx, AuditInput{ActorID: actorID, ActorName: actor.Name, Action: action, EntityType: "head", EntityID: &id, Summary: "Updated head " + name, Before: before, After: after}); err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
 // OpenRequest is one unfinished request, named on a deactivation warning.
@@ -631,7 +777,7 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 	}
 	seen := make(map[int64]struct{}, len(inputs))
 	for _, input := range inputs {
-		if input.HeadID <= 0 || input.Amount < 0 {
+		if input.HeadID <= 0 || input.Amount < 0 || input.Amount > money.MaxAmount {
 			return fmt.Errorf("%w: valid head and non-negative amount are required", ErrValidation)
 		}
 		if _, exists := seen[input.HeadID]; exists {
@@ -970,21 +1116,24 @@ func (s *Store) UpdatePayment(ctx context.Context, actor User, id int64, in Paym
 // UpdatePaymentWithAttachment updates payment fields, optionally adds a file,
 // and records both audit events in one transaction.
 func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id int64, in PaymentInput, attachment *AttachmentInput) error {
-	if err := s.validatePayment(ctx, in, false); err != nil {
-		return err
-	}
 	if attachment != nil {
 		if err := validateAttachment(*attachment); err != nil {
 			return err
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := validatePaymentTx(ctx, tx, in, false); err != nil {
+		return err
+	}
 	before, err := paymentInTx(ctx, tx, id)
 	if err != nil {
+		return err
+	}
+	if err := paymentWriteAccess(ctx, tx, actor.ID, before); err != nil {
 		return err
 	}
 	// S12: a payment that settles a request is the request's outcome. Editing it
@@ -1025,13 +1174,16 @@ func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id 
 
 func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason string) error {
 	reason = strings.TrimSpace(reason)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	before, err := paymentInTx(ctx, tx, id)
 	if err != nil {
+		return err
+	}
+	if err := paymentWriteAccess(ctx, tx, actor.ID, before); err != nil {
 		return err
 	}
 	// S12: voiding would leave the request 'completed' with nothing paid.
@@ -1392,6 +1544,13 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	// single settlement came to stack four separate five-second busy waits.
 	if err := validatePaymentTx(ctx, tx, in, treatment == "recoverable"); err != nil {
 		return 0, err
+	}
+	var approvedDate string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(substr(approved_at,1,10),'') FROM payment_requests WHERE id=?`, requestID).Scan(&approvedDate); err != nil {
+		return 0, err
+	}
+	if approvedDate == "" || in.PaidOn < approvedDate {
+		return 0, fmt.Errorf("%w: payment date cannot precede approval", ErrValidation)
 	}
 	// G13: the approved amount is a hard ceiling. Paying more is not a settlement
 	// decision, it is a different obligation — cancel and raise a new request.
@@ -1931,13 +2090,16 @@ func (s *Store) AddAttachment(ctx context.Context, actor User, paymentID int64, 
 	if err := validateAttachment(attachment); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	p, err := paymentInTx(ctx, tx, paymentID)
 	if err != nil {
+		return err
+	}
+	if err := paymentWriteAccess(ctx, tx, actor.ID, p); err != nil {
 		return err
 	}
 	// S12 / F-D-08: a payment that settles a request is the request's outcome
@@ -2423,7 +2585,7 @@ func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOption
 // already exclude recoverables by treatment, so its head was never meaningful.
 // Every other payment, including one with no request at all, still needs a head.
 func validatePaymentTx(ctx context.Context, q rowQuerier, in PaymentInput, headOptional bool) error {
-	if in.Amount <= 0 || !validDate(in.PaidOn) || (in.HeadID == 0 && !headOptional) {
+	if in.Amount <= 0 || in.Amount > money.MaxAmount || !validDate(in.PaidOn) || (in.HeadID == 0 && !headOptional) {
 		return fmt.Errorf("%w: valid head, date, and positive amount are required", ErrValidation)
 	}
 	// F-D-06: paid_on records when money left the bank, so a date after today
@@ -2534,6 +2696,9 @@ func monthRange(from, to string) ([]string, error) {
 	if end.Before(start) {
 		start, end = end, start
 	}
+	if (end.Year()-start.Year())*12+int(end.Month()-start.Month()) >= 120 {
+		return nil, fmt.Errorf("%w: report range must be 120 months or fewer", ErrValidation)
+	}
 	var months []string
 	for cur := start; !cur.After(end); cur = cur.AddDate(0, 1, 0) {
 		months = append(months, cur.Format("2006-01"))
@@ -2551,6 +2716,9 @@ func boolInt(v bool) int {
 func classify(err error) error {
 	if err == nil {
 		return nil
+	}
+	if strings.Contains(err.Error(), "financial limit") {
+		return fmt.Errorf("%w: financial limit exceeded", ErrValidation)
 	}
 	if strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("%w: %v", ErrDuplicate, err)

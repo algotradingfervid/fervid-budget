@@ -100,6 +100,13 @@ func (a *App) passwordResetPost(w http.ResponseWriter, r *http.Request) {
 		a.renderStatus(w, r, http.StatusUnprocessableEntity, "password_reset", data)
 		return
 	}
+	valid, err := a.st.ValidPasswordReset(r.Context(), resetHash(data.ResetToken), time.Now())
+	if err != nil || !valid {
+		data.Error = "This reset link is invalid, expired or already used. Request a new link below."
+		data.ResetToken = ""
+		a.renderStatus(w, r, http.StatusBadRequest, "password_reset", data)
+		return
+	}
 	hash, err := auth.HashPassword(password)
 	if err == nil {
 		err = a.st.ConsumePasswordReset(r.Context(), resetHash(data.ResetToken), hash, time.Now())

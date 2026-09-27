@@ -78,6 +78,23 @@ func (s *Service) notify(ctx context.Context, event string, req store.Request) (
 		return nil, err
 	}
 
+	var visibleAccounts []store.User
+	for _, u := range accountUsers {
+		if s.st.UserCanViewRequest(ctx, u.ID, req) {
+			visibleAccounts = append(visibleAccounts, u)
+		}
+	}
+	accountUsers = visibleAccounts
+	if !s.st.UserCanViewRequest(ctx, req.RequesterID, req) {
+		view.RequesterEmail = ""
+	}
+	if !s.st.UserCanViewRequest(ctx, req.ManagerID, req) {
+		view.ManagerEmail = ""
+	}
+
+	if req.ProcessingBy != nil && !s.st.UserCanViewRequest(ctx, *req.ProcessingBy, req) {
+		view.HolderEmail = ""
+	}
 	// 1. In-app, unconditionally (G19).
 	told, err := s.writeInApp(ctx, event, cfg, req, view, accountUsers)
 	if err != nil {
@@ -150,6 +167,9 @@ func (s *Service) writeInApp(ctx context.Context, event string, cfg store.Notifi
 	}
 	var told []string
 	for _, uid := range resolveInAppUsers(event, cfg, req, accountIDs) {
+		if !s.st.UserCanViewRequest(ctx, uid, req) {
+			continue
+		}
 		if _, err := s.st.AddNotification(ctx, store.Notification{
 			UserID: uid, Event: event, RequestID: reqID,
 			Title: title, Body: body, Href: requestHref(req),

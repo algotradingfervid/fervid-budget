@@ -16,7 +16,7 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	defaults := Load()
-	if defaults.Addr != ":8080" || defaults.AdminEmail != "admin@fervid.local" || defaults.BackupKeepDays != 30 {
+	if defaults.Addr != "127.0.0.1:8080" || defaults.AdminEmail != "admin@fervid.local" || defaults.BackupKeepDays != 30 {
 		t.Fatalf("unexpected defaults: %#v", defaults)
 	}
 	if defaults.BackupKeepMonths != 12 || defaults.BackupHour != 2 {
@@ -48,7 +48,7 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	if invalid.BackupHour != 2 {
 		t.Fatalf("out-of-range backup hour did not fall back: %d", invalid.BackupHour)
 	}
-	if invalid.SecureCookies || invalid.BackupKeepDays != 30 {
+	if !invalid.SecureCookies || invalid.BackupKeepDays != 30 {
 		t.Fatalf("invalid environment values did not fall back: %#v", invalid)
 	}
 }

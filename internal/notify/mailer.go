@@ -2,11 +2,14 @@ package notify
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"mime"
+	"net"
 	"net/mail"
 	"net/smtp"
 	"strings"
+	"time"
 
 	"fervidbudget/internal/store"
 )
@@ -27,15 +30,16 @@ type Mailer interface {
 // admin-editable data in app_settings; the password is not — it comes from the
 // environment via config.SMTPPassword and is never persisted or logged.
 type SMTPMailer struct {
-	st       *store.Store
-	password string
+	st           *store.Store
+	password     string
+	allowedHosts []string
 	// sendMail is injectable so the message the transport would put on the wire
 	// can be asserted without opening a socket.
 	sendMail func(addr string, a smtp.Auth, from string, to []string, msg []byte) error
 }
 
-func NewSMTPMailer(st *store.Store, password string) *SMTPMailer {
-	return &SMTPMailer{st: st, password: password, sendMail: smtp.SendMail}
+func NewSMTPMailer(st *store.Store, password string, allowedHosts ...string) *SMTPMailer {
+	return &SMTPMailer{st: st, password: password, allowedHosts: allowedHosts}
 }
 
 func (m *SMTPMailer) Send(ctx context.Context, msg Message) error {
@@ -45,6 +49,9 @@ func (m *SMTPMailer) Send(ctx context.Context, msg Message) error {
 	}
 	if strings.TrimSpace(app.SMTPHost) == "" {
 		return fmt.Errorf("smtp host is not configured")
+	}
+	if !AllowedSMTPHost(app.SMTPHost, m.allowedHosts) {
+		return fmt.Errorf("SMTP host is not in the operator allowlist")
 	}
 	port := app.SMTPPort
 	if port == 0 {
@@ -59,7 +66,10 @@ func (m *SMTPMailer) Send(ctx context.Context, msg Message) error {
 		auth = smtp.PlainAuth("", app.SMTPUsername, m.password, app.SMTPHost)
 	}
 	addr := fmt.Sprintf("%s:%d", app.SMTPHost, port)
-	return m.sendMail(addr, auth, envelopeAddr(app.SMTPFromAddr, msg.From), recipients, []byte(buildRFC822(msg)))
+	if m.sendMail != nil {
+		return m.sendMail(addr, auth, envelopeAddr(app.SMTPFromAddr, msg.From), recipients, []byte(buildRFC822(msg)))
+	}
+	return sendTLSMail(ctx, app.SMTPHost, port, auth, envelopeAddr(app.SMTPFromAddr, msg.From), recipients, []byte(buildRFC822(msg)))
 }
 
 func buildRFC822(msg Message) string {
@@ -114,4 +124,92 @@ func envelopeAddr(fromAddr, fromHeader string) string {
 		}
 	}
 	return fromHeader
+}
+
+// Only an operator may authorize the destination to which the SMTP secret is sent.
+func AllowedSMTPHost(host string, allowed []string) bool {
+	if strings.ContainsAny(host, "\r\n") {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || strings.ContainsAny(host, "/\\:@\r\n") {
+		return false
+	}
+	for _, v := range allowed {
+		if host == strings.ToLower(strings.TrimSpace(v)) {
+			return true
+		}
+	}
+	return false
+}
+func sendTLSMail(ctx context.Context, host string, port int, auth smtp.Auth, from string, to []string, msg []byte) error {
+	if port != 587 && port != 465 {
+		return fmt.Errorf("SMTP port must be 587 or 465")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("SMTP resolution failed")
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("SMTP resolution failed")
+	}
+	for _, ip := range ips {
+		if !ip.IP.IsGlobalUnicast() || ip.IP.IsPrivate() || ip.IP.IsLoopback() || ip.IP.IsLinkLocalUnicast() {
+			return fmt.Errorf("SMTP destination is not public")
+		}
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ips[0].IP.String(), fmt.Sprint(port)))
+	if err != nil {
+		return fmt.Errorf("SMTP connection failed")
+	}
+	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	conn.SetDeadline(deadline)
+	rawConn := conn
+	stop := context.AfterFunc(ctx, func() { rawConn.Close() })
+	defer stop()
+	tc := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	if port == 465 {
+		secured := tls.Client(conn, tc)
+		if err := secured.HandshakeContext(ctx); err != nil {
+			return fmt.Errorf("SMTP TLS failed")
+		}
+		conn = secured
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("SMTP greeting failed")
+	}
+	defer client.Close()
+	if port == 587 {
+		if err := client.StartTLS(tc); err != nil {
+			return fmt.Errorf("SMTP requires verified TLS")
+		}
+	}
+	if auth != nil {
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("SMTP authentication failed")
+		}
+	}
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("SMTP sender refused")
+	}
+	for _, recipient := range to {
+		if err := client.Rcpt(recipient); err != nil {
+			return fmt.Errorf("SMTP recipient refused")
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("SMTP data refused")
+	}
+	if _, err = w.Write(msg); err != nil {
+		return fmt.Errorf("SMTP delivery failed")
+	}
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("SMTP delivery failed")
+	}
+	return client.Quit()
 }

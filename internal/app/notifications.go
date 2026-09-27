@@ -88,6 +88,10 @@ func (a *App) adminNotificationsSMTP(w http.ResponseWriter, r *http.Request) {
 		ManagementRecipients: r.FormValue("management_recipients"),
 		BaseURL:              r.FormValue("base_url"),
 	}
+	if in.SMTPHost != "" && !notify.AllowedSMTPHost(in.SMTPHost, a.cfg.SMTPAllowedHosts) {
+		a.respondError(w, r, http.StatusBadRequest, "SMTP host must be authorized in FERVID_SMTP_ALLOWED_HOSTS by the server operator.", nil)
+		return
+	}
 	if err := a.st.SetMailSettings(r.Context(), auth.CurrentUser(r), in); err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -156,7 +160,7 @@ func (a *App) adminNotificationsTest(w http.ResponseWriter, r *http.Request) {
 		Body:    "This is a test from the notification rules screen. If you are reading it, SMTP is configured correctly.",
 	})
 	if err != nil {
-		a.renderAdminNotifications(w, r, http.StatusBadGateway, "The test email could not be sent: "+err.Error(), "")
+		a.renderAdminNotifications(w, r, http.StatusBadGateway, "The test email could not be sent. Check the operator SMTP configuration and server logs.", "")
 		return
 	}
 	a.renderAdminNotifications(w, r, http.StatusOK, "", "Test email sent to "+to+".")

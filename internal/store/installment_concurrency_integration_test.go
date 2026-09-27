@@ -16,14 +16,14 @@ func TestConcurrentInstallmentsAndStaleConfirmationPreserveCeiling(t *testing.T)
 		t.Fatal(err)
 	}
 	first := PaymentInput{PaidOn: "2026-06-15", Amount: 700000, SubmissionKey: "integration-first-confirmation"}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, first, "installment", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, first, "installment", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
 	// Replaying the old form after reserving again must not consume the balance.
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, first, "installment", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(s, ctx, acc, id, first, "installment", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("old token replay = %v", err)
 	}
 	start := make(chan struct{})
@@ -34,7 +34,7 @@ func TestConcurrentInstallmentsAndStaleConfirmationPreserveCeiling(t *testing.T)
 		go func(i int, key string) {
 			defer wg.Done()
 			<-start
-			_, errs[i] = s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 400000, SubmissionKey: key}, "installment", "", nil)
+			_, errs[i] = historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 400000, SubmissionKey: key}, "installment", "", nil)
 		}(i, key)
 	}
 	close(start)
@@ -60,10 +60,10 @@ func TestConcurrentInstallmentsAndStaleConfirmationPreserveCeiling(t *testing.T)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-17", Amount: 100001, SubmissionKey: "integration-over"}, "settled", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-17", Amount: 100001, SubmissionKey: "integration-over"}, "settled", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("overpayment=%v", err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-17", Amount: 100000, SubmissionKey: "integration-final"}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-17", Amount: 100000, SubmissionKey: "integration-final"}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	history, err := s.RequestPayments(ctx, id)

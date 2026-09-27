@@ -17,10 +17,10 @@ func TestInstallmentsCumulativeCeilingRetryAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := PaymentInput{PaidOn: "2026-06-15", Amount: 700000, SubmissionKey: "first-confirm"}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, first, "settled", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(s, ctx, acc, id, first, "settled", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("silent short settlement: %v", err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, first, "installment", "Payment 1 of 2", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, first, "installment", "Payment 1 of 2", nil); err != nil {
 		t.Fatal(err)
 	}
 	r, _ := s.Request(ctx, id)
@@ -30,16 +30,16 @@ func TestInstallmentsCumulativeCeilingRetryAndHistory(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, first, "installment", "Payment 1 of 2", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(s, ctx, acc, id, first, "installment", "Payment 1 of 2", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("replayed confirmation: %v", err)
 	}
 	stalePaid := int64(0)
 	stale := PaymentInput{PaidOn: "2026-06-16", Amount: 300000, SubmissionKey: "stale-window", ExpectedPaid: &stalePaid}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, stale, "installment", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(s, ctx, acc, id, stale, "installment", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("stale payment window: %v", err)
 	}
 	over := PaymentInput{PaidOn: "2026-06-16", Amount: 500001, SubmissionKey: "over"}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, over, "settled", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(s, ctx, acc, id, over, "settled", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("cumulative overpay: %v", err)
 	}
 	second := PaymentInput{PaidOn: "2026-06-16", Amount: 500000, SubmissionKey: "second-confirm"}
@@ -49,7 +49,7 @@ func TestInstallmentsCumulativeCeilingRetryAndHistory(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.RecordPaymentForRequest(ctx, acc, id, second, "settled", "", nil)
+			_, err := historicalSettlement(s, ctx, acc, id, second, "settled", "", nil)
 			results <- err
 		}()
 	}
@@ -130,7 +130,7 @@ func TestPartialReviewCanContinueWithoutNewApproval(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Balance disputed", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Balance disputed", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ContinuePartial(ctx, requester, id, "Next week"); !errors.Is(err, ErrForbidden) {

@@ -14,13 +14,13 @@ func TestFullBalanceCannotEnterShortfallReview(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "installment", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "installment", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 500000}, "partial", "Disputed remaining balance", nil)
+	_, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 500000}, "partial", "Disputed remaining balance", nil)
 	if !errors.Is(err, ErrValidation) {
 		r, _ := s.Request(ctx, id)
 		t.Fatalf("full balance partial returned %v with state=%s paid=%d; want refusal", err, r.Status, r.PaidAmount)
@@ -39,7 +39,7 @@ func TestContinuedShortfallThenAcceptedDeductionKeepsCumulativeAccounting(t *tes
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Only part delivered", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Only part delivered", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ContinuePartial(ctx, mgr, id, "Pay balance after inspection"); err != nil {
@@ -48,7 +48,7 @@ func TestContinuedShortfallThenAcceptedDeductionKeepsCumulativeAccounting(t *tes
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 300000}, "partial", "Final two thousand remains disputed", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 300000}, "partial", "Final two thousand remains disputed", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AcceptPartial(ctx, mgr, id, "Accept documented reduction of two thousand"); err != nil {

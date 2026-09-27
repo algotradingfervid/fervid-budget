@@ -307,7 +307,17 @@ func TestRoleAuditHTMLShowsPermissionScopeDeltasAndAuthorizedRoleLink(t *testing
 			filtered = append(filtered, g)
 		}
 	}
-	if err = s.st.UpdateRolePermissions(s.ctx, actor, adminRole, filtered, scopes); err != nil {
+	limitedRole, e := s.st.CreateRole(s.ctx, actor, "Audit only admin view", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if err = s.st.UpdateRolePermissions(s.ctx, actor, limitedRole, filtered, scopes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.st.DB().Exec(`DELETE FROM user_roles WHERE user_id=?`, actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.st.DB().Exec(`INSERT INTO user_roles(user_id,role_id) VALUES(?,?)`, actor.ID, limitedRole); err != nil {
 		t.Fatal(err)
 	}
 	body = responseBody(t, s.request("GET", strconvPath("/audit?entity=role&id=%d", id), nil, ""))

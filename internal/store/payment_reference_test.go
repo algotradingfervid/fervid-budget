@@ -17,7 +17,7 @@ func TestPaymentReferenceRejectsWhitespaceWithoutWriting(t *testing.T) {
 				t.Fatal(err)
 			}
 			in := PaymentInput{PaidOn: "2026-06-15", Amount: 101, PaymentMode: mode, ReferenceNo: " \t\n "}
-			if _, err := s.RecordPaymentForRequest(ctx, acc, id, in, "settled", "", nil); !errors.Is(err, ErrValidation) {
+			if _, err := historicalSettlement(s, ctx, acc, id, in, "settled", "", nil); !errors.Is(err, ErrValidation) {
 				t.Fatalf("blank reference accepted: %v", err)
 			}
 			rows, err := s.RequestPayments(ctx, id)
@@ -25,7 +25,7 @@ func TestPaymentReferenceRejectsWhitespaceWithoutWriting(t *testing.T) {
 				t.Fatalf("rejection wrote payments: %v %v", rows, err)
 			}
 			in.ReferenceNo = "BANK-101-" + mode
-			if _, err := s.RecordPaymentForRequest(ctx, acc, id, in, "settled", "", nil); err != nil {
+			if _, err := historicalSettlement(s, ctx, acc, id, in, "settled", "", nil); err != nil {
 				t.Fatalf("corrected reference rejected: %v", err)
 			}
 		})

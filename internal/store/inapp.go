@@ -140,7 +140,7 @@ func notificationScopeWhere(scope string) string {
 // alone and fails in a full run purely because the shared admin has crossed the
 // cap by the time it looks. Silence was the defect; the cap is fine.
 func (s *Store) ListNotificationsPage(ctx context.Context, f NotificationFilter) (NotificationPage, error) {
-	where := ` WHERE user_id=?` + notificationScopeWhere(f.Scope)
+	where := ` WHERE user_id=?` + notificationVisibility + notificationScopeWhere(f.Scope)
 
 	var page NotificationPage
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications`+where, f.UserID).Scan(&page.Total); err != nil {
@@ -190,7 +190,7 @@ func (s *Store) ListNotifications(ctx context.Context, f NotificationFilter) ([]
 // ErrNotFound rather than the row, so the caller cannot leak it by guessing.
 func (s *Store) Notification(ctx context.Context, userID, id int64) (Notification, error) {
 	var n Notification
-	err := s.db.QueryRowContext(ctx, notificationSelect+` WHERE id=? AND user_id=?`, id, userID).
+	err := s.db.QueryRowContext(ctx, notificationSelect+` WHERE id=? AND user_id=?`+notificationVisibility, id, userID).
 		Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt)
 	if err == sql.ErrNoRows {
 		return n, ErrNotFound
@@ -204,21 +204,21 @@ func (s *Store) NotificationCounts(ctx context.Context, userID int64) (Notificat
 		COALESCE(SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN kind='reminder' THEN 1 ELSE 0 END),0)
-		FROM notifications WHERE user_id=?`, userID).
+		FROM notifications WHERE user_id=?`+notificationVisibility, userID).
 		Scan(&c.All, &c.Unread, &c.Mentions, &c.Reminders)
 	return c, err
 }
 
 func (s *Store) UnreadNotificationCount(ctx context.Context, userID int64) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL`, userID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL`+notificationVisibility, userID).Scan(&n)
 	return n, err
 }
 
 // MarkNotificationRead is scoped by user_id, so another user's row matches
 // nothing and returns ErrNotFound rather than being marked by a guessed id.
 func (s *Store) MarkNotificationRead(ctx context.Context, userID, id int64, now time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND read_at IS NULL`,
+	res, err := s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND read_at IS NULL`+notificationVisibility,
 		now.UTC(), id, userID)
 	if err != nil {
 		return classify(err)
@@ -231,7 +231,7 @@ func (s *Store) MarkNotificationRead(ctx context.Context, userID, id int64, now 
 		// Either it is not yours, it does not exist, or it was already read.
 		// Distinguish the last case so a double click is not an error.
 		var exists int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE id=? AND user_id=?`, id, userID).Scan(&exists); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifications WHERE id=? AND user_id=?`+notificationVisibility, id, userID).Scan(&exists); err != nil {
 			return err
 		}
 		if exists == 0 {
@@ -242,6 +242,14 @@ func (s *Store) MarkNotificationRead(ctx context.Context, userID, id int64, now 
 }
 
 func (s *Store) MarkAllNotificationsRead(ctx context.Context, userID int64, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL`, now.UTC(), userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL`+notificationVisibility, now.UTC(), userID)
 	return classify(err)
 }
+
+// Re-evaluate current membership for old notifications after reassignment or revocation.
+const notificationVisibility = ` AND (request_id IS NULL OR EXISTS (
+ SELECT 1 FROM payment_requests nr JOIN users nu ON nu.id=notifications.user_id AND nu.active=1
+ WHERE nr.id=notifications.request_id
+ AND EXISTS (SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id WHERE ur.user_id=nu.id AND rp.resource='request' AND rp.action='view')
+ AND EXISTS (SELECT 1 FROM user_roles ur JOIN role_data_scope ds ON ds.role_id=ur.role_id WHERE ur.user_id=nu.id AND ds.resource='request' AND
+ (ds.scope='all' OR (ds.scope='own' AND nr.requester_id=nu.id) OR (ds.scope='assigned' AND (nr.requester_id=nu.id OR nr.manager_id=nu.id))))))`

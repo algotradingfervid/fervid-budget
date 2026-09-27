@@ -11,10 +11,12 @@ import sqlite3
 import subprocess
 import tarfile
 
-STAGE = Path('/root/fervid-budget-qa-deploy-20260926')
+STAGE = Path(os.environ['FERVID_QA_STAGE'])
 QA = Path('/opt/fervid-budget-qa')
-RELEASE = '20260926-qa-final'
-EXPECTED = '5ed1e87c79b4bd989641c35bc10309ea70d0dbc1a10bfe29c27cddb8968c75a5'
+RELEASE = os.environ['FERVID_QA_RELEASE']
+EXPECTED = os.environ['FERVID_QA_PACKAGE_SHA256']
+EXPECTED_HOST = os.environ['FERVID_EXPECTED_HOST']
+EXPECTED_PRODUCTION_PID = os.environ['FERVID_EXPECTED_PRODUCTION_PID']
 UNIT = Path('/etc/systemd/system/fervid-budget-qa.service')
 ENV = Path('/etc/fervid-budget-qa.env')
 
@@ -23,8 +25,8 @@ def run(*args):
 
 def main():
     os.umask(0o077)
-    assert os.geteuid() == 0 and run('hostname') == 'fervid-budget'
-    assert run('systemctl', 'show', 'fervid-budget.service', '-p', 'MainPID', '--value') == '400907'
+    assert os.geteuid() == 0 and run('hostname') == EXPECTED_HOST
+    assert run('systemctl', 'show', 'fervid-budget.service', '-p', 'MainPID', '--value') == EXPECTED_PRODUCTION_PID
     assert not QA.exists() and not UNIT.exists() and not ENV.exists()
     assert run('systemctl', 'show', 'fervid-budget-qa.service', '-p', 'LoadState', '--value') == 'not-found'
     with socket.socket() as s:
@@ -76,7 +78,7 @@ def main():
     subprocess.run(['systemd-analyze', 'verify', str(UNIT)], check=True)
     subprocess.run(['systemctl', 'daemon-reload'], check=True)
     subprocess.run(['systemctl', 'enable', '--now', 'fervid-budget-qa.service'], check=True)
-    print(json.dumps({'installed': True, 'release': RELEASE, 'port': 8081, 'production_pid_unchanged': run('systemctl', 'show', 'fervid-budget.service', '-p', 'MainPID', '--value') == '400907'}))
+    print(json.dumps({'installed': True, 'release': RELEASE, 'port': 8081, 'production_pid_unchanged': run('systemctl', 'show', 'fervid-budget.service', '-p', 'MainPID', '--value') == EXPECTED_PRODUCTION_PID}))
 
 if __name__ == '__main__':
     main()

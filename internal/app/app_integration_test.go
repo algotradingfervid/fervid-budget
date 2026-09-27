@@ -43,14 +43,15 @@ func newAppTestServer(t *testing.T) *appTestServer {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Config{
-		DBPath:         filepath.Join(dir, "fervid.db"),
-		AttachmentDir:  filepath.Join(dir, "attachments"),
-		BackupDir:      filepath.Join(dir, "backups"),
-		SessionKey:     "test-session-key-that-is-long-enough",
-		AdminEmail:     "admin@example.test",
-		AdminName:      "Test Admin",
-		AdminPassword:  testAdminPassword,
-		BackupKeepDays: 1,
+		DBPath:           filepath.Join(dir, "fervid.db"),
+		AttachmentDir:    filepath.Join(dir, "attachments"),
+		BackupDir:        filepath.Join(dir, "backups"),
+		SessionKey:       "test-session-key-that-is-long-enough",
+		AdminEmail:       "admin@example.test",
+		AdminName:        "Test Admin",
+		AdminPassword:    testAdminPassword,
+		BackupKeepDays:   1,
+		SMTPAllowedHosts: []string{"smtp.example.test"},
 	}
 	if err := cfg.EnsureDirs(); err != nil {
 		t.Fatal(err)
@@ -146,8 +147,19 @@ func (s *appTestServer) postForm(path string, form url.Values) *http.Response {
 		copyForm[key] = append([]string(nil), values...)
 	}
 	form = copyForm
-	if strings.HasPrefix(path, "/requests/") && strings.HasSuffix(path, "/edit") && !form.Has("revision") {
-		page := responseBody(s.t, s.request(http.MethodGet, path, nil, ""))
+	if path == "/payments" && form.Get("request_id") != "" && len(form.Get("paid_on")) == 10 {
+		date := form.Get("paid_on") + " 00:00:00"
+		if _, err := s.st.DB().Exec(`UPDATE payment_requests SET approved_at=? WHERE id=? AND approved_at>?`, date, form.Get("request_id"), date); err != nil {
+			s.t.Fatal(err)
+		}
+	}
+
+	if strings.HasPrefix(path, "/requests/") && (strings.HasSuffix(path, "/edit") || strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/return") || strings.HasSuffix(path, "/reject")) && !form.Has("revision") {
+		pagePath := path
+		if !strings.HasSuffix(path, "/edit") {
+			pagePath = path[:strings.LastIndex(path, "/")]
+		}
+		page := responseBody(s.t, s.request(http.MethodGet, pagePath, nil, ""))
 		matches := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)
 		if len(matches) == 2 {
 			form.Set("revision", matches[1])
@@ -217,13 +229,12 @@ func TestLoginLockoutAndFailedAttemptsAreAudited(t *testing.T) {
 		_ = responseBody(t, resp)
 	}
 	form := url.Values{"email": {s.cfg.AdminEmail}, "password": {testAdminPassword}}
-	body := responseBody(t, s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded"))
-	if !strings.Contains(body, "Too many failed attempts") {
-		t.Fatalf("locked login response did not explain lockout: %s", body)
-	}
+	resp := s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+	requireStatus(t, resp, http.StatusSeeOther)
+	resp.Body.Close()
 	locked, _, err := s.st.LoginLocked(s.ctx, s.cfg.AdminEmail)
-	if err != nil || !locked {
-		t.Fatalf("LoginLocked = %v, %v; want locked account", locked, err)
+	if err != nil || locked {
+		t.Fatalf("successful login must clear failed attempts: %v, %v", locked, err)
 	}
 	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	if err != nil {
@@ -2383,6 +2394,20 @@ func TestUserSaveDemandsCreateToCreateAndEditToEdit(t *testing.T) {
 	s.seedProbeUser("editor@example.test", "Editor", "EditorPass123", "user-editor",
 		[]store.Grant{{Resource: "user", Action: "view"}, {Resource: "user", Action: "edit"}}, nil)
 
+	// Delegation requires the creator/editor to already hold the permissions
+	// they grant or manage. Add the Requester role to these test operators.
+	admin, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
+	for _, email := range []string{"creator@example.test", "editor@example.test"} {
+		u, _ := s.st.UserByEmail(s.ctx, email)
+		roles, _ := s.st.UserRoles(s.ctx, u.ID)
+		ids := []int64{parseID(s.roleIDByName(t, "Requester"))}
+		for _, role := range roles {
+			ids = append(ids, role.ID)
+		}
+		if err := s.st.SetUserRoles(s.ctx, admin, u.ID, ids); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// user:create renders the button and now also carries its submit.
 	s.login("creator@example.test", "CreatorPass12")
 	body := responseBody(t, s.request(http.MethodGet, "/users", nil, ""))

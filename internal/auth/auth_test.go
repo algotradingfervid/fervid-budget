@@ -19,7 +19,7 @@ func TestValidatePassword(t *testing.T) {
 			t.Fatalf("ValidatePassword(%q) unexpectedly succeeded", password)
 		}
 	}
-	if err := ValidatePassword("budget2026"); err != nil {
+	if err := ValidatePassword("budget202600"); err != nil {
 		t.Fatalf("ValidatePassword valid password: %v", err)
 	}
 }
@@ -40,7 +40,7 @@ func newTestManager(t *testing.T) (*Manager, *store.Store) {
 
 func createTestUser(t *testing.T, st *store.Store, email, role string, active bool) store.User {
 	t.Helper()
-	hash, err := HashPassword("Account123")
+	hash, err := HashPassword("Account12345")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +78,11 @@ func authenticatedRequest(t *testing.T, manager *Manager, user store.User, metho
 }
 
 func TestHashAndCheckPassword(t *testing.T) {
-	hash, err := HashPassword("Budget123")
+	hash, err := HashPassword("Budget123456")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !CheckPassword(hash, "Budget123") {
+	if !CheckPassword(hash, "Budget123456") {
 		t.Fatal("valid password did not match its hash")
 	}
 	if CheckPassword(hash, "Wrong123") {
@@ -242,8 +242,8 @@ func TestCSRFAndLogoutLifecycle(t *testing.T) {
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	token := manager.EnsureCSRF(response, request)
-	if len(token) != 32 {
-		t.Fatalf("CSRF token length = %d, want 32", len(token))
+	if len(token) != 87 {
+		t.Fatalf("CSRF token length = %d, want 87", len(token))
 	}
 	csrf := cookieByName(t, response, csrfCookie)
 
@@ -281,5 +281,32 @@ func TestCSRFAndLogoutLifecycle(t *testing.T) {
 	session := cookieByName(t, logout, sessionCookie)
 	if session.MaxAge != -1 || session.Value != "" {
 		t.Fatalf("logout cookie = %#v, want expired empty session", session)
+	}
+}
+
+func TestSecurityCSRFCannotBeForgedOrTransferredBetweenSessions(t *testing.T) {
+	manager, st := newTestManager(t)
+	first := createTestUser(t, st, "first@csrf.test", "admin", true)
+	second := createTestUser(t, st, "second@csrf.test", "data_entry", true)
+	a := authenticatedRequest(t, manager, first, "POST", "/")
+	token, _ := a.Cookie(csrfCookie)
+	a.Header.Set("X-CSRF-Token", token.Value)
+	if !manager.CheckCSRF(a) {
+		t.Fatal("valid bound token refused")
+	}
+	b := authenticatedRequest(t, manager, second, "POST", "/")
+	session, _ := b.Cookie(sessionCookie)
+	forged := httptest.NewRequest("POST", "/", nil)
+	forged.AddCookie(session)
+	forged.AddCookie(token)
+	forged.Header.Set("X-CSRF-Token", token.Value)
+	if manager.CheckCSRF(forged) {
+		t.Fatal("CSRF token transferred across users")
+	}
+	forged = httptest.NewRequest("POST", "/", nil)
+	forged.AddCookie(&http.Cookie{Name: csrfCookie, Value: "attacker"})
+	forged.Header.Set("X-CSRF-Token", "attacker")
+	if manager.CheckCSRF(forged) {
+		t.Fatal("unsigned double-submit accepted")
 	}
 }

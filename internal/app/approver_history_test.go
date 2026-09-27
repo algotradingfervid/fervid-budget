@@ -71,7 +71,7 @@ func TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval(t *testing
 	}
 	// And so he still cannot decide it.
 	resp = s.postForm(fmt.Sprintf("/requests/%d/approve", reqID), url.Values{"approved_amount": {"900.00"}})
-	requireStatus(t, resp, http.StatusForbidden)
+	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
 
 	// Mona, the request's own approver, sees the control and may hand it on —
@@ -351,7 +351,7 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := part.Write([]byte("%PDF-1.4\n%%EOF\n")); err != nil {
+		if _, err := part.Write([]byte(validTestPDF)); err != nil {
 			t.Fatal(err)
 		}
 		if err := mw.Close(); err != nil {

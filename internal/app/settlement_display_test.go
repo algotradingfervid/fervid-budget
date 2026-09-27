@@ -375,14 +375,14 @@ func TestEntryScreenWithholdsSettleFromAPayerWithoutTheVerb(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("NoSettle")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	pns := s.seedProbeUser("pns@example.test", "Pay No Settle", "PnsPass1234", "QA Pay No Settle",
+	pns := s.seedProbeUser("pns@example.test", "Pay No Settle", "PnsPass123445", "QA Pay No Settle",
 		[]store.Grant{
 			{Resource: "request", Action: "view"}, {Resource: "payment", Action: "view"},
 			{Resource: "payment", Action: "create"}, {Resource: "payment", Action: "process"},
 			{Resource: "reservation", Action: "reserve"}, {Resource: "reservation", Action: "release"},
 		},
 		[]store.ScopeGrant{{Resource: "request", Scope: store.ScopeAll}, {Resource: "payment", Scope: store.ScopeAll}})
-	s.login(pns.Email, "PnsPass1234")
+	s.login(pns.Email, "PnsPass123445")
 	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	body := responseBody(t, s.request(http.MethodGet, strconvPath("/payments/new?request=%d", reqID), nil, ""))
 	mustNotContain(t, "no-settle entry screen", body, "settlement-preview", "Payment settled")

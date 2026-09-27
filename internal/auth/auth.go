@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"fervidbudget/internal/config"
+	"fervidbudget/internal/password"
 	"fervidbudget/internal/store"
 
 	"golang.org/x/crypto/bcrypt"
@@ -43,25 +45,8 @@ func HashPassword(password string) (string, error) {
 	return string(b), err
 }
 
-// ValidatePassword keeps the local bootstrap password compatible while
-// preventing trivially short credentials in user-management workflows.
-func ValidatePassword(password string) error {
-	if len(password) > 72 {
-		return fmt.Errorf("password must be at most 72 bytes; use fewer characters if it contains symbols or non-English letters")
-	}
-	if len(password) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
-	}
-	var hasLetter, hasDigit bool
-	for _, r := range password {
-		hasLetter = hasLetter || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z')
-		hasDigit = hasDigit || ('0' <= r && r <= '9')
-	}
-	if !hasLetter || !hasDigit {
-		return fmt.Errorf("password must include a letter and a number")
-	}
-	return nil
-}
+// ValidatePassword is shared by bootstrap, user management and email reset.
+func ValidatePassword(value string) error { return password.Validate(value) }
 
 func CheckPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
@@ -71,8 +56,9 @@ func (m *Manager) Login(w http.ResponseWriter, r *http.Request, user store.User)
 	exp := time.Now().Add(12 * time.Hour).Unix()
 	payload := fmt.Sprintf("%d:%d", user.ID, exp)
 	sig := m.sign(payload + ":" + user.PasswordHash + ":" + strconv.FormatInt(user.SessionVersion, 10))
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: base64.RawURLEncoding.EncodeToString([]byte(payload + ":" + sig)), Path: "/", HttpOnly: true, Secure: m.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
-	m.EnsureCSRF(w, r)
+	value := base64.RawURLEncoding.EncodeToString([]byte(payload + ":" + sig))
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: value, Path: "/", HttpOnly: true, Secure: m.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
+	m.setCSRF(w, value)
 }
 
 func (m *Manager) Logout(w http.ResponseWriter) {
@@ -172,6 +158,17 @@ func CurrentUser(r *http.Request) store.User {
 	return u
 }
 
+func (m *Manager) csrfBinding(r *http.Request) string {
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		return c.Value
+	}
+	return ""
+}
+func (m *Manager) validCSRF(token, binding string) bool {
+	nonce, signature, ok := strings.Cut(token, ".")
+	raw, err := base64.RawURLEncoding.DecodeString(nonce)
+	return ok && err == nil && len(raw) == 32 && hmac.Equal([]byte(signature), []byte(m.sign("csrf:"+binding+":"+nonce)))
+}
 func (m *Manager) CheckCSRF(r *http.Request) bool {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 		return true
@@ -184,16 +181,24 @@ func (m *Manager) CheckCSRF(r *http.Request) bool {
 	if token == "" {
 		token = r.Header.Get("X-CSRF-Token")
 	}
-	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1
+	return m.validCSRF(c.Value, m.csrfBinding(r)) && subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1
 }
-
+func (m *Manager) setCSRF(w http.ResponseWriter, binding string) string {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		panic(err)
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(raw)
+	token := nonce + "." + m.sign("csrf:"+binding+":"+nonce)
+	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: token, Path: "/", Secure: m.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
+	return token
+}
 func (m *Manager) EnsureCSRF(w http.ResponseWriter, r *http.Request) string {
-	if c, err := r.Cookie(csrfCookie); err == nil && c.Value != "" {
+	binding := m.csrfBinding(r)
+	if c, err := r.Cookie(csrfCookie); err == nil && m.validCSRF(c.Value, binding) {
 		return c.Value
 	}
-	token := m.sign(fmt.Sprintf("%d", time.Now().UnixNano()))[:32]
-	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: token, Path: "/", HttpOnly: false, Secure: m.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
-	return token
+	return m.setCSRF(w, binding)
 }
 
 func (m *Manager) CSRFMiddleware(next http.Handler) http.Handler {

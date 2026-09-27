@@ -84,10 +84,10 @@ func TestRequestScopeNoneShowsNoRowsAnywhere(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Scope")
 	reqID := s.seedPendingRequest(1, admin.ID, admin.ID, headID, 1200)
-	s.seedProbeUser("carl@example.test", "Carl", "CarlPass123", "Viewer",
+	s.seedProbeUser("carl@example.test", "Carl", "CarlPass12345", "Viewer",
 		[]store.Grant{{Resource: "request", Action: "view"}, {Resource: "grid", Action: "view"}}, nil)
 
-	s.login("carl@example.test", "CarlPass123")
+	s.login("carl@example.test", "CarlPass12345")
 	body := responseBody(t, s.request(http.MethodGet, "/requests?bucket=all", nil, ""))
 	if strings.Contains(body, "PR-2026-000001") {
 		t.Fatalf("a viewer with no request scope sees the list: %s", body)
@@ -108,10 +108,10 @@ func TestPaymentScopeNoneShowsNoLedgerRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.seedProbeUser("dana@example.test", "Dana", "DanaPass123", "Ledger Viewer",
+	s.seedProbeUser("dana@example.test", "Dana", "DanaPass12345", "Ledger Viewer",
 		[]store.Grant{{Resource: "payment", Action: "view"}}, nil)
 
-	s.login("dana@example.test", "DanaPass123")
+	s.login("dana@example.test", "DanaPass12345")
 	body := responseBody(t, s.request(http.MethodGet, "/payments?month=2026-06&status=all", nil, ""))
 	if strings.Contains(body, "Scope Probe Payee") {
 		t.Fatalf("a viewer with no payment scope sees the ledger: %s", body)
@@ -119,10 +119,10 @@ func TestPaymentScopeNoneShowsNoLedgerRows(t *testing.T) {
 	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", payID), nil, ""), http.StatusNotFound)
 
 	// And a scope of All still shows the row, so the ledger was not locked shut.
-	s.seedProbeUser("erin@example.test", "Erin", "ErinPass123", "Ledger Reader",
+	s.seedProbeUser("erin@example.test", "Erin", "ErinPass12345", "Ledger Reader",
 		[]store.Grant{{Resource: "payment", Action: "view"}},
 		[]store.ScopeGrant{{Resource: "payment", Scope: store.ScopeAll}})
-	s.login("erin@example.test", "ErinPass123")
+	s.login("erin@example.test", "ErinPass12345")
 	body = responseBody(t, s.request(http.MethodGet, "/payments?month=2026-06&status=all", nil, ""))
 	if !strings.Contains(body, "Scope Probe Payee") {
 		t.Fatalf("a viewer with scope All lost the ledger: %s", body)

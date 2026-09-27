@@ -37,7 +37,7 @@ func main() {
 	}
 	defer s.Close()
 	before, count := accountState(s.DB())
-	cfg := config.Config{DBPath: path, AttachmentDir: filepath.Join(data, "attachments"), BackupDir: filepath.Join(root, "startup-check/backups"), SessionKey: "local-startup-regression-no-listener", AdminEmail: "admin@fervid.local", AdminName: "Fervid Admin", AdminPassword: "admin123"}
+	cfg := config.Config{DBPath: path, AttachmentDir: filepath.Join(data, "attachments"), BackupDir: filepath.Join(root, "startup-check/backups"), SessionKey: "local-startup-regression-no-listener", AdminEmail: "admin@fervid.local", AdminName: "Fervid Admin", AdminPassword: "RehearsalAdmin12345"}
 	if _, err = app.New(cfg, s); err != nil {
 		fail("construct_application")
 	}

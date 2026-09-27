@@ -60,7 +60,8 @@ export default defineConfig({
       `FERVID_BACKUP_DIR=${runtime}/backups`,
       'FERVID_SESSION_KEY=fervid-playwright-session-key',
       'FERVID_ADMIN_EMAIL=admin@fervid.local',
-      'FERVID_ADMIN_PASSWORD=admin123',
+      'FERVID_ADMIN_PASSWORD=TestAdmin12345',
+      'FERVID_SECURE_COOKIES=false',
       'go run ./cmd/server --seed'
     ].join(' '),
     url: `http://127.0.0.1:${port}/login`,

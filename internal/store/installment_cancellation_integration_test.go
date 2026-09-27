@@ -18,7 +18,7 @@ func TestInstallmentCannotBeCancelledAndHidden(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000, SubmissionKey: "integration-cancel-first"}, "installment", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000, SubmissionKey: "integration-cancel-first"}, "installment", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	for name, action := range map[string]func() error{
@@ -52,7 +52,7 @@ func TestInstallmentCannotBeCancelledAndHidden(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 500000, SubmissionKey: "integration-cancel-second"}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 500000, SubmissionKey: "integration-cancel-second"}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
 }

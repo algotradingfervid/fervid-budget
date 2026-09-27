@@ -16,10 +16,10 @@ import (
 func TestBudgetAndMasterViewersHaveNoWriteControls(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("ReadOnly")
-	s.seedProbeUser("viewer@example.test", "Read-only viewer", "ReadOnly123", "read-only", []store.Grant{
+	s.seedProbeUser("viewer@example.test", "Read-only viewer", "ReadOnly12345", "read-only", []store.Grant{
 		{Resource: "budget", Action: "view"}, {Resource: "project", Action: "view"}, {Resource: "head", Action: "view"},
 	}, nil)
-	s.login("viewer@example.test", "ReadOnly123")
+	s.login("viewer@example.test", "ReadOnly12345")
 	for _, tc := range []struct{ path, button, field string }{
 		{"/budgets", "Save Budgets", `id="budget_`},
 		{"/projects", "Add Project", `form="project-`},

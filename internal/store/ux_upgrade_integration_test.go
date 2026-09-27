@@ -17,7 +17,7 @@ func TestUXUpgradeFromVersion15PreservesHistoricalWriteoffAndPayment(t *testing.
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := s.RecordPaymentForRequest(ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Legacy accepted shortfall", nil)
+	payID, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Legacy accepted shortfall", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

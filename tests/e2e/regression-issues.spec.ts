@@ -331,7 +331,7 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-007 hides administrator navigation and payment mutations from data entry', async ({ page, runId }) => {
-    await login(page, 'admin@fervid.local', 'admin123');
+    await login(page, 'admin@fervid.local', 'TestAdmin12345');
     const account = await createDataEntryUser(page, runId);
     await login(page, account.email, account.password);
     await expect(page.locator('.side-nav a[href="/users"]')).toHaveCount(0);
@@ -379,7 +379,7 @@ test.describe('documented issue regression guards', () => {
   });
 
   test('ISS-010 temporarily locks repeated failed sign-ins', async ({ page, runId }) => {
-    await login(page, 'admin@fervid.local', 'admin123');
+    await login(page, 'admin@fervid.local', 'TestAdmin12345');
     const email = `lock-${runId}@example.test`;
     await page.goto('/users');
     await openNewUserSheet(page);
@@ -407,7 +407,7 @@ test.describe('documented issue regression guards', () => {
     await page.getByLabel('Email').fill('unknown-audit@example.test');
     await page.getByLabel('Password').fill('Incorrect42');
     await page.getByRole('button', { name: 'Login' }).click();
-    await login(page, 'admin@fervid.local', 'admin123');
+    await login(page, 'admin@fervid.local', 'TestAdmin12345');
     await page.goto('/audit?action=login_failed');
     await expect(page.getByText('Failed login attempt').first()).toBeVisible();
   });
@@ -725,7 +725,7 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-033 does not publish default administrator credentials', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.locator('body')).not.toContainText('admin123');
+    await expect(page.locator('body')).not.toContainText('TestAdmin12345');
     await expect(page.getByLabel('Email')).toHaveValue('');
   });
 

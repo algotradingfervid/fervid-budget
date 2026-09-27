@@ -18,11 +18,11 @@ func TestNotificationLifecycleAndScopedFilters(t *testing.T) { // G19
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID := int64(7)
+
 	seed := []Notification{
-		{UserID: me, Event: "request_returned", RequestID: &reqID, Title: "Kavita Rao returned PR-2026-000131", Body: "Attach the July invoice", Href: "/requests/7"},
-		{UserID: me, Event: "reminder_pending", RequestID: &reqID, Title: "PR-2026-000134 has waited 3 days", Href: "/requests/7"},
-		{UserID: me, Event: "request_approved", RequestID: &reqID, Title: "Kavita Rao approved PR-2026-000128", Href: "/requests/7"},
+		{UserID: me, Event: "request_returned", Title: "Kavita Rao returned PR-2026-000131", Body: "Attach the July invoice", Href: "/requests/7"},
+		{UserID: me, Event: "reminder_pending", Title: "PR-2026-000134 has waited 3 days", Href: "/requests/7"},
+		{UserID: me, Event: "request_approved", Title: "Kavita Rao approved PR-2026-000128", Href: "/requests/7"},
 		{UserID: other, Event: "request_approved", Title: "Not yours", Href: "/requests/9"},
 	}
 	var ids []int64

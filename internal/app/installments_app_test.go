@@ -242,7 +242,7 @@ func TestClosedIncludesCompletedAndClearFiltersRetainsContext(t *testing.T) {
 	if err := s.st.ReserveRequest(s.ctx, admin, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.st.RecordPaymentForRequest(s.ctx, admin, id, store.PaymentInput{PaidOn: "2026-06-15", Amount: 1200000}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(s.st, s.ctx, admin, id, store.PaymentInput{PaidOn: "2026-06-15", Amount: 1200000}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	s.login(s.cfg.AdminEmail, testAdminPassword)

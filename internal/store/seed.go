@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
+	"fervidbudget/internal/password"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
 	defaultSeedAdminEmail = "admin@fervid.local"
 	defaultSeedAdminName  = "Fervid Admin"
-	defaultSeedAdminPass  = "admin123"
 	defaultSeedMonth      = "2026-06"
 )
 
@@ -76,9 +76,6 @@ func normalizeSeedOptions(opts SeedOptions) SeedOptions {
 	if opts.AdminName == "" {
 		opts.AdminName = defaultSeedAdminName
 	}
-	if opts.AdminPassword == "" && opts.AdminPasswordHash == "" {
-		opts.AdminPassword = defaultSeedAdminPass
-	}
 	if !validMonth(opts.Month) {
 		opts.Month = defaultSeedMonth
 	}
@@ -96,6 +93,9 @@ func (s *Store) ensureSeedAdmin(ctx context.Context, opts SeedOptions) (User, bo
 
 	hash := strings.TrimSpace(opts.AdminPasswordHash)
 	if hash == "" {
+		if err := password.Validate(opts.AdminPassword); err != nil {
+			return User{}, false, fmt.Errorf("bootstrap password: %w", err)
+		}
 		generated, err := bcrypt.GenerateFromPassword([]byte(opts.AdminPassword), bcrypt.DefaultCost)
 		if err != nil {
 			return User{}, false, err

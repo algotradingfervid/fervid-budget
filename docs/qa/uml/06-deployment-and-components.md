@@ -241,7 +241,7 @@ is not part of the shipped `Config` struct.
 | `FERVID_SESSION_KEY` | `internal/config/config.go:34` | 32 random bytes, hex-encoded, via `randomHex(32)` (`internal/config/config.go:80-86`) | No, but see below | **Yes** — HMAC key that signs every session and CSRF cookie (`internal/auth/auth.go:234-238`) | **Yes, never persisted** — lives only in `Config`/process memory |
 | `FERVID_SECURE_COOKIES` | `internal/config/config.go:35` | `false` | No | No | n/a |
 | `FERVID_ADMIN_EMAIL` | `internal/config/config.go:36` | `admin@fervid.local` | No | No | Persisted, but as an ordinary `users.email` row via `EnsureUser` (`internal/app/app.go:319`) — not a secret |
-| `FERVID_ADMIN_PASSWORD` | `internal/config/config.go:37` | `admin123` | No | **Yes** | **Never persisted in plaintext** — only its bcrypt hash reaches `users.password_hash` (`auth.HashPassword`, `internal/app/app.go:315-321`) |
+| `FERVID_ADMIN_PASSWORD` | `internal/config/config.go:37` | No default; a unique password is required | No | **Yes** | **Never persisted in plaintext** — only its bcrypt hash reaches `users.password_hash` (`auth.HashPassword`, `internal/app/app.go:315-321`) |
 | `FERVID_ADMIN_NAME` | `internal/config/config.go:38` | `Fervid Admin` | No | No | Persisted as `users.name` — not a secret |
 | `FERVID_BACKUP_KEEP_DAYS` | `internal/config/config.go:39` | `30` | No | No | n/a |
 | `FERVID_SMTP_PASSWORD` | `internal/config/config.go:40` | `""` (empty) | Effectively yes for outbound mail to work, but the app runs without it | **Yes** | **Never persisted, never logged** — held only in `config.Config.SMTPPassword` and passed straight into `notify.NewSMTPMailer` (`cmd/server/main.go:97`, `internal/app/app.go:203`); the comment at `internal/config/config.go:22-24` states this explicitly, and `store.MailSettings` (`internal/store/notifications.go:23-34`) — the struct the admin "Configuration" screen edits and that *is* written to `app_settings` — has no password field at all |
@@ -306,14 +306,14 @@ Notes on what could and could not be verified:
   the app on 127.0.0.1:8080 as a systemd unit") is **not directly stated in
   the two files this section is scoped to.** `deploy.sh` confirms a `systemctl
   restart fervid-budget.service` (`deploy.sh:46`) and a public HTTPS health
-  check against `https://fervidtools.optimussoftwares.com` (`deploy.sh:25,53`),
+  check against `the configured FERVID_PUBLIC_URL` (`deploy.sh:25,53`),
   and `docs/OPERATIONS.md` never mentions Caddy, TLS, or a port at all. Neither
   file states that the app listens on `127.0.0.1:8080` specifically, nor names
   Caddy as the reverse proxy — those two details come from the brief itself,
   not from a file this agent read. They are drawn on the diagram because the
   brief asked for them, but the concrete host/IP/proxy software is marked
   `<configured>` rather than asserted as verified fact.
-- The server's real address is `root@116.203.184.169` (`deploy.sh:23`, default
+- The server's real address is `the configured FERVID_DEPLOY_HOST` (`deploy.sh:23`, default
   for `FERVID_DEPLOY_HOST`) and the app directory is
   `/opt/fervid-budget` (`deploy.sh:24`); these two are genuinely in the file
   and are reproduced above, unlike the Caddy/port claim.

@@ -22,7 +22,7 @@ func TestLongAttachmentNamesSurviveCreateEditAndDownload(t *testing.T) {
 	manager := seedSecondApprover(t, s)
 	requester := s.seedRequester("long-file@example.test", "Long file requester", "RequesterPass123")
 	s.login(requester.Email, "RequesterPass123")
-	pdf := []byte("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n")
+	pdf := []byte(validTestPDF)
 	names := []string{strings.Repeat("r", 240) + ".pdf", strings.Repeat("文", 82) + ".pdf"}
 	fields := url.Values{"csrf": {s.csrf()}, "type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Long original filename"}, "project_id": {"1"}, "head_id": {strconvFormat(head)}, "amount": {"23.45"}, "purpose": {"Keep the upload and its exact filename"}, "expense_date": {"2026-07-17"}, "manager_id": {strconvFormat(manager)}}
 	var id int64
@@ -111,7 +111,7 @@ func TestConcurrentSameOriginalAttachmentNameGetsDistinctPrivateFiles(t *testing
 	results := make(chan result, workers)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
-		body, ct := attachmentMultipart(t, nil, name, []byte(fmt.Sprintf("%%PDF-1.4\nworker %d\n%%%%EOF\n", i)))
+		body, ct := attachmentMultipart(t, nil, name, []byte(validTestPDF))
 		content := append([]byte(nil), body.Bytes()...)
 		wg.Add(1)
 		go func(raw []byte, contentType string) {

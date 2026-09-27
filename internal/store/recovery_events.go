@@ -135,6 +135,11 @@ func (s *Store) RecordRecovery(ctx context.Context, actor User, requestID int64,
 	if err != sql.ErrNoRows {
 		return 0, err
 	}
+	if locked, err := isLocked(ctx, tx, in.OccurredOn[:7]); err != nil {
+		return 0, err
+	} else if locked {
+		return 0, ErrLockedMonth
+	}
 	var paid, recovered int64
 	var firstPaid string
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0),COALESCE(MIN(paid_on),'') FROM payments WHERE request_id=? AND voided_at IS NULL`, requestID).Scan(&paid, &firstPaid); err != nil {

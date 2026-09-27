@@ -2,7 +2,7 @@ import { expect, test as base, type Page } from '@playwright/test';
 
 export const admin = {
   email: 'admin@fervid.local',
-  password: 'admin123'
+  password: 'TestAdmin12345'
 };
 
 /** Every user these fixtures create gets this password. */

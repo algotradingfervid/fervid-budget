@@ -166,8 +166,8 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Number", "Category", "Counterparty", "Project", "Outstanding", "Paid out", "Recovered or reconciled", "Paid On", "Expected Return", "Ageing", "Status", "Requester", "Repayment Notes"})
 	for _, row := range rows {
-		_ = cw.Write([]string{row.Number, row.Category, row.Counterparty, row.Project, csvAmount(row.Amount), csvAmount(row.PaidAmount), csvAmount(row.RecoveredAmount),
-			row.PaidOn, row.ExpectedReturnDate, row.AgeingLabel, row.Status, row.Requester, row.RepaymentNotes})
+		_ = cw.Write([]string{csvText(row.Number), csvText(row.Category), csvText(row.Counterparty), csvText(row.Project), csvAmount(row.Amount), csvAmount(row.PaidAmount), csvAmount(row.RecoveredAmount),
+			row.PaidOn, row.ExpectedReturnDate, row.AgeingLabel, csvText(row.Status), csvText(row.Requester), csvText(row.RepaymentNotes)})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {
@@ -212,17 +212,17 @@ func (a *App) renderRecoverableDetail(w http.ResponseWriter, r *http.Request, in
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// This screen is the recoverables register, not a general request viewer.
-	if req.Treatment != "recoverable" {
-		a.respondError(w, r, http.StatusNotFound, "That request is not a recoverable payment.", nil)
-		return
-	}
 	// The same row scope /requests/{id} applies, answered the same way it answers
 	// it — 404, so the register is not an existence oracle either (F-G-016/F-G-002).
 	u := auth.CurrentUser(r)
 	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
 		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
 			fmt.Errorf("recoverable %d is outside the caller's data scope", req.ID))
+		return
+	}
+	// This screen is the recoverables register, not a general request viewer.
+	if req.Treatment != "recoverable" {
+		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)
 		return
 	}
 	// Reuse the register query so ageing here and in the list can never

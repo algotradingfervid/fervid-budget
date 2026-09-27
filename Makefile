@@ -1,5 +1,7 @@
 APP_NAME := fervid-budget
 GO ?= go
+# Generated review evidence under output/ may contain standalone Go probes.
+GO_PACKAGES := ./cmd/... ./internal/... ./tools/...
 
 .PHONY: help fmt vet test test-race test-cover typecheck test-e2e test-audit test-all run seed backup manual
 
@@ -20,19 +22,19 @@ help:
 	@echo "  make backup - create a local backup"
 
 fmt:
-	$(GO) fmt ./...
+	$(GO) fmt $(GO_PACKAGES)
 
 vet:
-	$(GO) vet ./...
+	$(GO) vet $(GO_PACKAGES)
 
 test:
-	$(GO) test ./...
+	$(GO) test $(GO_PACKAGES)
 
 test-race:
-	$(GO) test -race ./...
+	$(GO) test -race $(GO_PACKAGES)
 
 test-cover:
-	$(GO) test ./... -coverprofile=output/coverage.out
+	$(GO) test $(GO_PACKAGES) -coverprofile=output/coverage.out
 
 typecheck:
 	npm run typecheck

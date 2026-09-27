@@ -68,7 +68,7 @@ func TestConcurrentSettlementsAllSucceedAndLeaveTheDatabaseWritable(t *testing.T
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, errs[i] = s.RecordPaymentForRequest(ctx, actors[i], ids[i], PaymentInput{
+			_, errs[i] = historicalSettlement(s, ctx, actors[i], ids[i], PaymentInput{
 				PaidOn:      "2026-07-21",
 				Amount:      500000,
 				PaymentMode: "bank_transfer",

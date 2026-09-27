@@ -50,7 +50,7 @@ test.describe('authentication, permissions, and navigation', () => {
   });
 
   test('data-entry accounts are denied administrative routes and controls', async ({ page, runId }) => {
-    await login(page, 'admin@fervid.local', 'admin123');
+    await login(page, 'admin@fervid.local', 'TestAdmin12345');
     const user = await createDataEntryUser(page, runId);
     await login(page, user.email, user.password);
     await page.goto('/users');

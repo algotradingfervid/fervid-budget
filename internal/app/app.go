@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"log/slog"
-	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -19,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fervidbudget/internal/auth"
@@ -29,16 +28,19 @@ import (
 )
 
 type App struct {
-	cfg  config.Config
-	st   *store.Store
-	auth *auth.Manager
-	tpl  *template.Template
-	log  *slog.Logger
+	uploadMu          sync.Mutex
+	uploadQuotaWarned bool
+	cfg               config.Config
+	st                *store.Store
+	auth              *auth.Manager
+	tpl               *template.Template
+	log               *slog.Logger
 	// notify turns workflow events into in-app rows and email; mailer is the
 	// transport it uses, kept separately so the rules screen can send a test
 	// message without inventing an event.
-	notify *notify.Service
-	mailer notify.Mailer
+	notify     *notify.Service
+	mailer     notify.Mailer
+	authLimits authLimiter
 }
 
 // Warning is one caution above a form, with the heading that says what it is
@@ -324,7 +326,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 		return nil, err
 	}
 	a := &App{cfg: cfg, st: st, auth: am, log: slog.Default()}
-	a.mailer = notify.NewSMTPMailer(st, cfg.SMTPPassword)
+	a.mailer = notify.NewSMTPMailer(st, cfg.SMTPPassword, cfg.SMTPAllowedHosts...)
 	a.notify = notify.NewService(st, a.mailer)
 	am.SetErrorHandler(func(w http.ResponseWriter, r *http.Request, status int, message string) {
 		a.respondError(w, r, status, message, nil)
@@ -480,7 +482,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 	a.routes(mux)
 	return &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           a.httpObservability(am.Middleware(a.refreshBadgesAfterMutation(mux))),
+		Handler:           a.httpObservability(a.securityBoundary(am.Middleware(a.refreshBadgesAfterMutation(mux)))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      2 * time.Minute,
@@ -516,19 +518,13 @@ func contextWithTimeout() struct {
 }
 
 func (a *App) routes(mux *http.ServeMux) {
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", publicStatic()))
 	mux.HandleFunc("GET /login", a.loginForm)
 	mux.HandleFunc("GET /login/help", a.loginHelp)
 	mux.HandleFunc("POST /login/help", a.withCSRF(a.passwordResetRequest))
 	mux.HandleFunc("GET /login/reset", a.passwordResetForm)
 	mux.HandleFunc("POST /login/reset", a.withCSRF(a.passwordResetPost))
-	// POST /login is deliberately outside withCSRF: there is no session yet to
-	// protect, and a pre-session token buys nothing (F-A-10). It is the single
-	// exception to the rule that every mutating POST is wrapped, so it is
-	// written down here rather than left for the next reader of withCSRF to
-	// rediscover. The body cap is *not* optional, though — withCSRF is where it
-	// lives for every other POST, and loginPost is the one unauthenticated
-	// endpoint that parses a form, so it caps its own body instead.
+	// Login has no prior session; browser origin checks run before parsing.
 	mux.HandleFunc("POST /login", a.withBodyCap(a.loginPost))
 	mux.HandleFunc("POST /logout", a.withCSRF(a.logoutPost))
 	// "GET /{$}" matches the root and nothing else. Registered as "GET /" it is
@@ -793,14 +789,14 @@ func (a *App) requireAnyOf(resource string, actions []string, next http.Handler)
 // POST refuses at maxRequestBodyBytes and so does this one (F-A-10).
 func (a *App) withBodyCap(fn func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit(r))
 		fn(w, r)
 	}
 }
 
 func (a *App) withCSRF(fn func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit(r))
 		var err error
 		if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
 			err = r.ParseMultipartForm(1 << 20)
@@ -820,6 +816,14 @@ func (a *App) withCSRF(fn func(http.ResponseWriter, *http.Request)) func(http.Re
 			a.respondError(w, r, http.StatusForbidden, "Your form session expired. Refresh the page and try again.", nil)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/requests/") && pathID(r) > 0 {
+			if _, ok := a.loadViewableRequest(w, r); !ok {
+				return
+			}
+		}
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
 		fn(w, r)
 	}
 }
@@ -830,19 +834,27 @@ func (a *App) loginForm(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			a.respondError(w, r, http.StatusRequestEntityTooLarge, "The submitted form is too large.", nil)
+			return
+		}
 		a.renderStatus(w, r, http.StatusBadRequest, "login", PageData{Title: "Login", LoginNext: auth.SafeReturnPath(r.FormValue("next")), Error: "Invalid form"})
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
-	u, err := a.st.UserByEmail(r.Context(), email)
-	if err == nil {
-		if locked, until, lockErr := a.st.LoginLocked(r.Context(), email); lockErr == nil && locked {
-			a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "login_failed", EntityType: "user", EntityID: &u.ID, Summary: "Login blocked until " + until.Format(time.RFC3339), IP: r.RemoteAddr})
-			a.render(w, r, "login", PageData{Title: "Login", LoginNext: auth.SafeReturnPath(r.FormValue("next")), Error: "Too many failed attempts. Try again later."})
-			return
-		}
+	if len(email) > 254 {
+		email = "invalid-address"
 	}
-	if err != nil || !u.Active || !auth.CheckPassword(u.PasswordHash, r.FormValue("password")) {
+	u, err := a.st.UserByEmail(r.Context(), email)
+	// Per-source throttles protect guessing without allowing an attacker on a
+	// different source to disable a victim's correct password globally.
+	hash := u.PasswordHash
+	if err != nil || !u.Active {
+		hash = dummyPasswordHash
+	}
+	passwordOK := auth.CheckPassword(hash, r.FormValue("password"))
+	if err != nil || !u.Active || !passwordOK {
 		if _, failureErr := a.st.RecordFailedLogin(r.Context(), email); failureErr != nil && !errors.Is(failureErr, store.ErrNotFound) {
 			a.log.ErrorContext(r.Context(), "failed to record login attempt", "request_id", requestID(r), "error", failureErr)
 		}
@@ -873,6 +885,10 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	if u.ID != 0 {
+		if err := a.st.RevokeSessions(r.Context(), u.ID); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
 		a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "logout", EntityType: "user", EntityID: &u.ID, Summary: "Logged out", IP: r.RemoteAddr})
 	}
 	a.auth.Logout(w)
@@ -1132,6 +1148,13 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
+	if payment, err := a.st.Payment(r.Context(), pathID(r)); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	} else if !a.canReadPayment(r, payment) {
+		a.respondStoreError(w, r, store.ErrNotFound)
+		return
+	}
 	p, err := a.st.Payment(r.Context(), pathID(r))
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -1158,6 +1181,13 @@ func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
+	if payment, err := a.st.Payment(r.Context(), pathID(r)); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	} else if !a.canReadPayment(r, payment) {
+		a.respondStoreError(w, r, store.ErrNotFound)
+		return
+	}
 	id := pathID(r)
 	in, err := paymentInput(r)
 	var attachment *store.AttachmentInput
@@ -1190,6 +1220,13 @@ func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) paymentVoid(w http.ResponseWriter, r *http.Request) {
+	if payment, err := a.st.Payment(r.Context(), pathID(r)); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	} else if !a.canReadPayment(r, payment) {
+		a.respondStoreError(w, r, store.ErrNotFound)
+		return
+	}
 	id := pathID(r)
 	err := a.st.VoidPayment(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason"))
 	if err != nil {
@@ -1365,19 +1402,33 @@ func (a *App) serveAttachmentFile(w http.ResponseWriter, r *http.Request, id int
 		a.respondError(w, r, http.StatusNotFound, "The requested attachment was not found.", nil)
 		return
 	}
-	if _, err := os.Stat(stored); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			a.respondError(w, r, http.StatusNotFound, "The requested attachment was not found.", nil)
-		} else {
-			a.respondError(w, r, http.StatusInternalServerError, "The attachment could not be opened.", err)
-		}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		a.notFoundAttachment(w, r, "attachment root unavailable", id)
+		return
+	}
+	defer dir.Close()
+	rel, err := filepath.Rel(root, stored)
+	if err != nil {
+		a.notFoundAttachment(w, r, "unsafe attachment path", id)
+		return
+	}
+	file, err := dir.Open(rel)
+	if err != nil {
+		a.notFoundAttachment(w, r, "attachment unavailable", id)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		a.notFoundAttachment(w, r, "attachment unavailable", id)
 		return
 	}
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": originalName}))
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
 	}
-	http.ServeFile(w, r, stored)
+	http.ServeContent(w, r, originalName, info.ModTime(), file)
 }
 
 func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, string, error) {
@@ -1402,9 +1453,43 @@ func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, 
 	if header.Size > limit {
 		return nil, "", fmt.Errorf("%w: files must be %d MiB or smaller. Choose the attachment again after correcting it", store.ErrValidation, limitMB)
 	}
+	a.uploadMu.Lock()
+	defer a.uploadMu.Unlock()
 	mimeType, err := validatedAttachmentType(file, header.Filename)
 	if err != nil {
 		return nil, "", err
+	}
+	quota := a.cfg.AttachmentQuotaBytes
+	if quota <= 0 {
+		quota = 1 << 30
+	}
+	var used int64
+	err = filepath.WalkDir(a.cfg.AttachmentDir, func(path string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, e := d.Info()
+		if e != nil {
+			return e
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("attachment directory contains a non-regular file")
+		}
+		if info.Size() > quota-used {
+			return fmt.Errorf("attachment storage quota reached")
+		}
+		used += info.Size()
+		return nil
+	})
+	if err != nil || header.Size > quota-used {
+		return nil, "", fmt.Errorf("%w: attachment storage quota reached; contact an administrator", store.ErrValidation)
+	}
+	if used+header.Size >= quota*8/10 && !a.uploadQuotaWarned {
+		a.uploadQuotaWarned = true
+		a.log.WarnContext(r.Context(), "attachment storage above 80 percent", "used_bytes", used, "quota_bytes", quota)
 	}
 	// Keep the user's filename in metadata only. Prefixing it on disk can
 	// exceed the filesystem's component limit, even when the original filename
@@ -1420,7 +1505,7 @@ func (a *App) stageUploadedAttachment(r *http.Request) (*store.AttachmentInput, 
 			a.log.ErrorContext(r.Context(), "attachment cleanup failed", "request_id", requestID(r), "path", stored, "error", removeErr)
 		}
 	}
-	size, copyErr := io.Copy(out, io.LimitReader(file, limit+1))
+	size, copyErr := copyAttachment(out, file, mimeType, min(limit, quota-used))
 	cerr := out.Close()
 	if copyErr != nil {
 		cleanup()
@@ -1583,28 +1668,11 @@ func budgetInputValue(inputs map[int64]string, headID, amount int64) string {
 // the parser for it. A negative budget is still refused; SetBudgets refuses it
 // again.
 func parseBudgetPaise(raw string) (int64, error) {
-	s := strings.TrimSpace(raw)
-	s = strings.TrimSpace(strings.TrimPrefix(s, "₹"))
-	s = strings.ReplaceAll(s, ",", "")
-	if s == "" {
+	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "₹"))
+	if s == "" || s == "0" || s == "0.0" || s == "0.00" {
 		return 0, nil
 	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, fmt.Errorf("enter a number, or leave it empty for no budget")
-	}
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, fmt.Errorf("enter a number, or leave it empty for no budget")
-	}
-	rounded := math.Round(f * 100)
-	if rounded >= float64(math.MaxInt64) || rounded <= -float64(math.MaxInt64) {
-		return 0, fmt.Errorf("that budget is too large")
-	}
-	paise := int64(rounded)
-	if paise < 0 {
-		return 0, fmt.Errorf("a budget cannot be negative")
-	}
-	return paise, nil
+	return money.ParsePaise(raw)
 }
 
 // reRenderStatus is the status a handler that re-renders its own screen answers
@@ -1661,15 +1729,8 @@ func (a *App) projectSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sortOrder, _ := strconv.Atoi(r.FormValue("sort_order"))
-	pid, err := a.st.UpsertProject(r.Context(), id, r.FormValue("name"), r.FormValue("active") == "on", sortOrder)
-	if err == nil {
-		u := auth.CurrentUser(r)
-		action := "update"
-		if id == 0 {
-			action = "create"
-		}
-		a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: action, EntityType: "project", EntityID: &pid, Summary: strings.Title(action) + "d project " + strings.TrimSpace(r.FormValue("name"))})
-	}
+	_, err := a.st.UpsertProject(r.Context(), id, r.FormValue("name"), r.FormValue("active") == "on", sortOrder, auth.CurrentUser(r))
+
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -1731,15 +1792,8 @@ func (a *App) headSave(w http.ResponseWriter, r *http.Request) {
 	} else if asked {
 		return
 	}
-	hid, err := a.st.UpsertHead(r.Context(), id, projectID, r.FormValue("name"), r.FormValue("due_day"), r.FormValue("active") == "on", sortOrder)
-	if err == nil {
-		u := auth.CurrentUser(r)
-		action := "update"
-		if id == 0 {
-			action = "create"
-		}
-		a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: action, EntityType: "head", EntityID: &hid, Summary: strings.Title(action) + "d head " + strings.TrimSpace(r.FormValue("name"))})
-	}
+	_, err := a.st.UpsertHead(r.Context(), id, projectID, r.FormValue("name"), r.FormValue("due_day"), r.FormValue("active") == "on", sortOrder, auth.CurrentUser(r))
+
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -1877,17 +1931,9 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 		}
 		// users.role is superseded but still written, so anything that reads it
 		// keeps agreeing with the roles that actually decide permissions.
-		legacy := "data_entry"
-		if a.st.RoleIDsIncludeAdmin(r.Context(), roleIDs) {
-			legacy = "admin"
-		}
-		savedID, err = a.st.CreateUserWithRoles(r.Context(), r.FormValue("email"), r.FormValue("name"), hash, legacy, active, roleIDs)
+		savedID, err = a.st.CreateManagedUser(r.Context(), auth.CurrentUser(r), r.FormValue("email"), r.FormValue("name"), hash, active, roleIDs)
 	} else {
 		current := auth.CurrentUser(r)
-		if id == current.ID && (!active || r.FormValue("role") != "admin") {
-			a.respondError(w, r, http.StatusBadRequest, "You cannot deactivate or demote your own administrator account.", nil)
-			return
-		}
 		if asked, err := a.userDeactivationNeedsConfirm(w, r, id); err != nil {
 			a.respondStoreError(w, r, err)
 			return
@@ -2198,7 +2244,7 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 		q.To = to.AddDate(0, 0, 1)
 	}
 	fetch := func(offset int) (store.AuditPage, error) {
-		if a.auth.Scope(auth.CurrentUser(r), "request") == store.ScopeAll {
+		if a.auth.Scope(auth.CurrentUser(r), "request") == store.ScopeAll && a.auth.Scope(auth.CurrentUser(r), "payment") == store.ScopeAll && a.auth.Can(auth.CurrentUser(r), "request", "view") && a.auth.Can(auth.CurrentUser(r), "payment", "view") {
 			q.Limit, q.Offset = auditPageSize, offset
 			return a.st.AuditPage(r.Context(), q)
 		}
@@ -2300,12 +2346,21 @@ func pageAuditEntries(entries []store.AuditEntry, offset int) store.AuditPage {
 func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntry) []store.AuditEntry {
 	u := auth.CurrentUser(r)
 	scope := a.auth.Scope(u, "request")
-	if scope == store.ScopeAll {
+	if scope == store.ScopeAll && a.auth.Scope(u, "payment") == store.ScopeAll && a.auth.Can(u, "request", "view") && a.auth.Can(u, "payment", "view") {
 		return entries
 	}
 	visible := map[int64]bool{}
 	out := entries[:0]
 	for _, entry := range entries {
+		if entry.EntityType == "payment" {
+			if entry.EntityID != nil {
+				p, err := a.st.Payment(r.Context(), *entry.EntityID)
+				if err == nil && a.canReadPayment(r, p) {
+					out = append(out, entry)
+				}
+			}
+			continue
+		}
 		if entry.EntityType != "payment_request" {
 			out = append(out, entry)
 			continue
@@ -2318,7 +2373,7 @@ func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntr
 		id := *entry.EntityID
 		if _, known := visible[id]; !known {
 			req, err := a.st.Request(r.Context(), id)
-			visible[id] = err == nil && canViewRequest(scope, u, req)
+			visible[id] = err == nil && a.auth.Can(u, "request", "view") && canViewRequest(scope, u, req)
 		}
 		if visible[id] {
 			out = append(out, entry)
@@ -2498,7 +2553,7 @@ func (a *App) exportGrid(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Project", "Head", "Budget", "Actual", "Variance", "Variance %", "Status"})
 	for _, row := range grid.Rows {
-		_ = cw.Write([]string{row.Project, row.Head, csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent, row.Status})
+		_ = cw.Write([]string{csvText(row.Project), csvText(row.Head), csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent, csvText(row.Status)})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {
@@ -2540,7 +2595,7 @@ func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Period", "Project", "Head", "Budget", "Actual", "Variance", "Variance %"})
 	for _, row := range rows {
-		_ = cw.Write([]string{row.Period, row.Project, row.Head, csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent})
+		_ = cw.Write([]string{csvText(row.Period), csvText(row.Project), csvText(row.Head), csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Install root-owned, mode 0755 at /usr/local/sbin/fervid-budget-backup.
+# Give the deployment user sudo permission for this exact command, no arguments.
+set -euo pipefail
+[[ $# == 0 && $EUID == 0 ]] || exit 1
+umask 077
+cd /opt/fervid-budget
+set -a
+# This file must be root-owned and not writable by the deployment account.
+source /etc/fervid-budget.env
+set +a
+exec runuser -u fervid -- /opt/fervid-budget/server -backup

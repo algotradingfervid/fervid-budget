@@ -37,7 +37,7 @@ func bankViewer() PermissionSet {
 }
 
 func bankBlind() PermissionSet {
-	return NewPermissionSet([]Grant{{"vendor", "view"}, {"vendor", "edit"}}, nil)
+	return NewPermissionSet([]Grant{{"vendor", "view"}, {"vendor", "edit"}, {"payment", "view"}, {"request", "view"}}, []ScopeGrant{{"payment", "all"}, {"request", "all"}})
 }
 
 // The whole point of Phase 1V: the gate is on the data. A caller without
@@ -653,7 +653,7 @@ func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, settled,
+	if _, err := historicalSettlement(s, ctx, acc, settled,
 		PaymentInput{PaidOn: today, Amount: 910000}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}
@@ -714,7 +714,7 @@ func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
-	if _, err := s.RecordPaymentForRequest(ctx, acc, settled,
+	if _, err := historicalSettlement(s, ctx, acc, settled,
 		PaymentInput{PaidOn: today, Amount: 910000}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}

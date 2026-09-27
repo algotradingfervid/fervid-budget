@@ -12,7 +12,7 @@ import (
 func TestSeedCreatesTheAdminAndThreeSampleProjects(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	result, err := s.Seed(ctx, SeedOptions{AdminEmail: "admin@fervid.local", AdminPassword: "admin123"})
+	result, err := s.Seed(ctx, SeedOptions{AdminEmail: "admin@fervid.local", AdminPassword: "TestAdmin12345"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestSeedCreatesTheAdminAndThreeSampleProjects(t *testing.T) {
 	}
 
 	// A second --seed on a populated database adds nothing.
-	again, err := s.Seed(ctx, SeedOptions{AdminEmail: "admin@fervid.local", AdminPassword: "admin123"})
+	again, err := s.Seed(ctx, SeedOptions{AdminEmail: "admin@fervid.local", AdminPassword: "TestAdmin12345"})
 	if err != nil || again.AdminCreated || !again.SampleSkipped {
 		t.Fatalf("re-seed = %+v, %v; want a no-op", again, err)
 	}
