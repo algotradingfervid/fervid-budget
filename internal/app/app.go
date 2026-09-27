@@ -320,13 +320,31 @@ type ReportSummary struct {
 	NotPaid         int
 }
 
+// New builds the HTTP server.
 func New(cfg config.Config, st *store.Store) (*http.Server, error) {
+	srv, _, err := NewWithNotifier(cfg, st)
+	return srv, err
+}
+
+// NewWithNotifier builds the HTTP server and also returns the notification
+// service its handlers use. The reminder scheduler must run on this same
+// service, so there is exactly one mailer and one SMTP configuration (password
+// and host allowlist) in the process.
+func NewWithNotifier(cfg config.Config, st *store.Store) (*http.Server, *notify.Service, error) {
+	a, srv, err := build(cfg, st)
+	if err != nil {
+		return nil, nil, err
+	}
+	return srv, a.notify, nil
+}
+
+func build(cfg config.Config, st *store.Store) (*App, *http.Server, error) {
 	am, err := auth.New(cfg, st)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	a := &App{cfg: cfg, st: st, auth: am, log: slog.Default()}
-	a.mailer = notify.NewSMTPMailer(st, cfg.SMTPPassword, cfg.SMTPAllowedHosts...)
+	a.mailer = notify.NewSMTPMailer(st, cfg.SMTPPassword, cfg.SMTPAllowedHosts)
 	a.notify = notify.NewService(st, a.mailer)
 	am.SetErrorHandler(func(w http.ResponseWriter, r *http.Request, status int, message string) {
 		a.respondError(w, r, status, message, nil)
@@ -463,7 +481,7 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 	defer ctx.cancel()
 	hasUsers, err := st.HasUsers(ctx.ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Bootstrap configuration applies only to a new, empty installation.
 	// Restores and ordinary restarts keep their existing accounts untouched,
@@ -471,16 +489,16 @@ func New(cfg config.Config, st *store.Store) (*http.Server, error) {
 	if !hasUsers {
 		adminHash, err := auth.HashPassword(cfg.AdminPassword)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := st.BootstrapAdminIfEmpty(ctx.ctx, cfg.AdminEmail, cfg.AdminName, adminHash); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	mux := http.NewServeMux()
 	a.routes(mux)
-	return &http.Server{
+	return a, &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           a.httpObservability(a.securityBoundary(am.Middleware(a.refreshBadgesAfterMutation(mux)))),
 		ReadHeaderTimeout: 10 * time.Second,

@@ -38,7 +38,10 @@ type SMTPMailer struct {
 	sendMail func(addr string, a smtp.Auth, from string, to []string, msg []byte) error
 }
 
-func NewSMTPMailer(st *store.Store, password string, allowedHosts ...string) *SMTPMailer {
+// NewSMTPMailer builds the SMTP transport. allowedHosts is the operator's
+// FERVID_SMTP_ALLOWED_HOSTS list and is required: Send refuses any host not on
+// it, so a mailer built without the list can never deliver anything.
+func NewSMTPMailer(st *store.Store, password string, allowedHosts []string) *SMTPMailer {
 	return &SMTPMailer{st: st, password: password, allowedHosts: allowedHosts}
 }
 

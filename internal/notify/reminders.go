@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"fervidbudget/internal/store"
@@ -58,7 +59,7 @@ func (s *Service) runReminderBatch(ctx context.Context, now time.Time, th store.
 // returns when ctx is cancelled. now is injected so the whole loop is
 // deterministic under test.
 func (s *Service) Scheduler(ctx context.Context, interval time.Duration, now func() time.Time) {
-	_ = s.RunReminders(ctx, now())
+	s.runRemindersLogged(ctx, now())
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -66,7 +67,17 @@ func (s *Service) Scheduler(ctx context.Context, interval time.Duration, now fun
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.RunReminders(ctx, now())
+			s.runRemindersLogged(ctx, now())
 		}
+	}
+}
+
+// runRemindersLogged runs one reminder pass and logs a failure. A failed email
+// stops the pass before the request is stamped as reminded, so the same
+// reminder is retried on the next tick; the log line is how an operator finds
+// out why reminders keep repeating or never arrive.
+func (s *Service) runRemindersLogged(ctx context.Context, now time.Time) {
+	if err := s.RunReminders(ctx, now); err != nil && ctx.Err() == nil {
+		slog.ErrorContext(ctx, "reminder run failed", "error", err)
 	}
 }

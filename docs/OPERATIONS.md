@@ -10,6 +10,16 @@ The app stores business data in SQLite and payment files on disk.
 - Daily backup hour: `FERVID_BACKUP_HOUR`, local hour 0-23, default `2`
 - Retention: `FERVID_BACKUP_KEEP_DAYS`, default `30`; `FERVID_BACKUP_KEEP_MONTHS`, default `12`
 
+## Server Settings
+
+The full list of security-related settings is in `docs/SECURITY-DEPLOYMENT.md`. These three decide how sign-in is rate limited:
+
+- `FERVID_TRUSTED_PROXIES`: comma-separated proxy IPs or narrow CIDRs whose `X-Forwarded-For` header is believed. Production runs behind Caddy on the same host, so it **must** be set to `127.0.0.1`. Without it every visitor appears to come from Caddy's address and shares one login and password-reset allowance, so a few failed attempts lock everyone out.
+- `FERVID_LOGIN_LIMIT_PER_IP`: POSTs to `/login` and its sub-pages (sign-in, reset request, reset) allowed per minute from one client address, default `30`.
+- `FERVID_LOGIN_LIMIT_GLOBAL`: the same POSTs allowed per minute from all clients together, default `300`.
+
+Both limits must be whole numbers above zero; anything else (zero, negative, text) falls back to the default, so a typo cannot switch the limit off. Leave them at the defaults in production. The Playwright suites (`playwright.config.ts`, `playwright.audit.config.ts`, which `scripts/run-audit.sh` uses) set both to `100000` because every test signs in from `127.0.0.1`. A local server that the manual capture run (`tests/manual/playwright.manual.config.ts`) points at needs the same two settings if the run hits "Too many attempts".
+
 ## Seeding
 
 Use `store.Seed` after opening the database when a new environment needs starter data. It bootstraps the admin account with `EnsureUser`, then creates sample projects, heads, and June 2026 budgets only when projects, heads, and budgets are all empty.

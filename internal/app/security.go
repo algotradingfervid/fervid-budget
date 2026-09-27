@@ -62,6 +62,30 @@ func requestBodyLimit(r *http.Request) int64 {
 	return 64 << 10
 }
 
+// Default per-minute caps on POSTs to /login and its sub-pages.
+const (
+	defaultLoginLimitPerIP  = 30
+	defaultLoginLimitGlobal = 300
+)
+
+// loginLimits returns the per-client and global per-minute caps from the
+// configuration. A zero or negative value (a Config built by hand, as tests
+// do) means the production default, never "no limit".
+func (a *App) loginLimits() (perIP, global int) {
+	perIP, global = a.cfg.LoginLimitPerIP, a.cfg.LoginLimitGlobal
+	if perIP <= 0 {
+		perIP = defaultLoginLimitPerIP
+	}
+	if global <= 0 {
+		global = defaultLoginLimitGlobal
+	}
+	return perIP, global
+}
+
+// clientIP is the address rate limits are keyed on. It is the connection's
+// address, unless that address is a trusted proxy (FERVID_TRUSTED_PROXIES):
+// then it is the right-most X-Forwarded-For entry that is not itself a
+// trusted proxy.
 func (a *App) clientIP(r *http.Request) string {
 	host := remoteIP(r.RemoteAddr)
 	trusted := func(value string) bool {
@@ -127,7 +151,8 @@ func (a *App) securityBoundary(next http.Handler) http.Handler {
 			}
 			if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/") {
 				now := time.Now()
-				if !a.authLimits.allow("global", 300, now) || !a.authLimits.allow("ip:"+a.clientIP(r), 30, now) {
+				perIP, global := a.loginLimits()
+				if !a.authLimits.allow("global", global, now) || !a.authLimits.allow("ip:"+a.clientIP(r), perIP, now) {
 					h.Set("Retry-After", "60")
 					http.Error(w, "Too many attempts. Try again later.", http.StatusTooManyRequests)
 					return
