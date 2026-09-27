@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// test-1 (BV24): the only check that "Paid on" opens on today was an e2e regex
-// for any date. This pins the value itself on the record-payment screen.
+// The "Paid on" field on the record-payment screen opens on today's date.
 func TestRecordPaymentPaidOnDefaultsToToday(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Paid on default")

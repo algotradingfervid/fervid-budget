@@ -11,11 +11,10 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// rbac-1: an Advanced box unticked under a cell that is still ticked used to
-// be silently re-granted, because the save expanded every ticked cell and only
-// ever added the Advanced values. The Advanced boxes are the grant set; a
-// ticked cell counts only when none of the boxes behind it is ticked (the
-// JavaScript-less path, where ticking a cell cannot tick its boxes).
+// Saving a role grants exactly the ticked Advanced boxes: unticking a box under
+// a still-ticked cell removes that permission. A ticked cell counts only when
+// none of the boxes behind it is ticked (the no-JavaScript path, where ticking
+// a cell cannot tick its boxes).
 func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
@@ -56,7 +55,7 @@ func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 		t.Fatalf("grants after ticking the bare View cell = %v, want request:view + attachment:view", got)
 	}
 
-	// The screen then draws the partial state (rbac-5): the cell is marked
+	// The screen then draws the partial state: the cell is marked
 	// partial, and the mobile badge counts the row's grants, not its cells.
 	save = url.Values{"role_id": {roleID}, "name": {"Field Staff"}, "cell": {"requests:view"}, "perm": {"request:view", "approval:approve"}}
 	requireStatus(t, s.postForm("/roles", save), http.StatusSeeOther)
@@ -75,9 +74,9 @@ func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 	}
 }
 
-// rbac-6: the delete sheet for a role people still hold used to invite the
-// deletion and then land on the store's 403. It now says why the role cannot
-// be deleted, points at the Users screen and offers no Delete button.
+// The delete sheet for a role people still hold says why the role cannot be
+// deleted, points at the Users screen and offers no Delete button, rather than
+// inviting a deletion the server would refuse.
 func TestRoleDeleteSheetExplainsAHeldRole(t *testing.T) {
 	s := newAppTestServer(t)
 	holder := s.seedProbeUser("holder@example.test", "Holder", "HolderPass123", "Viewer",

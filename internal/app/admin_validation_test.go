@@ -85,10 +85,9 @@ func TestInvalidNotificationRecipientsKeepDrawerAndInput(t *testing.T) {
 	}
 }
 
-// ui-1 (c). Adding a user with no role used to answer with the full-page error
-// screen; Back closed the drawer and lost what was typed. The users page comes
-// back with the drawer open, an inline error, and the typed name, email and
-// roles still in place. The password is deliberately never echoed into HTML.
+// A rejected Add user form comes back on the users page with the drawer open,
+// an inline error, and the typed name, email and roles still in place, so
+// nothing has to be retyped. The password is deliberately never echoed into HTML.
 func TestAddUserValidationKeepsTheDrawerAndTheInput(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()

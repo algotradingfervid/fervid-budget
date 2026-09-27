@@ -10,8 +10,8 @@ import (
 )
 
 // The service handed to the reminder scheduler is the one the handlers use,
-// and its mailer honours the operator's SMTP host allowlist. A second mailer
-// built without the allowlist used to refuse every reminder email.
+// and its mailer honours the operator's SMTP host allowlist, so reminder
+// emails go through the same checks as every other email.
 func TestNewWithNotifierSharesTheAppMailerAndAllowlist(t *testing.T) {
 	s := newAppTestServer(t)
 	a, _, err := build(s.cfg, s.st)

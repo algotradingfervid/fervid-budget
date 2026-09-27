@@ -11,11 +11,11 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// notify-2: the body keeps its line breaks and shows the request link as a
+// A notification body keeps its line breaks and shows the request link as a
 // link, not as flattened text. The row itself is the <a> that opens the
 // request, so the link is drawn as link text inside it (a nested <a> is not
 // valid HTML), and everything else in the body stays escaped.
-func TestNotificationCentreRendersBodyLinesAndLink(t *testing.T) { // N1
+func TestNotificationCentreRendersBodyLinesAndLink(t *testing.T) {
 	s := newAppTestServer(t)
 	admin := s.admin()
 	if _, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO notifications(user_id,event,kind,title,body,href) VALUES(?,?,?,?,?,?)`,
@@ -31,7 +31,7 @@ func TestNotificationCentreRendersBodyLinesAndLink(t *testing.T) { // N1
 	}
 }
 
-func TestNotifBodyOnlyLinksTheRowsOwnTarget(t *testing.T) { // N1
+func TestNotifBodyOnlyLinksTheRowsOwnTarget(t *testing.T) {
 	cases := []struct{ body, href, want string }{
 		{"Open it: /requests/1", "/requests/1", `Open it: <span class="n-link">/requests/1</span>`},
 		// /requests/10 is a different request: no partial match.
@@ -48,7 +48,7 @@ func TestNotifBodyOnlyLinksTheRowsOwnTarget(t *testing.T) { // N1
 	}
 }
 
-func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) { // G19
+func TestNotificationCentreRendersFilterStripAndMarksRead(t *testing.T) {
 	s := newAppTestServer(t)
 	admin := s.admin()
 	returned := seedNotification(t, s, admin.ID, "request_returned", "mention", "Kavita Rao returned PR-2026-000131", "/requests/1")
@@ -160,7 +160,7 @@ func TestNotificationCentreRequiresASession(t *testing.T) {
 	_ = responseBody(t, resp)
 }
 
-func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D7, G20
+func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
 
@@ -185,7 +185,7 @@ func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
-	// require_attachments and the reminder thresholds live on Configuration (D6).
+	// require_attachments and the reminder thresholds live on Configuration.
 	for _, gone := range []string{`name="require_attachments"`, `name="reminder_pending_days"`} {
 		if strings.Contains(body, gone) {
 			t.Fatalf("%s belongs to the Configuration screen, not the rules screen", gone)
@@ -237,11 +237,10 @@ func TestAdminNotificationsScreenSavesAndBlocksUnprivileged(t *testing.T) { // D
 	}
 }
 
-// ux-2: every result on the rules screen used to show twice — the layout's
-// flash and the page's own callout (a pink "Done", or "That did not save" even
-// for a failed test email) — and a rule refused for a bad field closed its
-// sheet and threw away what the admin had typed.
-func TestAdminNotificationsShowsEachResultOnceAndKeepsARefusedRule(t *testing.T) { // N2, N8
+// Each result on the notification rules screen is shown once, worded for what
+// actually happened (a failed test email is not a failed save), and a rule
+// refused for a bad field reopens its sheet with what the admin typed.
+func TestAdminNotificationsShowsEachResultOnceAndKeepsARefusedRule(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
 
@@ -362,9 +361,8 @@ func TestApprovingARequestNotifiesTheRequester(t *testing.T) {
 	}
 }
 
-// F-G-037 — the centre listed at most 100 rows while the count on the filter
-// strip directly above them had no cap at all, so a user past the cap read a
-// total the list could not account for and nothing said which rows were missing.
+// The notification centre pages its list and says how many rows it is showing
+// out of the total, so a long list is never cut off without notice.
 func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
 	s := newAppTestServer(t)
 	admin := s.admin()

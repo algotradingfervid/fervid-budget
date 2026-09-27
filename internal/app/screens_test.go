@@ -13,8 +13,6 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// Phase 6: the eleven pre-existing screens come onto the design system.
-//
 // A wide <table> is unusable on a phone — it either overflows the viewport or
 // gets squeezed unreadably. .t-cards restacks each row into a labelled card
 // below 860px, reading the field name from data-label. This asserts both halves
@@ -99,13 +97,12 @@ func TestEmptyStatesOfferAnAction(t *testing.T) {
 	}
 }
 
-// F-F-01 — the per-event sheets on /admin/notifications carried no `hidden`,
-// unlike every other .overlay, so all of them laid out full-viewport at once and
-// only the last was reachable by a pointer.
-// F-G-004 / F-C-06 — the audit filters could not reach payment_request.
-// F-D-07 — the Accounts queue shipped only the mobile filter form.
-// F-F-05 — the notification centre had no desktop entry point.
-func TestScreensThatWereUnusableAsRendered(t *testing.T) {
+// Basic usability of several screens as rendered: the per-event sheets on
+// /admin/notifications start hidden like every other overlay (otherwise they
+// stack full-viewport and cover every control), the audit filters can select
+// payment-request actions, the Accounts queue has a desktop filter form, and
+// the sidebar links to the notification centre.
+func TestScreensAreUsableAsRendered(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
 
@@ -145,13 +142,9 @@ func TestScreensThatWereUnusableAsRendered(t *testing.T) {
 	}
 }
 
-// The `search` half of `class="field search"` had no rule anywhere in
-// fervid-ds.css — the only match was `.gridhead .toolbar .search-label`, a
-// different class — so five toolbars carried a token that rendered as nothing.
-// PROGRESS.md records this failure mode as a standing trap, and it is invisible
-// to every other test in this repository: markup with a dead class renders
-// perfectly, just not as designed. The rule is the approved stylesheet's own
-// (mockups/mockup.css), ported.
+// Every template using `class="field search"` needs a `.toolbar .search` rule
+// in fervid-ds.css. A class with no rule renders silently as nothing, which no
+// other test would notice.
 func TestToolbarSearchTokenHasARuleBehindIt(t *testing.T) {
 	css, err := os.ReadFile(filepath.Join("..", "..", "web", "static", "fervid-ds.css"))
 	if err != nil {
@@ -161,16 +154,15 @@ func TestToolbarSearchTokenHasARuleBehindIt(t *testing.T) {
 		t.Skip("no template uses the search token any more")
 	}
 	// Comments are stripped first, or the comment ABOVE the rule — which quotes
-	// the selector it is explaining — satisfies the search all by itself. That
-	// false pass was observed while writing this test, not guessed at.
+	// the selector it is explaining — satisfies the search all by itself.
 	live := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAll(css, nil)
 	if !regexp.MustCompile(`\.toolbar\s+\.search\s*\{`).Match(live) {
 		t.Fatal("templates carry `class=\"field search\"` and the stylesheet has no `.toolbar .search` rule")
 	}
 }
 
-// recoverables-6. At 390px every empty spacer cell in a t-cards tfoot became a
-// blank stripe in the total card. The spacers are desktop-only.
+// Empty spacer cells in a t-cards total row are desktop-only; on a phone each
+// would show as a blank stripe in the total card.
 func TestTCardsTotalRowsCarryNoEmptyMobileCells(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()

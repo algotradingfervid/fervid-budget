@@ -12,11 +12,10 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// F-G-006 / F-G-007 / F-G-018 — the dashboard's own three disagreements with the
-// screens it links to: a tile that omitted `returned` from a bucket that includes
-// it, an "Approved, unclaimed" count with no on_hold test beside a queue metric
-// of the same name that has one, and a work area built with Scope:"all" written
-// into the call.
+// Every dashboard number must match the screen it links to: the open-requests
+// tile counts returned requests as the open bucket does, "Approved, unclaimed"
+// leaves out requests on hold as the queue does, and the accounts area lists
+// only requests the viewer may open.
 func TestDashboardAreasAgreeWithTheQueuesTheyLinkTo(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Dashboard truth")
@@ -41,7 +40,7 @@ func TestDashboardAreasAgreeWithTheQueuesTheyLinkTo(t *testing.T) {
 		t.Fatalf("the In-progress tile reads %d and /requests?bucket=open holds %d", tile, bucket)
 	}
 
-	// The accounts area: hardwired scope, and no on_hold test.
+	// The accounts area respects the viewer's scope.
 	other := s.seedRequester("dash-other@example.test", "Other Dash", "OtherDashPass12")
 	visible := s.seedApprovedRequest(1303, other.ID, admin.ID, headID, 120000)
 	s.seedProbeUser("processor@example.test", "Processor Rao", "ProcessorPass12", "Narrow processor",

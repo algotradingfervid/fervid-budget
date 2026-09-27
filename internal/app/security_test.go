@@ -1,7 +1,7 @@
 package app
 
-// Permanent regression checks derived from the original nine exploit probes.
-// These assertions require the attacks to be blocked.
+// Security regression checks: each TestSecurityReplay test replays a known
+// attack and requires it to be blocked.
 import (
 	"bytes"
 	"context"

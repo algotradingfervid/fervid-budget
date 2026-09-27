@@ -26,9 +26,8 @@ func TestPaymentReceiptImmediatelyRefreshesLedgerBadge(t *testing.T) {
 	mustContain(t, "fresh receipt ledger badge", body, `Payments ledger<span class="n">`+strconvFormat(int64(before["my_payments"]+1))+`</span>`)
 }
 
-// F-G-013 — navSpec declared Badge:"approvals" and Badge:"accounts_queue" and no
-// query ever populated them, so the two counts a person most needs at a glance
-// were the two that were never built.
+// The navigation badges for pending approvals and the accounts queue show real
+// counts: they are the two numbers a person most needs at a glance.
 func TestTheTwoDeclaredWorkQueueBadgesArePopulated(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Badges")

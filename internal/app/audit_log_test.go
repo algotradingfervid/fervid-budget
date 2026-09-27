@@ -9,7 +9,7 @@ import (
 )
 
 // floodAudit writes one old "Created project Facilities" row and then n newer
-// failed-login rows, the shape the audit-1 repro used.
+// failed-login rows, so the old row sits beyond any fixed-size window.
 func floodAudit(t *testing.T, s *appTestServer, n int) {
 	t.Helper()
 	if err := s.st.RecordAudit(s.ctx, store.AuditInput{ActorName: "Test Admin", Action: "create", EntityType: "project", Summary: "Created project Facilities"}); err != nil {
@@ -32,9 +32,8 @@ func floodAudit(t *testing.T, s *appTestServer, n int) {
 	}
 }
 
-// audit-1: /audit read the newest 1000 rows, filtered action and actor in Go,
-// then cut the list at 200 without saying so, and had no date filter at all.
-// Every filter now runs in SQL over the whole log, and the rest is paged.
+// The audit log's filters search the whole log, not just recent rows, and the
+// results are paged with a visible total so nothing is silently cut off.
 func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
@@ -70,7 +69,7 @@ func TestAuditLogFiltersEveryRowAndPages(t *testing.T) {
 	}
 	// An offset past the end — a stale or hand-edited URL — lands on that same
 	// last page, not on "Showing 0 of N" with a Newer link to another empty
-	// page (audit-1 review).
+	// page.
 	past := s.get("/audit?offset=5000")
 	lastOffset := (total - 1) / auditPageSize * auditPageSize
 	if !strings.Contains(past, "Created project Facilities") ||
