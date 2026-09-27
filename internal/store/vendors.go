@@ -493,7 +493,7 @@ func (s *Store) CreateVendor(ctx context.Context, actor User, in VendorInput) (i
 	if err != nil {
 		return 0, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}

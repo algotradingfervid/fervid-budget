@@ -127,7 +127,7 @@ func (s *Store) SetNotificationSetting(ctx context.Context, actor User, in Notif
 	if strings.TrimSpace(in.Event) == "" {
 		return fmt.Errorf("%w: an event is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}

@@ -243,7 +243,7 @@ func (s *Store) CreateRole(ctx context.Context, actor User, name, description st
 	if name == "" {
 		return 0, fmt.Errorf("%w: role name is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}

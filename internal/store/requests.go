@@ -14,39 +14,10 @@ import (
 	"fervidbudget/internal/money"
 )
 
-// beginWriteTx opens a transaction that is a writer from its first statement.
-//
-// This is not decoration. SQLite will not upgrade a transaction that already
-// holds a read snapshot into a writer while another writer is active, and it
-// deliberately does **not** consult the busy handler for that upgrade — retrying
-// could only deadlock — so `_pragma=busy_timeout(5000)` on the DSN never applies
-// to it and the loser fails instantly with SQLITE_BUSY. Every writer in this
-// file used to be shaped BeginTx → read → write, which is exactly that case:
-// two simultaneous submits, or two simultaneous decisions, handed the loser a
-// 500 and threw their form away (F-B-10, F-C-05).
-//
-// Taking the write lock first is the way out, and it is the `BEGIN IMMEDIATE`
-// the driver can only express per-DSN (modernc.org/sqlite's `_txlock`), not per
-// call site. The statement below matches no row and changes nothing: SQLite
-// acquires the database write lock when a write statement starts, before it
-// filters rows, so this reserves the lock — and because the transaction holds no
-// read snapshot yet, the busy handler *does* apply and a second writer waits its
-// turn instead of erroring.
-//
-// Writers still guard their UPDATE with the state they expect and check
-// RowsAffected, the shape ReserveRequest uses (store.go:751): the lock decides
-// who goes first, the condition decides whether going second still makes sense.
-func (s *Store) beginWriteTx(ctx context.Context) (*sql.Tx, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE request_number_seq SET last=last WHERE 1=0`); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-	return tx, nil
-}
+// Writers guard their UPDATE with the state they expect and check RowsAffected,
+// the shape ReserveRequest uses: the write lock (taken at BEGIN, see tx.go)
+// decides who goes first, the condition decides whether going second still
+// makes sense.
 
 // ErrRequestRaced is the loser of a write race: the row moved between the read
 // that authorised this call and the conditional UPDATE that would have applied
@@ -692,9 +663,8 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 			return 0, err
 		}
 	}
-	// A writer from its first statement: the numbering settings are read inside
-	// this transaction, and a deferred transaction that reads before it writes
-	// cannot be upgraded while another submit is in flight (F-B-10).
+	// The numbering settings are read inside this write transaction, so two
+	// submits in flight at once take their numbers one after the other.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err

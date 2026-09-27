@@ -169,7 +169,7 @@ const reminderActor = "Fervid Budget"
 // rather than silently audited: an audit row asserting a reminder for a row that
 // does not exist is worse than no row.
 func (s *Store) MarkReminderSent(ctx context.Context, requestID int64, now time.Time, rec ReminderAudit) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}

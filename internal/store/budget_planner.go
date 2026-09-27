@@ -51,7 +51,7 @@ func upBudgetLines(tx *sql.Tx) error {
 }
 func (s *Store) BudgetPlan(ctx context.Context, month string) (BudgetPlan, error) {
 	// Keep month metadata, line values and the revision in one read snapshot.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginReadTx(ctx)
 	if err != nil {
 		return BudgetPlan{}, err
 	}
@@ -126,17 +126,14 @@ func (s *Store) SaveBudgetPlan(ctx context.Context, actor User, in BudgetPlan, e
 	if !validMonth(in.Month) || len(in.Projects) == 0 || len(in.Projects) > 200 {
 		return fmt.Errorf("%w: choose a month and add at least one project (maximum 200)", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	// Acquire the write reservation before the snapshot/read checks. This also
-	// serializes locking, legacy budget edits, and duplicate submissions.
-	if _, err = tx.ExecContext(ctx, `UPDATE budget_months SET month=month WHERE month=?`, in.Month); err != nil {
-		return err
-	}
-	// Read authorization after reserving the write transaction, so an account
+	// The write lock is held from BEGIN, which serializes this save against
+	// locking, legacy budget edits and duplicate submissions.
+	// Read authorization inside the write transaction, so an account
 	// or role revoked while a browser was open cannot save using stale grants.
 	var actorActive bool
 	if err = tx.QueryRowContext(ctx, `SELECT active FROM users WHERE id=?`, actor.ID).Scan(&actorActive); err != nil {

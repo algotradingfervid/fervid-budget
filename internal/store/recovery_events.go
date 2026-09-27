@@ -195,7 +195,7 @@ func (s *Store) RecordRecovery(ctx context.Context, actor User, requestID int64,
 }
 
 func (s *Store) RecoveryEvents(ctx context.Context, actor User, requestID int64) ([]RecoveryEvent, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginReadTx(ctx)
 	if err != nil {
 		return nil, err
 	}
