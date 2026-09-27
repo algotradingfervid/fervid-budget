@@ -85,7 +85,7 @@ export default page({
       [
         ['None', 'No scope stored at all.'],
         ['Own', 'Only records the person raised themselves.'],
-        ['Assigned', 'Records routed to them — the ones they are the approver or the assigned accountant for.'],
+        ['Assigned', 'Requests routed to them for approval, plus the ones they raised themselves.'],
         ['All', 'Every record in the company.'],
       ],
     ),

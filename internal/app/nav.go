@@ -203,7 +203,7 @@ func (a *App) workQueueBadges(r *http.Request, user store.User, perms store.Perm
 			statuses = append(statuses, "partial_review")
 		}
 		n, err := a.st.CountRequests(r.Context(), store.RequestListOptions{
-			Scope: "assigned", ViewerID: user.ID, Statuses: statuses})
+			Scope: perms.Scope("request"), ViewerID: user.ID, RoutedToViewer: true, Statuses: statuses})
 		if err != nil {
 			a.log.WarnContext(r.Context(), "approvals badge unavailable",
 				"request_id", requestID(r), "error", err)

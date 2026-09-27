@@ -19,9 +19,9 @@ func applyAuditNotificationEvents(t *testing.T, s *Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := UpAuditNotificationEvents(tx); err != nil {
+	if err := upAuditNotificationEvents(tx); err != nil {
 		_ = tx.Rollback()
-		t.Fatalf("UpAuditNotificationEvents: %v", err)
+		t.Fatalf("upAuditNotificationEvents: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)

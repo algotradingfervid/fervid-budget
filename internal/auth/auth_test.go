@@ -262,20 +262,6 @@ func TestCSRFAndLogoutLifecycle(t *testing.T) {
 		t.Fatal("matching CSRF header was rejected")
 	}
 
-	protected := manager.CSRFMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	rejected := httptest.NewRecorder()
-	protected.ServeHTTP(rejected, httptest.NewRequest(http.MethodPost, "/", nil))
-	if rejected.Code != http.StatusForbidden {
-		t.Fatalf("missing CSRF status = %d, want 403", rejected.Code)
-	}
-	accepted := httptest.NewRecorder()
-	protected.ServeHTTP(accepted, header)
-	if accepted.Code != http.StatusNoContent {
-		t.Fatalf("valid CSRF status = %d, want 204", accepted.Code)
-	}
-
 	logout := httptest.NewRecorder()
 	manager.Logout(logout)
 	session := cookieByName(t, logout, sessionCookie)

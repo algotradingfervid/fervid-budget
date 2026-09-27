@@ -1,3 +1,10 @@
+// migrations_notifications.go holds the seeded notification rules (event,
+// recipients, email wording) and the migrations that add or reword them.
+//
+// Notification rules are admin-editable, so after the first seed a migration
+// only ever adds new rows, or rewrites a row that still holds exactly the old
+// default text.
+
 package store
 
 import (
@@ -5,27 +12,8 @@ import (
 	"fmt"
 )
 
-// NotificationSetting is one admin-configurable event rule.
-//
-// Label is the human sentence the admin screen shows and Audience is the
-// plain-English "Goes to" column. Both are seeded, so the screen never
-// hardcodes copy per event and an event added later describes itself.
-type NotificationSetting struct {
-	Event            string
-	Label            string
-	Audience         string
-	EmailEnabled     bool
-	ToRecipients     string
-	CcRecipients     string
-	IncludeRequester bool
-	IncludeManager   bool
-	IncludeAccounts  bool
-	SubjectTemplate  string
-	BodyTemplate     string
-}
-
-// defaultNotificationSettings are the twelve events of G20, in the order
-// admin-notifications.html lists them. Templates use the {{token}} vocabulary
+// defaultNotificationSettings are the twelve rules v7 seeds, in the order the
+// admin notifications screen lists them. Templates use the {{token}} vocabulary
 // substituted by internal/notify — never Go template syntax, because these
 // strings are admin-editable and must never reach the Go template engine.
 var defaultNotificationSettings = []NotificationSetting{
@@ -70,23 +58,13 @@ var defaultNotificationSettings = []NotificationSetting{
 		BodyTemplate:    "{{number}} has been in processing since {{processing_on}} with no settlement recorded.\n\nOpen it: {{link}}"},
 }
 
-// auditNotificationSettings are the nine events the 2026-07-27 audit found
-// missing (F-F-06): six workflow actions notified nobody at all, and three more
-// sat in the same gap. They are seeded by migration v9 rather than being
-// appended to defaultNotificationSettings, because v7 has already run on every
-// installed database and a seed only ever runs once — see PROGRESS.md, "Seeding
-// only happens in v1".
+// auditNotificationSettings are the nine rules added by v9. They are a separate
+// list, not appended to defaultNotificationSettings, because v7 has already
+// seeded installed databases and only a new migration reaches them.
 //
-// Two conventions from the original twelve are followed deliberately rather
-// than reinvented:
-//
-//   - email_enabled is left at its 0 default, so a fresh install delivers in-app
-//     rows only and email stays opt-in per event.
-//   - the management recipient list is not touched. It is Cc-on-email-only for
-//     request_approved and the post-approval urgent case, and it never receives
-//     an in-app row because there is no user id to address one to. An
-//     organisation that wants management copied on any of these sets the event's
-//     own cc_recipients, which is the supported per-event control.
+// Like the first twelve, email is off by default (in-app only until an
+// administrator turns it on), and the management recipient list is not used:
+// an organisation that wants management copied sets the rule's own Cc list.
 var auditNotificationSettings = []NotificationSetting{
 	{Event: "request_withdrawn", Label: "Withdrawn by the requester", Audience: "Approver", IncludeManager: true,
 		SubjectTemplate: "{{requester}} withdrew {{number}} — no approval needed",
@@ -122,13 +100,13 @@ var auditNotificationSettings = []NotificationSetting{
 		BodyTemplate:    "{{approver}} declined the ask to cancel {{number}}. It is approved again for {{approved_amount}} to {{payee}} and the payment is no longer frozen.\n\nOpen it: {{link}}"},
 }
 
+// templateText is a rule's email subject and body.
+type templateText struct{ Subject, Body string }
+
 // oldSettlementTemplates are the four settlement rules exactly as v7 and v9
-// seeded them, before settlement-1 (2026-09-25) found that every one of them
-// filled the amount *paid* from {{amount}} — the amount *requested*. "Approved
-// for ₹12,000 but only ₹12,345.67 was paid" was the sentence an approver read
-// about an ₹8,000 payment. The map is what lets UpPaidAmountTemplates tell a
-// row still on the seeded default from one an administrator rewrote.
-var oldSettlementTemplates = map[string]struct{ Subject, Body string }{
+// seeded them, when they used {{amount}} (the amount requested) for the amount
+// paid. v14 rewrites a rule only while it still reads exactly like this.
+var oldSettlementTemplates = map[string]templateText{
 	"payment_settled": {
 		Subject: "{{number}} has been paid — {{amount}} to {{payee}}",
 		Body:    "{{number}} was paid in full: {{amount}} to {{payee}}. The request is now complete.\n\nOpen it: {{link}}"},
@@ -143,58 +121,46 @@ var oldSettlementTemplates = map[string]struct{ Subject, Body string }{
 		Body:    "{{approver}} is not satisfied with the shortfall on {{number}}: {{amount}} paid against {{approved_amount}} approved. The request stays in review until the concern is answered.\n\nOpen it: {{link}}"},
 }
 
-// UpPaidAmountTemplates is migration v14 (v13 on the settlement branch; renumbered
-// at integration behind UpReassignedNotificationWording).
-//
-// It rewrites a settlement rule's subject and body only when both still read
-// exactly as they were seeded, so an administrator's own wording — even wording
-// that happens to use {{amount}} on purpose — is never touched. The replacement
-// text is the current seeded default, so a fresh database and a migrated one
-// end up identical. Re-runnable: a row already rewritten no longer matches.
-func UpPaidAmountTemplates(tx *sql.Tx) error {
+// upPaidAmountTemplates is migration v14: the four settlement rules switch to
+// {{paid_amount}}, on rows still holding the old seeded text.
+func upPaidAmountTemplates(tx *sql.Tx) error {
+	return replaceDefaultTemplates(tx, "migration v14", oldSettlementTemplates)
+}
+
+// replaceDefaultTemplates rewrites each event's subject and body to its current
+// seeded text, but only where the row still reads exactly like old, so an
+// administrator's own wording is never touched. A fresh database and a
+// migrated one end up identical, and a re-run matches nothing. label prefixes
+// the error when an event has no seeded default.
+func replaceDefaultTemplates(tx *sql.Tx, label string, old map[string]templateText) error {
 	current := map[string]NotificationSetting{}
-	for _, n := range defaultNotificationSettings {
-		current[n.Event] = n
+	for _, list := range [][]NotificationSetting{defaultNotificationSettings, auditNotificationSettings, reassignmentNotificationSettings} {
+		for _, n := range list {
+			current[n.Event] = n
+		}
 	}
-	for _, n := range auditNotificationSettings {
-		current[n.Event] = n
-	}
-	for event, old := range oldSettlementTemplates {
+	for event, o := range old {
 		want, ok := current[event]
 		if !ok {
-			return fmt.Errorf("migration v14: %s has no seeded default", event)
+			return fmt.Errorf("%s: %s has no seeded default", label, event)
 		}
 		if _, err := tx.Exec(`UPDATE notification_settings SET subject_template=?, body_template=?
 			WHERE event=? AND subject_template=? AND body_template=?`,
-			want.SubjectTemplate, want.BodyTemplate, event, old.Subject, old.Body); err != nil {
+			want.SubjectTemplate, want.BodyTemplate, event, o.Subject, o.Body); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// reassignmentNotificationSettings are the two events migration v11 adds.
-//
-// They are the audit's repair auditing itself: both were found while checking
-// the QA documents against the code four waves had just written, and both are
-// the fault F-F-06 was about — a transition that changes what a specific other
-// person must do next, firing nothing.
-//
-// The first is the sharper of the two, because the product was not merely
-// silent, it was wrong: the reassignment sheet says "The new approver is told",
-// and the route Wave 3 built to make reassignment reachable at all fired
-// nothing. A screen that states a notification happens is a promise, and this
-// is what keeps it.
-//
-// Same conventions as v9's nine: email off by default so delivery stays opt-in
-// per event, and the management recipient list untouched.
+// reassignmentNotificationSettings are the two rules added by v11: tell the new
+// approver when a request is reassigned to them, and tell the requester when an
+// approver cancels their request. Email is off by default, as for v9's rules.
 var reassignmentNotificationSettings = []NotificationSetting{
-	// Not "needs your approval": a request can be handed on while it is
-	// returned, awaiting a cancellation decision or in partial review as well as
-	// while pending, and what the new approver is being asked for differs in
-	// each. The wording names what is true in all four — they are its approver
-	// now — and the body says what that can mean (deactivation-2 review). v13
-	// carries this onto databases v11 already seeded.
+	// Not "needs your approval": a request can be reassigned while pending,
+	// returned, awaiting a cancellation decision or in partial review, so the
+	// wording says only what is true in all four. v13 carries this text onto
+	// databases v11 already seeded.
 	{Event: "approval_reassigned", Label: "Sent to a different approver", Audience: "The new approver", IncludeManager: true,
 		SubjectTemplate: "{{number}} was reassigned to you as its approver",
 		BodyTemplate:    "{{number}} ({{amount}} to {{payee}}) was reassigned to you. You are its approver now: whatever it is waiting on from its approver — the approval itself, a cancellation request or a partial-settlement review — is yours to decide, and if it was returned for correction it comes to you once it is resubmitted.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"},
@@ -210,38 +176,22 @@ const (
 	v11ReassignedBody    = "{{number}} ({{amount}} to {{payee}}) was moved to you for approval.\n\nRequested by: {{requester}}\nProject: {{project}} / {{head}}\nNeeded by: {{needed_by}}\n\nOpen it: {{link}}"
 )
 
-// UpReassignedNotificationWording is migration v13: the approval_reassigned
-// notice stops saying "needs your approval".
-//
-// Fix wave B made a request reassignable while returned, awaiting a
-// cancellation decision or in partial review — every status the deactivation
-// warning promises can be handed on — and the notice v11 seeded was written
-// for the pending case alone: it told the new approver a returned request
-// needed their approval when it was waiting on the requester, and a frozen one
-// when it was waiting on a cancellation decision. The seed now carries wording
-// that is true in all four states; this migration brings an installed database
-// to the same text.
-//
-// Only where the row still reads exactly as v11 wrote it. The template columns
-// are an administrator's to edit, and seedNotificationSettings' whole contract
-// is that a migration never resets what they typed — so a row whose subject or
-// body differs from the v11 default is theirs and is left alone. Re-runnable
-// by construction: once rewritten, the WHERE matches nothing.
-func UpReassignedNotificationWording(tx *sql.Tx) error {
-	_, err := tx.Exec(`UPDATE notification_settings SET subject_template=?, body_template=?
-		WHERE event=? AND subject_template=? AND body_template=?`,
-		reassignmentNotificationSettings[0].SubjectTemplate, reassignmentNotificationSettings[0].BodyTemplate,
-		"approval_reassigned", v11ReassignedSubject, v11ReassignedBody)
-	return err
+// v11ReassignedTemplates is the v11 wording in the form replaceDefaultTemplates
+// takes.
+var v11ReassignedTemplates = map[string]templateText{
+	"approval_reassigned": {Subject: v11ReassignedSubject, Body: v11ReassignedBody},
 }
 
-// UpReassignmentNotificationEvents is migration v11.
-//
-// Rows only, ON CONFLICT DO NOTHING, so it is idempotent by construction and an
-// administrator's edits to the twenty-one events already seeded are untouched.
-// The sort order continues where v9 stopped, which is why the offset is the two
-// earlier sets added together rather than a literal.
-func UpReassignmentNotificationEvents(tx *sql.Tx) error {
+// upReassignedNotificationWording is migration v13: the approval_reassigned
+// notice stops saying "needs your approval", on rows still holding the v11
+// text.
+func upReassignedNotificationWording(tx *sql.Tx) error {
+	return replaceDefaultTemplates(tx, "migration v13", v11ReassignedTemplates)
+}
+
+// upReassignmentNotificationEvents is migration v11. It only adds rows, and
+// its sort order continues where v9 stopped.
+func upReassignmentNotificationEvents(tx *sql.Tx) error {
 	return seedNotificationSettings(tx, reassignmentNotificationSettings,
 		len(defaultNotificationSettings)+len(auditNotificationSettings))
 }
@@ -270,22 +220,15 @@ func seedNotificationSettings(tx *sql.Tx, rows []NotificationSetting, startOrder
 	return nil
 }
 
-// UpAuditNotificationEvents is migration v9: the nine event rules of F-F-06.
-//
-// It adds rows and nothing else — no schema change, no re-seed of the twelve
-// v7 already wrote — so it is idempotent by construction and an administrator's
-// existing settings are untouched whether it runs once or ten times.
-//
-// Exported because the migrations slice lives in migrations.go and this file
-// owns the notification vocabulary; register it there as
-// {Version: 9, Name: "notification_events_audit", Up: UpAuditNotificationEvents}.
-func UpAuditNotificationEvents(tx *sql.Tx) error {
+// upAuditNotificationEvents is migration v9. It only adds rows, after v7's
+// twelve.
+func upAuditNotificationEvents(tx *sql.Tx) error {
 	return seedNotificationSettings(tx, auditNotificationSettings, len(defaultNotificationSettings))
 }
 
-// upNotifications creates notification_settings and the in-app notifications
-// table. app_settings (key/value) is created by Phase 2's v3 migration and is
-// deliberately NOT re-created here.
+// upNotifications is migration v7: it creates notification_settings and the
+// in-app notifications table, and seeds the first twelve rules. app_settings
+// already exists (v3).
 func upNotifications(tx *sql.Tx) error {
 	if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS notification_settings (

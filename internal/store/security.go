@@ -1,3 +1,16 @@
+// security.go holds the privilege rules that every role and user write must
+// pass, plus the shared readers they are built on.
+//
+// The central idea is the "role ceiling": someone who is not an administrator
+// may only create, edit, copy or assign a role whose every permission and data
+// scope they already hold themselves, so nobody can hand out more than they
+// have. The built-in Admin role is out of reach for non-administrators
+// altogether, and the system always keeps at least one active administrator.
+//
+// The file also holds the payment write-scope check (paymentWriteAccess), the
+// request read check used for notification recipients (CanViewRequest), and
+// the database triggers that cap money values (installFinancialLimits).
+
 package store
 
 import (
@@ -6,55 +19,113 @@ import (
 	"fmt"
 )
 
+// securityQuerier is satisfied by both *sql.DB and *sql.Tx, so the permission
+// readers in this file can run inside the caller's transaction or on their own.
 type securityQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
+// adminRoleSQL is the rule for the built-in administrator role: the system role
+// named exactly "Admin". That role can never lose its user and role management
+// permissions, can never be edited or assigned by a non-administrator, and must
+// always have at least one active holder. The roles table must be aliased r.
+const adminRoleSQL = `r.is_system=1 AND r.name='Admin'`
+
+// adminMember reports whether user id is active and holds the built-in Admin role.
 func adminMember(ctx context.Context, q securityQuerier, id int64) (bool, error) {
 	var yes bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id WHERE u.id=? AND u.active=1 AND r.is_system=1 AND r.name='Admin')`, id).Scan(&yes)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id WHERE u.id=? AND u.active=1 AND `+adminRoleSQL+`)`, id).Scan(&yes)
 	return yes, err
 }
-func (s *Store) IsAdmin(ctx context.Context, id int64) bool {
-	ok, err := adminMember(ctx, s.db, id)
-	return err == nil && ok
+
+// isAdminRole reports whether roleID is the built-in Admin role. A role id that
+// does not exist returns sql.ErrNoRows.
+func isAdminRole(ctx context.Context, q securityQuerier, roleID int64) (bool, error) {
+	var yes bool
+	err := q.QueryRowContext(ctx, `SELECT `+adminRoleSQL+` FROM roles r WHERE r.id=?`, roleID).Scan(&yes)
+	return yes, err
 }
 
-func effectivePermissionsQ(ctx context.Context, q securityQuerier, id int64) (PermissionSet, error) {
-	ps := &dbPermissionSet{}
-	rows, err := q.QueryContext(ctx, `SELECT rp.resource,rp.action FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN role_permissions rp ON rp.role_id=ur.role_id WHERE u.id=? AND u.active=1`, id)
+// eachStringPair runs a query that returns two text columns and calls fn for
+// every row, in the order the query returns them.
+func eachStringPair(ctx context.Context, q securityQuerier, query string, arg any, fn func(a, b string)) error {
+	rows, err := q.QueryContext(ctx, query, arg)
 	if err != nil {
-		return ps, err
-	}
-	for rows.Next() {
-		var resource, action string
-		if err = rows.Scan(&resource, &action); err != nil {
-			rows.Close()
-			return ps, err
-		}
-		ps.add(resource, action)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return ps, err
-	}
-	rows, err = q.QueryContext(ctx, `SELECT ds.resource,ds.scope FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN role_data_scope ds ON ds.role_id=ur.role_id WHERE u.id=? AND u.active=1`, id)
-	if err != nil {
-		return ps, err
+		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var resource, scope string
-		if err = rows.Scan(&resource, &scope); err != nil {
-			return ps, err
+		var a, b string
+		if err := rows.Scan(&a, &b); err != nil {
+			return err
 		}
-		ps.mergeScope(resource, scope)
+		fn(a, b)
 	}
-	return ps, rows.Err()
+	return rows.Err()
 }
 
+// roleGrants loads one role's grants and data scopes, ordered by resource (and
+// action). Both slices are nil when the role has none.
+func roleGrants(ctx context.Context, q securityQuerier, roleID int64) ([]Grant, []ScopeGrant, error) {
+	var grants []Grant
+	if err := eachStringPair(ctx, q, `SELECT resource,action FROM role_permissions WHERE role_id=? ORDER BY resource,action`, roleID,
+		func(resource, action string) { grants = append(grants, Grant{resource, action}) }); err != nil {
+		return nil, nil, err
+	}
+	var scopes []ScopeGrant
+	if err := eachStringPair(ctx, q, `SELECT resource,scope FROM role_data_scope WHERE role_id=? ORDER BY resource`, roleID,
+		func(resource, scope string) { scopes = append(scopes, ScopeGrant{resource, scope}) }); err != nil {
+		return nil, nil, err
+	}
+	return grants, scopes, nil
+}
+
+// within reports whether ps already covers every grant and data scope: each
+// grant is held, and no scope is broader than the one ps has for that resource.
+// This is the role ceiling test.
+func within(ps PermissionSet, grants []Grant, scopes []ScopeGrant) bool {
+	for _, g := range grants {
+		if !ps.Can(g.Resource, g.Action) {
+			return false
+		}
+	}
+	for _, sc := range scopes {
+		if scopeRank(sc.Scope) > scopeRank(ps.Scope(sc.Resource)) {
+			return false
+		}
+	}
+	return true
+}
+
+// loadPermissions builds a user's permission set from every role they hold:
+// the union of the grants, and the broadest data scope per resource. With
+// activeOnly set, a deactivated user gets an empty set.
+func loadPermissions(ctx context.Context, q securityQuerier, userID int64, activeOnly bool) (*dbPermissionSet, error) {
+	ps := &dbPermissionSet{grants: map[string]map[string]struct{}{}, scopes: map[string]string{}}
+	from, where := `user_roles ur`, `ur.user_id=?`
+	if activeOnly {
+		from, where = `users u JOIN user_roles ur ON ur.user_id=u.id`, `u.id=? AND u.active=1`
+	}
+	if err := eachStringPair(ctx, q, `SELECT rp.resource,rp.action FROM `+from+` JOIN role_permissions rp ON rp.role_id=ur.role_id WHERE `+where, userID, ps.add); err != nil {
+		return ps, err
+	}
+	err := eachStringPair(ctx, q, `SELECT ds.resource,ds.scope FROM `+from+` JOIN role_data_scope ds ON ds.role_id=ur.role_id WHERE `+where, userID, ps.mergeScope)
+	return ps, err
+}
+
+// effectivePermissionsQ returns the permissions of an active user; a deactivated
+// user holds none. It runs on q, so a write can check the actor inside its own
+// transaction.
+func effectivePermissionsQ(ctx context.Context, q securityQuerier, id int64) (PermissionSet, error) {
+	return loadPermissions(ctx, q, id, true)
+}
+
+// requireRoleCeiling returns nil only when the actor may manage every role in
+// roleIDs. Unknown role ids are a validation error, checked first for everyone.
+// Administrators may then manage any role. Anyone else may never manage the
+// built-in Admin role, and may manage another role only when its grants and
+// scopes are all within their own (the role ceiling); otherwise ErrForbidden.
 func requireRoleCeiling(ctx context.Context, q securityQuerier, actorID int64, roleIDs []int64) error {
 	admin, err := adminMember(ctx, q, actorID)
 	if err != nil {
@@ -77,56 +148,25 @@ func requireRoleCeiling(ctx context.Context, q securityQuerier, actorID int64, r
 		return err
 	}
 	for _, id := range roleIDs {
-		var protected bool
-		if err = q.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, id).Scan(&protected); err != nil {
+		protected, err := isAdminRole(ctx, q, id)
+		if err != nil {
 			return err
 		}
 		if protected {
 			return ErrForbidden
 		}
-		rows, err := q.QueryContext(ctx, `SELECT resource,action FROM role_permissions WHERE role_id=?`, id)
+		grants, scopes, err := roleGrants(ctx, q, id)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var r, a string
-			if err = rows.Scan(&r, &a); err != nil {
-				rows.Close()
-				return err
-			}
-			if !ps.Can(r, a) {
-				rows.Close()
-				return ErrForbidden
-			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		rows, err = q.QueryContext(ctx, `SELECT resource,scope FROM role_data_scope WHERE role_id=?`, id)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var r, sc string
-			if err = rows.Scan(&r, &sc); err != nil {
-				rows.Close()
-				return err
-			}
-			if scopeRank(sc) > scopeRank(ps.Scope(r)) {
-				rows.Close()
-				return ErrForbidden
-			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
+		if !within(ps, grants, scopes) {
+			return ErrForbidden
 		}
 	}
 	return nil
 }
+
+// userRoleIDs lists the role ids assigned to a user.
 func userRoleIDs(ctx context.Context, q securityQuerier, id int64) ([]int64, error) {
 	rows, err := q.QueryContext(ctx, `SELECT role_id FROM user_roles WHERE user_id=?`, id)
 	if err != nil {
@@ -143,6 +183,13 @@ func userRoleIDs(ctx context.Context, q securityQuerier, id int64) ([]int64, err
 	}
 	return ids, rows.Err()
 }
+
+// protectUserChange enforces the rules for changing a user's roles or active
+// flag. The actor's role ceiling must cover both the roles the user has now
+// and the roles they are being given. And if the change would take the Admin
+// role away from an active administrator (by demotion or deactivation), it is
+// refused when the actor is doing it to themselves, or when nobody else would
+// be left as an active administrator.
 func protectUserChange(ctx context.Context, tx *sql.Tx, actorID, userID int64, roles []int64, active bool) error {
 	before, err := userRoleIDs(ctx, tx, userID)
 	if err != nil {
@@ -158,8 +205,8 @@ func protectUserChange(ctx context.Context, tx *sql.Tx, actorID, userID int64, r
 	var staysAdmin bool
 	if active {
 		for _, id := range roles {
-			var yes bool
-			if err = tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, id).Scan(&yes); err != nil {
+			yes, err := isAdminRole(ctx, tx, id)
+			if err != nil {
 				return err
 			}
 			staysAdmin = staysAdmin || yes
@@ -170,7 +217,7 @@ func protectUserChange(ctx context.Context, tx *sql.Tx, actorID, userID int64, r
 			return fmt.Errorf("%w: you cannot deactivate or demote your own administrator account", ErrValidation)
 		}
 		var others int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id WHERE u.active=1 AND u.id<>? AND r.name='Admin' AND r.is_system=1`, userID).Scan(&others); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id WHERE u.active=1 AND u.id<>? AND `+adminRoleSQL, userID).Scan(&others); err != nil {
 			return err
 		}
 		if others == 0 {
@@ -180,6 +227,10 @@ func protectUserChange(ctx context.Context, tx *sql.Tx, actorID, userID int64, r
 	return nil
 }
 
+// paymentWriteAccess allows the actor to change payment p when their payment
+// data scope is "all", or when it is "own" or "assigned" and they entered the
+// payment themselves. Otherwise it returns ErrNotFound, so a payment the actor
+// may not touch is not even revealed to exist.
 func paymentWriteAccess(ctx context.Context, tx *sql.Tx, actorID int64, p Payment) error {
 	ps, err := effectivePermissionsQ(ctx, tx, actorID)
 	if err != nil {
@@ -192,30 +243,31 @@ func paymentWriteAccess(ctx context.Context, tx *sql.Tx, actorID int64, p Paymen
 	return ErrNotFound
 }
 
-// CanViewRequest is shared by HTTP, notification recipients and inbox reads.
+// CanViewRequest answers whether a person may read request r on a screen that
+// exists to show requests: they need the request:view grant and their request
+// data scope has to reach the row (RequestInScope). Notification recipients and
+// inbox reads use it. HTTP handlers check the grant through the route and the
+// scope through the same predicate.
 func CanViewRequest(ps PermissionSet, uid int64, r Request) bool {
 	if ps == nil || !ps.Can("request", "view") {
 		return false
 	}
-	switch ps.Scope("request") {
-	case ScopeAll:
-		return true
-	case "own":
-		return r.RequesterID == uid
-	case "assigned":
-		return r.RequesterID == uid || r.ManagerID == uid
-	}
-	return false
+	return RequestInScope(ps.Scope("request"), uid, r)
 }
 
+// UserCanViewRequest is CanViewRequest for a user id: it loads the user's
+// current permissions (none if deactivated) and answers false on any error.
 func (s *Store) UserCanViewRequest(ctx context.Context, id int64, r Request) bool {
 	ps, err := effectivePermissionsQ(ctx, s.db, id)
 	return err == nil && CanViewRequest(ps, id, r)
 }
 
-// Bound all future financial writes, including imports and planner submissions.
-// 9e14 paise per table is below float64's exact-integer range and leaves ample
-// headroom for cross-table totals and the bounded 120-month reporting window.
+// installFinancialLimits bounds all future financial writes, including imports
+// and planner submissions, with INSERT and UPDATE triggers on every table that
+// stores an amount. 9e14 paise per table is below float64's exact-integer range
+// and leaves ample headroom for cross-table totals and the bounded 120-month
+// reporting window. If existing data already breaks a limit it refuses to start
+// rather than changing anything.
 func installFinancialLimits(db *sql.DB) error {
 	for _, table := range []string{"payments", "payment_requests", "budgets", "budget_lines", "recovery_events"} {
 		var exists bool

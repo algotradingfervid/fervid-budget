@@ -84,13 +84,15 @@ func TestRecoveryHTTPPermissionScopeAndCSRF(t *testing.T) {
 	requireStatus(t, resp, http.StatusForbidden)
 	_ = responseBody(t, resp)
 	// Grant the action but narrow the request scope: a valid CSRF POST still cannot
-	// mutate another requester's balance.
+	// mutate another requester's balance. A request outside the caller's scope
+	// answers 404, the same as a request that does not exist, so ids cannot be
+	// probed through this route either.
 	if err := s.st.UpdateRolePermissions(s.ctx, u, role, []store.Grant{{Resource: "recoverable_report", Action: "view"}, {Resource: "payment", Action: "create"}}, []store.ScopeGrant{{Resource: "request", Scope: "own"}}); err != nil {
 		t.Fatal(err)
 	}
 	s.login("recover-read@example.test", "ScopedPassword123")
 	resp = s.postForm(path+"/events", fields)
-	requireStatus(t, resp, http.StatusForbidden)
+	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
 	// Own request but missing CSRF is forbidden at the route boundary.
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET requester_id=? WHERE id=?`, uid, id); err != nil {

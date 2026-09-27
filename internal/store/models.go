@@ -307,14 +307,14 @@ type RecoverableReportOptions struct {
 //
 // **The zero value sees nothing.** That is deliberate and it is the whole point of
 // the type. `permissions.go` already documents an empty data scope as "no scope at
-// all", and `canViewRequest` returns false for it, so denying matches both. It
+// all", and RequestInScope returns false for it, so denying matches both. It
 // also fails in the safe direction: a caller who forgets to set Viewer gets an
 // empty screen, which someone reports, rather than a silent disclosure, which
 // nobody does.
 type RecoverableViewer struct {
-	// Scope is the caller's `request` data scope: ScopeAll, "assigned", "own", or
-	// "" for none. Narrower than the holder's real scope is allowed — that is how
-	// a URL filter works — but the caller must never widen it here.
+	// Scope is the caller's `request` data scope: ScopeAll, ScopeAssigned,
+	// ScopeOwn, or "" for none. Narrower than the holder's real scope is allowed —
+	// that is how a URL filter works — but the caller must never widen it here.
 	Scope string
 	// ViewerID is the reader's user id, consulted for "own" and "assigned".
 	ViewerID int64
@@ -491,11 +491,23 @@ type RequestInput struct {
 
 type RequestListOptions struct {
 	VendorID int64
-	Scope    string // "own" | "assigned" | "held" | "all" — "held" is the viewer's own reservations
+	// Scope is the viewer's request data scope (ScopeOwn, ScopeAssigned or
+	// ScopeAll, see request_scope.go). It says which requests the viewer may see
+	// at all; a URL may narrow it and must never widen it. Anything else reads
+	// no rows.
+	Scope    string
 	ViewerID int64
-	Status   string   // "" or "all" = any status; otherwise exact status
-	Statuses []string // optional explicit set; wins over Status when non-empty
-	Bucket   string   // "" | "open" | "closed" | "needs-me" | "all"
+	// RoutedToViewer keeps only the requests whose approver is the viewer: the
+	// approvals queue, its badge and the dashboard's "awaiting your approval"
+	// area. It is a filter inside the scope, not a scope of its own, so an
+	// approver's own raised requests never appear in their approval queue.
+	RoutedToViewer bool
+	// HeldByViewer keeps only the requests the viewer has reserved for payment:
+	// the accountant's "concerns to answer" list. Also a filter inside the scope.
+	HeldByViewer bool
+	Status       string   // "" or "all" = any status; otherwise exact status
+	Statuses     []string // optional explicit set; wins over Status when non-empty
+	Bucket       string   // "" | "open" | "closed" | "needs-me" | "all"
 	// ConcernOpen narrows to partial reviews whose concern Accounts has not
 	// yet answered — the accountant's "concerns to answer" list.
 	ConcernOpen bool
@@ -511,7 +523,7 @@ type RequestListOptions struct {
 const StaleReservation = 24 * time.Hour
 
 type LinkableOptions struct {
-	Scope    string // "own" | "assigned" | "all", from auth.Scope
+	Scope    string // the viewer's request data scope (ScopeOwn | ScopeAssigned | ScopeAll), from auth.Scope
 	ViewerID int64
 	Status   string // "" (picker pool, including unavailable) | "approved" (unclaimed, not held) | "processing" | "hold" | "partial_review" | "paid"
 	Query    string

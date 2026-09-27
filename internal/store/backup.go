@@ -1,3 +1,12 @@
+// backup.go creates, prunes and restores backups.
+//
+// A backup is a folder backup-YYYYMMDD-HHMMSS (with a -NN suffix if that name
+// is taken) holding fervid.db, a consistent copy of the database made with
+// VACUUM INTO; attachments/, a copy of the attachment folder; and
+// manifest.json, which records where the attachments originally lived. It is
+// built in a ".tmp" folder and renamed when complete, so a crash never leaves
+// a backup that looks finished. Every file and folder is created owner-only.
+
 package store
 
 import (
@@ -14,8 +23,15 @@ import (
 	"time"
 )
 
-const backupDBName = "fervid.db"
+const (
+	backupDBName       = "fervid.db"       // the database file inside a backup
+	backupAttachDir    = "attachments"     // the attachment folder inside a backup
+	backupManifestFile = "manifest.json"   // the manifest inside a backup
+	backupStampLayout  = "20060102-150405" // the time in a backup-<stamp> folder name
+)
 
+// BackupOptions says what to back up and where. Now overrides the clock that
+// names the backup; nil means time.Now.
 type BackupOptions struct {
 	DBPath        string
 	AttachmentDir string
@@ -23,6 +39,8 @@ type BackupOptions struct {
 	Now           func() time.Time
 }
 
+// BackupInfo describes a finished backup: its folder, the database and
+// attachment copies inside it, and the time it was stamped with.
 type BackupInfo struct {
 	Path          string
 	DBPath        string
@@ -30,12 +48,15 @@ type BackupInfo struct {
 	CreatedAt     time.Time
 }
 
+// RestoreOptions names the backup folder to restore and the live database
+// file and attachment folder it replaces.
 type RestoreOptions struct {
 	BackupPath    string
 	DBPath        string
 	AttachmentDir string
 }
 
+// Backup is CreateBackup with positional arguments and the real clock.
 func Backup(ctx context.Context, dbPath, attachmentDir, backupDir string) (BackupInfo, error) {
 	return CreateBackup(ctx, BackupOptions{
 		DBPath:        dbPath,
@@ -44,6 +65,9 @@ func Backup(ctx context.Context, dbPath, attachmentDir, backupDir string) (Backu
 	})
 }
 
+// CreateBackup writes a new backup folder under opts.BackupDir and returns its
+// paths. A missing attachment folder is backed up as an empty one. On any
+// failure the half-built ".tmp" folder is removed.
 func CreateBackup(ctx context.Context, opts BackupOptions) (BackupInfo, error) {
 	if opts.DBPath == "" || opts.BackupDir == "" {
 		return BackupInfo{}, fmt.Errorf("%w: database path and backup directory are required", ErrValidation)
@@ -79,7 +103,7 @@ func CreateBackup(ctx context.Context, opts BackupOptions) (BackupInfo, error) {
 	if err := backupSQLite(ctx, opts.DBPath, dbBackupPath); err != nil {
 		return BackupInfo{}, err
 	}
-	attachmentBackupPath := filepath.Join(tempPath, "attachments")
+	attachmentBackupPath := filepath.Join(tempPath, backupAttachDir)
 	if err := copyTree(ctx, opts.AttachmentDir, attachmentBackupPath); err != nil {
 		return BackupInfo{}, err
 	}
@@ -90,7 +114,7 @@ func CreateBackup(ctx context.Context, opts BackupOptions) (BackupInfo, error) {
 	if err := writeBackupManifest(tempPath, backupManifest{
 		CreatedAt:           createdAt.Format(time.RFC3339),
 		DatabaseFile:        backupDBName,
-		AttachmentDir:       "attachments",
+		AttachmentDir:       backupAttachDir,
 		SourceDBPath:        opts.DBPath,
 		SourceAttachment:    opts.AttachmentDir,
 		SourceAttachmentAbs: sourceAttachmentAbs,
@@ -105,11 +129,12 @@ func CreateBackup(ctx context.Context, opts BackupOptions) (BackupInfo, error) {
 	return BackupInfo{
 		Path:          finalPath,
 		DBPath:        filepath.Join(finalPath, backupDBName),
-		AttachmentDir: filepath.Join(finalPath, "attachments"),
+		AttachmentDir: filepath.Join(finalPath, backupAttachDir),
 		CreatedAt:     createdAt,
 	}, nil
 }
 
+// Restore is RestoreBackup with positional arguments.
 func Restore(ctx context.Context, backupPath, dbPath, attachmentDir string) error {
 	return RestoreBackup(ctx, RestoreOptions{
 		BackupPath:    backupPath,
@@ -118,12 +143,18 @@ func Restore(ctx context.Context, backupPath, dbPath, attachmentDir string) erro
 	})
 }
 
+// RestoreBackup replaces the live database and attachment folder with a
+// backup's. Everything is first copied beside the live files (".restore-new-"),
+// and attachment paths stored in the copied database are rewritten to the live
+// attachment folder. Only then are the live files moved aside
+// (".restore-old-") and the copies moved in. If a step fails the originals are
+// put back. The application must be stopped while this runs.
 func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 	if opts.BackupPath == "" || opts.DBPath == "" || opts.AttachmentDir == "" {
 		return fmt.Errorf("%w: backup path, database path, and attachment directory are required", ErrValidation)
 	}
 	backupDB := filepath.Join(opts.BackupPath, backupDBName)
-	backupAttachments := filepath.Join(opts.BackupPath, "attachments")
+	backupAttachments := filepath.Join(opts.BackupPath, backupAttachDir)
 	if _, err := os.Stat(backupDB); err != nil {
 		return err
 	}
@@ -134,7 +165,7 @@ func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 		return err
 	}
 
-	stamp := time.Now().Format("20060102-150405")
+	stamp := time.Now().Format(backupStampLayout)
 	newDB := opts.DBPath + ".restore-new-" + stamp
 	newAttachments := opts.AttachmentDir + ".restore-new-" + stamp
 	if err := os.RemoveAll(newDB); err != nil {
@@ -187,6 +218,8 @@ func RestoreBackup(ctx context.Context, opts RestoreOptions) error {
 	return errors.Join(cleanupErrs...)
 }
 
+// dbSidecarSuffixes are SQLite's write-ahead log and shared-memory files,
+// which sit beside the database file.
 var dbSidecarSuffixes = []string{"-wal", "-shm"}
 
 // moveDBSidecars renames dbPath's -wal and -shm files to sit beside oldBase and
@@ -212,6 +245,7 @@ func moveDBSidecars(dbPath, oldBase string) (map[string]string, error) {
 	return moved, nil
 }
 
+// restoreDBSidecars moves sidecars moved by moveDBSidecars back beside dbPath.
 func restoreDBSidecars(dbPath string, moved map[string]string) error {
 	var errs []error
 	for suffix, old := range moved {
@@ -220,7 +254,7 @@ func restoreDBSidecars(dbPath string, moved map[string]string) error {
 	return errors.Join(errs...)
 }
 
-// PruneBackups applies the §10 retention: every backup younger than keepDays is
+// PruneBackups applies the retention policy: every backup younger than keepDays is
 // kept, and so is the newest backup of each of the keepMonths calendar months
 // before the current one. Everything else named backup-* is removed. A backup's
 // age is the timestamp in its folder name (the time CreateBackup stamped on it),
@@ -281,7 +315,7 @@ func PruneBackups(backupDir string, keepDays, keepMonths int, now time.Time) err
 // backupTimeFromName reads the time from a folder named by uniqueBackupPath:
 // backup-YYYYMMDD-HHMMSS, optionally followed by a -NN collision suffix.
 func backupTimeFromName(name string, loc *time.Location) (time.Time, bool) {
-	const layout = "20060102-150405"
+	const layout = backupStampLayout
 	rest := strings.TrimPrefix(name, "backup-")
 	if len(rest) < len(layout) {
 		return time.Time{}, false
@@ -296,6 +330,9 @@ func backupTimeFromName(name string, loc *time.Location) (time.Time, bool) {
 	return at, true
 }
 
+// backupManifest is manifest.json. SourceAttachment and SourceAttachmentAbs
+// record where the attachments lived when the backup was taken, so a restore
+// can rewrite stored attachment paths to the new location.
 type backupManifest struct {
 	CreatedAt           string `json:"created_at"`
 	DatabaseFile        string `json:"database_file"`
@@ -305,8 +342,10 @@ type backupManifest struct {
 	SourceAttachmentAbs string `json:"source_attachment_absolute,omitempty"`
 }
 
+// backupSQLite writes a consistent copy of the database at sourcePath to
+// destPath, owner-only. A partial copy is removed on failure.
 func backupSQLite(ctx context.Context, sourcePath, destPath string) error {
-	if err := checkContext(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(destPath), 0700); err != nil {
@@ -343,8 +382,9 @@ func backupSQLite(ctx context.Context, sourcePath, destPath string) error {
 	return nil
 }
 
+// writeBackupManifest writes manifest.json into dir; the file must not exist.
 func writeBackupManifest(dir string, manifest backupManifest) error {
-	path := filepath.Join(dir, "manifest.json")
+	path := filepath.Join(dir, backupManifestFile)
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
@@ -359,8 +399,10 @@ func writeBackupManifest(dir string, manifest backupManifest) error {
 	return errors.Join(encodeErr, closeErr)
 }
 
+// uniqueBackupPath names a new backup folder for time t, adding -01, -02 ...
+// when a folder with that name already exists.
 func uniqueBackupPath(backupDir string, t time.Time) string {
-	base := filepath.Join(backupDir, "backup-"+t.Format("20060102-150405"))
+	base := filepath.Join(backupDir, "backup-"+t.Format(backupStampLayout))
 	if _, err := os.Stat(base); os.IsNotExist(err) {
 		return base
 	}
@@ -372,6 +414,9 @@ func uniqueBackupPath(backupDir string, t time.Time) string {
 	}
 }
 
+// copyTree copies the folder src to dst (which must not contain the files
+// yet). An empty or missing src produces an empty dst. Links and special files
+// are refused rather than followed.
 func copyTree(ctx context.Context, src, dst string) error {
 	if src == "" {
 		return os.MkdirAll(dst, 0700)
@@ -390,7 +435,7 @@ func copyTree(ctx context.Context, src, dst string) error {
 		if err != nil {
 			return err
 		}
-		if err := checkContext(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		rel, err := filepath.Rel(src, path)
@@ -408,24 +453,15 @@ func copyTree(ctx context.Context, src, dst string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%w: backups cannot include links or special files", ErrValidation)
 		}
-
-		return copyFileWithMode(ctx, path, target, info.Mode().Perm())
+		return copyFile(ctx, path, target)
 	})
 }
 
+// copyFile copies one regular file to dst, which must not exist, creating its
+// parent folders. The copy is always owner-only (0600), whatever the source's
+// permissions. A partial copy is removed on failure.
 func copyFile(ctx context.Context, src, dst string) error {
-	info, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%w: backup source must be a regular file", ErrValidation)
-	}
-	return copyFileWithMode(ctx, src, dst, 0600)
-}
-
-func copyFileWithMode(ctx context.Context, src, dst string, mode fs.FileMode) error {
-	if err := checkContext(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
@@ -459,6 +495,9 @@ func copyFileWithMode(ctx context.Context, src, dst string, mode fs.FileMode) er
 	return closeErr
 }
 
+// replacePath moves target aside to target.restore-old-<stamp> (if it exists)
+// and moves replacement into its place. It returns where the old copy went; if
+// the final move fails the old copy is put back.
 func replacePath(target, replacement, stamp string) (string, error) {
 	oldPath := target + ".restore-old-" + stamp
 	if _, err := os.Stat(target); err == nil {
@@ -477,6 +516,8 @@ func replacePath(target, replacement, stamp string) (string, error) {
 	return oldPath, nil
 }
 
+// rollbackReplace undoes replacePath: it removes whatever is at target and
+// moves the old copy back.
 func rollbackReplace(target, oldPath string) error {
 	if oldPath == "" {
 		return nil
@@ -490,23 +531,13 @@ func rollbackReplace(target, oldPath string) error {
 	return nil
 }
 
-func checkContext(ctx context.Context) error {
-	if ctx == nil {
-		return nil
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return nil
-	}
-}
-
-// rebaseRestoredAttachments preserves the same relative filename under the
-// manifest's recorded source root. It never guesses from a basename or accepts
-// a traversal path. An ambiguous/malformed backup fails before live replacement.
+// rebaseRestoredAttachments rewrites every stored attachment path in the
+// database copy at dbPath so it points under targetDir, keeping each file's
+// path relative to the attachment folder recorded in the backup's manifest.
+// A path outside that folder is a validation error, which stops the restore
+// before anything live is touched.
 func rebaseRestoredAttachments(ctx context.Context, dbPath, backupPath, targetDir string) error {
-	contents, err := os.ReadFile(filepath.Join(backupPath, "manifest.json"))
+	contents, err := os.ReadFile(filepath.Join(backupPath, backupManifestFile))
 	if err != nil {
 		return fmt.Errorf("read restore manifest: %w", err)
 	}
@@ -556,19 +587,7 @@ func rebaseRestoredAttachments(ctx context.Context, dbPath, backupPath, targetDi
 				rows.Close()
 				return err
 			}
-			relative := ""
-			matched := false
-			for _, root := range []string{manifest.SourceAttachment, manifest.SourceAttachmentAbs} {
-				if root == "" || filepath.IsAbs(root) != filepath.IsAbs(stored) {
-					continue
-				}
-				rel, e := filepath.Rel(filepath.Clean(root), filepath.Clean(stored))
-				if e == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel) {
-					relative = rel
-					matched = true
-					break
-				}
-			}
+			relative, matched := manifest.relativeToSourceRoot(stored)
 			if !matched {
 				rows.Close()
 				return fmt.Errorf("%w: attachment %d in %s is outside the recorded backup attachment root", ErrValidation, id, table)
@@ -587,4 +606,20 @@ func rebaseRestoredAttachments(ctx context.Context, dbPath, backupPath, targetDi
 		}
 	}
 	return tx.Commit()
+}
+
+// relativeToSourceRoot returns stored's path relative to the attachment folder
+// recorded in the manifest (tried as written, then as an absolute path), or
+// false if it lies outside that folder. It never guesses from a file name.
+func (m backupManifest) relativeToSourceRoot(stored string) (string, bool) {
+	for _, root := range []string{m.SourceAttachment, m.SourceAttachmentAbs} {
+		if root == "" || filepath.IsAbs(root) != filepath.IsAbs(stored) {
+			continue
+		}
+		rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(stored))
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel) {
+			return rel, true
+		}
+	}
+	return "", false
 }
