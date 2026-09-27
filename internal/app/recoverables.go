@@ -1,8 +1,6 @@
 package app
 
 import (
-	"bytes"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"net/http"
@@ -143,23 +141,13 @@ func (a *App) exportRecoverable(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export",
 		EntityType: "recoverable_report", Summary: "Exported recoverable payments · " + scope})
-	var body bytes.Buffer
-	cw := csv.NewWriter(&body)
-	_ = cw.Write([]string{"Number", "Category", "Counterparty", "Project", "Outstanding", "Paid out", "Recovered or reconciled", "Paid On", "Expected Return", "Ageing", "Status", "Requester", "Repayment Notes"})
+	cells := make([][]string, 0, len(rows))
 	for _, row := range rows {
-		_ = cw.Write([]string{csvText(row.Number), csvText(row.Category), csvText(row.Counterparty), csvText(row.Project), csvAmount(row.Amount), csvAmount(row.PaidAmount), csvAmount(row.RecoveredAmount),
+		cells = append(cells, []string{csvText(row.Number), csvText(row.Category), csvText(row.Counterparty), csvText(row.Project), csvAmount(row.Amount), csvAmount(row.PaidAmount), csvAmount(row.RecoveredAmount),
 			row.PaidOn, row.ExpectedReturnDate, row.AgeingLabel, csvText(row.Status), csvText(row.Requester), csvText(row.RepaymentNotes)})
 	}
-	cw.Flush()
-	if err := cw.Error(); err != nil {
-		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="recoverables.csv"`)
-	if _, err := w.Write(body.Bytes()); err != nil {
-		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
-	}
+	a.sendCSV(w, r, "recoverables.csv",
+		[]string{"Number", "Category", "Counterparty", "Project", "Outstanding", "Paid out", "Recovered or reconciled", "Paid On", "Expected Return", "Ageing", "Status", "Requester", "Repayment Notes"}, cells)
 }
 
 // recoverableDetail shows one recoverable.

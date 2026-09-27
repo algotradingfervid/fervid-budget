@@ -3,8 +3,6 @@ package app
 // Budget-versus-actual reports and the grid and report CSV exports.
 
 import (
-	"bytes"
-	"encoding/csv"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -153,22 +151,12 @@ func (a *App) exportGrid(w http.ResponseWriter, r *http.Request) {
 	}
 	u := auth.CurrentUser(r)
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported grid " + month})
-	var body bytes.Buffer
-	cw := csv.NewWriter(&body)
-	_ = cw.Write([]string{"Project", "Head", "Budget", "Actual", "Variance", "Variance %", "Status"})
+	rows := make([][]string, 0, len(grid.Rows))
 	for _, row := range grid.Rows {
-		_ = cw.Write([]string{csvText(row.Project), csvText(row.Head), csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent, csvText(row.Status)})
+		rows = append(rows, []string{csvText(row.Project), csvText(row.Head), csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent, csvText(row.Status)})
 	}
-	cw.Flush()
-	if err := cw.Error(); err != nil {
-		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="variance-`+month+`.csv"`)
-	if _, err := w.Write(body.Bytes()); err != nil {
-		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
-	}
+	a.sendCSV(w, r, "variance-"+month+".csv",
+		[]string{"Project", "Head", "Budget", "Actual", "Variance", "Variance %", "Status"}, rows)
 }
 
 // reportLevels are the three groupings store.Report knows, which are also the
@@ -195,22 +183,12 @@ func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 	}
 	u := auth.CurrentUser(r)
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export", EntityType: "report", Summary: "Exported " + level + " report " + from + " to " + to})
-	var body bytes.Buffer
-	cw := csv.NewWriter(&body)
-	_ = cw.Write([]string{"Period", "Project", "Head", "Budget", "Actual", "Variance", "Variance %"})
+	cells := make([][]string, 0, len(rows))
 	for _, row := range rows {
-		_ = cw.Write([]string{csvText(row.Period), csvText(row.Project), csvText(row.Head), csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent})
+		cells = append(cells, []string{csvText(row.Period), csvText(row.Project), csvText(row.Head), csvAmount(row.Budget), csvAmount(row.Actual), csvAmount(row.Variance), row.VariancePercent})
 	}
-	cw.Flush()
-	if err := cw.Error(); err != nil {
-		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="report-`+from+`-to-`+to+`.csv"`)
-	if _, err := w.Write(body.Bytes()); err != nil {
-		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
-	}
+	a.sendCSV(w, r, "report-"+from+"-to-"+to+".csv",
+		[]string{"Period", "Project", "Head", "Budget", "Actual", "Variance", "Variance %"}, cells)
 }
 
 func nonEmptyReportRows(rows []store.ReportRow) []store.ReportRow {

@@ -1,9 +1,7 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"net/http"
@@ -1279,29 +1277,19 @@ func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	list := page.Requests
 	a.recordAudit(r, store.AuditInput{ActorID: &u.ID, ActorName: u.Name, Action: "export",
 		EntityType: "payment_request", Summary: "Exported request list"})
-	var body bytes.Buffer
-	cw := csv.NewWriter(&body)
-	_ = cw.Write([]string{"Number", "Status", "Type", "Title", "Amount", "Approved amount", "Payee", "Requester", "Approver", "Created"})
+	rows := make([][]string, 0, len(list))
 	for _, req := range list {
 		// The approved amount is empty until the request is decided.
 		approved := ""
 		if req.ApprovedAmount != nil {
 			approved = csvAmount(*req.ApprovedAmount)
 		}
-		_ = cw.Write([]string{csvText(req.Number), requestStatusText(csvText(req.Status)), typeLabel(req.Type), csvText(req.ShortTitle),
+		rows = append(rows, []string{csvText(req.Number), requestStatusText(csvText(req.Status)), typeLabel(req.Type), csvText(req.ShortTitle),
 			csvAmount(req.Amount), approved, csvText(req.Vendor), csvText(req.RequesterName), csvText(req.ManagerName),
 			req.CreatedAt.Format(time.DateOnly)})
 	}
-	cw.Flush()
-	if err := cw.Error(); err != nil {
-		a.respondError(w, r, http.StatusInternalServerError, "The export could not be generated.", err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="requests.csv"`)
-	if _, err := w.Write(body.Bytes()); err != nil {
-		a.log.ErrorContext(r.Context(), "csv response write failed", "request_id", requestID(r), "error", err)
-	}
+	a.sendCSV(w, r, "requests.csv",
+		[]string{"Number", "Status", "Type", "Title", "Amount", "Approved amount", "Payee", "Requester", "Approver", "Created"}, rows)
 }
 
 // optionalID returns nil for an id of 0 or less, else a pointer to id.
