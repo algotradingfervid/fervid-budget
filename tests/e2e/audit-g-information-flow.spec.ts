@@ -37,9 +37,19 @@ import {
   capturePageErrors,
   createApprovedRequest,
   login,
-  settlePayment
+  settlePayment,
+  thisMonth,
+  today
 } from './fixtures';
-import { asRole, csrfToken, expectOutcome, probeGet, probePost, type Probe } from './audit-support';
+import {
+  asRole,
+  csrfToken,
+  expectOutcome,
+  probeGet,
+  probePost,
+  requestRevision,
+  type Probe
+} from './audit-support';
 
 // ---------------------------------------------------------------------------
 // Money helpers
@@ -136,11 +146,57 @@ function expectNoRuntimeErrors(errors: string[], what = 'no page error, console 
   ).toEqual([]);
 }
 
+/**
+ * The one line of a CSV that mentions `needle`, as a map from column name to
+ * cell, so a figure is read from its own row and column rather than found
+ * anywhere in the file.
+ */
+function csvRow(body: string, needle: string): Record<string, string> {
+  const lines = body.split(/\r?\n/).filter(line => line.trim());
+  const header = csvLine(lines[0] ?? '');
+  const matches = lines.slice(1).filter(line => line.includes(needle));
+  expect(matches.length, `exactly one CSV line mentions "${needle}"\n${lines.slice(0, 5).join('\n')}`).toBe(1);
+  const cells = csvLine(matches[0]);
+  return Object.fromEntries(header.map((name, i) => [name, cells[i] ?? '']));
+}
+
 /** Fetches a CSV through a signed-in context and returns its text. */
 async function csv(page: Page, path: string): Promise<string> {
   const response = await page.request.get(path, { failOnStatusCode: false });
   expect(response.status(), `GET ${path} must answer 200`).toBe(200);
   return response.text();
+}
+
+/**
+ * A project with one head, both made for one test through the admin screens'
+ * own POSTs.
+ *
+ * Every payment is dated today (a settlement may be dated neither before its
+ * approval nor after today), so a test can no longer have a month to itself.
+ * A project nobody else charges gives it the same isolation: the grid filtered
+ * to the project, the project report and the project's CSV rows hold this
+ * test's payments and nothing else.
+ */
+async function ownProjectHead(adminPage: Page, tag: string, runId: string) {
+  const project = `Flow ${tag} ${runId}`;
+  const head = `Spend ${tag} ${runId}`;
+  const madeProject = await probePost(adminPage, '/projects', { name: project, active: 'on', sort_order: '97' });
+  expect(madeProject.status, `the project ${project} is created`).toBe(303);
+  await adminPage.goto('/projects');
+  const projectId = await adminPage
+    .locator(`tbody tr:has(input[value="${project}"]) input[name="id"]`)
+    .first()
+    .inputValue();
+  const madeHead = await probePost(adminPage, '/heads', {
+    project_id: projectId,
+    name: head,
+    active: 'on',
+    sort_order: '97'
+  });
+  expect(madeHead.status, `the head ${head} is created`).toBe(303);
+  await adminPage.goto('/heads');
+  const headId = await adminPage.locator(`tbody tr:has(input[value="${head}"]) input[name="id"]`).first().inputValue();
+  return { project, head, label: `${project} / ${head}`, projectId, headId };
 }
 
 // ---------------------------------------------------------------------------
@@ -503,16 +559,11 @@ test.describe('G · the money trail', () => {
   /**
    * IF3 → IF4 → IF8 → IF12, end to end, for a lakh-grouped figure.
    *
-   * The month is this test's alone (2024-09), and the seed budgets only
-   * 2026-06, so the grid's company total for that month is exactly this one
-   * payment — which makes "the grid followed the money" an equality rather than
-   * a delta.
-   *
-   * The month is in the PAST because `validatePayment` now refuses a `paid_on`
-   * after today (F-D-06, internal/store/store.go:1938-1943): money cannot have
-   * left the bank on a date that has not happened. Every date in this file moved
-   * back by two years when the guard was wired through the UI, keeping each
-   * test's own month distinct.
+   * The payment is dated today, because a settlement may be dated neither
+   * before its approval nor after today. The head it is charged to belongs to a
+   * project of this test's own, so the grid filtered to that project, the
+   * project report and the project's CSV rows hold exactly this one payment —
+   * which makes "the grid followed the money" an equality rather than a delta.
    */
   test('TC-G-001 — a lakh-grouped amount survives twelve hops with exactly one ₹ at each', async ({
     adminPage,
@@ -524,6 +575,8 @@ test.describe('G · the money trail', () => {
     const PLAIN = '1,00,000.00'; // the money field's own grouped, glyph-less value
     const CSV_PLAIN = '100000.00'; // what csvAmount writes: a number, ungrouped
 
+    const MONTH = thisMonth();
+    const own = await ownProjectHead(adminPage, 'one', runId);
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgr1-${runId}`);
     const payee = `Trail Vendor ${runId}`;
     await ensureVendor(adminPage, payee);
@@ -532,9 +585,9 @@ test.describe('G · the money trail', () => {
     // prefix, so the input itself must carry the digits and no glyph.
     await adminPage.goto('/requests/new?type=vendor_invoice');
     await adminPage.getByLabel('Short title').fill(`Trail one ${runId}`);
-    await adminPage.locator('#project').selectOption({ label: 'Operations' });
-    await expect(adminPage.locator('#head option').filter({ hasNotText: 'Operations /' })).toHaveCount(1);
-    await adminPage.locator('#head').selectOption({ label: 'Operations / Office Rent' });
+    await adminPage.locator('#project').selectOption({ label: own.project });
+    await expect(adminPage.locator('#head option').filter({ hasNotText: `${own.project} /` })).toHaveCount(1);
+    await adminPage.locator('#head').selectOption({ label: own.label });
     await adminPage.locator('#vendor').pressSequentially(payee);
     await adminPage.locator('#vendor-options .co', { hasText: payee }).first().click();
     const amountField = adminPage.getByLabel('Amount');
@@ -626,7 +679,7 @@ test.describe('G · the money trail', () => {
     );
 
     // Hop 10 — the settlement sheet compares approved against paid.
-    await adminPage.getByLabel('Paid on').fill('2024-09-15');
+    await adminPage.getByLabel('Paid on').fill(today());
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-T1-${runId}`);
     await adminPage.getByLabel('Processing note').fill(`Trail one ${runId}`);
@@ -680,7 +733,7 @@ test.describe('G · the money trail', () => {
     );
 
     // Hop 13 — the payments ledger row.
-    await adminPage.goto('/payments?month=2024-09');
+    await adminPage.goto(`/payments?month=${MONTH}`);
     await adminPage.getByLabel('Search').fill(`Trail one ${runId}`);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     const ledger = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
@@ -692,33 +745,35 @@ test.describe('G · the money trail', () => {
       'hop 13 — payments ledger Amount'
     );
 
-    // Hop 14 — the variance grid actual for the head, and the company total.
-    await adminPage.goto('/grid?month=2024-09');
+    // Hop 14 — the variance grid actual for the head, and the project's
+    // subtotal. The footer's Actual is its fourth cell: the label spans two.
+    await adminPage.goto(`/grid?month=${MONTH}`);
     await expectMoney(
       adminPage,
-      'tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)',
+      `tr.head:has(.hname:text-is("${own.head}")) td:nth-child(5)`,
       MONEY,
-      'hop 14a — grid actual for Operations / Office Rent'
+      'hop 14a — grid actual for the head'
     );
-    await expectMoney(adminPage, 'tfoot tr.total td:nth-child(5)', MONEY, 'hop 14b — grid company total');
+    await adminPage.goto(`/grid?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
+    await expectMoney(adminPage, 'tfoot tr.total td:nth-child(4)', MONEY, 'hop 14b — grid subtotal for the project');
 
-    // Hop 15 — the monthly report reuses Grid, so its actual is the same number.
-    await adminPage.goto('/reports/monthly?from=2024-09&to=2024-09');
-    await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', MONEY, 'hop 15 — /reports/monthly Actual');
+    // Hop 15 — the project report reuses Grid, so its actual is the same number.
+    await adminPage.goto(`/reports/projects?from=${MONTH}&to=${MONTH}&project_id=${own.projectId}`);
+    await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', MONEY, 'hop 15 — /reports/projects Actual');
 
     // Hop 16 — /export.csv. The last hop of the chain is a machine, so the
     // figure arrives as a number: `csvAmount` writes "100000.00" where the
-    // screens above write "₹1,00,000.00" (F-G-030).
-    const gridCSV = await csv(adminPage, '/export.csv?month=2024-09');
+    // screens above write "₹1,00,000.00".
+    const gridCSV = await csv(adminPage, `/export.csv?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
     expectCSVAmount(gridCSV, CSV_PLAIN, 'hop 16 — /export.csv');
-    expect(
-      gridCSV.split('\n').filter(line => line.includes('Office Rent')).length,
-      'hop 16 — the head appears exactly once in the grid CSV'
-    ).toBe(1);
+    expect(csvRow(gridCSV, own.head).Actual, 'hop 16 — the head appears exactly once in the grid CSV, with the figure').toBe(
+      CSV_PLAIN
+    );
 
     // Hop 17 — /reports/ytd.csv.
-    const ytdCSV = await csv(adminPage, '/reports/ytd.csv?from=2024-09&to=2024-09');
+    const ytdCSV = await csv(adminPage, `/reports/ytd.csv?from=${MONTH}&to=${MONTH}`);
     expectCSVAmount(ytdCSV, CSV_PLAIN, 'hop 17 — /reports/ytd.csv');
+    expect(csvRow(ytdCSV, own.head).Actual, 'hop 17 — the head row carries the figure').toBe(CSV_PLAIN);
 
     // Hop 18 — /requests/export.csv keeps the REQUESTED figure, which here
     // equals the approved one.
@@ -743,12 +798,16 @@ test.describe('G · the money trail', () => {
     const errors = capturePageErrors(adminPage);
     const MONEY = '₹12,34,567.89';
     const CSV_PLAIN = '1234567.89';
+    const MONTH = thisMonth();
+    const own = await ownProjectHead(adminPage, 'two', runId);
 
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgr2-${runId}`);
     const payee = `Paise Vendor ${runId}`;
     await ensureVendor(adminPage, payee);
     const raised = await raiseVendorRequest(adminPage, {
       amount: '1234567.89',
+      project: own.project,
+      head: own.label,
       vendor: payee,
       title: `Trail paise ${runId}`,
       invoiceNo: `INV-T2-${runId}`,
@@ -764,14 +823,14 @@ test.describe('G · the money trail', () => {
     // The configured NEFT payment mode remains distinct from RTGS in the payment.
     const paymentPath = await settlePayment(adminPage, raised.id, {
       amount: '1234567.89',
-      paidOn: '2024-10-15',
+      paidOn: today(),
       mode: 'neft',
       reference: `UTR-T2-${runId}`,
       remarks: `Trail paise ${runId}`
     });
     await expectMoney(adminPage, '.rh-amt', MONEY, 'payment detail head');
 
-    await adminPage.goto('/payments?month=2024-10');
+    await adminPage.goto(`/payments?month=${MONTH}&q=${encodeURIComponent(`Trail paise ${runId}`)}`);
     await expectMoney(
       adminPage,
       `tbody tr:has(a[href="${paymentPath}"]) td[data-label="Amount"]`,
@@ -779,26 +838,27 @@ test.describe('G · the money trail', () => {
       'payments ledger'
     );
 
-    await adminPage.goto('/grid?month=2024-10');
+    await adminPage.goto(`/grid?month=${MONTH}`);
     await expectMoney(
       adminPage,
-      'tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)',
+      `tr.head:has(.hname:text-is("${own.head}")) td:nth-child(5)`,
       MONEY,
       'grid actual'
     );
-    await expectMoney(adminPage, 'tfoot tr.total td:nth-child(5)', MONEY, 'grid company total');
+    await adminPage.goto(`/grid?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
+    await expectMoney(adminPage, 'tfoot tr.total td:nth-child(4)', MONEY, 'grid subtotal for the project');
 
-    await adminPage.goto('/reports/monthly?from=2024-10&to=2024-10');
-    await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', MONEY, '/reports/monthly Actual');
+    await adminPage.goto(`/reports/projects?from=${MONTH}&to=${MONTH}&project_id=${own.projectId}`);
+    await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', MONEY, '/reports/projects Actual');
 
     // The paise tail survives the plain-number form too, which is the whole
     // point of this case: 1234567.89 and not 1234567.9 or 1234568.
-    expectCSVAmount(await csv(adminPage, '/export.csv?month=2024-10'), CSV_PLAIN, '/export.csv');
-    expectCSVAmount(
-      await csv(adminPage, '/reports/ytd.csv?from=2024-10&to=2024-10'),
-      CSV_PLAIN,
-      '/reports/ytd.csv'
-    );
+    const gridCSV = await csv(adminPage, `/export.csv?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
+    expectCSVAmount(gridCSV, CSV_PLAIN, '/export.csv');
+    expect(csvRow(gridCSV, own.head).Actual, '/export.csv head row').toBe(CSV_PLAIN);
+    const ytdCSV = await csv(adminPage, `/reports/ytd.csv?from=${MONTH}&to=${MONTH}`);
+    expectCSVAmount(ytdCSV, CSV_PLAIN, '/reports/ytd.csv');
+    expect(csvRow(ytdCSV, own.head).Actual, '/reports/ytd.csv head row').toBe(CSV_PLAIN);
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -825,12 +885,16 @@ test.describe('G · the money trail', () => {
     const REQUESTED_CSV = '50000.00';
     const APPROVED_CSV = '42500.75';
     const PAID_CSV = '37000.25';
+    const MONTH = thisMonth();
+    const own = await ownProjectHead(adminPage, 'three', runId);
 
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgr3-${runId}`);
     const payee = `Adjust Vendor ${runId}`;
     await ensureVendor(adminPage, payee);
     const raised = await raiseVendorRequest(adminPage, {
       amount: '50000.00',
+      project: own.project,
+      head: own.label,
       vendor: payee,
       title: `Trail adjusted ${runId}`,
       invoiceNo: `INV-T3-${runId}`,
@@ -866,7 +930,7 @@ test.describe('G · the money trail', () => {
 
     const paymentPath = await settlePayment(adminPage, raised.id, {
       amount: '37000.25',
-      paidOn: '2024-11-15',
+      paidOn: today(),
       mode: 'cheque',
       reference: `UTR-T3-${runId}`,
       remarks: `Trail adjusted ${runId}`,
@@ -903,23 +967,25 @@ test.describe('G · the money trail', () => {
     );
 
     // The grid follows PAID, and not requested and not approved.
-    await adminPage.goto('/grid?month=2024-11');
-    const actual = adminPage.locator('tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)');
-    await expectMoney(adminPage, 'tr.head:has(.hname:text-is("Office Rent")) td:nth-child(5)', PAID, 'grid actual');
+    const headActual = `tr.head:has(.hname:text-is("${own.head}")) td:nth-child(5)`;
+    await adminPage.goto(`/grid?month=${MONTH}`);
+    const actual = adminPage.locator(headActual);
+    await expectMoney(adminPage, headActual, PAID, 'grid actual');
     const actualText = (await actual.innerText()).trim();
     expect(actualText, 'the grid must not show the approved figure').not.toContain(APPROVED);
     expect(actualText, 'the grid must not show the requested figure').not.toContain(REQUESTED);
-    await expectMoney(adminPage, 'tfoot tr.total td:nth-child(5)', PAID, 'grid company total follows paid');
+    await adminPage.goto(`/grid?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
+    await expectMoney(adminPage, 'tfoot tr.total td:nth-child(4)', PAID, 'grid subtotal for the project follows paid');
 
     // And so does every downstream report.
-    await adminPage.goto('/reports/monthly?from=2024-11&to=2024-11');
-    await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', PAID, '/reports/monthly Actual follows paid');
-    expectCSVAmount(await csv(adminPage, '/export.csv?month=2024-11'), PAID_CSV, '/export.csv follows paid');
-    expectCSVAmount(
-      await csv(adminPage, '/reports/ytd.csv?from=2024-11&to=2024-11'),
-      PAID_CSV,
-      '/reports/ytd.csv'
-    );
+    await adminPage.goto(`/reports/projects?from=${MONTH}&to=${MONTH}&project_id=${own.projectId}`);
+    await expectMoney(adminPage, 'tbody tr td[data-label="Actual"]', PAID, '/reports/projects Actual follows paid');
+    const gridCSV = await csv(adminPage, `/export.csv?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
+    expectCSVAmount(gridCSV, PAID_CSV, '/export.csv follows paid');
+    expect(csvRow(gridCSV, own.head).Actual, '/export.csv head row follows paid').toBe(PAID_CSV);
+    const ytdCSV = await csv(adminPage, `/reports/ytd.csv?from=${MONTH}&to=${MONTH}`);
+    expectCSVAmount(ytdCSV, PAID_CSV, '/reports/ytd.csv');
+    expect(csvRow(ytdCSV, own.head).Actual, '/reports/ytd.csv head row follows paid').toBe(PAID_CSV);
 
     // The requests CSV carries both figures, each in its own column: Amount is
     // what was asked for, and "Approved amount" right after it is what was
@@ -940,8 +1006,8 @@ test.describe('G · the money trail', () => {
     expect(reqRow[amountCol], 'Amount keeps the REQUESTED figure').toBe(REQUESTED_CSV);
     expect(reqRow[approvedCol], 'Approved amount carries the adjusted figure').toBe(APPROVED_CSV);
 
-    // The ledger total for the month equals exactly the paid figure.
-    await adminPage.goto('/payments?month=2024-11');
+    // The ledger row carries exactly the paid figure.
+    await adminPage.goto(`/payments?month=${MONTH}&q=${encodeURIComponent(`Trail adjusted ${runId}`)}`);
     await expectMoney(
       adminPage,
       `tbody tr:has(a[href="${paymentPath}"]) td[data-label="Amount"]`,
@@ -960,7 +1026,9 @@ test.describe('G · the money trail', () => {
     runId
   }) => {
     const errors = capturePageErrors(adminPage);
-    const request = await createApprovedRequest(adminPage, runId, { amount: '8000.00' });
+    const MONTH = thisMonth();
+    const own = await ownProjectHead(adminPage, 'four', runId);
+    const request = await createApprovedRequest(adminPage, runId, { amount: '8000.00', head: own.label });
 
     await adminPage.goto('/accounts-queue?tab=approved');
     await adminPage
@@ -969,27 +1037,43 @@ test.describe('G · the money trail', () => {
       .click();
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
     await adminPage.getByLabel('Amount actually paid').fill('9000.00');
-    await adminPage.getByLabel('Paid on').fill('2024-12-15');
+    await adminPage.getByLabel('Paid on').fill(today());
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-OVER-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
-    const sheet = adminPage.locator('.overlay .sheet');
-    await expect(sheet).toBeVisible();
-    await sheet.locator('input[name="settlement"][value="settled"]').check();
-    await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
 
-    await expect(adminPage, 'a refused settlement creates no payment, so no /payments/{id}').toHaveURL(/\/payments$/);
-    await expect(sheet.locator('.banner.bad')).toContainText('more than the approved');
+    // The entry screen refuses the figure before anything is sent: no
+    // confirmation sheet opens, and the field says why.
+    await expect(
+      adminPage.getByText('Enter an amount no greater than the remaining approved balance.').first(),
+      'the entry screen refuses an amount above the remaining approved balance'
+    ).toBeVisible();
+    await expect(adminPage.locator('.overlay .sheet'), 'so the confirmation sheet never opens').toHaveCount(0);
 
-    // The month is otherwise empty, so "nothing was written" is an equality.
-    await adminPage.goto('/grid?month=2024-12');
+    // The server is the rule, not the page: the same confirmation posted
+    // directly, with the form's own hidden fields, is refused as well.
+    const refused = await probePost(adminPage, '/payments', {
+      submission_key: await adminPage.locator('input[name="submission_key"]').inputValue(),
+      expected_paid: await adminPage.locator('input[name="expected_paid"]').inputValue(),
+      request_id: String(request.id),
+      amount: '9000.00',
+      paid_on: today(),
+      payment_mode: 'neft',
+      reference_no: `UTR-OVER-${runId}`,
+      settlement: 'settled'
+    });
+    expect(refused.status, 'a settlement over the ceiling creates no payment, so no redirect to one').toBe(400);
+    expect(refused.body, 'and the refusal names the ceiling it broke').toContain('more than the approved');
+
+    // Nobody else charges this project, so "nothing was written" is an equality.
+    await adminPage.goto(`/grid?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
     await expectMoney(
       adminPage,
-      'tfoot tr.total td:nth-child(5)',
+      'tfoot tr.total td:nth-child(4)',
       '₹0.00',
       'a refused settlement must not move the grid'
     );
-    await adminPage.goto('/payments?month=2024-12');
+    await adminPage.goto(`/payments?month=${MONTH}&q=${encodeURIComponent(`UTR-OVER-${runId}`)}`);
     expect(await dataRows(adminPage), 'a refused settlement must not put a row in the ledger').toBe(0);
 
     await adminPage.goto(`/requests/${request.id}`);
@@ -1088,7 +1172,7 @@ test.describe('G · payee, project, head, invoice', () => {
 
     // Hop 5 — the settlement sheet's sub-line.
     await adminPage.getByLabel('Amount actually paid').fill('6400.00');
-    await adminPage.getByLabel('Paid on').fill('2025-01-12');
+    await adminPage.getByLabel('Paid on').fill(today());
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-P1-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -1118,7 +1202,7 @@ test.describe('G · payee, project, head, invoice', () => {
     ).toContainText('Operations / Office Rent');
 
     // Hop 7 — the ledger, found BY the payee, which proves the search index too.
-    await adminPage.goto('/payments?month=2025-01');
+    await adminPage.goto(`/payments?month=${thisMonth()}`);
     await adminPage.getByLabel('Search').fill(payee);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     const ledger = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
@@ -1185,7 +1269,7 @@ test.describe('G · payee, project, head, invoice', () => {
 
     const paymentPath = await settlePayment(adminPage, id, {
       amount: '3250.50',
-      paidOn: '2025-02-10',
+      paidOn: today(),
       mode: 'upi',
       reference: `UTR-R1-${runId}`,
       remarks: `Reimburse ${runId}`
@@ -1194,7 +1278,7 @@ test.describe('G · payee, project, head, invoice', () => {
       requester.subject.name
     );
 
-    await adminPage.goto('/payments?month=2025-02');
+    await adminPage.goto(`/payments?month=${thisMonth()}`);
     await adminPage.getByLabel('Search').fill(requester.subject.name);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     const ledger = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
@@ -1269,7 +1353,7 @@ test.describe('G · payee, project, head, invoice', () => {
 
     const paymentPath = await settlePayment(adminPage, id, {
       amount: '2500.00',
-      paidOn: '2025-03-10',
+      paidOn: today(),
       reference: `UTR-F1-${runId}`,
       remarks: `Forged ${runId}`
     });
@@ -1311,7 +1395,7 @@ test.describe('G · the audit trail', () => {
     await approveFor(approver.page, raised.id, '9500.00');
     await settlePayment(adminPage, raised.id, {
       amount: '9500.00',
-      paidOn: '2025-04-14',
+      paidOn: today(),
       reference: `UTR-A1-${runId}`,
       remarks: `Audit ${runId}`
     });
@@ -1469,11 +1553,16 @@ test.describe('G · the audit trail', () => {
     const before = (await auditRows(adminPage, stranger.subject.name, 'payment_request', raised.id)).length;
 
     // A Manager who is not this request's manager holds approval:approve and is
-    // still refused — the grant says they may decide, the row says which.
+    // still refused — the grant says they may decide, the row says which. The
+    // request is hidden from them, and a hidden request answers 404 on every
+    // route, so the refusal cannot confirm the request exists. The POST carries
+    // the request's current revision, so nothing but the approver check can
+    // refuse it.
     const refused = await probePost(stranger.page, `/requests/${raised.id}/approve`, {
-      approved_amount: '7000.00'
+      approved_amount: '7000.00',
+      revision: await requestRevision(adminPage, raised.id)
     });
-    expectOutcome(refused, [403], 'a manager who is not the request manager cannot approve it');
+    expectOutcome(refused, [404], 'a manager who is not the request manager cannot approve it');
 
     const after = await auditRows(adminPage, stranger.subject.name, 'payment_request', raised.id);
     expect(
@@ -1515,7 +1604,7 @@ test.describe('G · the audit trail', () => {
     const refused = await probePost(adminPage, '/payments', {
       request_id: String(request.id),
       amount: '99999.00',
-      paid_on: '2025-05-10',
+      paid_on: today(),
       payment_mode: 'bank_transfer',
       reference_no: `UTR-N2-${runId}`,
       head_id: '1',
@@ -1536,7 +1625,7 @@ test.describe('G · the audit trail', () => {
       'no settle row may survive a refused settlement'
     ).toBe(0);
 
-    await adminPage.goto('/payments?month=2025-05');
+    await adminPage.goto(`/payments?month=${thisMonth()}&q=${encodeURIComponent(`UTR-N2-${runId}`)}`);
     expect(await dataRows(adminPage), 'and no ledger row either').toBe(0);
 
     expectNoRuntimeErrors(errors);
@@ -1872,12 +1961,12 @@ test.describe('G · the same fact in several places', () => {
   });
 
   /**
-   * Inside the accounts queue: four of five tab badges equal the rows beneath
-   * them, and the Approved tab does not, because its rows are
-   * `status IN ('approved','processing')` while its badge is the strict
-   * takeable set (internal/store/store.go:1112 vs :1153).
+   * Inside the accounts queue every tab badge equals the rows beneath it. The
+   * Approved tab lists only what can be taken now (approved, not reserved, not
+   * on hold), which is exactly what its badge counts, so a request somebody
+   * has reserved leaves the Approved tab and appears under Processing.
    */
-  test('TC-G-032 — the accounts-queue tab badges match their rows, except Approved', async ({
+  test('TC-G-032 — every accounts-queue tab badge matches the rows beneath it', async ({
     adminPage,
     runId
   }) => {
@@ -1909,12 +1998,16 @@ test.describe('G · the same fact in several places', () => {
     const rows = await dataRows(adminPage);
     const takeable = await adminPage.getByRole('button', { name: 'Take for processing' }).count();
     expect(badge, 'the Approved badge is the takeable set, and equals the takeable buttons').toBe(takeable);
-    // F-G-008 — deliberate per the store comment, but still a number that
-    // under-states the rows it sits above.
-    expect(
-      rows > badge,
-      'F-G-008: the Approved tab renders reserved rows its own badge excludes'
-    ).toBe(true);
+    expect(rows, 'and the Approved badge equals the rows beneath it too').toBe(badge);
+    await expect(
+      adminPage.locator('tbody tr', { hasText: taken.number }),
+      'the reserved request is not listed under Approved'
+    ).toHaveCount(0);
+    await adminPage.goto('/accounts-queue?tab=processing');
+    await expect(
+      adminPage.locator('tbody tr', { hasText: taken.number }),
+      'it is listed under Processing instead'
+    ).toHaveCount(1);
 
     expectNoRuntimeErrors(errors);
   });
@@ -1965,42 +2058,54 @@ test.describe('G · the same fact in several places', () => {
     runId
   }) => {
     const errors = capturePageErrors(adminPage);
-    // Two payments on two different heads in one month, so the total is a real
-    // sum and not a copy of a single row.
-    const one = await createApprovedRequest(adminPage, runId, { amount: '15000.00' });
+    const MONTH = thisMonth();
+    // Two payments on one head of this test's own project, so the project's
+    // subtotal is exactly their sum, and a real sum rather than a copy of one
+    // payment.
+    const own = await ownProjectHead(adminPage, 'sum', runId);
+    const one = await createApprovedRequest(adminPage, runId, { amount: '15000.00', head: own.label });
     await settlePayment(adminPage, one.id, {
       amount: '15000.00',
-      paidOn: '2025-06-05',
+      paidOn: today(),
       reference: `UTR-S1-${runId}`,
       remarks: `Sum one ${runId}`
     });
-    const two = await createApprovedRequest(adminPage, runId, { amount: '25000.00' });
+    const two = await createApprovedRequest(adminPage, runId, { amount: '25000.00', head: own.label });
     await settlePayment(adminPage, two.id, {
       amount: '25000.00',
-      paidOn: '2025-06-06',
+      paidOn: today(),
       reference: `UTR-S2-${runId}`,
       remarks: `Sum two ${runId}`
     });
 
-    await adminPage.goto('/grid?month=2025-06');
+    await adminPage.goto(`/grid?month=${MONTH}&q=${encodeURIComponent(own.project)}`);
+    expect(
+      paise(await adminPage.locator('tfoot tr.total td:nth-child(4)').innerText()),
+      'both payments landed on the same head, so the project subtotal is their sum'
+    ).toBe(4000000);
+
+    // The agreement itself is read over the whole company for this month: the
+    // other payments in it are on every screen alike, and nothing is written
+    // between the reads below.
+    await adminPage.goto(`/grid?month=${MONTH}`);
     const rowCells = await adminPage.locator('tr.head td:nth-child(5)').allInnerTexts();
     const rowSum = rowCells.reduce((acc, cell) => acc + paise(cell), 0);
-    const total = paise(await adminPage.locator('tfoot tr.total td:nth-child(5)').innerText());
+    const total = paise(await adminPage.locator('tfoot tr.total td:nth-child(4)').innerText());
     expect(rowSum, 'the company total is the sum of the rows above it').toBe(total);
-    expect(total, 'both payments landed on the same head, so the total is their sum').toBe(4000000);
+    expect(total, 'and it includes this test\'s two payments').toBeGreaterThanOrEqual(4000000);
 
-    await adminPage.goto('/reports/monthly?from=2025-06&to=2025-06');
+    await adminPage.goto(`/reports/monthly?from=${MONTH}&to=${MONTH}`);
     expect(
       paise(await adminPage.locator('tbody tr td[data-label="Actual"]').innerText()),
       '/reports/monthly reuses Grid, so its actual is the grid total'
     ).toBe(total);
 
-    // The CSV's Actual column is now a column of numbers (F-G-030), so summing it
-    // needs no stripping at all: Number() of the cell is the figure. That is the
+    // The CSV's Actual column is a column of numbers, so summing it needs no
+    // stripping at all: Number() of the cell is the figure. That is the
     // property being asserted as much as the total — the reduce below is what a
-    // spreadsheet does, and it used to produce NaN.
-    const gridCSV = await csv(adminPage, '/export.csv?month=2025-06');
-    const header = gridCSV.split(/\r?\n/)[0].split(',');
+    // spreadsheet does.
+    const gridCSV = await csv(adminPage, `/export.csv?month=${MONTH}`);
+    const header = csvLine(gridCSV.split(/\r?\n/)[0]);
     const actualColumn = header.indexOf('Actual');
     expect(actualColumn, 'the grid CSV names its Actual column').toBeGreaterThan(-1);
     const csvSum = gridCSV
@@ -2008,7 +2113,7 @@ test.describe('G · the same fact in several places', () => {
       .slice(1)
       .filter(line => line.trim())
       .reduce((acc, line) => {
-        const cell = line.split(',')[actualColumn];
+        const cell = csvLine(line)[actualColumn];
         const value = Number(cell);
         expect(Number.isNaN(value), `the Actual cell "${cell}" must parse as a number`).toBe(false);
         return acc + Math.round(value * 100);
@@ -2041,11 +2146,11 @@ test.describe('G · the same fact in several places', () => {
     const errors = capturePageErrors(adminPage);
     const payee = `Rename Vendor ${runId}`;
     const request = await createApprovedRequest(adminPage, runId, { amount: '9100.00', payee });
-    // "This year" is the server's calendar year, so the payment must fall in it.
-    const thisYear = new Date().getFullYear();
+    // "This year" is the server's calendar year, and a payment dated today
+    // falls in it.
     const paymentPath = await settlePayment(adminPage, request.id, {
       amount: '9100.00',
-      paidOn: `${thisYear}-03-11`,
+      paidOn: today(),
       reference: `UTR-V1-${runId}`,
       remarks: `Vendor total ${runId}`
     });
@@ -2068,7 +2173,7 @@ test.describe('G · the same fact in several places', () => {
     await adminPage.getByRole('button', { name: 'Save vendor' }).click();
     await adminPage.waitForURL(url => !url.pathname.endsWith('/new'));
 
-    await adminPage.goto(`/payments?month=${thisYear}-03`);
+    await adminPage.goto(`/payments?month=${thisMonth()}&q=${encodeURIComponent(`Vendor total ${runId}`)}`);
     const ledger = adminPage.locator('tbody tr').filter({ has: adminPage.locator(`a[href="${paymentPath}"]`) });
     await expect(ledger, 'the payment is untouched').toHaveCount(1);
     await expect(
@@ -2187,7 +2292,7 @@ test.describe('G · the same fact in several places', () => {
       approverName: approver.subject.name
     });
     await approveFor(approver.page, id, '60000.00');
-    await settlePayment(adminPage, id, { amount: '60000.00', paidOn: '2023-09-15', reference: `REC-PAID-${runId}` });
+    await settlePayment(adminPage, id, { amount: '60000.00', paidOn: today(), reference: `REC-PAID-${runId}` });
 
     // Dashboard total, list total and CSV must be the same money.
     await adminPage.goto('/recoverables');
@@ -2289,7 +2394,7 @@ test.describe('G · the same fact in several places', () => {
     ).toHaveValue('0');
 
     await adminPage.getByLabel('Amount actually paid').fill('45000.00');
-    await adminPage.getByLabel('Paid on').fill('2025-07-20');
+    await adminPage.getByLabel('Paid on').fill(today());
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-RC-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -2333,7 +2438,7 @@ test.describe('G · the same fact in several places', () => {
     await expect(
       registerRow.locator('td[data-label="Paid on"]'),
       'and the register carries the date the money left, not "Not yet paid"'
-    ).toHaveText('2025-07-20');
+    ).toHaveText(today());
 
     expectNoRuntimeErrors(errors);
     await approver.close();
@@ -2698,10 +2803,12 @@ test.describe('G · the same fact in several places', () => {
    */
   test('TC-G-043 — every CSV amount column is a plain number a spreadsheet can sum', async ({ adminPage, runId }) => {
     const errors = capturePageErrors(adminPage);
-    const request = await createApprovedRequest(adminPage, runId, { amount: '150000.00' });
+    const MONTH = thisMonth();
+    const own = await ownProjectHead(adminPage, 'csv', runId);
+    const request = await createApprovedRequest(adminPage, runId, { amount: '150000.00', head: own.label });
     await settlePayment(adminPage, request.id, {
       amount: '150000.00',
-      paidOn: '2024-03-07',
+      paidOn: today(),
       reference: `UTR-CSV-${runId}`,
       remarks: `CSV shape ${runId}`
     });
@@ -2709,8 +2816,8 @@ test.describe('G · the same fact in several places', () => {
     // `bucket=all` on the requests export: it defaults to `open` like the list it
     // sits on (F-G-014), and this request has been settled.
     const exports: Array<[string, string]> = [
-      ['/export.csv?month=2024-03', 'grid'],
-      ['/reports/ytd.csv?from=2024-03&to=2024-03', 'ytd'],
+      [`/export.csv?month=${MONTH}`, 'grid'],
+      [`/reports/ytd.csv?from=${MONTH}&to=${MONTH}`, 'ytd'],
       [`/requests/export.csv?bucket=all&q=${encodeURIComponent(request.number)}`, 'requests'],
       ['/recoverables/list.csv', 'recoverables']
     ];
@@ -2727,7 +2834,7 @@ test.describe('G · the same fact in several places', () => {
         body.includes('"1,50,000.00"') || body.includes('1,50,000.00'),
         `${what}: no Indian-grouped form of the figure may appear either`
       ).toBe(false);
-      if (what === 'recoverables') continue; // no rows guaranteed in this month
+      if (what === 'recoverables') continue; // no row of this test's is in the register
       expect(
         csvCells(body).includes('150000.00'),
         `${what} writes the amount as the plain number 150000.00`
@@ -2736,11 +2843,8 @@ test.describe('G · the same fact in several places', () => {
 
     // The consequence, stated as an assertion: the naive numeric parse a
     // spreadsheet performs on the grid CSV's Actual column now yields the figure.
-    const grid = await csv(adminPage, '/export.csv?month=2024-03');
-    const gridHeader = grid.split(/\r?\n/)[0].split(',');
-    const actualColumn = gridHeader.indexOf('Actual');
-    const dataLine = grid.split(/\r?\n/).find(l => l.includes('Office Rent'))!;
-    const actualCell = dataLine.split(',')[actualColumn];
+    const grid = await csv(adminPage, `/export.csv?month=${MONTH}`);
+    const actualCell = csvRow(grid, own.head).Actual;
     expect(
       Number(actualCell),
       'Number() of the Actual cell is the figure itself, so the export is data and not a report'
@@ -2767,10 +2871,11 @@ test.describe('G · the same fact in several places', () => {
     runId
   }) => {
     const errors = capturePageErrors(adminPage);
+    const MONTH = thisMonth();
     const request = await createApprovedRequest(adminPage, runId, { amount: '31000.00' });
     await settlePayment(adminPage, request.id, {
       amount: '31000.00',
-      paidOn: '2026-04-04',
+      paidOn: today(),
       reference: `UTR-YTD-${runId}`,
       remarks: `YTD shape ${runId}`
     });
@@ -2780,16 +2885,16 @@ test.describe('G · the same fact in several places', () => {
     // comparison is case-insensitive.
     const headers = async () =>
       (await adminPage.locator('thead th').allInnerTexts()).map(h => h.trim().toLowerCase());
-    await adminPage.goto('/reports/monthly?from=2026-04&to=2026-04');
+    await adminPage.goto(`/reports/monthly?from=${MONTH}&to=${MONTH}`);
     expect(await headers(), 'the monthly view is one row per period').not.toContain('head');
-    await adminPage.goto('/reports/heads?from=2026-04&to=2026-04');
+    await adminPage.goto(`/reports/heads?from=${MONTH}&to=${MONTH}`);
     expect(await headers(), 'the heads view names the head').toContain('head');
 
     // The Monthly tab's own link names its own level, and downloads its own shape.
-    await adminPage.goto('/reports/monthly?from=2026-04&to=2026-04');
+    await adminPage.goto(`/reports/monthly?from=${MONTH}&to=${MONTH}`);
     const monthlyLink = await adminPage.getByRole('link', { name: 'Export CSV' }).getAttribute('href');
     expect(monthlyLink, 'the export link carries the tab it was pressed on').toBe(
-      '/reports/ytd.csv?from=2026-04&to=2026-04&level=monthly'
+      `/reports/ytd.csv?from=${MONTH}&to=${MONTH}&level=monthly`
     );
     const monthly = await csv(adminPage, monthlyLink!);
     expect(
@@ -2798,27 +2903,27 @@ test.describe('G · the same fact in several places', () => {
     ).toBe(false);
     const monthlyRows = monthly.split(/\r?\n/).filter(l => l.trim()).slice(1);
     expect(monthlyRows.length, 'one month asked for is one row per period').toBe(1);
-    expect(monthlyRows[0], 'and the period is the month').toContain('2026-04');
+    expect(monthlyRows[0], 'and the period is the month').toContain(MONTH);
 
     // The Heads tab's link names its level, and downloads the head rows.
-    await adminPage.goto('/reports/heads?from=2026-04&to=2026-04');
+    await adminPage.goto(`/reports/heads?from=${MONTH}&to=${MONTH}`);
     const headsLink = await adminPage.getByRole('link', { name: 'Export CSV' }).getAttribute('href');
-    expect(headsLink).toBe('/reports/ytd.csv?from=2026-04&to=2026-04&level=heads');
+    expect(headsLink).toBe(`/reports/ytd.csv?from=${MONTH}&to=${MONTH}&level=heads`);
     const heads = await csv(adminPage, headsLink!);
     expect(heads.includes('Office Rent'), 'the heads export names the head').toBe(true);
 
     // The Projects tab too, so all three are proven and not just the two that
     // differ most.
-    await adminPage.goto('/reports/projects?from=2026-04&to=2026-04');
+    await adminPage.goto(`/reports/projects?from=${MONTH}&to=${MONTH}`);
     const projectsLink = await adminPage.getByRole('link', { name: 'Export CSV' }).getAttribute('href');
-    expect(projectsLink).toBe('/reports/ytd.csv?from=2026-04&to=2026-04&level=projects');
+    expect(projectsLink).toBe(`/reports/ytd.csv?from=${MONTH}&to=${MONTH}&level=projects`);
     const projects = await csv(adminPage, projectsLink!);
     expect(projects.includes('Operations'), 'the projects export names the project').toBe(true);
     expect(projects.includes('Office Rent'), 'and not the heads beneath it').toBe(false);
 
     // A link with no level at all — a bookmark from before the fix — still works,
     // and still means "heads".
-    const bare = await csv(adminPage, '/reports/ytd.csv?from=2026-04&to=2026-04');
+    const bare = await csv(adminPage, `/reports/ytd.csv?from=${MONTH}&to=${MONTH}`);
     expect(bare.includes('Office Rent'), 'an absent level falls back to heads').toBe(true);
 
     expectNoRuntimeErrors(errors);
@@ -3071,7 +3176,7 @@ test.describe('G · confinement', () => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '13100.00' });
     const paymentPath = await settlePayment(adminPage, request.id, {
       amount: '13100.00',
-      paidOn: '2025-08-09',
+      paidOn: today(),
       reference: `UTR-SC-${runId}`,
       remarks: `Scope probe ${runId}`
     });
@@ -3083,7 +3188,7 @@ test.describe('G · confinement', () => {
       'the role screen stores and re-renders the payment scope'
     ).toBeChecked();
 
-    const ledger = await probeGet(subject.page, '/payments?month=2025-08');
+    const ledger = await probeGet(subject.page, `/payments?month=${thisMonth()}`);
     expect(ledger.status, 'payment:view opens the ledger').toBe(200);
     expect(
       ledger.body.includes('₹13,100.00'),
@@ -3096,7 +3201,7 @@ test.describe('G · confinement', () => {
     // string later by the note another accountant typed.
     const searched = await probeGet(
       subject.page,
-      `/payments?month=2025-08&q=${encodeURIComponent(`Scope probe ${runId}`)}`
+      `/payments?month=${thisMonth()}&q=${encodeURIComponent(`Scope probe ${runId}`)}`
     );
     expect(
       searched.body.includes('₹13,100.00'),
@@ -3105,7 +3210,7 @@ test.describe('G · confinement', () => {
 
     // The control: the admin, who holds payment=all, does see it — so the empty
     // list above is a scope filter and not an empty month.
-    const asAdmin = await probeGet(adminPage, '/payments?month=2025-08');
+    const asAdmin = await probeGet(adminPage, `/payments?month=${thisMonth()}`);
     expect(
       asAdmin.body.includes('₹13,100.00'),
       'the payment is genuinely there for a caller whose scope reaches it'
@@ -3466,12 +3571,16 @@ test.describe('G · confinement', () => {
     browser,
     runId
   }) => {
-    // A payment to put a real figure and a real payee on the grid's panel.
+    // A payment to put a real figure and a real payee on the grid's panel. Its
+    // head belongs to a project of this test's own, so the head's actual on
+    // the grid is exactly this payment.
+    const MONTH = thisMonth();
+    const own = await ownProjectHead(adminPage, 'leak', runId);
     const payee = `Grid Leak Vendor ${runId}`;
-    const request = await createApprovedRequest(adminPage, runId, { amount: '66000.00', payee });
+    const request = await createApprovedRequest(adminPage, runId, { amount: '66000.00', payee, head: own.label });
     await settlePayment(adminPage, request.id, {
       amount: '66000.00',
-      paidOn: '2026-05-06',
+      paidOn: today(),
       reference: `UTR-GL-${runId}`,
       remarks: `Grid leak ${runId}`
     });
@@ -3484,7 +3593,7 @@ test.describe('G · confinement', () => {
     for (const path of ['/requests', '/payments', '/reports/monthly', '/audit', '/users', '/vendors']) {
       expectOutcome(await probeGet(nobody.page, path), [403], `a role-less subject is refused ${path}`);
     }
-    const grid = await probeGet(nobody.page, '/grid?month=2026-05');
+    const grid = await probeGet(nobody.page, `/grid?month=${MONTH}`);
     expectOutcome(grid, [403], 'and the variance grid, which needs grid:view');
     expect(
       grid.body.includes('₹66,000.00'),
@@ -3504,7 +3613,7 @@ test.describe('G · confinement', () => {
     // The screen and its download are consistent now: the same subject is refused
     // both, where they used to be refused only the download.
     expectOutcome(
-      await probeGet(nobody.page, '/export.csv?month=2026-05'),
+      await probeGet(nobody.page, `/export.csv?month=${MONTH}`),
       [403],
       'the CSV of the same data is refused too — one gate, not two different answers'
     );
@@ -3518,9 +3627,10 @@ test.describe('G · confinement', () => {
     // budget matrix — which is what grid:view is for — and no payments panel.
     const gridOnly = await createCustomRole(adminPage, `GridOnly ${runId}`, ['grid:view'], {});
     const reader = await asCustomRole(adminPage, browser, runId, 'gridonly', gridOnly);
-    const matrix = await probeGet(reader.page, '/grid?month=2026-05');
+    const matrix = await probeGet(reader.page, `/grid?month=${MONTH}`);
     expect(matrix.status, 'grid:view opens the budget matrix').toBe(200);
     expect(matrix.body.includes('Office Rent'), 'with its heads').toBe(true);
+    expect(matrix.body.includes(own.head), 'including the head this payment was charged to').toBe(true);
     expect(
       matrix.body.includes('₹66,000.00'),
       'the head-level actual is part of the matrix grid:view entitles them to'
@@ -3542,7 +3652,7 @@ test.describe('G · confinement', () => {
     // The control: Accounts holds grid:view AND payment:view, so the panel is
     // genuinely there for somebody entitled to it.
     const accounts = await asRole(adminPage, browser, runId, ['Accounts'], `gridall-${runId}`);
-    const full = await probeGet(accounts.page, '/grid?month=2026-05');
+    const full = await probeGet(accounts.page, `/grid?month=${MONTH}`);
     expect(full.body.includes(payee), 'a caller holding payment:view does get the panel').toBe(true);
     expect(
       /href="\/payments\/\d+"/.test(full.body),
@@ -3729,17 +3839,25 @@ test.describe('G · idempotence', () => {
       approverName: approver.subject.name
     });
 
+    // Both POSTs carry the revision the approver saw before the first. The
+    // second is a replay of that same form: no screen offers a decision on an
+    // approved request, and the status is checked before the revision, so the
+    // refusal names the status.
+    const revision = await requestRevision(approver.page, raised.id);
     const first = await probePost(approver.page, `/requests/${raised.id}/approve`, {
-      approved_amount: '2600.00'
+      approved_amount: '2600.00',
+      revision
     });
     expect(first.status, 'the first approve succeeds').toBe(303);
     const second = await probePost(approver.page, `/requests/${raised.id}/approve`, {
-      approved_amount: '1.00'
+      approved_amount: '1.00',
+      revision
     });
     expect(
       second.status >= 400,
       `an approved request cannot be approved again — got ${second.outcome}`
     ).toBe(true);
+    expect(second.body, 'and the refusal says it is already approved').toContain('cannot be approved');
 
     await adminPage.goto(`/requests/${raised.id}`);
     await expectMoney(
@@ -3784,7 +3902,7 @@ test.describe('G · idempotence', () => {
       request_id: String(request.id),
       head_id: headID,
       amount: '3800.00',
-      paid_on: '2025-09-09',
+      paid_on: today(),
       payment_mode: 'bank_transfer',
       reference_no: `UTR-D3-${runId}`,
       remarks: `Replay settle ${runId}`,
@@ -3803,7 +3921,7 @@ test.describe('G · idempotence', () => {
       'S9: a double confirm goes to the payment that already exists rather than creating a second'
     ).toBe(first.location);
 
-    await adminPage.goto('/payments?month=2025-09');
+    await adminPage.goto(`/payments?month=${thisMonth()}`);
     await adminPage.getByLabel('Search').fill(`Replay settle ${runId}`);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     expect(await dataRows(adminPage), 'exactly one payment exists for this request').toBe(1);
@@ -3908,186 +4026,185 @@ test.describe('G · a locked month', () => {
     runId
   }) => {
     const errors = capturePageErrors(adminPage);
-    const MONTH = '2025-10';
+    // A settlement may be dated neither before its approval nor after today, and
+    // every approval here happens today, so the only month a settlement can be
+    // dated into is the current one. That is the month this case locks. It is
+    // reopened in the `finally` below even if an assertion fails, because every
+    // later case pays into it.
+    const MONTH = thisMonth();
     const approver = await asRole(adminPage, browser, runId, ['Manager'], `mgrlk-${runId}`);
+    let locked = false;
 
-    // Lock the month from the grid's "Month Close" block.
-    await adminPage.goto(`/grid?month=${MONTH}`);
-    const unlock = adminPage.getByRole('button', { name: 'Unlock Month' });
-    if ((await unlock.count()) > 0) {
-      adminPage.once('dialog', dialog => dialog.accept());
-      await adminPage.getByLabel('Unlock reason').fill('resetting for the audit');
-      await unlock.click();
+    try {
+      // Lock the month from the grid's "Month Close" block.
       await adminPage.goto(`/grid?month=${MONTH}`);
+      const unlock = adminPage.getByRole('button', { name: 'Unlock Month' });
+      if ((await unlock.count()) > 0) {
+        adminPage.once('dialog', dialog => dialog.accept());
+        await adminPage.getByLabel('Unlock reason').fill('resetting for the audit');
+        await unlock.click();
+        await adminPage.goto(`/grid?month=${MONTH}`);
+      }
+      await adminPage.getByLabel('Lock reason').fill(`Audit G lock ${runId}`);
+      const lock = await probePost(adminPage, `/months/${MONTH}/lock`, { reason: `Audit G lock ${runId}` });
+      expect(lock.status, 'locking is a 303').toBe(303);
+      locked = true;
+
+      // The redirect lands on the one screen that renders the lock and its reason.
+      expect(lock.location, 'lock redirects to /grid?month=, which is where the lock is visible').toBe(
+        `/grid?month=${MONTH}`
+      );
+      const landing = await probeGet(adminPage, lock.location!);
+      expect(landing.status, 'the landing page renders').toBe(200);
+      expect(
+        landing.body.includes(`Audit G lock ${runId}`),
+        'and the operator is shown a confirmation of the lock they just applied'
+      ).toBe(true);
+      expect(landing.body.includes(MONTH), 'naming the month they locked').toBe(true);
+
+      // The same thing through the rendered screen, so the assertion is not only
+      // about a substring in a probe body.
+      await adminPage.goto(`/grid?month=${MONTH}`);
+      await expect(adminPage.locator('.locked'), 'the grid names the lock and its reason').toContainText(
+        `Audit G lock ${runId}`
+      );
+
+      // A settlement dated into the locked month is refused, and writes nothing.
+      // A request naming no needed-by month is approved normally while the month
+      // is locked (asserted below), so this one can be approved and reserved now.
+      const request = await createApprovedRequest(adminPage, runId, { amount: '5100.00' });
+      await adminPage.goto('/accounts-queue?tab=approved');
+      await adminPage
+        .locator('tbody tr', { hasText: request.number })
+        .getByRole('button', { name: 'Take for processing' })
+        .click();
+      await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
+      // The entry screen opens on today's date, which is in the locked month, so
+      // it warns before anything is filled in.
+      await expect(
+        adminPage.locator('.locked'),
+        'the entry screen warns that a payment dated in the locked month will be refused'
+      ).toContainText(`${MONTH} is locked`);
+
+      await adminPage.getByLabel('Amount actually paid').fill('5100.00');
+      await adminPage.getByLabel('Paid on').fill(today());
+      await adminPage.getByLabel('Payment mode').selectOption('neft');
+      await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-LK-${runId}`);
+      await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+      const sheet = adminPage.locator('.overlay .sheet');
+      await expect(sheet).toBeVisible();
+      await sheet.locator('input[name="settlement"][value="settled"]').check();
+      await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
+      await expect(adminPage, 'a locked-month settlement creates no payment').toHaveURL(/\/payments$/);
+      await expect(sheet.locator('.banner.bad'), 'and says the month is locked').toContainText(/locked/i);
+
+      await adminPage.goto(`/payments?month=${MONTH}&q=${encodeURIComponent(`UTR-LK-${runId}`)}`);
+      expect(await dataRows(adminPage), 'the ledger holds no payment with this reference').toBe(0);
+
+      // A budget edit is refused too — the form is disabled and the POST fails.
+      await adminPage.goto(`/budgets?month=${MONTH}`);
+      await expect(adminPage.locator('.locked'), 'the budgets screen says the month is locked').toBeVisible();
+      const anyHead = await adminPage.locator('input[name^="budget_"]').first().getAttribute('name');
+      expect(anyHead, 'the budgets form names its inputs budget_<headID>').toMatch(/^budget_\d+$/);
+      const budget = await probePost(adminPage, '/budgets', { month: MONTH, [anyHead!]: '100.00' });
+      // One condition, one status code: a locked-month budget save answers 409,
+      // exactly as a locked-month void or month edit does.
+      expect(
+        budget.status,
+        'a locked-month budget save answers 409, like every other locked-month refusal'
+      ).toBe(409);
+      expect(budget.body, 'and says the month is locked').toContain('month is locked');
+
+      // A request that names no period is still accepted and approved into a
+      // locked month, deliberately: needed_by is the only date a request carries,
+      // and without one there is nothing to test against the lock.
+      const payee = `Locked Vendor ${runId}`;
+      await ensureVendor(adminPage, payee);
+      const raised = await raiseVendorRequest(adminPage, {
+        amount: '5200.00',
+        vendor: payee,
+        title: `Into a locked month ${runId}`,
+        invoiceNo: `INV-LK-${runId}`,
+        approverName: approver.subject.name
+      });
+      expect(raised.id, 'a request naming no period is unaffected by the lock').toBeGreaterThan(0);
+      await approveFor(approver.page, raised.id, '5200.00');
+      await adminPage.goto(`/requests/${raised.id}`);
+      await expect(adminPage.locator('.rh-status'), 'and is approved normally').toContainText('Approved');
+
+      // But a request that DOES name the locked month cannot be approved into it:
+      // an approval is a promise the request can be paid, and a payment dated
+      // inside the lock would be refused.
+      const dated = await raiseVendorRequest(adminPage, {
+        amount: '5300.00',
+        vendor: payee,
+        title: `Needed in a locked month ${runId}`,
+        invoiceNo: `INV-LK3-${runId}`,
+        neededBy: today(),
+        approverName: approver.subject.name
+      });
+      const refusedApproval = await probePost(approver.page, `/requests/${dated.id}/approve`, {
+        approved_amount: '5300.00',
+        revision: await requestRevision(approver.page, dated.id)
+      });
+      expect(
+        refusedApproval.status,
+        'approving into a locked month is a 409, the same answer every other locked-month refusal gives'
+      ).toBe(409);
+      expect(
+        refusedApproval.body,
+        'and it names the month and what to do about it, rather than failing at the settlement weeks later'
+      ).toContain(MONTH);
+      await adminPage.goto(`/requests/${dated.id}`);
+      await expect(
+        adminPage.locator('.rh-status'),
+        'so no approved obligation nobody can discharge was created'
+      ).toContainText('Awaiting');
+
+      // Unlocking restores the write, which proves the refusal was the lock.
+      const unlocked = await probePost(adminPage, `/months/${MONTH}/unlock`, { reason: `Audit G unlock ${runId}` });
+      expect(unlocked.status, 'unlocking is a 303').toBe(303);
+      locked = false;
+      expect(unlocked.location, 'unlock lands on the grid too').toBe(`/grid?month=${MONTH}`);
+
+      // And the approval the lock refused now goes through, which is what makes the
+      // 409 above a lock refusal rather than a broken route.
+      const nowAllowed = await probePost(approver.page, `/requests/${dated.id}/approve`, {
+        approved_amount: '5300.00',
+        revision: await requestRevision(approver.page, dated.id)
+      });
+      expect(nowAllowed.status, 'the same approval succeeds once the month is open').toBe(303);
+
+      // The reservation survived the locked-month refusal, so the request is
+      // still `processing` and no longer in the takeable set — `settlePayment`
+      // would look for a "Take for processing" button that is correctly absent.
+      // Resuming the entry form the accountant already holds is the real path.
+      await adminPage.goto(`/payments/new?request=${request.id}`);
+      await expect(adminPage.locator('.reserve-bar'), 'the reservation survived the refusal').toContainText(
+        'Reserved by you'
+      );
+      await expect(adminPage.locator('.locked'), 'and the entry screen no longer warns').toHaveCount(0);
+      await adminPage.getByLabel('Amount actually paid').fill('5100.00');
+      await adminPage.getByLabel('Paid on').fill(today());
+      await adminPage.getByLabel('Payment mode').selectOption('neft');
+      await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-LK2-${runId}`);
+      await adminPage.getByLabel('Processing note').fill(`Unlocked ${runId}`);
+      await adminPage.getByRole('button', { name: /Payment settled/ }).click();
+      const reopened = adminPage.locator('.overlay .sheet');
+      await expect(reopened).toBeVisible();
+      await reopened.locator('input[name="settlement"][value="settled"]').check();
+      await reopened.getByRole('button', { name: 'Confirm and save payment' }).click();
+      await expect(adminPage, 'the same settlement succeeds once the month is open').toHaveURL(/\/payments\/\d+$/);
+      await expectMoney(adminPage, '.rh-amt', '₹5,100.00', 'the figure the lock refused now lands intact');
+
+      expectNoRuntimeErrors(errors);
+    } finally {
+      // Reopen the month whatever happened above: every later case pays into it.
+      if (locked) {
+        await probePost(adminPage, `/months/${MONTH}/unlock`, { reason: `Audit G cleanup ${runId}` });
+      }
+      await approver.close();
     }
-    adminPage.once('dialog', dialog => dialog.accept());
-    await adminPage.getByLabel('Lock reason').fill(`Audit G lock ${runId}`);
-    const locked = await probePost(adminPage, `/months/${MONTH}/lock`, { reason: `Audit G lock ${runId}` });
-    expect(locked.status, 'locking is a 303').toBe(303);
-
-    // The redirect lands on the one screen that renders the lock and its reason.
-    expect(
-      locked.location,
-      'lock redirects to /grid?month=, which is where the lock is visible'
-    ).toBe(`/grid?month=${MONTH}`);
-    const landing = await probeGet(adminPage, locked.location!);
-    expect(landing.status, 'the landing page renders').toBe(200);
-    expect(
-      landing.body.includes(`Audit G lock ${runId}`),
-      'and the operator is shown a confirmation of the lock they just applied'
-    ).toBe(true);
-    expect(
-      landing.body.includes(MONTH),
-      'naming the month they locked'
-    ).toBe(true);
-
-    // The same thing through the rendered screen, so the assertion is not only
-    // about a substring in a probe body.
-    await adminPage.goto(`/grid?month=${MONTH}`);
-    await expect(adminPage.locator('.locked'), 'the grid names the lock and its reason').toContainText(
-      `Audit G lock ${runId}`
-    );
-
-    // A settlement dated into the locked month is refused, and writes nothing.
-    const request = await createApprovedRequest(adminPage, runId, { amount: '5100.00' });
-    await adminPage.goto('/accounts-queue?tab=approved');
-    await adminPage
-      .locator('tbody tr', { hasText: request.number })
-      .getByRole('button', { name: 'Take for processing' })
-      .click();
-    await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${request.id}$`));
-    // F-G-020, and the precise shape of what is still open. The entry screen DOES
-    // carry a lock affordance — paymentEntry sets Locked and payment_form renders
-    // the banner and disables every fieldset (internal/app/linking.go:308-321,
-    // internal/app/templates.go:200-218) — but it can only test the month the date
-    // field opens on, which is today's. This case locks a different month and then
-    // types that date in, so there is nothing for the server to have warned about
-    // at render time: which month is being written is not known until submit.
-    //
-    // So the assertion below is not "no affordance exists"; it is "the affordance
-    // cannot reach this case", and the refusal at the confirmation is what catches
-    // it. Closing the remaining gap needs the client to re-ask on date change.
-    expect(
-      (await adminPage.locator('.locked').count()) === 0,
-      'the form opens on an unlocked month, so no banner is expected here — F-G-020 is closed only for the opening month'
-    ).toBe(true);
-
-    await adminPage.getByLabel('Amount actually paid').fill('5100.00');
-    await adminPage.getByLabel('Paid on').fill(`${MONTH}-15`);
-    await adminPage.getByLabel('Payment mode').selectOption('neft');
-    await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-LK-${runId}`);
-    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
-    const sheet = adminPage.locator('.overlay .sheet');
-    await expect(sheet).toBeVisible();
-    await sheet.locator('input[name="settlement"][value="settled"]').check();
-    await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
-    await expect(adminPage, 'a locked-month settlement creates no payment').toHaveURL(/\/payments$/);
-    await expect(sheet.locator('.banner.bad'), 'and says the month is locked').toContainText(/locked/i);
-
-    await adminPage.goto(`/payments?month=${MONTH}`);
-    expect(await dataRows(adminPage), 'the locked month stays empty').toBe(0);
-
-    // A budget edit is refused too — the form is disabled and the POST fails.
-    await adminPage.goto(`/budgets?month=${MONTH}`);
-    await expect(adminPage.locator('.locked'), 'the budgets screen says the month is locked').toBeVisible();
-    const anyHead = await adminPage.locator('input[name^="budget_"]').first().getAttribute('name');
-    expect(anyHead, 'the budgets form names its inputs budget_<headID>').toMatch(/^budget_\d+$/);
-    const budget = await probePost(adminPage, '/budgets', { month: MONTH, [anyHead!]: '100.00' });
-    // One condition, one status code. `budgetSave` used to render its own 400 for
-    // every failure rather than routing the store's error through
-    // `storeErrorStatus`, which answers 409 for the same `ErrLockedMonth` on
-    // /payments/{id}/void and /months — so the answer depended only on which
-    // handler you reached the lock through (F-G-026).
-    expect(
-      budget.status,
-      'a locked-month budget save answers 409, like every other locked-month refusal'
-    ).toBe(409);
-    expect(budget.body, 'and says the month is locked').toContain('month is locked');
-
-    // A request that names no period is still accepted and approved into a locked
-    // month, deliberately: needed_by is the only date a request carries, and
-    // without one there is nothing to test against the lock.
-    const payee = `Locked Vendor ${runId}`;
-    await ensureVendor(adminPage, payee);
-    const raised = await raiseVendorRequest(adminPage, {
-      amount: '5200.00',
-      vendor: payee,
-      title: `Into a locked month ${runId}`,
-      invoiceNo: `INV-LK-${runId}`,
-      approverName: approver.subject.name
-    });
-    expect(raised.id, 'a request naming no period is unaffected by the lock').toBeGreaterThan(0);
-    await approveFor(approver.page, raised.id, '5200.00');
-    await adminPage.goto(`/requests/${raised.id}`);
-    await expect(
-      adminPage.locator('.rh-status'),
-      'and is approved normally'
-    ).toContainText('Approved');
-
-    // But a request that DOES name the locked month cannot be approved into it:
-    // an approval is a promise the request can be paid, and validatePayment would
-    // refuse a paid_on inside the lock (F-G-021).
-    const dated = await raiseVendorRequest(adminPage, {
-      amount: '5300.00',
-      vendor: payee,
-      title: `Needed in a locked month ${runId}`,
-      invoiceNo: `INV-LK3-${runId}`,
-      neededBy: `${MONTH}-20`,
-      approverName: approver.subject.name
-    });
-    const refusedApproval = await probePost(approver.page, `/requests/${dated.id}/approve`, {
-      approved_amount: '5300.00'
-    });
-    expect(
-      refusedApproval.status,
-      'approving into a locked month is a 409, the same answer every other locked-month refusal gives'
-    ).toBe(409);
-    expect(
-      refusedApproval.body,
-      'and it names the month and what to do about it, rather than failing at the settlement weeks later'
-    ).toContain(MONTH);
-    await adminPage.goto(`/requests/${dated.id}`);
-    await expect(
-      adminPage.locator('.rh-status'),
-      'so no approved obligation nobody can discharge was created'
-    ).toContainText('Awaiting');
-
-    // Unlocking restores the write, which proves the refusal was the lock.
-    adminPage.once('dialog', dialog => dialog.accept());
-    const unlocked = await probePost(adminPage, `/months/${MONTH}/unlock`, { reason: `Audit G unlock ${runId}` });
-    expect(unlocked.status, 'unlocking is a 303').toBe(303);
-    expect(unlocked.location, 'unlock lands on the grid too').toBe(`/grid?month=${MONTH}`);
-
-    // And the approval the lock refused now goes through, which is what makes the
-    // 409 above a lock refusal rather than a broken route.
-    const nowAllowed = await probePost(approver.page, `/requests/${dated.id}/approve`, {
-      approved_amount: '5300.00'
-    });
-    expect(nowAllowed.status, 'the same approval succeeds once the month is open').toBe(303);
-
-    // The reservation survived the locked-month refusal, so the request is
-    // still `processing` and no longer in the takeable set — `settlePayment`
-    // would look for a "Take for processing" button that is correctly absent.
-    // Resuming the entry form the accountant already holds is the real path.
-    await adminPage.goto(`/payments/new?request=${request.id}`);
-    await expect(adminPage.locator('.reserve-bar'), 'the reservation survived the refusal').toContainText(
-      'Reserved by you'
-    );
-    await adminPage.getByLabel('Amount actually paid').fill('5100.00');
-    await adminPage.getByLabel('Paid on').fill(`${MONTH}-15`);
-    await adminPage.getByLabel('Payment mode').selectOption('neft');
-    await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-LK2-${runId}`);
-    await adminPage.getByLabel('Processing note').fill(`Unlocked ${runId}`);
-    await adminPage.getByRole('button', { name: /Payment settled/ }).click();
-    const reopened = adminPage.locator('.overlay .sheet');
-    await expect(reopened).toBeVisible();
-    await reopened.locator('input[name="settlement"][value="settled"]').check();
-    await reopened.getByRole('button', { name: 'Confirm and save payment' }).click();
-    await expect(adminPage, 'the same settlement succeeds once the month is open').toHaveURL(/\/payments\/\d+$/);
-    await expectMoney(adminPage, '.rh-amt', '₹5,100.00', 'the figure the lock refused now lands intact');
-
-    expectNoRuntimeErrors(errors);
-    await approver.close();
   });
 });
 
@@ -4285,7 +4402,7 @@ test.describe('G · referential integrity', () => {
       .click();
     await expect(adminPage).toHaveURL(new RegExp(`/payments/new\\?request=${raised.id}$`));
     await adminPage.getByLabel('Amount actually paid').fill('6600.00');
-    await adminPage.getByLabel('Paid on').fill('2025-11-11');
+    await adminPage.getByLabel('Paid on').fill(today());
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-RI-${runId}`);
     await adminPage.getByRole('button', { name: /Payment settled/ }).click();
@@ -4352,7 +4469,7 @@ test.describe('G · referential integrity', () => {
     // not strand the obligation.
     const paymentPath = await settlePayment(adminPage, raised.id, {
       amount: '7700.00',
-      paidOn: '2025-12-12',
+      paidOn: today(),
       reference: `UTR-VD-${runId}`,
       remarks: `Retired vendor ${runId}`
     });
@@ -4651,7 +4768,7 @@ test.describe('G · referential integrity', () => {
       request_id: String(request.id),
       head_id: '99999999',
       amount: '1500.00',
-      paid_on: '2026-01-10',
+      paid_on: today(),
       payment_mode: 'bank_transfer',
       reference_no: `UTR-FK-${runId}`,
       settlement: 'settled'
@@ -4671,8 +4788,8 @@ test.describe('G · referential integrity', () => {
     ).toContainText(APPROVED_HEAD);
 
     // Hop 2 — and so does the ledger, which reads head_id back out of the row.
-    await adminPage.goto('/payments?month=2026-01');
-    expect(await dataRows(adminPage), 'exactly the one payment lands in that month').toBe(1);
+    await adminPage.goto(`/payments?month=${thisMonth()}&q=${encodeURIComponent(`UTR-FK-${runId}`)}`);
+    expect(await dataRows(adminPage), 'exactly the one payment carries this reference').toBe(1);
     await expect(
       adminPage.locator('tbody tr td[data-label="Project / Head"]'),
       'the stored head_id is the approved one, so no head 99999999 was ever written'
@@ -4831,7 +4948,7 @@ test.describe('G · referential integrity', () => {
       default_approver_id: '0'
     });
     expect(refused.status, 'the save is refused — the role does not exist').toBe(400);
-    expect(refused.body, 'and says so').toContain('does not exist');
+    expect(refused.body, 'and names the role it could not find').toContain('unknown role 99999999');
 
     // The refusal is total. Neither half of the POST happened.
     await adminPage.goto('/users');
@@ -4942,7 +5059,8 @@ test.describe('G · referential integrity', () => {
       expense_date: '2026-07-14',
       purpose: `Atomic edit purpose ${runId}.`,
       manager_id: managerID,
-      submit_action: 'resubmit'
+      submit_action: 'resubmit',
+      revision: await requestRevision(requester.page, id)
     });
     expect(refused.status, 'the resubmit is refused').toBe(400);
     expect(refused.body, 'and the requester is told the transition is illegal').toContain('cannot be submitted');
@@ -4975,7 +5093,8 @@ test.describe('G · referential integrity', () => {
       amount: '31000.00',
       expense_date: '2026-07-14',
       purpose: `Atomic edit purpose ${runId}.`,
-      manager_id: managerID
+      manager_id: managerID,
+      revision: await requestRevision(requester.page, id)
     });
     expect(saved.status, 'saving the correction on its own succeeds').toBe(303);
     await requester.page.goto(`/requests/${id}`);
