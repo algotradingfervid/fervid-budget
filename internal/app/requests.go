@@ -950,7 +950,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 			locked+" is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.", nil)
 		return
 	}
-	if err := a.st.ApproveRequest(r.Context(), u, req.ID, amount, r.FormValue("note")); err != nil {
+	if err := a.st.ApproveRequest(r.Context(), u, req.ID, amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			a.refuseRequestApproval(w, r, friendly(err))
 			return
