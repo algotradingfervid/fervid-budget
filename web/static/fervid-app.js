@@ -227,7 +227,10 @@
     syncDialogBackground();
 
     var list = focusables(el);
-    if (list.length) {
+    var initial = el.querySelector("[data-dialog-initial-focus]");
+    if (initial && list.indexOf(initial) !== -1) {
+      initial.focus();
+    } else if (list.length) {
       list[0].focus();
     } else {
       el.setAttribute("tabindex", "-1");
@@ -1036,7 +1039,10 @@
      reader had opened it, so Escape, the focus trap and Cancel all work. */
   function openServedDialogs(root) {
     Array.prototype.forEach.call(root.querySelectorAll(".overlay[data-open-on-load]:not([hidden])"), function (el) {
-      openDialog(el, null);
+      var opener = Array.prototype.find.call(root.querySelectorAll("[data-open]"), function (button) {
+        return button.getAttribute("data-open") === el.id && button.getClientRects().length > 0;
+      });
+      openDialog(el, opener || null);
     });
   }
 

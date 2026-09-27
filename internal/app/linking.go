@@ -185,14 +185,9 @@ func (a *App) requestRecordPayment(w http.ResponseWriter, r *http.Request) {
 // know how to build.
 type queueTab struct{ Key, Label string }
 
-// The Approved tab is labelled the way the metric strip above it labels the same
-// number, because the number and the rows answer different questions and always
-// will: the badge is the strictly takeable set (approved · unclaimed · not on
-// hold) while the rows also include the ones somebody is already paying, so the
-// picker can render them as .co.is-taken instead of silently hiding a request
-// from the person about to duplicate it. Labelled "Approved", the badge looked
-// like an undercount of its own list (F-G-008); labelled this way it is visibly
-// counting something narrower.
+// Each queue tab selects the same workflow state its badge counts. Approved is
+// strictly unclaimed and not on hold; the payment picker separately retains
+// unavailable rows so it can warn about requests someone is already paying.
 var queueTabs = []queueTab{
 	{"approved", "Approved, unclaimed"}, {"processing", "Processing"}, {"hold", "On hold"},
 	{"partial_review", "Partial review"}, {"paid", "Paid"},

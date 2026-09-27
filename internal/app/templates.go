@@ -1950,14 +1950,15 @@ const templates = `
 
 {{/* The sheets sit outside #role-form: HTML forbids nested forms, and the
      create/copy/delete posts must not carry the matrix. */}}
-<div class="overlay" id="role-new" hidden>
+<div class="overlay" id="role-new" {{if .NewRole.Open}}data-open-on-load{{else}}hidden{{end}}>
   <div class="sheet">
     <form method="post" action="/roles/new">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="selected_role_id" value="{{.Role.ID}}">
       <div class="sh-head"><div><h2>New role</h2><p class="sh-sub">It starts with no permissions at all.</p></div><button class="sh-close" type="button" data-close="role-new">✕</button></div>
       <div class="sh-body stack-12">
-        <div class="field"><label for="nr-name">Role name</label><input id="nr-name" name="name" required></div>
-        <div class="field"><label for="nr-desc">Description</label><input id="nr-desc" name="description"></div>
+        <div class="field"><label for="nr-name">Role name</label><input id="nr-name" name="name" value="{{.NewRole.Name}}" required {{if .NewRole.Error}}aria-invalid="true" aria-describedby="nr-error" data-dialog-initial-focus{{end}}>{{if .NewRole.Error}}<span id="nr-error" class="field-error-message" role="alert">{{.NewRole.Error}}</span>{{end}}</div>
+        <div class="field"><label for="nr-desc">Description</label><input id="nr-desc" name="description" value="{{.NewRole.Description}}"></div>
       </div>
       <div class="sh-foot"><button class="btn outline" type="button" data-close="role-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Create role</button></div>
     </form>
@@ -2652,18 +2653,19 @@ const templates = `
      The amount uses amountValue, not money: the .money-field draws its own ₹
      in the .cur prefix and money.FormatPaise already carries one. */}}
 {{define "request_sheets"}}
-<div class="overlay" id="approve-sheet" hidden>
+<div class="overlay" id="approve-sheet" {{if .ApprovalError}}data-open-on-load{{else}}hidden{{end}}>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/approve">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <div class="sh-head"><div><h2>Approve {{money .Request2.Amount}}?</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.Vendor}}</p></div><button class="sh-close" type="button" data-close="approve-sheet" aria-label="Close">✕</button></div>
     <div class="sh-body stack-12">
       <div class="field money-field">
         <label for="ap-amount">Amount approved</label>
-        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="ap-amount" name="approved_amount" inputmode="decimal" value="{{if .RequestRawAmount}}{{.RequestRawAmount}}{{else}}{{amountValue .Request2.Amount}}{{end}}" required></span>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="ap-amount" name="approved_amount" inputmode="decimal" value="{{if .ApprovalError}}{{.ApprovalRawAmount}}{{else}}{{amountValue .Request2.Amount}}{{end}}" required {{if .ApprovalError}}aria-invalid="true" aria-describedby="ap-error" data-dialog-initial-focus{{end}}></span>
+        {{if .ApprovalError}}<span id="ap-error" class="field-error-message" role="alert">{{.ApprovalError}}</span>{{end}}
         <span class="in-words">{{inWords .Request2.Amount}}</span>
         <span class="hint">You may approve a smaller amount than was asked for.</span>
       </div>
-      <div class="field"><label for="ap-note">Note <span class="opt" aria-hidden="true">optional</span></label><textarea id="ap-note" name="note" placeholder="Recorded in the history and visible to everyone."></textarea></div>
+      <div class="field"><label for="ap-note">Note <span class="opt" aria-hidden="true">optional</span></label><textarea id="ap-note" name="note" placeholder="Recorded in the history and visible to everyone.">{{.ApprovalNote}}</textarea></div>
       <p class="hint" style="margin:0">Accounts will be able to reserve this immediately. {{.Request2.RequesterName}} can no longer edit it.</p>
     </div>
     <div class="sh-foot"><button class="btn outline" type="button" data-close="approve-sheet">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Approve request</button></div>

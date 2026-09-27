@@ -1111,7 +1111,7 @@ func editedRequest(stored store.Request, in store.RequestInput) store.Request {
 func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 	amount, err := money.ParsePaise(r.FormValue("approved_amount"))
 	if err != nil {
-		a.respondError(w, r, http.StatusBadRequest, "Enter the amount you are approving.", err)
+		a.refuseRequestApproval(w, r, "Enter the amount you are approving.")
 		return
 	}
 	locked, err := a.lockedApprovalMonth(r)
@@ -1125,11 +1125,42 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note")); err != nil {
+		if errors.Is(err, store.ErrValidation) {
+			a.refuseRequestApproval(w, r, friendly(err))
+			return
+		}
 		a.respondStoreError(w, r, err)
 		return
 	}
 	a.fire(r, notify.EventRequestApproved, pathID(r))
 	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
+}
+
+// Refused amounts stay in the same approval sheet. Reload permission and state
+// before rendering: a concurrent decision must not reopen an actionable sheet.
+func (a *App) refuseRequestApproval(w http.ResponseWriter, r *http.Request, message string) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	u := auth.CurrentUser(r)
+	if req.ManagerID != u.ID || req.RequesterID == u.ID {
+		a.respondStoreError(w, r, store.ErrForbidden)
+		return
+	}
+	if req.Status != "pending" {
+		a.respondError(w, r, http.StatusBadRequest, message, nil)
+		return
+	}
+	data, err := a.requestDetailData(r, req, req.Number)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	data.ApprovalError = message
+	data.ApprovalRawAmount = r.FormValue("approved_amount")
+	data.ApprovalNote = r.FormValue("note")
+	a.renderStatus(w, r, http.StatusBadRequest, "request_detail", data)
 }
 
 // lockedApprovalMonth names the locked month an approval would commit to, or ""

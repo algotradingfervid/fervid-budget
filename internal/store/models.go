@@ -500,7 +500,7 @@ const StaleReservation = 24 * time.Hour
 type LinkableOptions struct {
 	Scope    string // "own" | "assigned" | "all", from auth.Scope
 	ViewerID int64
-	Status   string // "" or "approved" (the approved pool) | "processing" | "hold" | "partial_review" | "paid"
+	Status   string // "" (picker pool, including unavailable) | "approved" (unclaimed, not held) | "processing" | "hold" | "partial_review" | "paid"
 	Query    string
 	Limit    int
 	Now      time.Time // injected clock; zero means time.Now()

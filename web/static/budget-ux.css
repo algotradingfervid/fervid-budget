@@ -1,5 +1,9 @@
 /* Bounded names preserve financial columns and editable field widths. */
-.matrix.grid { table-layout: fixed; min-width: 1000px; width: 100%; }
+.matrix.grid { table-layout: fixed; min-width: 1580px; width: 100%; }
+/* Exact currency must fit its column; the surrounding card owns scrolling. */
+.matrix.grid th:nth-child(4),
+.matrix.grid th:nth-child(5),
+.matrix.grid th:nth-child(6) { width: 240px; }
 .matrix.grid .project-col { width: 110px; min-width: 110px; max-width: 110px; }
 .matrix.grid .head-col { width: 180px; min-width: 180px; max-width: 180px; left: 110px; }
 .matrix.grid .project-row .project-col { width: 290px; min-width: 290px; max-width: 290px; }
@@ -9,6 +13,7 @@
 .matrix.grid .hname { white-space: normal; overflow-wrap: anywhere; }
 .matrix.grid .num { padding-left: 8px; padding-right: 8px; }
 .grid-scope-note { font-size: 13px; line-height: 1.6; }
+.report-context { min-width: 0; overflow-wrap: anywhere; }
 .pill.no-activity { color: #4a4946; background: #eeece7; }
 .heads-setup-form label { min-width: 0; }
 .heads-setup-form label:first-of-type { flex: 1 1 240px; max-width: 350px; }
@@ -21,7 +26,8 @@
 .heads-editor th:nth-child(6) { width: 10%; }
 .heads-editor input:not([type=checkbox]), .heads-editor select { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .budget-editor td { overflow-wrap: anywhere; }
-.budget-editor input { max-width: 100%; }
+.budget-editor input { width: 24ch; max-width: 100%; }
+.budget-editor table input { min-width: 24ch; }
 .budget-editor [aria-invalid=true] { border: 2px solid #a92f23; }
 .field-error { display: block; color: #a92f23; font-weight: 650; white-space: normal; margin-top: 6px; }
 .budget-saved { display: block; color: #285c42; font-size: 12px; margin-top: 4px; }
@@ -35,6 +41,10 @@
  .acc .ah-main, .acc .hr-name { min-width: 0; overflow-wrap: anywhere; }
  .acc .ah-main b { white-space: normal; }
  .budget-editor td>span { min-width: 0; max-width: 100%; }
+ .head-row .hr-figs { flex-wrap: wrap; }
+ .head-row .hr-fig .v { white-space: nowrap; }
+ .acc-head { flex-wrap: wrap; }
+ .acc-head .ah-main { flex: 1 1 120px; }
 }
 
 /* A payment is evidence of activity, not proof that every payable is settled. */

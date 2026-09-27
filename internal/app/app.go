@@ -87,6 +87,9 @@ type PageData struct {
 	RequestProjectID     int64
 	RequestVendorID      int64
 	RequestRawAmount     string
+	ApprovalError        string
+	ApprovalRawAmount    string
+	ApprovalNote         string
 	RequestRevision      string
 	DuplicateReason      string
 	Attachments          []store.Attachment
@@ -143,6 +146,7 @@ type PageData struct {
 	PermColumns    []permColumn
 	PermMatrix     []permRow
 	RoleUserCounts map[int64]int
+	NewRole        newRoleForm
 
 	// Users screen.
 	AllRoles      []store.Role
@@ -1987,50 +1991,61 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
+// newRoleForm retains a refused create without changing the selected role.
+type newRoleForm struct {
+	Open        bool
+	Error       string
+	Name        string
+	Description string
+}
+
 func (a *App) rolesPage(w http.ResponseWriter, r *http.Request) {
-	roles, err := a.st.AllRoles(r.Context())
+	data, err := a.rolesPageData(r, parseID(r.URL.Query().Get("role")))
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	selected := parseID(r.URL.Query().Get("role"))
+	a.render(w, r, "roles", data)
+}
+
+func (a *App) rolesPageData(r *http.Request, selected int64) (PageData, error) {
+	roles, err := a.st.AllRoles(r.Context())
+	if err != nil {
+		return PageData{}, err
+	}
 	if selected == 0 && len(roles) > 0 {
 		selected = roles[0].ID
 	}
 	role, err := a.st.Role(r.Context(), selected)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		a.respondStoreError(w, r, err)
-		return
+		return PageData{}, err
 	}
 	grants, scopes, err := a.st.RolePermissions(r.Context(), selected)
 	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
+		return PageData{}, err
 	}
 	counts := map[int64]int{}
 	users, err := a.st.ListUsers(r.Context())
 	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
+		return PageData{}, err
 	}
 	for _, u := range users {
 		urs, err := a.st.UserRoles(r.Context(), u.ID)
 		if err != nil {
-			a.respondStoreError(w, r, err)
-			return
+			return PageData{}, err
 		}
 		for _, ur := range urs {
 			counts[ur.ID]++
 		}
 	}
-	a.render(w, r, "roles", PageData{
+	return PageData{
 		Title:          "Roles",
 		Roles:          roles,
 		Role:           role,
 		PermColumns:    permColumns,
 		PermMatrix:     buildPermMatrix(grants, scopes),
 		RoleUserCounts: counts,
-	})
+	}, nil
 }
 
 // rolesSave persists the matrix. The Advanced checkboxes are the grant set:
@@ -2115,6 +2130,20 @@ func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 func (a *App) roleCreate(w http.ResponseWriter, r *http.Request) {
 	id, err := a.st.CreateRole(r.Context(), auth.CurrentUser(r), r.FormValue("name"), r.FormValue("description"))
 	if err != nil {
+		if (errors.Is(err, store.ErrDuplicate) || errors.Is(err, store.ErrValidation)) && a.auth.Can(auth.CurrentUser(r), "role", "view") {
+			data, loadErr := a.rolesPageData(r, parseID(r.FormValue("selected_role_id")))
+			if loadErr != nil {
+				a.respondStoreError(w, r, loadErr)
+				return
+			}
+			message := friendly(err)
+			if errors.Is(err, store.ErrDuplicate) {
+				message = "A role with this name already exists. Choose a different name."
+			}
+			data.NewRole = newRoleForm{Open: true, Error: message, Name: r.FormValue("name"), Description: r.FormValue("description")}
+			a.renderStatus(w, r, http.StatusBadRequest, "roles", data)
+			return
+		}
 		a.respondStoreError(w, r, err)
 		return
 	}

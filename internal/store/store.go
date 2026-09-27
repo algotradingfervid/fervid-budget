@@ -1699,11 +1699,15 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		WHERE `
 	var args []any
 	switch opts.Status {
-	case "", "approved":
+	case "":
 		// The approved pool: what may be taken, plus what has been taken out of
 		// it. The picker needs the second half to render .co.is-taken rows rather
 		// than silently hiding a request someone is already paying.
 		q += `r.status IN ('approved','processing')`
+	case "approved":
+		// The queue tab promises the same unclaimed, actionable set as its
+		// Approved count. The payment picker uses the broader default above.
+		q += `r.status='approved' AND r.processing_by IS NULL AND r.on_hold=0`
 	case "processing":
 		q += `r.status='processing'`
 	case "hold":
