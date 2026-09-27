@@ -25,7 +25,7 @@ func settlementDisplayFixture(t *testing.T, s *Store, seq int) (acc, req, mgr Us
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
 		t.Fatal(err)
 	}
 	return acc, req, mgr, headID, id

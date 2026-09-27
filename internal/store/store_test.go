@@ -637,7 +637,7 @@ func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{
 		HeadID:      otherHeadID, // forged: another project's head
 		PaidOn:      "2026-06-15",
 		Amount:      440000,
@@ -717,7 +717,7 @@ func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	// head_id=0 is exactly what the entry screen's hidden input posts.
-	payID, err := historicalSettlement(s, ctx, mgr, reqID, PaymentInput{
+	payID, err := historicalSettlement(ctx, s, mgr, reqID, PaymentInput{
 		HeadID: 0, PaidOn: "2026-07-20", Amount: 500000, VendorPayee: "whatever the form carried",
 	}, "settled", "", nil)
 	if err != nil {
@@ -966,7 +966,7 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	if err := s.ReserveRequest(ctx, actor, reqID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, actor, reqID, PaymentInput{HeadID: headID, PaidOn: "2027-01-01", Amount: 5000, Now: clock}, "settled", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(ctx, s, actor, reqID, PaymentInput{HeadID: headID, PaidOn: "2027-01-01", Amount: 5000, Now: clock}, "settled", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("future-dated settlement = %v, want ErrValidation", err)
 	}
 	// No clock at all — the shape every production caller uses. The rule must
@@ -996,7 +996,7 @@ func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000}, "settled", "", nil)
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000}, "settled", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1038,7 +1038,7 @@ func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000},
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000},
 		"settled", "", &AttachmentInput{OriginalName: "advice.pdf", StoredPath: "/tmp/advice.pdf", MimeType: "application/pdf", SizeBytes: 9})
 	if err != nil {
 		t.Fatal(err)

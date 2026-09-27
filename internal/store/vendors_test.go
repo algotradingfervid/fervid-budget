@@ -599,7 +599,7 @@ func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, settled,
+	if _, err := historicalSettlement(ctx, s, acc, settled,
 		PaymentInput{PaidOn: today, Amount: 910000}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, settled,
+	if _, err := historicalSettlement(ctx, s, acc, settled,
 		PaymentInput{PaidOn: today, Amount: 910000}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}

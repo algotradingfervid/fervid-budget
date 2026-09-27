@@ -787,7 +787,7 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 		"processing_by": actor.ID, "processing_at": sqlNow, "submitted_at": sqlNow,
 	})
 
-	if _, err := historicalSettlement(s, ctx, actor, reqID,
+	if _, err := historicalSettlement(ctx, s, actor, reqID,
 		PaymentInput{HeadID: headID, PaidOn: "2026-02-20", Amount: 500000, VendorPayee: "State PWD"}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}
