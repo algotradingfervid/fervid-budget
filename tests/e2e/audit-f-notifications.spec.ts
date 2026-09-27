@@ -10,13 +10,14 @@
  * socket) are listed as NOT RUN in the test-case document, not faked here.
  */
 import { expect, test as base, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { admin, login, settlePayment } from './fixtures';
+import { admin, login, settlePayment, today } from './fixtures';
 import {
   asRole,
   signIn,
   probeGet,
   probePost,
-  probeAnonymous
+  probeAnonymous,
+  requestRevision
 } from './audit-support';
 
 const RUN = `fnotif${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -313,7 +314,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
       invoiceNo: nextInvoice()
     });
     await approveAsManager(mgr.page, requestF.id, '4200.00');
-    await settlePayment(accA.page, requestF.id, { amount: '4200.00', paidOn: '2026-07-20' });
+    await settlePayment(accA.page, requestF.id, { amount: '4200.00', paidOn: today() });
 
     const reqTitles = await notificationTitles(req.page);
     const mgrTitles = await notificationTitles(mgr.page);
@@ -334,7 +335,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     const reqCountBefore = (await notificationTitles(req.page)).length;
 
     await settlePayment(accA.page, requestG.id, {
-      amount: '5000.00', paidOn: '2026-07-21', settlement: 'partial', partialReason: 'Vendor short-shipped the order.'
+      amount: '5000.00', paidOn: today(), settlement: 'partial', partialReason: 'Vendor short-shipped the order.'
     });
 
     const mgrTitles = await notificationTitles(mgr.page);
@@ -838,8 +839,19 @@ test.describe.serial('TC-F — notifications & reminders', () => {
   // echoed back, not which control reaches it.
 
   test('TC-F-035 — SMTP host/port/username/from-name/from-addr/base URL/management recipients persist and round-trip', async () => {
+    // The SMTP host must be on the server operator's FERVID_SMTP_ALLOWED_HOSTS
+    // list. The audit server sets no list, so any host is refused and nothing
+    // is saved; with the host left empty, every other field saves.
+    const refusedHost = await probePost(adminPage, '/admin/notifications/smtp', {
+      smtp_host: `smtp-${RUN}.example.test`, smtp_port: '587'
+    });
+    expect(refusedHost.status, 'a host the operator has not allowed is refused').toBe(400);
+    expect(refusedHost.body).toContain('FERVID_SMTP_ALLOWED_HOSTS');
+    await adminPage.goto('/admin/notifications');
+    await expect(adminPage.locator('[name="smtp_host"]'), 'and the refused host is not saved').not.toHaveValue(`smtp-${RUN}.example.test`);
+
     const values = {
-      smtp_host: `smtp-${RUN}.example.test`,
+      smtp_host: '',
       smtp_port: '2526',
       smtp_username: `user-${RUN}`,
       smtp_from_name: `Fervid QA ${RUN}`,
@@ -863,7 +875,7 @@ test.describe.serial('TC-F — notifications & reminders', () => {
 
     const marker = `NOPWLEAK-${RUN}`;
     const probe = await probePost(adminPage, '/admin/notifications/smtp', {
-      smtp_host: `smtp-${RUN}.example.test`, smtp_password: marker, smtp_username: `user-${RUN}`
+      smtp_host: '', smtp_password: marker, smtp_username: `user-${RUN}`
     });
     expect(probe.status).toBe(303);
 
@@ -909,10 +921,14 @@ test.describe.serial('TC-F — notifications & reminders', () => {
   });
 
   test('TC-F-040 — a Manager who is not the assigned approver is refused approving an urgent request', async () => {
+    // The revision is read as the assigned manager, because a manager who is not
+    // the approver cannot see the request at all.
     const probe = await probePost(wrongMgr.page, `/requests/${requestK.id}/approve`, {
-      approved_amount: '9000.00', note: ''
+      approved_amount: '9000.00', note: '', revision: await requestRevision(mgr.page, requestK.id)
     });
-    expect(probe.status, 'only the requests own assigned manager may approve it, urgent or not').toBe(403);
+    // A request this manager may not see answers 404, never 403, so its
+    // existence is not revealed.
+    expect(probe.status, 'only the requests own assigned manager may approve it, urgent or not').toBe(404);
   });
 
   test('TC-F-041 — submitting an urgent request notifies the assigned manager immediately and not Accounts', async () => {
@@ -1148,7 +1164,9 @@ test.describe.serial('TC-F — notifications & reminders', () => {
     // rather than one because the sentences are opposites ("nothing will be
     // paid" / "the payment is unfrozen"); this drives the decline half.
     const before = (await notificationTitles(req.page)).length;
-    const probe = await probePost(mgr.page, `/requests/${requestH.id}/cancellation`, { decision: 'decline', note: 'Payment is already in motion.' });
+    const probe = await probePost(mgr.page, `/requests/${requestH.id}/cancellation`, {
+      decision: 'decline', note: 'Payment is already in motion.', revision: await requestRevision(mgr.page, requestH.id)
+    });
     expect(probe.status).toBe(303);
     const after = await notificationTitles(req.page);
     expect(after.length, 'the person who asked is told the answer').toBe(before + 1);
