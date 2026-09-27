@@ -17,28 +17,20 @@ import (
 // words or CSS class a person sees. They are registered in the template
 // FuncMap, so every screen spells a status or an action the same way.
 
-// Waiting is the "waiting on" line: one plain sentence naming who owes the
-// next action on a request. Class is the Phase 0 modifier — "you" in brand
-// colour when it is the reader, "closed" when nobody owes anything any more.
-// It is computed once, here, so the list, the approvals queue and the detail
-// head cannot drift into three different answers.
+// Waiting is the "waiting on" line of a request: a short sentence naming who
+// must act next, and a CSS class ("you" when it is the reader, "closed" or
+// "done" when nobody has to act).
 type Waiting struct {
 	Text  string
 	Class string
 }
 
+// waitingOn works out the "waiting on" line for req as seen by viewerID. The
+// request list, the approvals queue and the request page all use it.
 func waitingOn(req store.Request, viewerID int64) Waiting {
 	you := Waiting{Text: "Waiting on you", Class: "you"}
-	// A hold is not a status — the request stays 'approved' so the queue's own
-	// availability test takes it out of the takeable set (L7) — but it is the
-	// only thing anybody is waiting on while it lasts. It therefore answers
-	// before the status does, or a held request would read "Waiting on
-	// Accounts" while Accounts is the one waiting.
-	//
-	// activeHold, not req.OnHold: answering before the status is only right
-	// while 'approved' is the status. On anything else there is a real decision
-	// pending, and hiding it behind the hold would take the approvals queue's
-	// answer away from the one person who owes it.
+	// An approved request on hold waits on the requester to answer Accounts'
+	// question, whatever else is true.
 	if activeHold(req) {
 		if req.RequesterID == viewerID {
 			return you
@@ -68,17 +60,14 @@ func waitingOn(req store.Request, viewerID int64) Waiting {
 		if req.ProcessingBy != nil && *req.ProcessingBy == viewerID {
 			return you
 		}
-		// The assigned accountant by name (uiux design §4, "Waiting on Priya
-		// Nair (Accounts)"), not the department: the reader wants to know who to
-		// ask. The generic line stays for a row read without the join.
+		// Name the accountant who reserved it, when the name was loaded.
 		if req.ProcessingByName != "" {
 			return Waiting{Text: "Waiting on " + req.ProcessingByName + " (Accounts)"}
 		}
 		return Waiting{Text: "Waiting on Accounts"}
 	case "partial_review":
-		// An open concern is a question the manager put to Accounts, so both
-		// owe something: Accounts an answer, the manager the decision that
-		// follows it (owner decision, settlement-8). The holder is who answers.
+		// With an open concern both must act: the accountant holding it must
+		// answer, then the approver decides.
 		if req.ConcernOpen {
 			switch {
 			case req.ProcessingBy != nil && *req.ProcessingBy == viewerID:
@@ -142,17 +131,13 @@ func requestStatusText(status string) string {
 	return status
 }
 
-// Pill is the status pill as a reader sees it: the `.pill` modifier and the
-// sentence inside it.
+// Pill is a status pill: its CSS class and its text.
 type Pill struct{ Class, Text string }
 
-// statusPill reads the row, not only the status, because two of the design's
-// states are not statuses (uiux design §4): "Processing — taken by *name*"
-// names the holder, and "Partial — under discussion" is a partial review with
-// an open concern. Every screen that shows a request's pill uses this, so the
-// detail head, the cards, the queue and the dashboard cannot disagree about
-// who has it. pillClass/requestStatusText stay for the places that only have
-// a status string.
+// statusPill is the pill for a request. Two cases need more than the status:
+// a reserved request names who has it ("With Accounts — taken by you"), and a
+// partial review with an open concern reads "Partial — under discussion".
+// Every screen showing a request's pill uses this.
 func statusPill(req store.Request, viewerID int64) Pill {
 	switch {
 	case req.Status == "processing" && req.ProcessingByName != "":
@@ -168,10 +153,7 @@ func statusPill(req store.Request, viewerID int64) Pill {
 	}
 }
 
-// rowStatusPill is statusPill for a recoverables register row, which is not a
-// store.Request but carries the same three facts the pill turns on — status,
-// holder and open concern — so the register cannot describe a request that is
-// taken or under discussion differently from the detail page behind it.
+// rowStatusPill is statusPill for a row of the recoverables list.
 func rowStatusPill(row store.RecoverableRow, viewerID int64) Pill {
 	return statusPill(store.Request{
 		Status:           row.Status,
@@ -181,6 +163,7 @@ func rowStatusPill(row store.RecoverableRow, viewerID int64) Pill {
 	}, viewerID)
 }
 
+// typeLabel is the label of a request type, or the type itself if unknown.
 func typeLabel(t string) string {
 	if label, ok := requestTypeLabels[t]; ok {
 		return label
@@ -188,8 +171,10 @@ func typeLabel(t string) string {
 	return t
 }
 
-// recoverableCategoryLabels names the Phase-2 recoverable categories. Phase 4
-// replaces the map with rows from `recoverable_categories`.
+// recoverableCategoryLabels are the names of the six seeded recoverable
+// categories. They are used where the category rows are not loaded (the
+// "recoverable" template helper and the legacy-deposit warning). Categories an
+// admin adds or renames later show their code there instead.
 var recoverableCategoryLabels = map[string]string{
 	"emd":              "EMD — earnest money deposit",
 	"pbg":              "PBG — performance bank guarantee",
@@ -199,6 +184,7 @@ var recoverableCategoryLabels = map[string]string{
 	"other":            "Other",
 }
 
+// recoverableLabel is the name of a seeded recoverable category, or the code.
 func recoverableLabel(code string) string {
 	if label, ok := recoverableCategoryLabels[code]; ok {
 		return label
@@ -215,8 +201,8 @@ func formatLongDate(iso string) string {
 	return t.Format("2 January 2006")
 }
 
-// amountValue renders paise for a `.money-field` input, which draws its own ₹
-// in the `.cur` prefix — so the value must not carry a second one.
+// amountValue formats paise for a money input box, without the ₹ sign (the
+// box shows its own). Zero or less gives an empty box.
 func amountValue(paise int64) string {
 	if paise <= 0 {
 		return ""
@@ -224,14 +210,8 @@ func amountValue(paise int64) string {
 	return strings.TrimPrefix(money.FormatPaise(paise), "₹")
 }
 
-// threadDot and threadGlyph decorate one line of the merged thread. Kind wins
-// over Action: a comment is shown as the person who wrote it, whatever the
-// audit called the event behind it.
-//
-// The hold pair is here because the hold lives on this stream, not on a trail
-// of its own: request-on-hold.html renders it as a warn ⏸, and "unhold" is a
-// return to the takeable queue, which is what auditTone tones "brand". The two
-// helpers describe the same two events and have to agree about them.
+// threadDot is the colour class of a line's dot in the request conversation
+// (the thread on the request page).
 func threadDot(e store.ThreadEntry) string {
 	switch e.Action {
 	case "submit", "reraise", "unhold":
@@ -247,6 +227,8 @@ func threadDot(e store.ThreadEntry) string {
 	}
 }
 
+// threadGlyph is the symbol in a conversation line's dot. A comment shows its
+// author's initials and an attachment the upload symbol, whatever the action.
 func threadGlyph(e store.ThreadEntry) string {
 	switch e.Kind {
 	case "comment":
@@ -274,9 +256,9 @@ func threadGlyph(e store.ThreadEntry) string {
 	}
 }
 
-// threadValue renders one side of a `.tl-change` the way a person reads it. The
-// audit trail stores raw JSON, so an amount arrives as 2.35e+07 and a flag as
-// true — neither is a sentence anybody wants to find in their own history.
+// threadValue formats one old or new value of a changed field. The audit
+// stores raw JSON, so amounts (in paise, possibly like 2.35e+07) are formatted
+// as money and the urgent flag as Urgent/Normal; empty values show "—".
 func threadValue(field, raw string) string {
 	switch raw {
 	case "", "<nil>", "null":
@@ -296,8 +278,8 @@ func threadValue(field, raw string) string {
 	return raw
 }
 
-// threadField names a changed column for a reader. The audit records column
-// names, which are the right key and the wrong words.
+// threadField is the label for a changed column, falling back to the column
+// name with spaces for underscores.
 func threadField(column string) string {
 	if label, ok := threadFieldLabels[column]; ok {
 		return label
@@ -305,6 +287,7 @@ func threadField(column string) string {
 	return strings.ReplaceAll(column, "_", " ")
 }
 
+// threadFieldLabels are the labels threadField knows.
 var threadFieldLabels = map[string]string{
 	"amount": "Amount", "approved_amount": "Approved amount", "needed_by": "Needed by",
 	"invoice_no": "Invoice number", "invoice_date": "Invoice date", "expense_date": "Expense date",
@@ -312,7 +295,8 @@ var threadFieldLabels = map[string]string{
 	"urgent": "Urgency",
 }
 
-// fileKind is the three-or-four letter tag the `.f-ico` square shows.
+// fileKind is the file-type tag shown on a document icon: the file extension
+// in capitals, at most four letters, or "FILE".
 func fileKind(name string) string {
 	ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(name), "."))
 	if ext == "" {
@@ -324,6 +308,7 @@ func fileKind(name string) string {
 	return ext
 }
 
+// deref returns *p, or 0 for nil.
 func deref(p *int64) int64 {
 	if p == nil {
 		return 0
@@ -331,18 +316,16 @@ func deref(p *int64) int64 {
 	return *p
 }
 
-// activeHold is the hold as a reader experiences it, rather than the column.
-// Every writer that moves a request off 'approved' clears the hold, so the two
-// are the same thing on a well-formed row — but the pill, the waiting line and
-// the release control all lie the moment they disagree, and a row written
-// before that rule existed is exactly when they would. Asking one question in
-// one place is what keeps the answer from drifting between them.
+// activeHold reports whether req is on hold in effect: the flag is set and the
+// request is still approved. (Leaving "approved" clears the flag, but older
+// rows may still carry it.) The pill, the waiting line and the controls all
+// ask this rather than reading the flag.
 func activeHold(req store.Request) bool {
 	return req.OnHold && req.Status == "approved"
 }
 
-// approvedOf is the ceiling a payment is measured against: what the approver
-// signed off, falling back to what was asked when nothing was recorded.
+// approvedOf is the amount payments are measured against: the approved amount,
+// or the requested amount if none was recorded.
 func approvedOf(req store.Request) int64 {
 	if req.ApprovedAmount != nil {
 		return *req.ApprovedAmount
@@ -350,8 +333,10 @@ func approvedOf(req store.Request) int64 {
 	return req.Amount
 }
 
+// subPaise is a - b, for templates (the "sub" helper).
 func subPaise(a, b int64) int64 { return a - b }
 
+// hhmm is t's local clock time ("14:02"), or "" for nil.
 func hhmm(t *time.Time) string {
 	if t == nil {
 		return ""
@@ -359,6 +344,7 @@ func hhmm(t *time.Time) string {
 	return t.Local().Format("15:04")
 }
 
+// since is how long ago t was: "just now", "N m" under an hour, else "N h".
 func since(t *time.Time) string {
 	if t == nil {
 		return ""
@@ -373,9 +359,8 @@ func since(t *time.Time) string {
 	return fmt.Sprintf("%d h", int(d.Hours()))
 }
 
-// reservedLabel is the clock time while the reservation is same-day and the
-// elapsed time once it is older. "· 14:02" answers "when did I start?"; "· 26 h"
-// answers "how long has this been sitting?".
+// reservedLabel describes when a reservation was made: the clock time while it
+// is younger than store.StaleReservation, and the elapsed hours after that.
 func reservedLabel(t *time.Time) string {
 	if t == nil {
 		return ""
@@ -386,20 +371,18 @@ func reservedLabel(t *time.Time) string {
 	return since(t)
 }
 
-// stale is the predicate reservedLabel switches on, exposed on its own so a row
-// that has crossed the one-day mark can be linked to the nudge screen (Q6)
-// rather than merely labelled with the elapsed hours. The count in
-// LinkableSet.Counts is an aggregate over the whole scope and cannot say which
-// row it means; this can.
+// stale reports whether a reservation made at t is older than
+// store.StaleReservation, so the queue can link that row to the "reserved too
+// long" screen.
 func stale(t *time.Time) bool {
 	return t != nil && time.Since(*t) >= store.StaleReservation
 }
 
-// trailAction disambiguates an audit row before it is decorated or spelled. The
-// full trail merges two entity types, and "create" or "update" on a payment is a
-// different sentence from the same word on a request — so the entity is folded
-// into the action once, here, rather than in every switch downstream. Every name
-// it invents is one no store writer uses, so nothing else changes meaning.
+// trailAction is the action name used to draw an audit entry on a merged
+// request-and-payment trail. A payment's "create", "update" and "attach" mean
+// something different from the same words on a request, so they become
+// record_payment, amend_payment and attach_payment (names no store writer
+// uses). Everything else is unchanged.
 func trailAction(e store.AuditEntry) string {
 	if e.EntityType != "payment" {
 		return e.Action
@@ -474,12 +457,11 @@ func auditPhrase(action string) string {
 	return actionText(action)
 }
 
-// trailBody is the audit summary as the trail prints it, under a head that has
-// already named the actor. Every request-side writer composes its summary as
-// "<actor> did this", so rendering both put the name on the screen twice; the
-// mockup's bodies carry the figures and nothing else. The name is removed only
-// when the summary genuinely opens with it — payment-side summaries ("Recorded
-// payment ₹98,000.00") never do, and come through untouched.
+// trailBody is an audit entry's summary as printed on a trail, below a heading
+// that already names the actor. Request summaries start with the actor's name
+// ("Priya Nair approved …"), so that name is removed and the next letter
+// capitalised; summaries that do not start with it are left as they are. Any
+// note on the entry is appended.
 func trailBody(e store.AuditEntry) string {
 	body := e.Summary
 	if e.ActorName != "" {
@@ -496,7 +478,8 @@ func trailBody(e store.AuditEntry) string {
 	return body
 }
 
-// initials is the two-letter avatar a comment's `.tl-dot` shows.
+// initials is the first letters of the first two words of name, in capitals
+// ("··" for an empty name); a comment's dot shows it.
 func initials(name string) string {
 	out := make([]rune, 0, 2)
 	for _, word := range strings.Fields(name) {

@@ -9,8 +9,13 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// contextReturn keeps a drilldown's visible way back without accepting arbitrary
-// redirect destinations. The destination routes still enforce record access.
+// The "Back to report" / "Back to vendor" link on a drill-down page.
+
+// contextReturn returns the back link (href and label) for the current page,
+// or two empty strings. It accepts ?report_back= for readers with report:view,
+// or a ?return_to= of the form /vendors/{id} for readers with vendor:view;
+// anything else is ignored, so the link can never point off-site. The target
+// page still checks access itself.
 func contextReturn(r *http.Request, perms store.PermissionSet) (string, string) {
 	if perms.Can("report", "view") {
 		if back := safeReportBack(r.URL.Query().Get("report_back")); back != "" {

@@ -18,28 +18,27 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// The payment-request workflow's screens (Phase 2).
+// Payment request screens: raising a request, editing and correcting it, the
+// request list and detail page, the approver's decisions (approve, return,
+// reject), withdrawal, cancellation and the approvals queue.
 //
-// Two rules shape everything in this file.
-//
-// D1 — there are no drafts. Creating and submitting are one atomic POST, so a
-// request exists only once it has been sent to an approver, and it takes its
-// number at that moment. Nothing here saves a half-finished request.
-//
-// A16 — the request type is a route parameter, never a form control. The type
-// fixes which fieldsets exist; treatment and recoverable category swap the
-// middle of the form through an htmx fragment, so there is exactly one copy of
-// the conditional-field rules and it lives in Go. `hidden` is not validation:
-// every reveal is re-enforced by store.validateRequestInput, which is what a
-// hand-rolled POST runs into.
+// Two rules shape this file:
+//   - There are no drafts. Creating a request also submits it, in one POST, so
+//     a request exists only once it has gone to an approver, and it gets its
+//     number then.
+//   - The request type comes from the URL (?type=), never from a form control.
+//     The type decides which fields the form shows. Changing the treatment or
+//     the recoverable category reloads the middle of the form from the server
+//     (htmx), so the show/hide rules live only in Go. Hiding a field is not
+//     validation: the store checks every field again on save.
 
-// requestTypeOption is one card on request-new-type.html: the whole vocabulary
-// of request types, in the order the approved screen lays them out. Adding a
-// type here is the only way to add one to the product.
+// requestTypeOption is one card on the "new request" chooser.
 type requestTypeOption struct {
 	Key, Label, Icon, Blurb, Tag, TagClass string
 }
 
+// requestTypeOptions lists every request type in the order the chooser shows
+// them. A type missing here cannot be raised from the UI.
 var requestTypeOptions = []requestTypeOption{
 	{Key: "vendor_invoice", Label: "Vendor invoice payment", Icon: "▤",
 		Blurb: "You have an invoice from a vendor and it needs paying.",
@@ -53,20 +52,15 @@ var requestTypeOptions = []requestTypeOption{
 	{Key: "employee_advance", Label: "Employee advance", Icon: "₹",
 		Blurb: "Money to you up front for organisation spending you are about to make.",
 		Tag:   "Paid to you · usually recoverable", TagClass: "recoverable"},
-	// The store's fifth type, and the only one whose payee is both free and not
-	// a vendor: an EMD, PBG, ICD or security deposit is paid to a counterparty
-	// or a tender authority and expected back. Until this card existed the only
-	// way to raise one was the employee advance, which pays the requester — so a
-	// ₹10 lakh inter-corporate deposit was recorded as owed to the employee
-	// (form-1 / recoverables-1; phase-2 spec §3, design Figure 2).
+	// A deposit or guarantee is paid to another company or authority (not a
+	// vendor, not the requester) and is expected back.
 	{Key: "recoverable", Label: "Deposit or guarantee", Icon: "⇄",
 		Blurb: "EMD, PBG, ICD or a security deposit — money paid to another company or authority that comes back.",
 		Tag:   "Paid to the counterparty · always recoverable", TagClass: "recoverable"},
 }
 
-// requestTypeLabels is derived from the ordered vocabulary above, so a type is
-// named for a human in exactly one place. Its keys are also the only types the
-// chooser and the form will render: anything else falls back to the chooser.
+// requestTypeLabels maps a type key to its label, built from
+// requestTypeOptions. Its keys are the only types the form will render.
 var requestTypeLabels = func() map[string]string {
 	out := make(map[string]string, len(requestTypeOptions))
 	for _, option := range requestTypeOptions {
@@ -75,22 +69,13 @@ var requestTypeLabels = func() map[string]string {
 	return out
 }()
 
-// unofferedRequestType is what `/requests/new?type=` says when the type names no
-// card. A URL naming something the system will not raise is a client error about
-// that URL (F-D-14), so it answers 400 on the chooser rather than pretending the
-// URL said nothing.
-//
-// F-D-14's original reconciliation kept the chooser at four cards on the premise
-// that "recoverable" was only a treatment every type carried. That premise was
-// false — only the employee advance carries the radio, and that type pays the
-// requester — so the store's fifth type has its own card now (form-1). The
-// message does not echo the requested type and does not name the vocabulary:
-// re-typing that list here is how the two drift.
+// unofferedRequestType is the error shown on the chooser, with status 400, when
+// /requests/new?type= names a type that has no card.
 const unofferedRequestType = "That is not a request type this system raises. Pick one below — a deposit or guarantee has its own card, and an advance to yourself is an employee advance."
 
-// requestNew is both steps of the new-request flow on one route. With no ?type=
-// it is the chooser; with a known type it is the form for that type and nothing
-// else (A16). A type with no card is refused on the chooser, above.
+// requestNew serves /requests/new. With no ?type= it shows the type chooser;
+// with a known type it shows the form for that type; with an unknown type it
+// shows the chooser with an error (400).
 func (a *App) requestNew(w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("type")
 	label, known := requestTypeLabels[kind]
@@ -113,10 +98,9 @@ func (a *App) requestNew(w http.ResponseWriter, r *http.Request) {
 	data.Request2.Type = kind
 	data.Request2.Treatment = "budget"
 	data.Categories = categoriesForType(kind, data.Categories)
-	// An employee advance is money the organisation expects to see accounted
-	// for, so it opens on the recoverable treatment already categorised. The
-	// requester can still switch it to a budget expense. A deposit or guarantee
-	// is recoverable by definition and opens with the category still to choose.
+	// An employee advance opens as recoverable, in its own category; the
+	// requester may still switch it to a budget expense. A deposit or guarantee
+	// is always recoverable and opens with no category chosen.
 	if kind == "employee_advance" || kind == "recoverable" {
 		data.Request2.Treatment = "recoverable"
 		data.Request2.RecoverableCategory = normalizeRecoverableCategory("", kind, data.Categories)
@@ -129,11 +113,9 @@ func (a *App) requestNew(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "request_form", data)
 }
 
-// requestFormFields serves the treatment-dependent middle of the form. The
-// browser asks for it on every treatment, category or project change, so there
-// is exactly one copy of the conditional-field rules and it lives in Go — a
-// fieldset the server did not render is one the requester cannot fill in, and
-// validateRequestInput refuses it a second time if they forge it anyway.
+// requestFormFields returns the middle of the request form (the part that
+// depends on treatment and category) as an htmx fragment. The browser asks for
+// it whenever the treatment, category or project changes.
 func (a *App) requestFormFields(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	data, err := a.requestFormData(r, "")
@@ -150,8 +132,7 @@ func (a *App) requestFormFields(w http.ResponseWriter, r *http.Request) {
 		data.Request2.RecoverableCategory = normalizeRecoverableCategory(q.Get("recoverable_category"), data.FormType, data.Categories)
 		data.RecCategory = resolveRecoverableCategory(data.Request2.RecoverableCategory, data.Categories)
 	}
-	// Whatever the requester had already typed survives the swap; losing it
-	// would make changing a radio button a punishment.
+	// Keep what the requester already typed in these fields.
 	data.Request2.ProjectID = optionalID(parseID(q.Get("project_id")))
 	data.Request2.HeadID = optionalID(parseID(q.Get("head_id")))
 	data.Request2.Counterparty = q.Get("counterparty")
@@ -160,17 +141,11 @@ func (a *App) requestFormFields(w http.ResponseWriter, r *http.Request) {
 	a.renderPartial(w, r, "request_form_fields", data)
 }
 
-// normalizeRecoverableCategory keeps the server's idea of the category and the
-// rendered <select> in step, against the *live* active categories rather than a
-// hardcoded six.
-//
-// It no longer substitutes a code. An unrecognised or deactivated value used to
-// resolve to "emd" — so a request the requester believed was a security deposit
-// was silently reclassified as earnest money (F-E-02/F-B-17). It now resolves to
-// "nothing chosen", the select renders its "Choose a category" option selected,
-// and validateRequestInput refuses the submit until a person picks one. An empty
-// value still takes the form type's own default when that category is active,
-// which is what opens an employee advance already categorised.
+// normalizeRecoverableCategory returns code if it is one of the active
+// categories in cats. An unknown or inactive code becomes "" (nothing chosen),
+// so the person has to pick one; it is never swapped for another category. An
+// empty code takes the category named like the form type, if active (this is
+// how an employee advance opens already categorised).
 func normalizeRecoverableCategory(code, formType string, cats []store.RecoverableCategory) string {
 	for _, c := range cats {
 		if c.Code == code {
@@ -188,16 +163,11 @@ func normalizeRecoverableCategory(code, formType string, cats []store.Recoverabl
 	return ""
 }
 
-// categoriesForType is the category vocabulary a request type may choose from.
-//
-// The category and the type agree on who is paid, so they cannot be chosen
-// independently: an employee advance pays the requester and is always in the
-// Employee advance category, and a deposit or guarantee pays a counterparty and
-// is never in it. validateRequestInput refuses the other combinations; this is
-// the same rule on the form, so a requester is not offered a choice that is
-// refused after the whole form has been filled in (form-1 / recoverables-1).
-// Every other type keeps the full active list — it is only rendered on the
-// recoverable treatment, which those types do not carry.
+// categoriesForType returns the recoverable categories a request type may use.
+// An employee advance pays the requester, so it may only use the "Employee
+// advance" category; a deposit or guarantee pays a counterparty, so it may use
+// any category except that one. The store enforces the same rule on save.
+// Other types get the full list.
 func categoriesForType(kind string, cats []store.RecoverableCategory) []store.RecoverableCategory {
 	if kind != "employee_advance" && kind != "recoverable" {
 		return cats
@@ -211,10 +181,9 @@ func categoriesForType(kind string, cats []store.RecoverableCategory) []store.Re
 	return out
 }
 
-// resolveRecoverableCategory finds the row behind a code so the form can reveal
-// the fields that category requires. A code with no active row resolves to the
-// zero value, whose Requires flags are both false — the same state as "no
-// category chosen", which is what the reader is looking at.
+// resolveRecoverableCategory returns the category row for code, so the form can
+// show the fields that category requires. An unknown code returns the zero
+// value, which requires nothing, the same as "no category chosen".
 func resolveRecoverableCategory(code string, cats []store.RecoverableCategory) store.RecoverableCategory {
 	for _, c := range cats {
 		if c.Code == code {
@@ -224,11 +193,11 @@ func resolveRecoverableCategory(code string, cats []store.RecoverableCategory) s
 	return store.RecoverableCategory{}
 }
 
-// requestCreate is the whole of D1 in one handler: stage the file, create the
-// request already pending, redirect to the confirmation. There is no draft to
-// save and no second submit step, so the row, its number, its submission
-// timestamp and the requester's document all commit together — or none of them
-// do, and the staged file is removed behind them.
+// requestCreate raises and submits a new request in one step: it saves any
+// uploaded file to a staging path, creates the request (already pending, with
+// its number) together with the attachment, and redirects to the confirmation.
+// If anything fails nothing is saved, the staged file is deleted, and the form
+// is shown again with the message (or the error page for a server fault).
 func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
 	in, err := requestInput(r)
 	var stagedPath string
@@ -244,7 +213,6 @@ func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
 		id, err = a.st.CreateRequest(r.Context(), auth.CurrentUser(r), in)
 	}
 	if err != nil {
-		// Nothing was written, so nothing may be left on disk either.
 		removeStagedAttachment(a.log, r, stagedPath)
 		if status, ok := userError(err); ok {
 			a.renderRejectedRequestForm(w, r, status, in, err)
@@ -265,24 +233,16 @@ func userError(err error) (int, bool) {
 	return status, status < http.StatusInternalServerError
 }
 
-// renderRejectedRequestForm puts the form back with the message and everything
-// the requester had typed still in it. Losing a page of typing to one bad field
-// is the cruellest thing a form can do.
+// renderRejectedRequestForm shows the new-request form again with the error
+// message, per-field errors and everything the requester typed. If the posted
+// type has no card, it answers 400 when the store did not know the type at all,
+// and otherwise shows the chooser with the store's message.
 func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, status int, in store.RequestInput, refusal error) {
 	message := friendly(refusal)
 	label, known := requestTypeLabels[in.Type]
 	if !known {
-		// A type the *store* does not recognise is a client error about the type,
-		// and "that is not a kind of request this system raises" is the right
-		// sentence for it. A type the store knows but this chooser does not carry
-		// used to fall in here too and lose both its real reason and the whole
-		// form (F-E-08/F-B-02); every store type has a card now, so that branch
-		// only guards against the two vocabularies drifting apart again, and a
-		// refusal there keeps the rule that refused it and lands on the chooser.
-		//
-		// The two are told apart by the store's own message rather than by a
-		// second copy of the type vocabulary here: duplicating that list is how it
-		// drifts, and drifting is the defect.
+		// The store's own message tells an unknown type apart from a type the
+		// store knows but the chooser lacks, so the type list is not repeated here.
 		if strings.Contains(message, "unknown request type") {
 			a.respondError(w, r, http.StatusBadRequest, "That is not a kind of request this system raises.", nil)
 			return
@@ -330,8 +290,8 @@ func (a *App) setFormType(r *http.Request, data *PageData, kind, category string
 	return err
 }
 
-// requestFromInput turns what was posted back into the shape the form renders
-// from, so a rejected submission re-renders as itself.
+// requestFromInput copies the posted fields into a store.Request, the shape
+// the form renders from, so a rejected submission shows what was typed.
 func requestFromInput(in store.RequestInput) store.Request {
 	req := store.Request{
 		Treatment: in.Treatment, Type: in.Type, RecoverableCategory: in.RecoverableCategory,
@@ -348,13 +308,13 @@ func requestFromInput(in store.RequestInput) store.Request {
 	return req
 }
 
+// requestSubmitted is the confirmation page after a request is raised. Its
+// "what happens next" text quotes the configured reminder wait.
 func (a *App) requestSubmitted(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
 		return
 	}
-	// "What happens next" quotes the reminder wait twice, so it reads the
-	// configured threshold rather than a hardcoded three (F-F-03).
 	thresholds, err := a.st.ReminderThresholds(r.Context())
 	if err != nil {
 		a.respondStoreError(w, r, err)
@@ -363,34 +323,23 @@ func (a *App) requestSubmitted(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "request_submitted", PageData{Title: "Request submitted", Request2: req, Reminders: thresholds})
 }
 
-// canSeeRequest reports whether the signed-in user's request data scope reaches
-// req. It is the row half of the access rule, shared with every store read
-// through store.RequestInScope, so a list, a queue, a notification and a detail
-// page can never disagree about who may see a request.
+// canSeeRequest reports whether the signed-in user's request data scope
+// ("own", "assigned" or "all") covers req. It uses store.RequestInScope, the
+// same rule the store's list queries use, so lists and detail pages agree.
 //
-// It deliberately checks the scope alone and not the request:view grant. Which
-// verb a screen needs depends on the screen — request:view for /requests,
-// payment:view for a linked payment, recoverable_report:view for the register —
-// and every route already demands its own verb before a handler runs. Adding
-// request:view here would refuse an accountant with payment:view but no
-// request:view the payment they are allowed to open, without hiding anything
-// the routes do not already hide. Notification recipients, which have no route
-// in front of them, use store.CanViewRequest, which does require the grant.
+// It checks only the scope, not the request:view permission: each route
+// already requires its own permission (request:view, payment:view,
+// recoverable_report:view …) before the handler runs. Notifications, which
+// have no route in front of them, use store.CanViewRequest, which checks both.
 func (a *App) canSeeRequest(r *http.Request, req store.Request) bool {
 	u := auth.CurrentUser(r)
 	return store.RequestInScope(a.auth.Scope(u, "request"), u.ID, req)
 }
 
-// loadRequestByID reads request id and refuses it to anybody whose data scope
-// does not reach it — holding request:view somewhere is not the same as being
-// allowed to read this one.
-//
-// The refusal is 404, not 403, and the same sentence a missing row gets. If a
-// row that exists but is out of scope answered 403 while a missing row answered
-// 404, the status code would tell a requester exactly which request ids exist,
-// and from that how many requests the company raises. The existence of a row is
-// information about that row, so the two cases are indistinguishable. The
-// attempt is still logged.
+// loadRequestByID reads request id and returns it if the signed-in user's data
+// scope covers it. Otherwise it has already answered and returns false. A
+// request outside the scope gets the same 404 as a missing one, so status codes
+// never reveal which request ids exist.
 func (a *App) loadRequestByID(w http.ResponseWriter, r *http.Request, id int64) (store.Request, bool) {
 	req, err := a.st.Request(r.Context(), id)
 	if err != nil {
@@ -420,19 +369,16 @@ func (a *App) loadViewableRequest(w http.ResponseWriter, r *http.Request) (store
 	return a.loadRequestByID(w, r, pathID(r))
 }
 
-// requestDuplicateCheck renders the advisory duplicate warning. It is a read:
-// it answers 200 whether or not anything matched, and POST /requests neither
-// calls it nor consults its result. Legitimate repeat payments exist — the same
-// rent, the same monthly retainer — so the system points and the person
-// decides (G6). Even a failed check must not stand between somebody and their
-// submit, which is why an error here is logged and swallowed.
+// requestDuplicateCheck returns the "possible duplicate" warning fragment for
+// the form being filled in. It is only advice: it always answers 200, saving a
+// request never depends on it, and a failed check is logged and shows nothing.
+// Only matches the reader may see are listed.
 func (a *App) requestDuplicateCheck(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	amount, _ := money.ParsePaise(r.FormValue("amount"))
 	payee := r.FormValue("vendor_payee")
-	// A reimbursement or an employee advance carries no vendor row: the store
-	// forces its payee to the requester, so the check has to look for it there
-	// or those two types would never be checked at all.
+	// Reimbursements and employee advances are paid to the requester, so that
+	// is the payee to look for.
 	if payeeIsRequester(r.FormValue("type")) {
 		payee = u.Name
 	}
@@ -454,16 +400,15 @@ func (a *App) requestDuplicateCheck(w http.ResponseWriter, r *http.Request) {
 	a.renderPartial(w, r, "request_duplicates", PageData{Similar: similar})
 }
 
-// payeeIsRequester mirrors the store's forcesRequesterPayee. These types never
-// carry a vendor row, so the payee snapshot is the only payee they have.
+// payeeIsRequester reports whether requests of type t are always paid to the
+// requester (the store applies the same rule when saving).
 func payeeIsRequester(t string) bool {
 	return t == "reimbursement" || t == "employee_advance"
 }
 
-// vendorChoices backs the plain <select> the form falls back to when the
-// combobox cannot run — no JavaScript, or a requester who does not hold
-// vendor:view and so cannot reach GET /vendors/search. Types that never carry a
-// vendor row load nothing.
+// vendorChoices lists the active vendors for the form's plain vendor <select>,
+// used when the search box cannot run (no JavaScript, or no vendor:view
+// permission for /vendors/search). Types without a vendor get nil.
 func (a *App) vendorChoices(r *http.Request, formType string) ([]store.Vendor, error) {
 	if formType != "vendor_invoice" && formType != "vendor_advance" {
 		return nil, nil
@@ -472,10 +417,9 @@ func (a *App) vendorChoices(r *http.Request, formType string) ([]store.Vendor, e
 		a.auth.Permissions(auth.CurrentUser(r)))
 }
 
-// requestInput reads the whole form. Every field the adaptive form is capable
-// of revealing is read unconditionally: the store decides what was allowed to
-// be filled in, because a browser that hid a control is not a guarantee that
-// the submitter's browser did.
+// requestInput reads every field the request form can show, whether or not
+// the form showed it; the store decides which fields a request may carry. An
+// amount that does not parse is returned as a validation error.
 func requestInput(r *http.Request) (store.RequestInput, error) {
 	in := store.RequestInput{
 		DuplicateReason:           r.FormValue("duplicate_reason"),
@@ -522,9 +466,10 @@ func (a *App) effectiveScope(u store.User, requested string) string {
 // scopeRank orders the request data scopes from narrowest to widest.
 var scopeRank = map[string]int{store.ScopeOwn: 1, store.ScopeAssigned: 2, store.ScopeAll: 3}
 
-// requestFormData assembles everything the adaptive form needs. The approver
-// list comes from ListApprovers, so the requester's own name is structurally
-// absent (G8), and their default approver is pre-selected (G9).
+// requestFormData loads what every request form needs: active projects and
+// heads, the approvers (never the requester), settings, active recoverable
+// categories and reminder thresholds. The user's default approver is
+// preselected.
 func (a *App) requestFormData(r *http.Request, title string) (PageData, error) {
 	u := auth.CurrentUser(r)
 	ctx := r.Context()
@@ -544,40 +489,35 @@ func (a *App) requestFormData(r *http.Request, title string) (PageData, error) {
 	if err != nil {
 		return PageData{}, err
 	}
-	// The recoverable category picker is the table, not a literal. An
-	// admin-added category was enforced but unselectable and a deactivated one
-	// was still offered, which is half of V4 (F-E-02/F-B-17).
 	cats, err := a.st.ListRecoverableCategories(ctx, true)
 	if err != nil {
 		return PageData{}, err
 	}
-	// The reminder copy on this form quotes a number, so it reads the number.
 	thresholds, err := a.st.ReminderThresholds(ctx)
 	if err != nil {
 		return PageData{}, err
 	}
 	data := PageData{Title: title, Projects: projects, Heads: heads, Approvers: approvers,
 		Settings: settings, Categories: cats, Reminders: thresholds}
-	// G9: 0 means "no default"; the control then opens on "Choose an approver".
+	// 0 means no default approver; the select then opens on "Choose an approver".
 	if u.DefaultApproverID > 0 {
 		data.Request2.ManagerID = u.DefaultApproverID
 	}
 	return data, nil
 }
 
-// requestCardData is what "request_card" is called with. It exists because a
-// {{template}} inside a {{range}} rebinds dot to the request, and $.User.ID
-// inside the card would then resolve against the card rather than the page —
-// silently, and with the wrong "waiting on" line to show for it.
+// requestCardData is the data for the "request_card" template: the request and
+// the id of the person viewing it (needed for the "waiting on" line, and not
+// reachable from inside a {{range}} over requests).
 type requestCardData struct {
 	Req      store.Request
 	ViewerID int64
 }
 
+// requestTab is one tab on the /requests list. Key is the store's bucket name.
 type requestTab struct{ Key, Label string }
 
-// requestTabs are the .segmented tabs. "needs-me" is the one the whole design
-// turns on: it is the only view that answers "what is mine to do".
+// requestTabs are the tabs on the /requests list, in display order.
 var requestTabs = []requestTab{
 	{"open", "Open"}, {"needs-me", "Needs me"}, {"closed", "Closed"}, {"all", "All"},
 }
@@ -611,8 +551,8 @@ func (a *App) requests(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// Every tab count comes from the same SQL as the rows, with only the bucket
-	// changed, so a tab can never promise a number the list does not show.
+	// Each tab's count uses the same filters as the rows, with only the bucket
+	// changed (and no status filter).
 	counts := map[string]int{}
 	for _, tab := range requestTabs {
 		counted := opts
@@ -636,18 +576,15 @@ func (a *App) requests(w http.ResponseWriter, r *http.Request) {
 		RequestClearHref: requestClearURL(r, opts), Counts: counts, Projects: projects, RequestProjectID: opts.ProjectID, RequestVendorID: opts.VendorID})
 }
 
-// requestDetail is one screen for every audience. The two detail mockups are
-// the same page: only the `.action-bar` differs, and it differs on permission —
-// never on a role name, and never on which URL the reader arrived from.
+// requestDetail is the request page, the same for everyone who may see the
+// request; which action buttons appear depends on the reader's permissions.
+// The requester of a returned request (with request:edit) gets the correction
+// form instead.
 func (a *App) requestDetail(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
 		return
 	}
-	// request-returned.html is this request in a different state, seen by the
-	// one person who can act on it. It is a different template rather than a
-	// pile of conditionals: what a returned request needs is a correction form,
-	// and everybody else still needs the detail.
 	if a.showsReturnedCorrection(r, req) {
 		data, err := a.requestEditData(r, req)
 		if err != nil {
@@ -665,15 +602,16 @@ func (a *App) requestDetail(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "request_detail", data)
 }
 
+// showsReturnedCorrection reports whether the reader should get the correction
+// form for req: it is returned, they raised it, and they hold request:edit.
 func (a *App) showsReturnedCorrection(r *http.Request, req store.Request) bool {
 	u := auth.CurrentUser(r)
 	return req.Status == "returned" && req.RequesterID == u.ID && a.auth.Can(u, "request", "edit")
 }
 
-// requestDetailData loads the merged thread and the documents every screen that
-// shows one request needs, so the detail page, the returned-correction page and
-// the cancellation decision cannot drift into three different readings of the
-// same request.
+// requestDetailData loads what every single-request screen shows: the history
+// thread, documents, edit revision, payments, the latest payment (if any) and,
+// for a reader who may reassign the approval, the list of possible approvers.
 func (a *App) requestDetailData(r *http.Request, req store.Request, title string) (PageData, error) {
 	thread, err := a.st.RequestThread(r.Context(), req.ID)
 	if err != nil {
@@ -692,13 +630,8 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 	if err != nil {
 		return PageData{}, err
 	}
-	// A7: the reassign-the-approval control needs somebody to reassign it to. The
-	// list is ListApprovers — everyone holding approval:approve except the
-	// requester — which is the same list the request form offers and the same rule
-	// store.ReassignRequest enforces, so the select can never name a target the
-	// POST would refuse. It is loaded only for a caller who may actually use the
-	// control (F-A-06/F-C-02): the same answer the route gives, so nobody is
-	// offered a sheet whose submit answers 403 (rbac-8).
+	// Possible new approvers: everyone who may approve except the requester,
+	// the same rule store.ReassignRequest enforces.
 	if data.CanReassignApprover = a.mayReassignApprover(auth.CurrentUser(r), req); data.CanReassignApprover {
 		approvers, aerr := a.st.ListApprovers(r.Context(), req.RequesterID)
 		if aerr != nil {
@@ -706,9 +639,7 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 		}
 		data.Approvers = approvers
 	}
-	// Q4: the requester reads the outcome on the request, not in the ledger. No
-	// payment yet is the ordinary case for most of a request's life, so
-	// ErrNotFound is an answer here rather than a failure.
+	// Most requests have no payment yet; that is not an error.
 	pay, perr := a.st.PaymentForRequest(r.Context(), req.ID)
 	switch {
 	case perr == nil:
@@ -719,15 +650,12 @@ func (a *App) requestDetailData(r *http.Request, req store.Request, title string
 	return data, nil
 }
 
-// mayReassignApprover is the one answer to who may hand this request's approval
-// on, asked by the detail screen and by the route. The request's own approver
-// may, because it is theirs to decide (A5). So may a holder of user:edit — the
-// grant that deactivates a person is the grant that rescues what they leave
-// behind (F-G-025) — because an administrator is the only door out of a request
-// whose approver cannot act. Nobody else: the seeded Manager role holds
-// approval:reassign and sees every request, and with no more than that any
-// manager could make another manager's request theirs and approve it (rbac-8).
-// Only in a status the store will move, so the control is never a dead end.
+// mayReassignApprover reports whether u may hand req's approval to another
+// approver. It needs approval:reassign, a status the store allows reassigning
+// from, and either being req's current approver or holding user:edit (an
+// administrator, who can rescue requests left with an approver who cannot
+// act). Other managers may not, or they could take and approve each other's
+// requests. The detail page and the route both use this.
 func (a *App) mayReassignApprover(u store.User, req store.Request) bool {
 	if !a.auth.Can(u, "approval", "reassign") || !store.Reassignable(req.Status) {
 		return false
@@ -735,10 +663,8 @@ func (a *App) mayReassignApprover(u store.User, req store.Request) bool {
 	return req.ManagerID == u.ID || a.auth.Can(u, "user", "edit")
 }
 
-// requestEditForm is the correction screen. Only the person who raised a
-// request may open it: holding request:edit says you may correct your own work,
-// not somebody else's, and an approver who wants a change returns the request
-// instead — which is a different verb with a different audit line.
+// requestEditForm shows the edit form for a pending or returned request. Only
+// the requester may open it; an approver who wants changes returns the request.
 func (a *App) requestEditForm(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadEditableRequest(w, r)
 	if !ok {
@@ -752,10 +678,9 @@ func (a *App) requestEditForm(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "request_edit", data)
 }
 
-// loadEditableRequest resolves the request and refuses anybody who is not its
-// requester, or any status the store would refuse to write anyway. Answering
-// 403 here rather than at the store keeps the screen honest: a control the
-// reader may not use is never rendered, and the URL says the same thing.
+// loadEditableRequest loads the request in the URL for editing. It answers 403
+// unless the reader raised it, and 400 (with the reason) unless it is pending
+// or returned, the only statuses the store lets a requester edit.
 func (a *App) loadEditableRequest(w http.ResponseWriter, r *http.Request) (store.Request, bool) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
@@ -773,6 +698,8 @@ func (a *App) loadEditableRequest(w http.ResponseWriter, r *http.Request) (store
 	return req, true
 }
 
+// reqStatusExplain is a short sentence saying why a request in status cannot
+// be edited or cancelled, and what to do instead.
 func reqStatusExplain(status string) string {
 	switch status {
 	case "approved":
@@ -788,9 +715,9 @@ func reqStatusExplain(status string) string {
 	}
 }
 
-// requestEditData is the edit form's whole state: the same projects, heads,
-// approvers and settings the new-request form is built from, plus the request
-// as it stands and the documents already on it.
+// requestEditData builds the edit form for req: the same lists the new-request
+// form uses, plus the request as it stands, its history and its documents. It
+// also adds the warnings about legacy deposits and retired projects or heads.
 func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, error) {
 	data, err := a.requestFormData(r, "Edit "+req.Number)
 	if err != nil {
@@ -817,11 +744,10 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 	return data, nil
 }
 
-// legacyDepositCategory is the deposit category an employee advance was
-// recorded under before deposits and guarantees were their own request type
-// (form-1), or "" for any other row. The test is the stored code itself, not
-// whether it resolves in the active list: retiring the Employee advance
-// category does not turn every employee advance into a legacy deposit.
+// legacyDepositCategory returns the deposit category of an older employee
+// advance that was filed under a deposit category (EMD, ICD …) before deposits
+// and guarantees had their own request type, or "" for any other request. It
+// checks the stored code, not whether that category is still active.
 func legacyDepositCategory(req store.Request) string {
 	if req.Type == "employee_advance" && req.Treatment == "recoverable" &&
 		req.RecoverableCategory != "" && req.RecoverableCategory != "employee_advance" {
@@ -830,18 +756,12 @@ func legacyDepositCategory(req store.Request) string {
 	return ""
 }
 
-// noteLegacyDeposit is the edit and returned screens' handling of a row from
-// before deposits were their own type: an employee advance filed under EMD, ICD
-// or another deposit category. It still reads as it was recorded, but both
-// screens fix the category, so it is offered back as an Employee advance, and
-// the banner says what saving will do *before* the press (form-1, kept
-// readable). The returned screen's one-press resubmit used to do this without
-// a word, because the banner was rendered on the full edit form only.
-//
-// The way out for money that goes to a counterparty depends on the status: a
-// pending request can be withdrawn now, while a returned one can only be
-// resubmitted first (returned → pending is its one legal transition), so the
-// sentence says so rather than pointing at a control the screen does not have.
+// noteLegacyDeposit handles such a legacy employee advance on the edit and
+// returned screens: the form offers it as an Employee advance (saving will
+// refile it that way), and a warning explains this before the user saves. If
+// the money really goes to a counterparty, the warning says how to raise a
+// deposit instead: a pending request can be withdrawn now, while a returned
+// one must be resubmitted first, since that is its only allowed next step.
 func noteLegacyDeposit(data *PageData, req store.Request) {
 	code := legacyDepositCategory(req)
 	if code == "" || data.LegacyCategory != "" {
@@ -868,20 +788,11 @@ func noteLegacyDeposit(data *PageData, req store.Request) {
 	})
 }
 
-// offerRetiredRefs puts a project or head that was retired after the request was
-// raised back into the edit form's selects, marked, and says why it has to be
-// chosen again (T12, form-3).
-//
-// The selects are built from the active set, so a retired project or head had no
-// option to select: the control fell back to "Choose a project", the browser
-// posted nothing, and a requester who changed only the purpose was refused with
-// "project and head are required for this type" — a sentence about a request
-// that had both. The historical value is offered back so the form shows what the
-// request charges today, and the banner names the retirement, because the store
-// still refuses a retired head (validateRequestRefs) and the reader has to know
-// that re-choosing is the way through. The head is flagged inactive here even
-// when only its project was retired: ListHeads(ctx, true) treats the two alike,
-// and "retired" is what the option has to say either way.
+// offerRetiredRefs handles a request whose project or head was retired after
+// it was raised. The form's selects list only active items, so the retired one
+// is added back (marked inactive) and a warning asks the user to choose an
+// open project and head, because the store will not save a retired one. A head
+// counts as retired here when it or its project is inactive.
 func (a *App) offerRetiredRefs(r *http.Request, data *PageData, req store.Request) error {
 	var retired []string
 	projectID := deref(req.ProjectID)
@@ -925,10 +836,10 @@ func (a *App) offerRetiredRefs(r *http.Request, data *PageData, req store.Reques
 	return nil
 }
 
-// requestEdit saves a correction. "resubmit" is the returned screen's primary
-// action: the corrections and the resubmission are one press, because saving
-// and then forgetting to send it back is how a returned request sits for a week
-// with nobody waiting on it.
+// requestEdit saves the requester's corrections. With submit_action=resubmit
+// (the returned screen's main button) it also sends a returned request back
+// for approval. The edit, a new attachment and the resubmit are saved in one
+// store transaction: all of them or none. A refusal shows the form again.
 func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadEditableRequest(w, r)
 	if !ok {
@@ -946,12 +857,6 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		attachment, stagedPath, err = a.stageUploadedAttachment(r)
 	}
-	// One press, one transaction (F-G-035/F-C-04). This used to be three calls in a
-	// row — update, attach, submit — so a resubmit that failed its own preconditions
-	// left the edit committed *and audited as done* while the requester was shown a
-	// 400, the history asserting a change the caller had been told did not happen.
-	// store.EditRequest commits all three or none, and validates the submit against
-	// the edited row rather than the row as it was on entry.
 	if err == nil {
 		err = a.st.EditRequest(r.Context(), u, req.ID, store.RequestEdit{
 			Input: in, Attachment: attachment, Resubmit: resubmitting, Revision: revision})
@@ -965,38 +870,30 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// Not unconditionally. The seeded template for this event says the request
-	// "was edited and re-sent for approval", and there is exactly one case where
-	// that is false: "Save corrections" on a *returned* request, the button whose
-	// whole purpose is staying put without re-sending. Firing there told the
-	// approver something was back in their queue when the status was still
-	// `returned` (F-F-07).
-	//
-	// Editing a *pending* request does re-notify, and the edit screen's banner
-	// promises it does: the request is already in the approver's queue and the
-	// figures they are about to decide on have changed, so the sentence holds.
+	// The approver is told the request "was edited and re-sent for approval".
+	// That is true for a resubmit and for an edit of a pending request, but not
+	// for "Save corrections" on a returned request, which stays returned.
 	if resubmitting || req.Status == "pending" {
 		a.fire(r, notify.EventRequestEdited, req.ID)
 	}
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
-// renderRejectedEdit puts the correction screen back with the message and
-// everything that was typed still in it, re-read from the row only for the
-// parts the form does not own.
+// renderRejectedEdit shows the edit (or returned) screen again with the error
+// message and what was typed; fields the form does not edit come from the
+// stored request.
 func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored store.Request, in store.RequestInput, status int, refusal error) {
 	data, err := a.requestEditData(r, editedRequest(stored, in))
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// The posted values already say Employee advance, so the edited row is not
-	// legacy — but the stored one still is, and the notice about what saving
-	// does must not vanish because one field was refused.
+	// The posted values already say Employee advance, so the legacy-deposit
+	// warning is based on the stored request.
 	noteLegacyDeposit(&data, stored)
 	data.Error = friendly(refusal)
 	data.UrgencyReasonError = errors.Is(refusal, store.ErrUrgencyReasonRequired)
-	data.RequestRevision = r.FormValue("revision") // Never bless a stale retry with the latest revision.
+	data.RequestRevision = r.FormValue("revision") // keep the posted revision, so a stale form stays stale
 	data.RequestRawAmount = r.FormValue("amount")
 	data.RequestFieldErrors = requestFieldErrors(in)
 	data.DuplicateReason = in.DuplicateReason
@@ -1007,9 +904,9 @@ func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored 
 	a.renderStatus(w, r, status, name, data)
 }
 
-// editedRequest overlays what was posted onto the stored row. Losing a page of
-// corrections to one bad field is the cruellest thing a form can do, and the
-// number, the status and the names were never the form's to change.
+// editedRequest returns the posted values laid over the stored request. The
+// number, status, names, decisions and dates are not form fields, so they come
+// from stored.
 func editedRequest(stored store.Request, in store.RequestInput) store.Request {
 	edited := requestFromInput(in)
 	edited.ID, edited.Number, edited.Status = stored.ID, stored.Number, stored.Status
@@ -1023,9 +920,11 @@ func editedRequest(stored store.Request, in store.RequestInput) store.Request {
 	return edited
 }
 
-// requestApprove is the approve sheet. The amount is editable there because an
-// approver may approve less than was asked for; the store is what refuses a
-// requester approving themselves, whatever this handler is sent.
+// requestApprove approves a pending request, possibly for less than was
+// asked. Only the request's approver may; anyone else gets 404. Approval is
+// refused (409) when the needed-by month is locked. An amount the store
+// refuses shows the approve sheet again with the message. The store also
+// refuses a requester approving their own request.
 func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	req, err := a.st.Request(r.Context(), pathID(r))
@@ -1063,8 +962,9 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
 }
 
-// Refused amounts stay in the same approval sheet. Reload permission and state
-// before rendering: a concurrent decision must not reopen an actionable sheet.
+// refuseRequestApproval shows the request page again with the approve sheet
+// open and message on it (400). The request is re-read first, so if someone
+// else decided it meanwhile the sheet is not offered again.
 func (a *App) refuseRequestApproval(w http.ResponseWriter, r *http.Request, message string) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
@@ -1084,7 +984,7 @@ func (a *App) refuseRequestApproval(w http.ResponseWriter, r *http.Request, mess
 		a.respondStoreError(w, r, err)
 		return
 	}
-	data.RequestRevision = r.FormValue("revision") // A refused submission never authorizes an unseen revision.
+	data.RequestRevision = r.FormValue("revision") // keep the posted revision, so a stale form stays stale
 	data.ApprovalError = message
 	data.ApprovalRawAmount = r.FormValue("approved_amount")
 	data.ApprovalNote = r.FormValue("note")
@@ -1157,9 +1057,9 @@ func (a *App) requestWithdraw(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requestReraise lands on the confirmation screen rather than the source, and
-// it lands there for the *new* request: D1 makes a re-raise a fresh pending
-// request with its own number, not a draft copy of the rejected one.
+// requestReraise raises a rejected request again as a new pending request
+// with its own number, notifies the approver about the new one, and shows its
+// confirmation page.
 func (a *App) requestReraise(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.loadViewableRequest(w, r); !ok {
 		return
@@ -1169,13 +1069,11 @@ func (a *App) requestReraise(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// Fired for the *new* id, not the rejected one: the second attempt is what
-	// needs deciding, and without this the approver never learned it existed
-	// (F-F-06).
 	a.fire(r, notify.EventRequestReraised, id)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d/submitted", id), http.StatusSeeOther)
 }
 
+// requestComment adds a comment to the request's conversation.
 func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
@@ -1186,25 +1084,18 @@ func (a *App) requestComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dest := fmt.Sprintf("/requests/%d", req.ID)
-	// The partial review is a decision screen, and a manager who asks Accounts a
-	// question mid-decision should land back on the decision. The field carries
-	// a token, never a URL: the destination is built from the id this handler
-	// already loaded, so nothing a form says can redirect anybody off-site.
+	// A comment made from the partial-review screen returns there. return_to
+	// is a fixed token, not a URL, so the form cannot redirect anywhere else.
 	if r.FormValue("return_to") == "partial-review" && req.Status == "partial_review" {
 		dest += "/partial-review"
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
-// requestAttachmentUpload adds one document to a request without touching a
-// field on it. It is the requester's answer to a hold — "Need GST receipt" —
-// which the design says they may give as a comment or an attachment (Q6/L7),
-// and which the edit path cannot carry once the request is approved. Only the
-// person who raised the request may add to it, and only while it is on hold:
-// that is the one moment the design grants, the only one the detail screen
-// offers, and the server allows no more than it shows (hold-1 review). The
-// checks here answer before a file is staged for nothing; the store makes them
-// again on the row inside its transaction, which is where they count.
+// requestAttachmentUpload adds one document to a request that Accounts has put
+// on hold (for example "Need GST receipt"), without changing anything else.
+// Only the requester may, and only while it is on hold. These checks run
+// before the file is saved; the store repeats them inside its transaction.
 func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
@@ -1231,7 +1122,6 @@ func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 		_, err = a.st.AddHeldRequestAttachment(r.Context(), u, req.ID, *attachment)
 	}
 	if err != nil {
-		// Nothing was written, so nothing may be left on disk either.
 		removeStagedAttachment(a.log, r, stagedPath)
 		a.respondStoreError(w, r, err)
 		return
@@ -1239,15 +1129,12 @@ func (a *App) requestAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
 
-// The cancellation flow (G1, G2, G3). An approved request cannot be withdrawn
-// on the requester's own say-so: they ask, payment freezes at that moment, and
-// the approver accepts or declines. The approver may also cancel outright with
-// a reason, without having been asked.
+// Cancellation. An approved request cannot simply be withdrawn: the requester
+// asks for cancellation, payment is frozen, and the approver accepts or
+// declines. The approver may also cancel a request outright, with a reason.
 
-// requestCancelForm is the employee's side. Asking is the requester's act, so
-// anybody else — including an administrator holding every verb — is refused
-// here rather than at the store, and the screen is never rendered to somebody
-// whose submit would bounce.
+// requestCancelForm shows the requester the "ask to cancel" form. Only the
+// requester (403 for anyone else) and only for an approved request (400).
 func (a *App) requestCancelForm(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
@@ -1258,9 +1145,6 @@ func (a *App) requestCancelForm(w http.ResponseWriter, r *http.Request) {
 			"Only the person who raised a request may ask for it to be cancelled.", nil)
 		return
 	}
-	// Only an approved request is frozen by asking. A pending one is withdrawn
-	// and a closed one is already closed, so rendering the form for either would
-	// be offering a control whose submit the store is going to refuse.
 	if req.Status != "approved" {
 		a.respondError(w, r, http.StatusBadRequest,
 			"Only an approved request is cancelled this way. "+reqStatusExplain(req.Status), nil)
@@ -1277,10 +1161,9 @@ func (a *App) requestCancelAsk(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requestCancellationForm is the approver's side: the decision on a pending
-// cancellation, or the outright cancellation of a request nobody asked about.
-// Both are the same screen because both are the same question — should this
-// still be paid — and the answer is recorded the same way either way.
+// requestCancellationForm shows the approver's cancellation screen, used both
+// to decide a requested cancellation and to cancel outright. Only the
+// request's approver may open it (403 otherwise).
 func (a *App) requestCancellationForm(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.loadViewableRequest(w, r)
 	if !ok {
@@ -1299,6 +1182,9 @@ func (a *App) requestCancellationForm(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "request_cancellation", data)
 }
 
+// requestCancellationDecide records the approver's decision on a requested
+// cancellation (decision=accept, or decline) and tells the requester which it
+// was: accepted means nothing will be paid, declined means payment resumes.
 func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.loadViewableRequest(w, r); !ok {
 		return
@@ -1309,9 +1195,6 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// Two events, not one: "nothing will be paid" and "payment is unfrozen" are
-	// opposite sentences, and the requester who asked is owed whichever one is
-	// true (F-F-06).
 	if accept {
 		a.fire(r, notify.EventCancellationAccepted, id)
 	} else {
@@ -1328,31 +1211,25 @@ func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// approvalTab is one `.segmented` tab on the manager queue. The queue is its
-// own screen rather than a scope of /requests because it answers a different
-// question — "what is mine to decide" — and its tabs are statuses, not buckets.
+// approvalTab is one tab on the approvals queue, selecting requests by status.
 type approvalTab struct {
 	Key, Label string
 	Statuses   []string
 }
 
+// approvalTabs are the approvals queue's tabs, in display order.
 var approvalTabs = []approvalTab{
 	{"to-approve", "To approve", []string{"pending"}},
 	{"cancellations", "Cancellations", []string{"cancellation_requested"}},
-	// S11: a shortfall waits on the same manager, so it is listed in the same
-	// queue (phase-2 spec §N1, mockups/screens/approvals-list.html). Without
-	// this tab a partial review was reachable only through a notification link
-	// while the request itself read "Waiting on you" (settlement-3).
+	// A partial payment waits on the same approver to accept the shortfall.
 	{"partial-review", "Partial review", []string{"partial_review"}},
 	{"decided", "Decided", []string{"approved", "rejected", "cancelled"}},
 }
 
-// approvals is the manager queue: the requests routed to this person as
-// approver (RoutedToViewer), within whatever request data scope they hold.
-// Holding approval:approve says you may decide, and the manager_id on the row
-// says which requests are yours to decide; the person's own raised requests are
-// never in this queue, whatever their scope. There is no bulk approval by
-// design (A6).
+// approvals is the approver's queue: requests sent to the reader as approver,
+// within their request data scope, one tab per status group with a count on
+// each. Requests the reader raised themselves never appear here. Each request
+// is decided on its own page; there is no bulk approval.
 func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	query := r.URL.Query().Get("q")
@@ -1383,10 +1260,13 @@ func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
 		Counts: counts, Query: query})
 }
 
+// knownApprovalTab reports whether key names one of approvalTabs.
 func knownApprovalTab(key string) bool {
 	return slices.ContainsFunc(approvalTabs, func(tab approvalTab) bool { return tab.Key == key })
 }
 
+// requestsExport downloads the /requests list as requests.csv, using the same
+// filters as the screen but with no row limit. The export is audited.
 func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	opts := a.requestListOptions(r)
@@ -1403,7 +1283,7 @@ func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(&body)
 	_ = cw.Write([]string{"Number", "Status", "Type", "Title", "Amount", "Approved amount", "Payee", "Requester", "Approver", "Created"})
 	for _, req := range list {
-		// F-G-011: the approved figure beside the requested one; empty until decided.
+		// The approved amount is empty until the request is decided.
 		approved := ""
 		if req.ApprovedAmount != nil {
 			approved = csvAmount(*req.ApprovedAmount)
@@ -1424,6 +1304,7 @@ func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// optionalID returns nil for an id of 0 or less, else a pointer to id.
 func optionalID(id int64) *int64 {
 	if id <= 0 {
 		return nil
@@ -1431,8 +1312,9 @@ func optionalID(id int64) *int64 {
 	return &id
 }
 
-// requestClearURL clears user filters while retaining the access scope, current
-// bucket and fixed vendor/report context that brought the reader to the list.
+// requestClearURL is the "clear filters" link on /requests. It drops the
+// user's filters but keeps the scope, the current tab, and the vendor or
+// report the reader came from.
 func requestClearURL(r *http.Request, opts store.RequestListOptions) string {
 	q := url.Values{"scope": {opts.Scope}, "bucket": {opts.Bucket}}
 	if opts.VendorID > 0 {

@@ -11,10 +11,17 @@ import (
 // for the payment forms and the vendor form from the "Payment modes offered"
 // setting.
 
+// PaymentModeChoice is one option in a payment form's mode select: the stored
+// code (Value) and the label shown (Label).
 type PaymentModeChoice struct{ Value, Label string }
 
+// canonicalPaymentMode turns a configured label ("Bank transfer") into its
+// stored code ("bank_transfer"); see store.CanonicalPaymentMode.
 func canonicalPaymentMode(value string) string { return store.CanonicalPaymentMode(value) }
 
+// vendorPaymentModes lists the vendor form's "default payment mode" choices:
+// the configured labels, trimmed and without repeats, plus the vendor's
+// current value if it is no longer configured (so an unrelated edit keeps it).
 func vendorPaymentModes(settings map[string]string, current string) []string {
 	out := []string{}
 	seen := map[string]bool{}
@@ -25,25 +32,21 @@ func vendorPaymentModes(settings map[string]string, current string) []string {
 			seen[value] = true
 		}
 	}
-	// Preserve an older/custom value on unrelated edits, even if configuration
-	// no longer offers it for new vendors.
 	if current != "" && !seen[current] {
 		out = append(out, current)
 	}
 	return out
 }
 
-// paymentModes is the stored vocabulary of payment modes (store.PaymentModes,
-// the one list the server also validates against). paymentMode() spells each
-// one for a person.
+// paymentModes lists every payment mode code the store accepts. The
+// "paymentMode" template helper turns a code into its label.
 func paymentModes() []string { return store.PaymentModes() }
 
-// paymentModeChoices is the option list of every payment form — settlement
-// entry and the historical payment edit alike — so the two can never offer
-// different modes. It follows the "Payment modes offered" setting (order and
-// labels), keeping only modes in the vocabulary, since the server refuses the
-// rest. With nothing usable configured it offers the whole vocabulary. The
-// payment's current mode is always kept, so an edit never silently drops it.
+// paymentModeChoices is the mode list for every payment form (new payments and
+// edits). It follows the "Payment modes offered" setting, in its order and with
+// its labels, keeping only modes the store accepts. If none are usable it
+// offers every mode. The payment's current mode is always included, so an edit
+// never drops it.
 func paymentModeChoices(settings map[string]string, current string) []PaymentModeChoice {
 	out := []PaymentModeChoice{}
 	seen := map[string]bool{}
