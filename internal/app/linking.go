@@ -274,7 +274,7 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 		return
 	}
 	headID := deref(req.HeadID)
-	paidOn := time.Now().Format("2006-01-02")
+	paidOn := time.Now().Format(time.DateOnly)
 	token, err := newFormToken()
 	if err != nil {
 		a.respondError(w, r, http.StatusInternalServerError, "Could not prepare payment confirmation.", err)
@@ -502,7 +502,7 @@ func (a *App) requestPartialReview(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	trail, err := a.mergedTrail(r, req.ID, pay.ID)
+	trail, err := a.mergedTrail(r, req.ID)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -637,7 +637,7 @@ func (a *App) reservationForm(w http.ResponseWriter, r *http.Request) {
 		}
 		users = a.reassignCandidates(all, *req.ProcessingBy)
 	}
-	trail, terr := a.mergedTrail(r, req.ID, 0)
+	trail, terr := a.mergedTrail(r, req.ID)
 	if terr != nil {
 		a.respondStoreError(w, r, terr)
 		return
@@ -774,7 +774,7 @@ func (a *App) requestStale(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusConflict, "This request is not reserved by anyone.", nil)
 		return
 	}
-	trail, terr := a.mergedTrail(r, req.ID, 0)
+	trail, terr := a.mergedTrail(r, req.ID)
 	if terr != nil {
 		a.respondStoreError(w, r, terr)
 		return
@@ -795,9 +795,8 @@ func (a *App) requestStale(w http.ResponseWriter, r *http.Request) {
 }
 
 // mergedTrail returns the audit history of a request and of every payment
-// recorded against it, oldest first (ties broken by id). The third argument is
-// not used: the trail always covers all of the request's payments.
-func (a *App) mergedTrail(r *http.Request, requestID int64, _ int64) ([]store.AuditEntry, error) {
+// recorded against it, oldest first (ties broken by id).
+func (a *App) mergedTrail(r *http.Request, requestID int64) ([]store.AuditEntry, error) {
 	entries, err := a.st.Audit(r.Context(), "payment_request", requestID, 200)
 	if err != nil {
 		return nil, err

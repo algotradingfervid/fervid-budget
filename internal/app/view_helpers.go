@@ -194,7 +194,7 @@ func recoverableLabel(code string) string {
 
 // formatLongDate turns a stored YYYY-MM-DD into the date a person would say.
 func formatLongDate(iso string) string {
-	t, err := time.Parse("2006-01-02", iso)
+	t, err := time.Parse(time.DateOnly, iso)
 	if err != nil {
 		return iso
 	}
