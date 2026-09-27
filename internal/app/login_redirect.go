@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/store"
 	"net/http"
@@ -58,13 +59,13 @@ func (a *App) authorizedLoginNext(r *http.Request, u store.User, raw string) str
 			}
 			if resource == "recoverable_report" {
 				req, err := a.st.Request(r.Context(), id)
-				if err != nil || req.Treatment != "recoverable" || !a.canSeeRequest(r, req) {
+				if err != nil || req.Treatment != "recoverable" || !a.userSeesRequest(u, req) {
 					return "/"
 				}
 			}
 			if resource == "request" {
 				req, err := a.st.Request(r.Context(), id)
-				if err != nil || !a.canSeeRequest(r, req) {
+				if err != nil || !a.userSeesRequest(u, req) {
 					return "/"
 				}
 			}
@@ -77,7 +78,7 @@ func (a *App) authorizedLoginNext(r *http.Request, u store.User, raw string) str
 				// it — "own" and "assigned" mean payments this person entered,
 				// "all" means every payment, and no scope means none.
 				pay, err := a.st.Payment(r.Context(), id)
-				if err != nil || !a.canReadPayment(r, pay) {
+				if err != nil || !a.userReadsPayment(r.Context(), u, pay) {
 					return "/"
 				}
 			}
@@ -122,3 +123,22 @@ func knownLoginPage(parts []string) bool {
 }
 
 const loginFallbackNotice = "You’re signed in. The requested page isn’t available to your account, so we’ve opened Home."
+
+// userSeesRequest is canSeeRequest for an explicit user. The sign-in request
+// has no signed-in user in its context yet, so the post-login redirect must
+// check the user who has just signed in.
+func (a *App) userSeesRequest(u store.User, req store.Request) bool {
+	return store.RequestInScope(a.auth.Scope(u, "request"), u.ID, req)
+}
+
+// userReadsPayment is canReadPayment for an explicit user, for the same
+// reason: a payment linked to a request is readable when the user's request
+// scope reaches that request; one without a request needs payment:view and a
+// payment scope that reaches it.
+func (a *App) userReadsPayment(ctx context.Context, u store.User, p store.Payment) bool {
+	if p.RequestID != nil {
+		req, err := a.st.Request(ctx, *p.RequestID)
+		return err == nil && a.userSeesRequest(u, req)
+	}
+	return a.auth.Can(u, "payment", "view") && paymentScopeReaches(a.auth.Scope(u, "payment"), u.ID, p)
+}
