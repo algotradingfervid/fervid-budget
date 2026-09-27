@@ -131,21 +131,33 @@
 <li>Select <strong>＋ Add user</strong> at the top right.</li>
 <li>Type their <strong>Email</strong>. This is what they will sign in with.</li>
 <li>Type their <strong>Name</strong>.</li>
-<li>Choose a <strong>Role</strong>.<p class="step-note">This field offers two values only — <code>Data entry</code> and <code>Admin</code>. It is the account-level flag, not the role list; the fuller set of roles is assigned afterwards from the edit panel.</p></li>
-<li>Type a starting <strong>Password</strong>.<p class="step-note">At least 12 characters, and it must contain a letter and a number. Anything shorter is refused.</p></li>
+<li>Tick one or more <strong>Roles</strong>.<p class="step-note">One tick box per role, each followed by its description. At least one is required; a new account with no role ticked is refused with <code>Choose at least one role for the new user.</code></p></li>
+<li>Type a starting <strong>Password</strong>.<p class="step-note">12 to 72 characters, and it must contain a letter and a number. Anything else is refused.</p></li>
 <li>Leave <strong>Active</strong> ticked unless you are creating an account that should not be usable yet.</li>
 <li>Select <strong>Add User</strong>.<p class="step-note">The new account appears in the list, and the creation is written to the audit trail.</p></li>
 </ol>
-<aside class="callout callout-note"><p class="callout-title">What the Role field actually does</p><p>The <strong>Role</strong> choice on this panel also seeds the person’s first role: choosing <code>Admin</code> gives the new account the Admin role, and choosing <code>Data entry</code> gives it Accounts. If neither is what you want, open the new row’s <strong>Edit</strong> panel straight away and set the roles properly.</p></aside>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/admin/user-new-sheet.png" aria-label="Enlarge: The Add user panel: Email, Name, a tick box for each role, Password and Active.">
+    <img src="../assets/shots/admin/user-new-sheet.png" alt="The panel for creating an account: email, name, roles and a starting password." loading="lazy" width="1440">
+  </button>
+  <figcaption>The Add user panel: Email, Name, a tick box for each role, Password and Active. </figcaption>
+</figure>
+<aside class="callout callout-note"><p class="callout-title">When adding is refused</p><p>If the save is refused, the panel opens again with the reason at the top and the email, name and roles you entered still filled in. The password is never kept, so type it again. An email address that already belongs to an account is refused with <code>A user with this email address already exists.</code></p></aside>
 <aside class="callout callout-warning"><p class="callout-title">The starting password</p><p>Give the starting password over a trusted channel. <strong>Can’t sign in?</strong> offers email reset when configured, or an administrator/operator route when it is not. Administrators can set a new password here; see <a href="../getting-started/signing-in.html">Signing in</a>.</p></aside>
 <h2 id="changing-somebody">Changing somebody</h2>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Name</strong></td><td><span class="req">Required</span></td><td>How they appear on every request, approval and payment.</td></tr>
 <tr><td><strong>Roles</strong></td><td><span class="opt">Optional</span></td><td>One tick box per role, each with its description: <code>Accounts — Process approved requests and record payments.</code>, <code>Admin — Full administrative access.</code>, <code>Manager — Review and decide on payment requests.</code>, <code>Requester — Raise and manage your own payment requests.</code> Tick as many as apply.</td></tr>
-<tr><td><strong>Default approver for their own requests</strong></td><td><span class="opt">Optional</span></td><td>Who their requests go to by default. The person themselves is never in their own list — the hint under the field says so, and the save refuses it again on the server. <code>None</code> is a valid answer for somebody who raises nothing.</td></tr>
+<tr><td><strong>Default approver for their own requests</strong></td><td><span class="opt">Optional</span></td><td>Who their requests go to by default. Only active people allowed to approve are offered, and never the person themselves. The hint under the field reads <em>Only active users with permission to approve requests are offered. Self-approval is not allowed.</em>, and the save refuses self-approval again on the server. <code>None</code> is a valid answer for somebody who raises nothing.</td></tr>
 <tr><td><strong>Reset password</strong></td><td><span class="opt">Optional</span></td><td>Leave blank to keep the current one. Anything you type replaces it immediately, with the same 12-character, letter-and-number rule as a new account.</td></tr>
 <tr><td><strong>Active</strong></td><td><span class="opt">Optional</span></td><td>Untick to switch the account off. See below.</td></tr>
 </tbody></table></div>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/admin/user-edit-sheet.png" aria-label="Enlarge: The edit panel for one person: their name, a tick box for each role, their default approver, a password reset and Active.">
+    <img src="../assets/shots/admin/user-edit-sheet.png" alt="The panel for changing somebody’s roles, approver or password." loading="lazy" width="1440">
+  </button>
+  <figcaption>The edit panel for one person: their name, a tick box for each role, their default approver, a password reset and Active. </figcaption>
+</figure>
 <ol class="steps">
 <li>Select <strong>Edit</strong> on the person’s row.</li>
 <li>Change what needs changing.</li>

@@ -14,15 +14,18 @@ export default page({
     section(`The form, top to bottom`),
 
     prose(`Every fieldset is the same on every type except two: the block under **What is this for**,
-       which follows your treatment choice, and the type's own block — **Vendor and invoice**,
-       **Vendor and advance**, **Your expense** or **Advance details**. A red asterisk marks the
-       fields the product will insist on.`),
+       which follows the request's treatment, and the type's own block — **Vendor and invoice**,
+       **Vendor and advance**, **Your expense**, **Advance details** or **Who is paid**. A red
+       asterisk marks the fields the product will insist on.`),
+
+    shot('requester/form-vendor-invoice', 'A vendor invoice form, top to bottom. The treatment is stated as a fixed line, Budget expense, rather than offered as a choice.'),
 
     subsection(`What is this for`),
 
     fields([
       { name: `Short title`, required: true, note: `One line naming the spend. The hint says what it is for: *What your approver will see in their approval list.*` },
-      { name: `How should this be treated`, required: true, note: `Two radio buttons — **Budget expense** or **Refundable or recoverable**. Changing it changes the next fieldset. See [Budget spend or money you expect back](page:requester/budget-and-recoverable).` },
+      { name: `How this is treated`, required: false, note: `On most types this is not a choice but a fixed line. A vendor invoice payment, a vendor advance and a reimbursement read *Budget expense. Money spent and gone. It counts against a project and head.*; a deposit or guarantee reads *Refundable or recoverable.*` },
+      { name: `How should this be treated`, required: true, note: `Only on an **Employee advance**, which offers two choices — **Budget expense** or **Refundable or recoverable** — and opens on the recoverable one. Changing it changes the next fieldset. See [Budget spend or money you expect back](page:requester/budget-and-recoverable).` },
     ]),
 
     subsection(`Charge it to`),
@@ -32,9 +35,9 @@ export default page({
       { name: `Head`, required: true, note: `The budget line the spend is booked against. Options read *Project / Head*, so you can see which project a head belongs to.` },
     ]),
 
-    note(`This fieldset only appears on a **Budget expense**. Choose **Refundable or recoverable** and
-       it is replaced by **Recoverable details** — a category, an expected return date and the
-       repayment terms.`),
+    note(`This fieldset only appears on a budget expense. On a deposit or guarantee, and on an employee
+       advance treated as recoverable, it is replaced by **Recoverable details** — a category, an
+       expected return date and the repayment or refund terms.`),
 
     subsection(`Amount and timing`),
 
@@ -53,6 +56,7 @@ export default page({
         [`Vendor advance`, `**Vendor and advance**`, `**Vendor** and **Reason for the advance**`],
         [`Reimbursement`, `**Your expense**`, `**Paid to** (your name, fixed) and **Expense date**`],
         [`Employee advance`, `**Advance details**`, `**Paid to** (your name, fixed) and **What the money is for**`],
+        [`Deposit or guarantee`, `**Who is paid**`, `**Paid to** — the company or authority receiving the deposit, never you`],
       ],
     ),
 
@@ -60,7 +64,7 @@ export default page({
 
     fields([
       { name: `Purpose`, required: true, note: `A free-text box. This is where you explain the spend to somebody who was not in the conversation.` },
-      { name: `Supporting document`, required: false, note: `One file. The uploader says **Add invoice, receipt or proof** and, beneath, *PDF, JPG or PNG up to 10 MB* — the size is a figure your administrator sets. See [Attaching documents](page:requester/attachments).` },
+      { name: `Supporting document`, required: false, note: `One file. The uploader says **Add invoice, receipt or proof** and, beneath, *PDF, JPG or PNG up to 10 MiB* — the size is a figure your administrator sets, so yours may differ. See [Attaching documents](page:requester/attachments).` },
     ]),
 
     note(`**Supporting document** is marked *optional* here because this organisation has not made

@@ -85,7 +85,7 @@ export default page({
     ),
 
     section('Budget overview'),
-    shot('admin/budgets', 'The budget overview: one aggregate row per expense head. This earlier capture does not show the guided planner.'),
+    shot('admin/budgets', 'The budget overview for July 2026: **Create budget** and **Edit budget lines** at the top, then one row per project and expense head with its budget, actual and percentage used.'),
     prose(
       'The overview remains useful for comparing each head’s total budget with actual spending. ' +
       '**Open** loads the selected month; **Month history** opens monthly plans, and **View grid** ' +

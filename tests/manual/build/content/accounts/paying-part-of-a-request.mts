@@ -50,6 +50,22 @@ export default page({
 
     shot('manager/partial-review', 'The approver’s screen. Your reason is quoted near the top, the payment is marked **Cannot be edited**, and the three decisions sit at the bottom.'),
 
+    section(`Following it up`),
+
+    shot('accounts/queue-partial-review', 'The Partial review tab of the payment queue. Every row carries the Partial — manager review pill and a View button.'),
+
+    prose(`While the approver decides, the request sits on the **Partial review** tab of [the payment
+       queue](page:accounts/the-payment-queue), its count on the tab. Each row shows the request
+       number with the requester and approval time beneath it, the payee, the project and head (or a
+       **Recoverable** pill), the approved amount, the needed-by date and the status pill **Partial —
+       manager review**.
+
+       **View** opens the shortfall screen. It shows **Approved**, **Total paid to date** and **Still
+       owed to the payee**; your reason under a banner reading *… marked this a genuine partial
+       payment*; the recorded payment, marked **Cannot be edited**; and the history and conversation.
+       The decision buttons are not yours — the foot of the screen says the approver *decides. You
+       can still comment.* — so use **Add a comment** to answer any question they raise there.`),
+
     section(`Following the balance`),
 
     prose(`The request shows cumulative payments and what remains. Installments awaiting payment return

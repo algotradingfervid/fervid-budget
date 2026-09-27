@@ -107,6 +107,16 @@ server with `FERVID_ADDR=127.0.0.1:<port>` and, because it is plain HTTP on your
 `FERVID_SECURE_COOKIES=false` (otherwise every sign-in is refused as a cross-origin post), then
 run the capture with `FERVID_MANUAL_PORT=<port>`.
 
+The capture signs in once per shot, about a hundred times from one address, which trips the
+sign-in throttle part-way through. Start the capture server with `FERVID_LOGIN_LIMIT_PER_IP` and
+`FERVID_LOGIN_LIMIT_GLOBAL` raised (for example to `100000`) or most shots fail at sign-in.
+
+The shots depend on the specific records named in `tests/manual/actors.ts`, so they cannot be
+taken from a freshly seeded (`--seed`) database, which has no requests. Take them from a copy of
+the demo dataset instead, and remove from that copy anything left over from development that a
+reader would find confusing — for example an experimental role with its test user — before
+capturing. Never capture against `data/fervid.db` itself.
+
 ## Checking your work
 
 ```

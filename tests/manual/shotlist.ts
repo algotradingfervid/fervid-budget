@@ -38,6 +38,13 @@ export interface Shot {
   skipAxe?: boolean;
   /** Capture the entire page however tall it is, instead of the two-screenful cap. */
   fullHeight?: boolean;
+  /**
+   * Capture only the browser window, scrolled to the top. For a panel opened
+   * over a long page: the panel is fixed to the window, so a full-page capture
+   * of a long list stretches the page behind it and leaves the panel and the
+   * sidebar wherever the window happened to be when the page was stitched.
+   */
+  windowOnly?: boolean;
   /** Expected HTTP status, when the point of the shot is a refusal. */
   expectStatus?: number;
 }
@@ -516,21 +523,21 @@ export const SHOTS: Shot[] = [
     role: 'manager',
     title: 'The monthly report',
     shows: 'Spending by month across the whole organisation.',
-    url: '/reports/monthly',
+    url: `/reports/monthly?from=${e.reportFrom}&to=${e.reportTo}`,
   },
   {
     id: 'manager/reports-projects',
     role: 'manager',
     title: 'The report by project',
     shows: 'The same figures grouped by project instead of by month.',
-    url: '/reports/projects',
+    url: `/reports/projects?from=${e.reportFrom}&to=${e.reportTo}`,
   },
   {
     id: 'manager/reports-heads',
     role: 'manager',
     title: 'The report by expense head',
     shows: 'Spending broken down to the individual budget line.',
-    url: '/reports/heads',
+    url: `/reports/heads?from=${e.reportFrom}&to=${e.reportTo}`,
   },
   {
     id: 'manager/payments-refused',
@@ -677,7 +684,7 @@ export const SHOTS: Shot[] = [
     role: 'accounts',
     title: 'The payments ledger',
     shows: 'Every payment recorded, filtered by month.',
-    url: '/payments',
+    url: `/payments?month=${e.busyPaymentMonth}`,
   },
   {
     id: 'accounts/payments-ledger-empty',
@@ -737,6 +744,7 @@ export const SHOTS: Shot[] = [
     shows: 'The panel for creating an account: email, name, roles and a starting password.',
     url: '/users',
     openSheet: 'user-new',
+    windowOnly: true,
   },
   {
     id: 'admin/user-edit-sheet',
@@ -745,6 +753,7 @@ export const SHOTS: Shot[] = [
     shows: 'The panel for changing somebody’s roles, approver or password.',
     url: '/users',
     openSheet: `user-${e.editableUser}`,
+    windowOnly: true,
   },
   {
     id: 'admin/roles',
@@ -789,7 +798,7 @@ export const SHOTS: Shot[] = [
     role: 'admin',
     title: 'Budgets',
     shows: 'The figures each head is allowed, month by month.',
-    url: '/budgets',
+    url: `/budgets?month=${e.openMonth}`,
   },
   {
     id: 'admin/months',

@@ -27,7 +27,7 @@ export default page({
        historical rows recorded before every payment had to belong to an approved request. They are
        still ledger entries, so they are still corrected the old way.`),
 
-    shot('accounts/payments-ledger', 'The ledger for September 2026. Every row in this capture offers only **View**.'),
+    shot('accounts/payments-ledger', 'The ledger for June 2026. Every row in this capture is settled against a request, so each offers only **View**.'),
 
     table(
       [`Kind of payment`, `View`, `Edit`, `Remove`],

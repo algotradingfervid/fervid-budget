@@ -113,7 +113,7 @@
 <h2 id="the-four-states-after-approval">The four states after approval</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">Status pill</th><th scope="col">What has happened</th><th scope="col">Waiting on</th></tr></thead><tbody>
 <tr><td><strong>Approved — awaiting payment</strong></td><td>Your approver signed it. Nobody in Accounts has claimed it yet.</td><td>Accounts</td></tr>
-<tr><td><strong>With Accounts</strong></td><td>An accountant has claimed the request and is working on it. Nobody else can pay it while they hold it.</td><td>Accounts</td></tr>
+<tr><td><strong>With Accounts — taken by …</strong></td><td>An accountant has claimed the request and is working on it; the pill names them. Nobody else can pay it while they hold it.</td><td>That accountant</td></tr>
 <tr><td><strong>Completed</strong></td><td>The payment has been recorded and covers what was approved.</td><td>Nothing pending</td></tr>
 <tr><td><strong>Completed — partial accepted</strong></td><td>Less was paid than approved, and your approver agreed to close it anyway.</td><td>Nothing pending</td></tr>
 </tbody></table></div>
@@ -126,16 +126,31 @@
 </figure>
 <p>The moment a request is approved, <strong>Details</strong> grows a second figure. <strong>Amount</strong> is what you asked for; <strong>Approved</strong> is what your approver signed. They are usually the same. Where they are not, the approved figure is the smaller one — an approver may reduce what was asked for and can never raise it.</p>
 <h3 id="claimed-by-accounts">Claimed by Accounts</h3>
-<p>When an accountant takes the request, the status becomes <strong>With Accounts</strong> and a line appears in the history, naming the accountant: <em>Harsh Agarwal reserved the request for processing</em>. That claim is exclusive — it exists so two people cannot pay the same request twice.</p>
+<p>When an accountant takes the request, the status pill becomes <strong>With Accounts — taken by</strong> and their name, the sentence beside it reads <em>Waiting on</em> followed by their name and <em>(Accounts)</em>, and the history gains the line <em>Reserved request for processing</em>. That claim is exclusive — it exists so two people cannot pay the same request twice. If they hold it for too long without paying, the history also records each <em>Stale-reservation reminder sent to</em> them.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-processing.png" aria-label="Enlarge: A request claimed by Accounts. The pill names the accountant who took it, and the history ends with the reservation and the reminders sent to them.">
+    <img src="../assets/shots/requester/detail-processing.png" alt="A request the accounts team has claimed and is working on." loading="lazy" width="1440">
+  </button>
+  <figcaption>A request claimed by Accounts. The pill names the accountant who took it, and the history ends with the reservation and the reminders sent to them. </figcaption>
+</figure>
 <h3 id="paid">Paid</h3>
-<p>A recorded payment adds a <strong>Payment outcome</strong> block between the details and the attachments. It has two or three rows: <strong>Approved</strong> with the signed figure, <strong>Paid on</strong> with the date and the amount that actually went out, and a third row naming the difference between them.</p>
+<p>A recorded payment adds a <strong>Payment outcome</strong> block between the details and the attachments. It always has three rows: <strong>Approved</strong> with the signed figure, <strong>Total paid to date</strong> with everything paid against the request so far, and a third row naming the difference between them. Beneath it, <strong>Payment history</strong> lists each linked payment on one line — its number, the date it was paid, the amount and the transaction reference, for example <em>PAY-17 · 19 June 2026 · ₹5,300.00 · UTR00000537</em>.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-completed.png" aria-label="Enlarge: A completed request. Payment outcome shows Approved, Total paid to date and a ₹0.00 difference confirmed settled by Accounts; Payment history lists the one payment.">
+    <img src="../assets/shots/requester/detail-completed.png" alt="A finished request, showing the payment recorded against it." loading="lazy" width="1440">
+  </button>
+  <figcaption>A completed request. Payment outcome shows Approved, Total paid to date and a ₹0.00 difference confirmed settled by Accounts; Payment history lists the one payment. </figcaption>
+</figure>
 <h2 id="reading-a-payment-that-is-short">Reading a payment that is short</h2>
 <p>Payments can fully settle the request, keep an installment balance payable, or ask the manager to decide a shortfall. The request shows cumulative payments and the remaining balance. An installment returns it to Approved for another payment under the same approval.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">The third row says</th><th scope="col">What it means</th></tr></thead><tbody>
-<tr><td><strong>Difference · confirmed settled by Accounts</strong></td><td>Accounts declared the obligation discharged. Where they paid the full amount, the difference is ₹0.00; where they paid slightly less, they have confirmed nothing more is owed.</td></tr>
-<tr><td><strong>Still owed to the payee</strong></td><td>A genuine shortfall. The balance has not been paid, and the request has gone to your approver to decide what happens to it.</td></tr>
+<tr><td><strong>Difference · confirmed settled by Accounts</strong></td><td>The request is <strong>Completed</strong> and paid in full; the difference is ₹0.00.</td></tr>
+<tr><td><strong>Difference · agreed deduction or adjustment · confirmed settled by Accounts</strong></td><td>The request is <strong>Completed</strong>, but less than the approved figure was paid. Accounts declared the obligation discharged and recorded why; nothing more is owed.</td></tr>
+<tr><td><strong>Still owed to the payee · awaiting manager decision</strong></td><td>A genuine shortfall. The balance has not been paid, and the request has gone to your approver to decide what happens to it.</td></tr>
+<tr><td><strong>Still owed to the payee · remaining approved balance</strong></td><td>An installment. Part has been paid and the rest is still payable under the same approval.</td></tr>
+<tr><td><strong>Balance written off · shortfall accepted by …</strong></td><td>Your approver, named in the row, accepted the shortfall and the request closed as <strong>Completed — partial accepted</strong>.</td></tr>
 </tbody></table></div>
-<p>A partial payment always carries a written reason, and it appears on your request as a banner headed with the accountant's name and the words <strong>marked this a genuine partial payment</strong>, their sentence beneath it. The status becomes <strong>Partial — manager review</strong>, and the request goes back to your approver, who can Keep balance payable for another installment, accept the shortfall and close as <strong>Completed — partial accepted</strong>, or raise a concern with Accounts.</p>
+<p>A partial payment always carries a written reason, and it appears on your request under the payment outcome as a banner headed with the accountant's name and the words <strong>provided this settlement reason</strong>, their sentence beneath it. The status becomes <strong>Partial — manager review</strong>, and the request goes back to your approver, who can Keep balance payable for another installment, accept the shortfall and close as <strong>Completed — partial accepted</strong>, or raise a concern with Accounts.</p>
 <aside class="callout callout-warning"><p>Nobody can pay more than was approved. An attempt to is refused outright, with a message saying the amount <em>is more than the approved</em> figure, and <em>to pay more, cancel this request and raise a new one</em>. If the true cost has risen, that is a new request, not a bigger payment.</p></aside>
 <h2 id="if-accounts-put-it-on-hold">If Accounts put it on hold</h2>
 <p>An accountant who cannot pay a request as it stands can park it and ask you something. The request then shows an amber banner headed <strong>This request is on hold</strong>, quoting their question, and adds <em>Payment is blocked until Accounts lifts the hold.</em> The status pill reads <strong>On hold</strong> and the waiting sentence becomes <strong>Waiting on you</strong>.</p>
