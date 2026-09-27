@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -75,7 +76,7 @@ func (s *Store) nameUsersInChanges(ctx context.Context, changes []ThreadChange) 
 			}
 			var name string
 			err = s.db.QueryRowContext(ctx, `SELECT name FROM users WHERE id=?`, int64(id)).Scan(&name)
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			if err != nil {

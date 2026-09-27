@@ -65,7 +65,7 @@ func validatedAttachmentType(file io.ReadSeeker, filename string) (string, error
 	}
 	var prefix [512]byte
 	n, err := file.Read(prefix[:])
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("read attachment content: %w", err)
 	}
 	actual := http.DetectContentType(prefix[:n])

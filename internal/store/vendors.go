@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -209,7 +210,7 @@ func scanVendor(scanner rowScanner, withBank, withTotals bool) (Vendor, error) {
 		dest = append(dest, &v.PaidThisYear, &v.OpenRequests)
 	}
 	if err := scanner.Scan(dest...); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return v, ErrNotFound
 		}
 		return v, err

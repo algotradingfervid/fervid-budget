@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // upInstallments is the migration that allows several payments per request:
@@ -58,7 +59,7 @@ func (s *Store) PaymentBySubmission(ctx context.Context, requestID, actorID int6
 	}
 	var id int64
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM payments WHERE request_id=? AND entered_by=? AND submission_key=?`, requestID, actorID, key).Scan(&id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return Payment{}, ErrNotFound
 	}
 	if err != nil {

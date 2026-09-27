@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -131,7 +132,7 @@ func (s *Store) recoverableCategoryLink(ctx context.Context, treatment, code str
 	}
 	var id int64
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // validation already rejected unknown codes
 	}
 	if err != nil {
@@ -243,7 +244,7 @@ func (s *Store) DeleteRecoverableCategory(ctx context.Context, actor User, id in
 
 	var name string
 	err = tx.QueryRowContext(ctx, `SELECT name FROM recoverable_categories WHERE id=?`, id).Scan(&name)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {

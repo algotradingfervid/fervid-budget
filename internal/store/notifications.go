@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -104,7 +105,7 @@ func scanNotificationSetting(sc rowScanner) (NotificationSetting, error) {
 	var email, req, mgr, acct int
 	err := sc.Scan(&n.Event, &n.Label, &n.Audience, &email, &n.ToRecipients, &n.CcRecipients,
 		&req, &mgr, &acct, &n.SubjectTemplate, &n.BodyTemplate)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return n, ErrNotFound
 	}
 	n.EmailEnabled, n.IncludeRequester, n.IncludeManager, n.IncludeAccounts = email == 1, req == 1, mgr == 1, acct == 1

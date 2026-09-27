@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -238,7 +239,7 @@ func (a *App) budgetPlannerSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		a.respondError(w, r, http.StatusBadRequest, "The budget contains unexpected data.", nil)
 		return
 	}

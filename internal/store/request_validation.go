@@ -9,6 +9,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -266,7 +267,7 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 		err := s.db.QueryRowContext(ctx, `SELECT h.project_id, h.active, p.active
  FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, in.HeadID).
 			Scan(&projectID, &headActive, &projectActive)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: that budget head does not exist", ErrValidation)
 		}
 		if err != nil {
@@ -286,7 +287,7 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 		// checked on its own: the register groups recoverables by it.
 		var active int
 		err := s.db.QueryRowContext(ctx, `SELECT active FROM projects WHERE id=?`, in.ProjectID).Scan(&active)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: that project does not exist", ErrValidation)
 		}
 		if err != nil {
@@ -299,7 +300,7 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 	if in.VendorID > 0 {
 		var status string
 		err := s.db.QueryRowContext(ctx, `SELECT status FROM vendors WHERE id=?`, in.VendorID).Scan(&status)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: that vendor does not exist", ErrValidation)
 		}
 		if err != nil {

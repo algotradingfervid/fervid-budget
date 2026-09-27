@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ import (
 func settingInTx(tx *sql.Tx, key, def string) (string, error) {
 	var v string
 	err := tx.QueryRow(`SELECT value FROM app_settings WHERE key=?`, key).Scan(&v)
-	if err == sql.ErrNoRows || (err == nil && strings.TrimSpace(v) == "") {
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && strings.TrimSpace(v) == "") {
 		return def, nil
 	}
 	return v, err
@@ -125,7 +126,7 @@ func scanRequest(sc rowScanner) (Request, error) {
 		&approvedAmt, &approvedBy, &r.ApprovedByName, &approvedAt,
 		&r.DecisionReason, &r.CancelReason, &onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt, &concernOpen,
 		&reminder, &submitted, &r.CreatedAt, &r.UpdatedAt, &r.PaidAmount)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
 	if err != nil {
