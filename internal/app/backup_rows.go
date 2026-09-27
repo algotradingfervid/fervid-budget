@@ -1,5 +1,8 @@
 package app
 
+// Rows for the Backups screen: each backup folder's creation time, whether
+// its files look complete, and the exact command that restores it.
+
 import (
 	"encoding/json"
 	"os"
@@ -8,10 +11,17 @@ import (
 	"time"
 )
 
+// BackupRow is one backup folder as the Backups screen lists it.
 type BackupRow struct{ Name, CreatedAt, Status, RestoreCommand string }
 
+// shellQuote wraps value in single quotes for a POSIX shell, escaping any
+// single quotes inside it.
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 
+// backupRows describes each named backup folder. The time comes from its
+// manifest.json; the status says "Files present" only when that manifest is
+// valid and both fervid.db and the attachments folder exist (the backup has
+// not been test-restored). RestoreCommand is a copy-paste shell command.
 func (a *App) backupRows(names []string) []BackupRow {
 	rows := []BackupRow{}
 	for _, name := range names {
