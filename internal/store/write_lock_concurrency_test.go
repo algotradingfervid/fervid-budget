@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 )
@@ -121,17 +120,4 @@ func TestReleaseAndReassignRaceHasOneWinner(t *testing.T) {
 			t.Fatalf("round %d: neither operation succeeded: release %v; reassign %v", round, releaseErr, reassignErr)
 		}
 	}
-}
-
-func newAccountsUser(t *testing.T, s *Store, ctx context.Context, email string) User {
-	t.Helper()
-	uid, err := s.CreateUser(ctx, email, fmt.Sprintf("Accounts %s", email), "hash", "data_entry", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, uid)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
 }

@@ -143,19 +143,6 @@ func TestVendorNotFound(t *testing.T) {
 	}
 }
 
-func vendorActor(t *testing.T, s *Store, ctx context.Context) User {
-	t.Helper()
-	id, err := s.CreateUser(ctx, "vendor-admin@example.com", "Vendor Admin", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, id)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
-}
-
 func validVendorInput() VendorInput {
 	return VendorInput{
 		Name:          "Sundaram Electricals Pvt Ltd",
@@ -577,47 +564,6 @@ func TestListVendorsFiltersAndOrders(t *testing.T) {
 	if err != nil || len(missing) != 2 {
 		t.Fatalf("ListVendors(missing GSTIN) = %d rows, %v; want 2", len(missing), err)
 	}
-}
-
-// seedVendorRequest inserts a payment_requests row shaped the way the request
-// form makes one for a vendor: vendor_id names the payee and vendor_payee is
-// left empty. Reading the snapshot on such a row is the trap PROGRESS.md
-// records, and it is exactly the trap a test about vendor totals must not fall
-// into — a fixture that fills vendor_payee would make the payee-name fallback
-// look like the vendor_id join working.
-func seedVendorRequest(t *testing.T, s *Store, ctx context.Context, seq int, status string, requesterID, managerID, headID, vendorID, amount int64) int64 {
-	t.Helper()
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatalf("head project: %v", err)
-	}
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,project_id,head_id,vendor_id,amount,purpose,invoice_no,
-		 requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,?,'budget','vendor_invoice',?,?,?,?,'Switchgear','INV-1',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), status, projectID, headID, vendorID, amount,
-		requesterID, managerID, amount, managerID)
-	if err != nil {
-		t.Fatalf("seed vendor request: %v", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
-func seedVendorNamed(t *testing.T, s *Store, name string) int64 {
-	t.Helper()
-	res, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status) VALUES(?,'company','active')`, name)
-	if err != nil {
-		t.Fatalf("seed vendor %q: %v", name, err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
 }
 
 func vendorByName(t *testing.T, rows []Vendor, name string) Vendor {

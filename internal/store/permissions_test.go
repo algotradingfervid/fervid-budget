@@ -7,19 +7,6 @@ import (
 	"testing"
 )
 
-func newRoleActor(t *testing.T, s *Store, ctx context.Context) User {
-	t.Helper()
-	id, err := s.CreateUser(ctx, "roleadmin@example.com", "Role Admin", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, id)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
-}
-
 func TestCreateRoleAndListAndDeleteCustomRole(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -1064,41 +1063,6 @@ func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
 	if _, _, err := s.AttachmentWithPayment(ctx, 999999); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing payment attachment = %v, want ErrNotFound", err)
 	}
-}
-
-func newTestStore(t *testing.T) *Store {
-	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "fervid-budget-test.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
-		}
-	})
-	return s
-}
-
-func seedActorAndHead(t *testing.T, s *Store, ctx context.Context) (User, int64) {
-	t.Helper()
-	userID, err := s.CreateUser(ctx, "qa@example.com", "QA User", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	actor, err := s.UserByID(ctx, userID)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
-	if err != nil {
-		t.Fatalf("UpsertProject: %v", err)
-	}
-	headID, err := s.UpsertHead(ctx, 0, projectID, "Rent", "5", true, 1)
-	if err != nil {
-		t.Fatalf("UpsertHead: %v", err)
-	}
-	return actor, headID
 }
 
 func assertAuditActions(t *testing.T, audits []AuditEntry, want []string) {
