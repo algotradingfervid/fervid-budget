@@ -1,3 +1,7 @@
+// password_reset.go stores one-time password-reset links (only a hash of each
+// token is kept), rate-limits how often resets can be requested, and revokes a
+// user's sessions.
+
 package store
 
 import (
@@ -7,22 +11,37 @@ import (
 	"time"
 )
 
-// UpPasswordReset stores only token hashes. Throttle keys are also hashed so
-// unknown account addresses and source addresses need not be retained.
-func UpPasswordReset(tx *sql.Tx) error {
+const (
+	// resetTokenLifetime is how long a password-reset link stays valid.
+	resetTokenLifetime = 30 * time.Minute
+	// resetThrottleWindow and resetMaxPerWindow limit reset requests: a key
+	// asking more than resetMaxPerWindow times within one window is refused.
+	resetThrottleWindow = time.Hour
+	resetMaxPerWindow   = 5
+)
+
+// upPasswordReset is migration v18. It stores only token hashes. Throttle keys
+// are also hashed so unknown account addresses and source addresses need not
+// be retained.
+func upPasswordReset(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS password_resets (
  token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS password_reset_throttle (key_hash TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL);`)
 	return err
 }
 
+// AllowPasswordReset counts one reset request against each hashed key (for
+// example the email address and the client address) and reports false if any
+// key has asked more than resetMaxPerWindow times within resetThrottleWindow.
+// A key's window starts at its first request and is cleared once it is older
+// than the window.
 func (s *Store) AllowPasswordReset(ctx context.Context, keys []string, now time.Time) (bool, error) {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `DELETE FROM password_reset_throttle WHERE window_start<?`, now.Add(-time.Hour).Unix()); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM password_reset_throttle WHERE window_start<?`, now.Add(-resetThrottleWindow).Unix()); err != nil {
 		return false, err
 	}
 	allowed := true
@@ -34,13 +53,17 @@ func (s *Store) AllowPasswordReset(ctx context.Context, keys []string, now time.
 		if err = tx.QueryRowContext(ctx, `SELECT attempts FROM password_reset_throttle WHERE key_hash=?`, key).Scan(&attempts); err != nil {
 			return false, err
 		}
-		if attempts > 5 {
+		if attempts > resetMaxPerWindow {
 			allowed = false
 		}
 	}
 	return allowed, tx.Commit()
 }
 
+// CreatePasswordReset stores a new token hash for an active user, valid for
+// resetTokenLifetime, replacing any earlier token of theirs and clearing
+// expired ones. A deactivated user is ErrNotFound; a user id that does not
+// exist returns sql.ErrNoRows.
 func (s *Store) CreatePasswordReset(ctx context.Context, userID int64, hash string, now time.Time) error {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -57,12 +80,16 @@ func (s *Store) CreatePasswordReset(ctx context.Context, userID int64, hash stri
 	if _, err = tx.ExecContext(ctx, `DELETE FROM password_resets WHERE user_id=? OR expires_at<=?`, userID, now.Unix()); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO password_resets(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)`, hash, userID, now.Add(30*time.Minute).Unix(), now.Unix()); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO password_resets(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)`, hash, userID, now.Add(resetTokenLifetime).Unix(), now.Unix()); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
+// ConsumePasswordReset sets a new password if the token is unexpired and
+// belongs to an active user: it deletes the token (and any others of the
+// user), signs the user out everywhere, clears the login lockout and audits
+// the change. An unknown, expired or already-used token is ErrNotFound.
 func (s *Store) ConsumePasswordReset(ctx context.Context, tokenHash, passwordHash string, now time.Time) error {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -102,18 +129,12 @@ func (s *Store) ConsumePasswordReset(ctx context.Context, tokenHash, passwordHas
 	return tx.Commit()
 }
 
-// UpSessionRevocation adds a durable generation so reactivation cannot revive
-// a cookie issued before the account was disabled. Existing users begin at zero.
-func UpSessionRevocation(tx *sql.Tx) error {
-	exists, err := columnExists(tx, "users", "session_version")
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	_, err = tx.Exec(`ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0`)
-	return err
+// upSessionRevocation is migration v19. It adds users.session_version, a
+// counter signed into every session cookie, so bumping it invalidates every
+// cookie issued before; reactivating an account cannot revive an old cookie.
+// Existing users begin at zero.
+func upSessionRevocation(tx *sql.Tx) error {
+	return addColumnIfMissing(tx, "users", "session_version", "INTEGER NOT NULL DEFAULT 0")
 }
 
 // RevokeSessions makes every previously issued cookie for this user invalid.
@@ -121,6 +142,9 @@ func (s *Store) RevokeSessions(ctx context.Context, userID int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET session_version=session_version+1 WHERE id=?`, userID)
 	return err
 }
+
+// ValidPasswordReset reports whether a token hash is unexpired and belongs to
+// an active user, without using it up.
 func (s *Store) ValidPasswordReset(ctx context.Context, hash string, now time.Time) (bool, error) {
 	var valid bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM password_resets r JOIN users u ON u.id=r.user_id WHERE token_hash=? AND expires_at>? AND u.active=1)`, hash, now.Unix()).Scan(&valid)

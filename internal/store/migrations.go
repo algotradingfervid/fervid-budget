@@ -1,3 +1,6 @@
+// migrations.go upgrades an existing database one step at a time. Read the
+// comment on migrations before adding one.
+
 package store
 
 import (
@@ -6,37 +9,50 @@ import (
 	"fmt"
 )
 
+// migration is one upgrade step: Up moves the database to Version.
 type migration struct {
 	Version int
 	Name    string
 	Up      func(*sql.Tx) error
 }
 
-// migrations is ordered and append-only. Versions are contiguous and never
-// reordered; each phase appends its own. v0 is the baseline schemaSQL.
+// migrations upgrade an existing database one step at a time. The schema in
+// schema.go is version 0; each entry below moves the database to its Version.
+// migrate runs every entry newer than the database's PRAGMA user_version, each
+// in its own transaction, and records the new version in the same transaction.
 //
-// Reserved global sequence (one monotonic line across all phases):
+// To add a migration:
 //
-//	v1 — permissions (roles, role_permissions, role_data_scope, user_roles)
-//	v2 — vendors
-//	v3 — requests
-//	v4 — payments linking + settlement
-//	v5 — accounts reservation grants (Phase 3)
-//	v6 — recoverable categories (Phase 4)
-//	v7 — notification settings (Phase 5)
-//	v8 — payments.head_id nullable (2026-07-27 audit, F-D-11/F-E-01/F-G-001)
-//	v9 — notification rows for nine unnotified actions (2026-07-27 audit, F-F-06)
-//	v10 — payments.vendor_id (2026-07-27 audit, F-G-009/F-G-010)
+//  1. Append {Version: <last+1>, Name: "...", Up: upSomething}. Never renumber,
+//     reorder or edit a shipped entry: installed databases have already run it.
+//  2. Make Up safe to run twice: CREATE ... IF NOT EXISTS, addColumnIfMissing
+//     for a new column, INSERT ... ON CONFLICT DO NOTHING for seed rows.
+//  3. After v1, never overwrite rows an administrator can edit (role grants,
+//     notification rules). Only add new rows, or update rows that still hold
+//     exactly the old default.
 //
-// Phase 3 consumed v5 for a grant back-fill, so every phase plan written before
-// it is off by one from here on. Migrations are append-only and are never
-// renumbered: this list is the authority, not the plan text.
+// What each version did:
 //
-// Phase 1 owns exactly one migration, v1: it creates all four permission
-// tables (overview §3 P1), seeds the four system roles and back-fills
-// user_roles from the legacy users.role column. The whole Up is idempotent —
-// CREATE TABLE IF NOT EXISTS, upsert-by-name seeding and conflict-tolerant
-// back-fill — so re-applying it after a user_version reset is safe.
+//	v1  roles, role grants, data scopes and user roles; the four starter roles
+//	v2  vendor master
+//	v3  payment requests, attachments, comments, app settings
+//	v4  link a payment to the request it settles
+//	v5  give the Accounts role reserve and release
+//	v6  recoverable categories
+//	v7  notification rules and in-app notifications
+//	v8  allow payments without a budget head (table rebuild)
+//	v9  nine more notification rules
+//	v10 payments.vendor_id
+//	v11 notification rules for reassignment and approver cancellation
+//	v12 let the Manager role open request attachments
+//	v13 reword the reassignment notification
+//	v14 settlement notifications show the amount actually paid
+//	v15 payment_requests.concern_open flag
+//	v16 recovery events
+//	v17 request installments
+//	v18 password reset tokens and throttle
+//	v19 session revocation (users.session_version)
+//	v20 budget lines
 var migrations = []migration{
 	{
 		Version: 1,
@@ -84,17 +100,10 @@ CREATE TABLE IF NOT EXISTS user_roles (
 			return addDefaultApproverColumn(tx)
 		},
 	},
-	// Phase 1V owns exactly one migration, v2: the vendor master. Bank columns
-	// live on the same row as the rest of the vendor — they are attributes of
-	// the vendor, not a separate entity — and are kept from the wrong eyes by
-	// the store never selecting them for a caller without vendor_bank:view
-	// (see vendors.go). Splitting them into a second table would move the
-	// secret without adding a boundary, because the same code would join it.
-	//
-	// payments.vendor_payee is deliberately untouched: it is the payee snapshot
-	// for reimbursements and employee advances, where no vendor row exists, and
-	// it keeps historical payments readable. Phase 2 adds vendor_id alongside
-	// it rather than replacing it.
+	// v2: the vendor master. Bank columns live on the vendor row; they are kept
+	// from the wrong eyes by the store never selecting them for a caller without
+	// vendor_bank:view (see vendors.go). payments.vendor_payee stays as the payee
+	// snapshot for payments with no vendor row; v10 adds vendor_id beside it.
 	{
 		Version: 2,
 		Name:    "vendors",
@@ -136,16 +145,13 @@ CREATE INDEX IF NOT EXISTS idx_vendors_status ON vendors(status);`)
 			return err
 		},
 	},
-	// Phase 2 owns exactly one migration, v3: the request workflow. Two schema
-	// decisions are load-bearing and must not be softened later.
+	// v3: the request workflow. There are no drafts: status has no DEFAULT and a
+	// CHECK forbids 'draft'. vendor_id points at the vendor master, and
+	// vendor_payee is the payee snapshot for requests with no vendor row.
 	//
-	// D1 — there are no drafts. `status` carries no DEFAULT, so every writer has
-	// to name a status, and CHECK (status <> 'draft') makes a draft row
-	// unrepresentable for the life of the table.
-	//
-	// A2 — `vendor_id` references the Phase-1V vendor master, while
-	// `vendor_payee` survives beside it as the payee snapshot for reimbursements
-	// and employee advances, which have no vendor row at all.
+	// The SQL comment on recoverable_category_id below is shipped text and is
+	// left as it was. Its last sentence is out of date: the recoverable
+	// categories table and the back-fill come from v6, not v5.
 	{
 		Version: 3,
 		Name:    "requests",
@@ -253,39 +259,25 @@ ON CONFLICT(key) DO NOTHING;
 `); err != nil {
 				return err
 			}
-			// G9: default approver per employee. Phase 1's v1 already adds this
-			// column; the columnExists guard makes the double ownership harmless
-			// and keeps this migration runnable against a database that skipped
-			// it. Do not convert it to an unguarded ALTER — that fails hard.
+			// v1 already adds this column; the guard makes adding it here too
+			// harmless, and covers a database that skipped v1's copy.
 			return addDefaultApproverColumn(tx)
 		},
 	},
-	// Phase 3 owns exactly one migration, v4: it links a payment to the request
-	// it settles. Three additive columns and one partial unique index, so the
-	// historical ledger is untouched — every pre-Phase-3 payment keeps
-	// request_id NULL and stays editable and voidable (X6).
-	//
-	// S9 — exactly one payment per request. The index is partial
-	// (WHERE request_id IS NOT NULL) because SQLite treats NULLs as distinct
-	// anyway; stating it keeps the intent readable and the index small.
+	// v4: link a payment to the request it settles. Older payments keep
+	// request_id NULL. The partial unique index allows at most one payment per
+	// request.
 	{
 		Version: 4,
 		Name:    "payments_request_linking",
 		Up: func(tx *sql.Tx) error {
-			adds := []struct{ col, ddl string }{
-				{"request_id", `ALTER TABLE payments ADD COLUMN request_id INTEGER REFERENCES payment_requests(id)`},
-				{"settlement", `ALTER TABLE payments ADD COLUMN settlement TEXT NOT NULL DEFAULT ''`},
-				{"partial_reason", `ALTER TABLE payments ADD COLUMN partial_reason TEXT NOT NULL DEFAULT ''`},
+			adds := []struct{ col, def string }{
+				{"request_id", `INTEGER REFERENCES payment_requests(id)`},
+				{"settlement", `TEXT NOT NULL DEFAULT ''`},
+				{"partial_reason", `TEXT NOT NULL DEFAULT ''`},
 			}
 			for _, a := range adds {
-				exists, err := columnExists(tx, "payments", a.col)
-				if err != nil {
-					return err
-				}
-				if exists {
-					continue
-				}
-				if _, err := tx.Exec(a.ddl); err != nil {
+				if err := addColumnIfMissing(tx, "payments", a.col, a.def); err != nil {
 					return err
 				}
 			}
@@ -293,13 +285,9 @@ ON CONFLICT(key) DO NOTHING;
 			return err
 		},
 	},
-	// The reservation verbs entered the vocabulary with Phase 3, after v1 had
-	// already seeded the starter roles on every existing database — and
-	// seedSystemRoles only runs inside v1. Without this, an installed system
-	// upgrades to a phase whose whole flow the Accounts role cannot start.
-	//
-	// It adds the two grants and nothing else: a re-seed would also reset every
-	// deliberate change an administrator has made to a system role.
+	// v5: give the Accounts role reservation:reserve and reservation:release on
+	// databases v1 seeded before those actions existed. It adds the two grants
+	// and nothing else, so an administrator's changes to the role survive.
 	{
 		Version: 5,
 		Name:    "accounts_reservation_grants",
@@ -313,83 +301,72 @@ ON CONFLICT(key) DO NOTHING;
 			return nil
 		},
 	},
-	// Phase 4. Creates the table payment_requests.recoverable_category_id was
-	// declared against (deliberately without a REFERENCES clause — see the v3
-	// schema comment) and links the requests Phase 2 already wrote.
+	// v6: the recoverable categories table that
+	// payment_requests.recoverable_category_id points at, and the back-fill of
+	// that column for existing requests.
 	{
 		Version: 6,
 		Name:    "recoverable_categories",
 		Up:      upRecoverableCategories,
 	},
-	// Phase 5. notification_settings (the twelve admin-editable event rules) and
-	// the in-app notifications table behind the shell bell.
+	// v7: notification_settings (the twelve admin-editable event rules) and the
+	// in-app notifications table behind the bell.
 	{
 		Version: 7,
 		Name:    "notifications",
 		Up:      upNotifications,
 	},
-	// 2026-07-27 audit, F-D-11 / F-E-01 / F-G-001: a recoverable request has no
-	// budget head — the recoverable fieldset never collects one — so the payment
-	// that settles it cannot carry a NOT NULL head_id. SQLite cannot drop a
-	// NOT NULL in place, so the table is rebuilt with head_id nullable.
+	// v8: a recoverable request has no budget head, so the payment that settles
+	// it cannot carry a NOT NULL head_id. SQLite cannot drop NOT NULL in place,
+	// so the table is rebuilt (see upPaymentsHeadNullable).
 	{
 		Version: 8,
 		Name:    "payments_head_nullable",
 		Up:      upPaymentsHeadNullable,
 	},
 	{
-		// The nine workflow actions that notified nobody. Adds rows only —
-		// ON CONFLICT(event) DO NOTHING — so an administrator's edits to v7's
-		// twelve survive, which is why this is a migration and never a re-seed.
+		// v9: rules for nine more workflow events. Adds rows only, so an
+		// administrator's edits to v7's twelve survive.
 		Version: 9,
 		Name:    "notification_events_audit",
-		Up:      UpAuditNotificationEvents,
+		Up:      upAuditNotificationEvents,
 	},
-	// 2026-07-27 audit, F-G-009 / F-G-010: the vendor master's two numbers had
-	// no join to stand on. v2's own comment promised "Phase 2 adds vendor_id
-	// alongside it rather than replacing it" and Phase 2 never did.
+	// v10: record which vendor each payment went to.
 	{
 		Version: 10,
 		Name:    "payments_vendor_id",
 		Up:      upPaymentsVendorID,
 	},
-	// The two events the repair's own documentation pass found still firing
-	// nothing — including the approver reassignment, whose screen promises in
-	// as many words that the new approver is told.
+	// v11: notify the new approver on reassignment, and the requester when an
+	// approver cancels their request.
 	{
 		Version: 11,
 		Name:    "notification_events_reassignment",
-		Up:      UpReassignmentNotificationEvents,
+		Up:      upReassignmentNotificationEvents,
 	},
-	// An approver could not open the invoice on the request they were being
-	// asked to approve.
+	// v12: let the Manager role open the attachments on requests it approves.
 	{
 		Version: 12,
 		Name:    "approver_can_view_attachments",
 		Up:      upApproverAttachmentView,
 	},
-	// The approver-reassignment notice said "needs your approval" for every
-	// status a request can now be handed on in, three of which need no such
-	// thing.
+	// v13: the reassignment notice no longer says "needs your approval", which
+	// was wrong for most statuses a request can be reassigned in.
 	{
 		Version: 13,
 		Name:    "notification_reassigned_wording",
-		Up:      UpReassignedNotificationWording,
+		Up:      upReassignedNotificationWording,
 	},
-	// 2026-09-25 fix wave, settlement-1: the four settlement templates filled
-	// the amount paid from {{amount}}, the requested figure. The seeded defaults
-	// now say {{paid_amount}}; this carries the correction onto an installed
-	// database, and only onto rows still on the old default. (Written as v13 on
-	// the settlement branch; renumbered at integration because the approver
-	// branch's v13 merged first.)
+	// v14: the four settlement notices used {{amount}} (the amount requested)
+	// where they meant the amount paid. Rewrites only rules still on the old
+	// default text.
 	{
 		Version: 14,
 		Name:    "notification_paid_amount",
-		Up:      UpPaidAmountTemplates,
+		Up:      upPaidAmountTemplates,
 	},
-	// settlement-8: a concern the manager raised, not yet answered by Accounts,
-	// is displayed as "Partial — under discussion". It is a flag on the row,
-	// never a status — the state machine is unchanged.
+	// v15: concern_open marks a partial payment the approver raised a concern
+	// about that Accounts has not answered yet. It is a flag, not a status.
 	{
 		Version: 15,
 		Name:    "request_concern_open",
@@ -397,36 +374,20 @@ ON CONFLICT(key) DO NOTHING;
 	},
 	{Version: 16, Name: "recovery_events", Up: upRecoveryEvents},
 	{Version: 17, Name: "request_installments", Up: upInstallments},
-	{Version: 18, Name: "password_reset", Up: UpPasswordReset},
-	{Version: 19, Name: "session_revocation", Up: UpSessionRevocation},
+	{Version: 18, Name: "password_reset", Up: upPasswordReset},
+	{Version: 19, Name: "session_revocation", Up: upSessionRevocation},
 	{Version: 20, Name: "budget_lines", Up: upBudgetLines},
 }
 
-// upRequestConcernOpen adds payment_requests.concern_open, guarded by
-// columnExists exactly as every other additive column migration is.
+// upRequestConcernOpen adds payment_requests.concern_open.
 func upRequestConcernOpen(tx *sql.Tx) error {
-	has, err := columnExists(tx, "payment_requests", "concern_open")
-	if err != nil || has {
-		return err
-	}
-	_, err = tx.Exec(`ALTER TABLE payment_requests ADD COLUMN concern_open INTEGER NOT NULL DEFAULT 0`)
-	return err
+	return addColumnIfMissing(tx, "payment_requests", "concern_open", "INTEGER NOT NULL DEFAULT 0")
 }
 
-// upApproverAttachmentView lets the Manager role read the documents attached to
-// a request.
-//
-// Approving is the one moment in the workflow where somebody is asked to judge
-// whether a payment is justified, and it is the moment the supporting document
-// matters most. The Manager role held no attachment:view, and both download
-// routes are gated on exactly that permission, so the invoice behind a request
-// was unreachable for the person deciding it — pushing the check outside the
-// product, where it leaves no record.
-//
-// Scoped to the seeded system role by name, so a custom role somebody built
-// deliberately without the grant is left alone. Re-runnable: the insert is a
-// no-op if the row is already there, and it does nothing at all on a database
-// whose Manager role has been renamed or removed.
+// upApproverAttachmentView grants attachment:view to the system Manager role,
+// so an approver can open the invoice on the request they are deciding.
+// Custom roles are left alone. It does nothing if the grant is already there
+// or the Manager role has been renamed or removed.
 func upApproverAttachmentView(tx *sql.Tx) error {
 	var roleID int64
 	err := tx.QueryRow(`SELECT id FROM roles WHERE lower(name)='manager' AND is_system=1`).Scan(&roleID)
@@ -442,55 +403,29 @@ func upApproverAttachmentView(tx *sql.Tx) error {
 	return err
 }
 
-// upPaymentsVendorID gives a payment the vendor it was made to, so the vendor
-// master can stop inferring it from a name (F-G-009, F-G-010).
-//
-// It is deliberately NOT a table rebuild. v8 had to rebuild because SQLite
-// cannot drop a NOT NULL in place, and its doc comment records what that cost:
-// PRAGMA foreign_keys rides on the DSN and cannot be changed inside the
-// migration's transaction, defer_foreign_keys alone does not survive a DROP,
-// and payment_attachments had to be stashed and restored around it. None of
-// that applies here. `ALTER TABLE … ADD COLUMN … REFERENCES vendors(id)` is
-// legal with foreign keys enforced precisely because the new column's default
-// is NULL, so no existing row is left dangling — SQLite's own rule, verified
-// against modernc.org/sqlite inside a transaction before this was written, and
-// already relied on by v4 for payments.request_id.
-//
-// Three steps, each of them re-runnable:
-//
-//   - Add the column, guarded by columnExists exactly as v4 guards its three.
-//   - Back-fill from the request the payment settles. payments.request_id is
-//     v4's link and payment_requests.vendor_id is v3's, so the vendor is one
-//     join away for every linked payment; the WHERE keeps it to rows that are
-//     still NULL, so a re-run can never overwrite a later deliberate value.
-//   - Index it, because vendorPaidThisYear now filters on it per vendor row.
-//
-// Payments written before v10 that settle no request keep vendor_id NULL for
-// ever: there is nothing to derive it from. That is what the payee-name
-// fallback in vendorPaidThisYear exists to cover.
+// upPaymentsVendorID records which vendor each payment went to. It adds
+// payments.vendor_id (adding a column that defaults to NULL is allowed with
+// foreign keys on, so no rebuild is needed), back-fills it from the request
+// each payment settles, touching only rows still NULL, and indexes it for
+// vendorPaidThisYear. Payments that settle no request stay NULL and are
+// matched by payee name instead. Every step is safe to re-run.
 func upPaymentsVendorID(tx *sql.Tx) error {
-	exists, err := columnExists(tx, "payments", "vendor_id")
-	if err != nil {
+	if err := addColumnIfMissing(tx, "payments", "vendor_id", "INTEGER REFERENCES vendors(id)"); err != nil {
 		return err
-	}
-	if !exists {
-		if _, err := tx.Exec(`ALTER TABLE payments ADD COLUMN vendor_id INTEGER REFERENCES vendors(id)`); err != nil {
-			return err
-		}
 	}
 	if _, err := tx.Exec(`UPDATE payments
 		SET vendor_id = (SELECT r.vendor_id FROM payment_requests r WHERE r.id = payments.request_id)
 		WHERE vendor_id IS NULL AND request_id IS NOT NULL`); err != nil {
 		return err
 	}
-	_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS idx_payments_vendor ON payments(vendor_id)`)
+	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_payments_vendor ON payments(vendor_id)`)
 	return err
 }
 
 // upPaymentsHeadNullable rebuilds payments so head_id is nullable, preserving
-// every row (production has real historical payments with request_id NULL),
-// every column v4 added, and every index — including the partial unique index
-// idx_payments_request, which is what enforces one-payment-per-request (S9).
+// every row (including historical payments with request_id NULL), every column
+// v4 added, and every index, including the partial unique index
+// idx_payments_request that allows at most one payment per request.
 //
 // Three constraints shape it:
 //
@@ -518,7 +453,7 @@ func upPaymentsVendorID(tx *sql.Tx) error {
 //     cannot silently reorder if the source schema drifts.
 //
 // Guarded by columnNotNull so a re-run against an already-rebuilt table is a
-// no-op, matching how v1/v3/v4 guard themselves.
+// no-op.
 func upPaymentsHeadNullable(tx *sql.Tx) error {
 	notNull, err := columnNotNull(tx, "payments", "head_id")
 	if err != nil {
@@ -581,18 +516,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_request ON payments(request_id) W
 	return nil
 }
 
-// addDefaultApproverColumn is additive and guarded by columnExists, so
-// re-applying v1 to a database that already has the column is a no-op (G9).
-// Phase 2 reads this column to pre-select the approver on a new request.
+// addDefaultApproverColumn adds users.default_approver_id, the approver
+// pre-selected on a user's new requests. Both v1 and v3 call it.
 func addDefaultApproverColumn(tx *sql.Tx) error {
-	has, err := columnExists(tx, "users", "default_approver_id")
-	if err != nil || has {
-		return err
-	}
-	_, err = tx.Exec(`ALTER TABLE users ADD COLUMN default_approver_id INTEGER REFERENCES users(id)`)
-	return err
+	return addColumnIfMissing(tx, "users", "default_approver_id", "INTEGER REFERENCES users(id)")
 }
 
+// systemRoleDef is one seeded starter role.
 type systemRoleDef struct {
 	Name        string
 	Description string
@@ -600,8 +530,8 @@ type systemRoleDef struct {
 	Scopes      []ScopeGrant
 }
 
-// systemRoleDefaults are the seeded starter roles (overview §5). Admin holds
-// every action in the canonical vocabulary.
+// systemRoleDefaults are the seeded starter roles. Admin holds every action in
+// the vocabulary.
 var systemRoleDefaults = []systemRoleDef{
 	{
 		Name:        "Requester",
@@ -609,8 +539,8 @@ var systemRoleDefaults = []systemRoleDef{
 		Grants: []Grant{
 			{"request", "view"}, {"request", "create"}, {"request", "edit"},
 			{"request", "withdraw"}, {"request", "reraise"}, {"request", "comment"},
-			// G1: after approval it is too late to withdraw, so the requester
-			// asks for cancellation and an approver decides.
+			// After approval it is too late to withdraw, so the requester asks
+			// for cancellation and an approver decides.
 			{"request", "cancel"},
 			{"attachment", "view"}, {"attachment", "create"},
 		},
@@ -623,8 +553,8 @@ var systemRoleDefaults = []systemRoleDef{
 			{"request", "view"}, {"request", "comment"},
 			{"approval", "approve"}, {"approval", "reject"}, {"approval", "return"},
 			{"approval", "reassign"}, {"approval", "accept_partial"},
-			// G1 decides a requester's cancellation; G2 cancels an approved
-			// request outright, with a reason.
+			// Decides a requester's cancellation, or cancels an approved
+			// request outright with a reason.
 			{"approval", "cancel"},
 			{"grid", "view"}, {"report", "view"},
 		},
@@ -637,9 +567,8 @@ var systemRoleDefaults = []systemRoleDef{
 			{"request", "view"}, {"request", "comment"},
 			{"payment", "view"}, {"payment", "create"}, {"payment", "edit"}, {"payment", "void"},
 			{"payment", "process"}, {"payment", "settle"}, {"payment", "mark_partial"}, {"payment", "hold"},
-			// Phase 3 put taking a request out of the queue on its own verbs.
-			// Accounts is the role that takes work; reassign — taking work off
-			// somebody else — stays with an administrator.
+			// Accounts takes work from the queue; reassigning work away from
+			// somebody else stays with an administrator.
 			{"reservation", "reserve"}, {"reservation", "release"},
 			{"attachment", "view"}, {"attachment", "create"},
 			{"grid", "view"}, {"report", "view"}, {"report", "export"},
@@ -655,6 +584,8 @@ var systemRoleDefaults = []systemRoleDef{
 	},
 }
 
+// adminGrants is every (resource, action) pair in the vocabulary, in
+// resourceOrder.
 func adminGrants() []Grant {
 	var out []Grant
 	for _, res := range resourceOrder {
@@ -666,7 +597,8 @@ func adminGrants() []Grant {
 }
 
 // seedSystemRoles is idempotent: it upserts each system role by name and resets
-// its grants and scopes to the canonical defaults.
+// its grants and scopes to the canonical defaults. Only v1 calls it; later
+// migrations must add grants instead, so an administrator's changes survive.
 func seedSystemRoles(tx *sql.Tx) error {
 	for _, def := range systemRoleDefaults {
 		var roleID int64
@@ -707,8 +639,8 @@ func seedSystemRoles(tx *sql.Tx) error {
 	return nil
 }
 
-// backfillUserRoles maps every existing user's legacy users.role to a system
-// role (admin->Admin, everything else->Accounts) and inserts user_roles rows.
+// backfillUserRoles gives every existing user the system role that matches
+// their legacy users.role (see systemRoleForLegacy).
 func backfillUserRoles(tx *sql.Tx) error {
 	rows, err := tx.Query(`SELECT id, role FROM users`)
 	if err != nil {
@@ -734,12 +666,8 @@ func backfillUserRoles(tx *sql.Tx) error {
 	rows.Close()
 
 	for _, one := range users {
-		name := "Accounts"
-		if one.role == "admin" {
-			name = "Admin"
-		}
 		var roleID int64
-		if err := tx.QueryRow(`SELECT id FROM roles WHERE lower(name)=lower(?)`, name).Scan(&roleID); err != nil {
+		if err := tx.QueryRow(`SELECT id FROM roles WHERE lower(name)=lower(?)`, systemRoleForLegacy(one.role)).Scan(&roleID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO user_roles(user_id,role_id) VALUES(?,?) ON CONFLICT(user_id,role_id) DO NOTHING`, one.id, roleID); err != nil {
@@ -749,16 +677,21 @@ func backfillUserRoles(tx *sql.Tx) error {
 	return nil
 }
 
-// assignDefaultRoleTx gives a freshly created user a user_roles row derived from
-// its legacy role, so users created after the RBAC migration still resolve to a
-// concrete permission set. Tolerant if system roles are somehow absent.
-func assignDefaultRoleTx(ctx context.Context, tx *sql.Tx, userID int64, legacyRole string) error {
-	name := "Accounts"
+// systemRoleForLegacy maps the legacy users.role value to a starter role name:
+// "admin" becomes Admin, anything else Accounts.
+func systemRoleForLegacy(legacyRole string) string {
 	if legacyRole == "admin" {
-		name = "Admin"
+		return "Admin"
 	}
+	return "Accounts"
+}
+
+// assignDefaultRoleTx gives a freshly created user the starter role matching
+// their legacy role (see systemRoleForLegacy), so every user resolves to a
+// concrete permission set. It does nothing if that role no longer exists.
+func assignDefaultRoleTx(ctx context.Context, tx *sql.Tx, userID int64, legacyRole string) error {
 	var roleID int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM roles WHERE lower(name)=lower(?)`, name).Scan(&roleID)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM roles WHERE lower(name)=lower(?)`, systemRoleForLegacy(legacyRole)).Scan(&roleID)
 	if err == sql.ErrNoRows {
 		return nil
 	}
@@ -801,40 +734,26 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
-// columnNotNull reports whether table.col carries a NOT NULL constraint. It is
-// the re-run guard for rebuild migrations (v8): once the rebuild has happened
-// the constraint is gone and the migration is a no-op, so applying it twice is
-// safe even if user_version is out of sync with the physical schema.
-func columnNotNull(tx *sql.Tx, table, col string) (bool, error) {
-	rows, err := tx.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
-	if err != nil {
-		return false, err
+// addColumnIfMissing runs ALTER TABLE table ADD COLUMN col def unless the
+// column already exists, so the migration is safe to re-run. def is the column
+// definition exactly as it would follow the column name, for example
+// "INTEGER NOT NULL DEFAULT 0". table, col and def must be literals from the
+// migration itself, never user input.
+func addColumnIfMissing(tx *sql.Tx, table, col, def string) error {
+	has, err := columnExists(tx, table, col)
+	if err != nil || has {
+		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notnull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == col {
-			return notnull == 1, nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	return false, fmt.Errorf("column %s.%s not found", table, col)
+	_, err = tx.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, col, def))
+	return err
 }
 
-// columnExists guards additive column migrations so a re-run is safe even if
-// user_version is out of sync with the physical schema.
-func columnExists(tx *sql.Tx, table, col string) (bool, error) {
+// tableColumn reads PRAGMA table_info for table and reports whether col exists
+// and whether it is NOT NULL.
+func tableColumn(tx *sql.Tx, table, col string) (found, notNull bool, err error) {
 	rows, err := tx.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -843,11 +762,33 @@ func columnExists(tx *sql.Tx, table, col string) (bool, error) {
 		var notnull, pk int
 		var dflt sql.NullString
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, err
+			return false, false, err
 		}
 		if name == col {
-			return true, nil
+			return true, notnull == 1, nil
 		}
 	}
-	return false, rows.Err()
+	return false, false, rows.Err()
+}
+
+// columnNotNull reports whether table.col carries a NOT NULL constraint, and
+// is an error if the column does not exist. It is the re-run guard for rebuild
+// migrations (v8): once the rebuild has happened the constraint is gone and
+// the migration is a no-op.
+func columnNotNull(tx *sql.Tx, table, col string) (bool, error) {
+	found, notNull, err := tableColumn(tx, table, col)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, fmt.Errorf("column %s.%s not found", table, col)
+	}
+	return notNull, nil
+}
+
+// columnExists reports whether table.col exists. It guards additive column
+// migrations (see addColumnIfMissing).
+func columnExists(tx *sql.Tx, table, col string) (bool, error) {
+	found, _, err := tableColumn(tx, table, col)
+	return found, err
 }

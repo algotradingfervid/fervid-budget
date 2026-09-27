@@ -1,3 +1,7 @@
+// notifications.go holds the typed email settings, the admin-editable
+// notification rules, and the lookup of users who hold a given permission
+// (how a rule addressed to "Accounts" finds real people).
+
 package store
 
 import (
@@ -8,14 +12,8 @@ import (
 	"strings"
 )
 
-// MailSettings is the typed view of the handful of app_settings keys the
-// notification layer needs.
-//
-// The plan called this AppSettings with Get/SetAppSettings accessors, but
-// Phase 2 already owns `AppSettings(ctx) map[string]string` and
-// `SetAppSettings(ctx, actor, map[string]string)` — the generic key/value pair
-// the Configuration screen saves through. These are the typed wrapper over a
-// named subset of the same table, so they carry their own name.
+// MailSettings is the typed view of the app_settings keys the notification
+// layer needs.
 //
 // The SMTP password is deliberately absent: it comes from the environment
 // (config.SMTPPassword) and is never persisted. TestMailSettingsNeverStoreA
@@ -43,6 +41,8 @@ const (
 	keyBaseURL        = "base_url"
 )
 
+// GetMailSettings reads the email settings; a missing or invalid port reads
+// as 0.
 func (s *Store) GetMailSettings(ctx context.Context) (MailSettings, error) {
 	all, err := s.AppSettings(ctx)
 	if err != nil {
@@ -60,6 +60,8 @@ func (s *Store) GetMailSettings(ctx context.Context) (MailSettings, error) {
 	}, nil
 }
 
+// SetMailSettings saves the email settings (trimmed, base URL without a
+// trailing slash) through SetAppSettings, which audits the change.
 func (s *Store) SetMailSettings(ctx context.Context, actor User, in MailSettings) error {
 	return s.SetAppSettings(ctx, actor, map[string]string{
 		keySMTPHost:       strings.TrimSpace(in.SMTPHost),
@@ -72,10 +74,31 @@ func (s *Store) SetMailSettings(ctx context.Context, actor User, in MailSettings
 	})
 }
 
+// NotificationSetting is one admin-configurable event rule.
+//
+// Label is the human sentence the admin screen shows and Audience is the
+// plain-English "Goes to" column. Both are seeded, so the screen never
+// hardcodes copy per event and an event added later describes itself.
+type NotificationSetting struct {
+	Event            string
+	Label            string
+	Audience         string
+	EmailEnabled     bool
+	ToRecipients     string
+	CcRecipients     string
+	IncludeRequester bool
+	IncludeManager   bool
+	IncludeAccounts  bool
+	SubjectTemplate  string
+	BodyTemplate     string
+}
+
 const notificationSettingSelect = `SELECT event,label,audience,email_enabled,to_recipients,cc_recipients,
 	include_requester,include_manager,include_accounts,subject_template,body_template
 	FROM notification_settings`
 
+// scanNotificationSetting reads one notification_settings row; sql.ErrNoRows
+// becomes ErrNotFound.
 func scanNotificationSetting(sc interface{ Scan(...any) error }) (NotificationSetting, error) {
 	var n NotificationSetting
 	var email, req, mgr, acct int
@@ -88,6 +111,7 @@ func scanNotificationSetting(sc interface{ Scan(...any) error }) (NotificationSe
 	return n, err
 }
 
+// NotificationSetting reads the rule for one event, or ErrNotFound.
 func (s *Store) NotificationSetting(ctx context.Context, event string) (NotificationSetting, error) {
 	return scanNotificationSetting(s.db.QueryRowContext(ctx, notificationSettingSelect+` WHERE event=?`, event))
 }
