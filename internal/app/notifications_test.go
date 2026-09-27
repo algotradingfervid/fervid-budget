@@ -10,65 +10,82 @@ import (
 	"fervidbudget/internal/notify"
 )
 
-// F-F-06 / F-D-12 — six real workflow actions notified nobody, and the release
-// screen promised in as many words that they did. Every one is driven through its
-// own route here, and the row is read back for the person the seeded rule
-// addresses.
-func TestWorkflowActionsThatUsedToNotifyNobodyNowFire(t *testing.T) {
+// Workflow actions that change what somebody is waiting on notify that person:
+// withdrawing or re-raising a request tells its approver; lifting a hold,
+// releasing a reservation or reassigning it tells the requester. Each action is
+// driven through its own route and the notification is read back for the
+// person the seeded rule addresses. The steps run in order and share one
+// session.
+func TestWorkflowActionsNotifyTheAffectedPerson(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Notify")
 	requester := s.seedRequester("firer@example.test", "Fire Requester", "FirePass12345")
 
-	// Withdraw: the approver's queue item disappears without a decision.
-	pending := s.seedPendingRequest(901, requester.ID, admin.ID, headID, 120000)
-	s.login("firer@example.test", "FirePass12345")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/withdraw", pending), url.Values{}), http.StatusSeeOther)
-	if !hasEvent(notificationTitles(t, s, admin.ID), notify.EventRequestWithdrawn) {
-		t.Error("withdrawing a pending request tells the approver nothing")
-	}
+	t.Run("withdrawing tells the approver", func(t *testing.T) {
+		s := s.withT(t)
+		// Withdraw: the approver's queue item disappears without a decision.
+		pending := s.seedPendingRequest(901, requester.ID, admin.ID, headID, 120000)
+		s.login("firer@example.test", "FirePass12345")
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/withdraw", pending), url.Values{}), http.StatusSeeOther)
+		if !hasEvent(notificationTitles(t, s, admin.ID), notify.EventRequestWithdrawn) {
+			t.Error("withdrawing a pending request tells the approver nothing")
+		}
+	})
 
-	// Re-raise: fired for the NEW request, which is the one that needs deciding.
-	rejected := s.seedPendingRequest(902, requester.ID, admin.ID, headID, 130000)
-	s.loginAdmin()
-	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/reject", rejected),
-		url.Values{"reason": {"Wrong head"}}), http.StatusSeeOther)
-	s.login("firer@example.test", "FirePass12345")
-	resp := s.postForm(fmt.Sprintf("/requests/%d/reraise", rejected), url.Values{})
-	requireStatus(t, resp, http.StatusSeeOther)
-	if !hasEvent(notificationTitles(t, s, admin.ID), notify.EventRequestReraised) {
-		t.Error("re-raising a rejected request tells the approver nothing")
-	}
+	t.Run("re-raising tells the approver", func(t *testing.T) {
+		s := s.withT(t)
+		// Re-raise: fired for the NEW request, which is the one that needs deciding.
+		rejected := s.seedPendingRequest(902, requester.ID, admin.ID, headID, 130000)
+		s.loginAdmin()
+		requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/reject", rejected),
+			url.Values{"reason": {"Wrong head"}}), http.StatusSeeOther)
+		s.login("firer@example.test", "FirePass12345")
+		resp := s.postForm(fmt.Sprintf("/requests/%d/reraise", rejected), url.Values{})
+		requireStatus(t, resp, http.StatusSeeOther)
+		if !hasEvent(notificationTitles(t, s, admin.ID), notify.EventRequestReraised) {
+			t.Error("re-raising a rejected request tells the approver nothing")
+		}
+	})
 
-	// Hold then unhold: request_on_hold already told the requester the pause
-	// began; request_unheld is the half that says it is over.
-	held := s.seedApprovedRequest(903, requester.ID, admin.ID, headID, 140000)
-	s.loginAdmin()
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", held),
-		url.Values{"reason": {"Which cost centre?"}}), http.StatusSeeOther)
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", held), url.Values{}), http.StatusSeeOther)
-	if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventRequestUnheld) {
-		t.Error("lifting a hold tells the requester nothing")
-	}
+	t.Run("lifting a hold tells the requester", func(t *testing.T) {
+		s := s.withT(t)
+		// Hold then unhold: request_on_hold already told the requester the pause
+		// began; request_unheld is the half that says it is over.
+		held := s.seedApprovedRequest(903, requester.ID, admin.ID, headID, 140000)
+		s.loginAdmin()
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", held),
+			url.Values{"reason": {"Which cost centre?"}}), http.StatusSeeOther)
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/unhold", held), url.Values{}), http.StatusSeeOther)
+		if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventRequestUnheld) {
+			t.Error("lifting a hold tells the requester nothing")
+		}
+	})
 
-	// Release: the screen states "The requester and the approver are both
-	// notified", which is now true.
-	released := s.seedApprovedRequest(904, requester.ID, admin.ID, headID, 150000)
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", released), url.Values{}), http.StatusSeeOther)
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/release", released),
-		url.Values{"reason": {"Waiting on a corrected invoice"}, "confirm": {"on"}}), http.StatusSeeOther)
-	if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventReservationReleased) {
-		t.Error("releasing a reservation tells the requester nothing")
-	}
+	t.Run("releasing a reservation tells the requester", func(t *testing.T) {
+		s := s.withT(t)
+		// Release: the screen states "The requester and the approver are both
+		// notified", which is now true.
+		released := s.seedApprovedRequest(904, requester.ID, admin.ID, headID, 150000)
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", released), url.Values{}), http.StatusSeeOther)
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/release", released),
+			url.Values{"reason": {"Waiting on a corrected invoice"}, "confirm": {"on"}}), http.StatusSeeOther)
+		if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventReservationReleased) {
+			t.Error("releasing a reservation tells the requester nothing")
+		}
+	})
 
-	// Reassign the reservation to a colleague who can work the queue.
-	colleague := s.seedColleague("taker@example.test", "Taker Rao", "TakerPass12345")
-	reassigned := s.seedApprovedRequest(905, requester.ID, admin.ID, headID, 160000)
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reassigned), url.Values{}), http.StatusSeeOther)
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reassigned),
-		url.Values{"to_user_id": {strconvFormat(colleague.ID)}, "reason": {"Off sick"}, "confirm": {"on"}}), http.StatusSeeOther)
-	if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventReservationReassigned) {
-		t.Error("reassigning a reservation tells the requester nothing")
-	}
+	t.Run("reassigning a reservation tells the requester", func(t *testing.T) {
+		s := s.withT(t)
+		// Reassign the reservation to a colleague who can work the queue.
+		colleague := s.seedColleague("taker@example.test", "Taker Rao", "TakerPass12345")
+		reassigned := s.seedApprovedRequest(905, requester.ID, admin.ID, headID, 160000)
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reassigned), url.Values{}), http.StatusSeeOther)
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign", reassigned),
+			url.Values{"to_user_id": {strconvFormat(colleague.ID)}, "reason": {"Off sick"}, "confirm": {"on"}}), http.StatusSeeOther)
+		if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventReservationReassigned) {
+			t.Error("reassigning a reservation tells the requester nothing")
+		}
+	})
 }
 
 // F-F-06 — the partial-review decisions and the two halves of a cancellation.
@@ -79,47 +96,56 @@ func TestPartialAndCancellationDecisionsFire(t *testing.T) {
 	admin, headID := s.seedHead("Decide notify")
 	requester := s.seedRequester("decided@example.test", "Decided Requester", "DecidePass1234")
 
-	// Accept a partial: the requester learns the balance is never coming.
-	s.loginAdmin()
-	accepted := s.seedApprovedRequest(911, requester.ID, admin.ID, headID, 10000000)
-	s.seedPartialReview(accepted, headID, "Bank deducted charges")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", accepted),
-		url.Values{"note": {"Not worth chasing"}}), http.StatusSeeOther)
-	if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventPaymentPartialAccepted) {
-		t.Error("accepting a partial payment tells the requester nothing")
-	}
-
-	// Raise a concern: it waits on Accounts, so Accounts is told.
-	concerned := s.seedApprovedRequest(912, requester.ID, admin.ID, headID, 10000000)
-	s.seedPartialReview(concerned, headID, "Short by a lakh")
-	before := len(notificationTitles(t, s, admin.ID))
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/raise-concern", concerned),
-		url.Values{"comment": {"Why is this short?"}}), http.StatusSeeOther)
-	if after := len(notificationTitles(t, s, admin.ID)); after == before {
-		t.Error("raising a concern about a shortfall tells nobody")
-	}
-
-	// A cancellation accepted and a cancellation declined are two events,
-	// because the sentences are opposites.
-	for _, tc := range []struct {
-		seq      int
-		decision string
-		event    string
-	}{
-		{913, "accept", notify.EventCancellationAccepted},
-		{914, "decline", notify.EventCancellationDeclined},
-	} {
-		id := s.seedApprovedRequest(tc.seq, requester.ID, admin.ID, headID, 220000)
-		s.login("decided@example.test", "DecidePass1234")
-		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel-request", id),
-			url.Values{"reason": {"Order withdrawn"}}), http.StatusSeeOther)
+	t.Run("accepting a partial tells the requester", func(t *testing.T) {
+		s := s.withT(t)
+		// Accept a partial: the requester learns the balance is never coming.
 		s.loginAdmin()
-		requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/cancellation", id),
-			url.Values{"decision": {tc.decision}, "note": {"Decided"}}), http.StatusSeeOther)
-		if !hasEvent(notificationTitles(t, s, requester.ID), tc.event) {
-			t.Errorf("a %sd cancellation does not fire %s", tc.decision, tc.event)
+		accepted := s.seedApprovedRequest(911, requester.ID, admin.ID, headID, 10000000)
+		s.seedPartialReview(accepted, headID, "Bank deducted charges")
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", accepted),
+			url.Values{"note": {"Not worth chasing"}}), http.StatusSeeOther)
+		if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventPaymentPartialAccepted) {
+			t.Error("accepting a partial payment tells the requester nothing")
 		}
-	}
+	})
+
+	t.Run("raising a concern tells Accounts", func(t *testing.T) {
+		s := s.withT(t)
+		// Raise a concern: it waits on Accounts, so Accounts is told.
+		concerned := s.seedApprovedRequest(912, requester.ID, admin.ID, headID, 10000000)
+		s.seedPartialReview(concerned, headID, "Short by a lakh")
+		before := len(notificationTitles(t, s, admin.ID))
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/raise-concern", concerned),
+			url.Values{"comment": {"Why is this short?"}}), http.StatusSeeOther)
+		if after := len(notificationTitles(t, s, admin.ID)); after == before {
+			t.Error("raising a concern about a shortfall tells nobody")
+		}
+	})
+
+	t.Run("cancellation decisions tell the requester", func(t *testing.T) {
+		s := s.withT(t)
+		// A cancellation accepted and a cancellation declined are two events,
+		// because the sentences are opposites.
+		for _, tc := range []struct {
+			seq      int
+			decision string
+			event    string
+		}{
+			{913, "accept", notify.EventCancellationAccepted},
+			{914, "decline", notify.EventCancellationDeclined},
+		} {
+			id := s.seedApprovedRequest(tc.seq, requester.ID, admin.ID, headID, 220000)
+			s.login("decided@example.test", "DecidePass1234")
+			requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/cancel-request", id),
+				url.Values{"reason": {"Order withdrawn"}}), http.StatusSeeOther)
+			s.loginAdmin()
+			requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/cancellation", id),
+				url.Values{"decision": {tc.decision}, "note": {"Decided"}}), http.StatusSeeOther)
+			if !hasEvent(notificationTitles(t, s, requester.ID), tc.event) {
+				t.Errorf("a %sd cancellation does not fire %s", tc.decision, tc.event)
+			}
+		}
+	})
 }
 
 // F-F-07 — "Save corrections" leaves the request `returned` on purpose, and the
@@ -319,38 +345,44 @@ func TestReassignmentAndOutrightCancellationNotifyTheirSubject(t *testing.T) {
 	second := s.seedRequester("secondapprover@example.test", "Second Approver", "SecondPass12345")
 	s.assignRole(second.ID, "Manager")
 
-	id := s.seedPendingRequest(931, requester.ID, admin.ID, headID, 140000)
-	s.loginAdmin()
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", id), url.Values{
-		"manager_id": {fmt.Sprint(second.ID)},
-		"reason":     {"Original approver is on leave"},
-	}), http.StatusSeeOther)
+	t.Run("reassigning the approver tells the new approver only", func(t *testing.T) {
+		s := s.withT(t)
+		id := s.seedPendingRequest(931, requester.ID, admin.ID, headID, 140000)
+		s.loginAdmin()
+		requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", id), url.Values{
+			"manager_id": {fmt.Sprint(second.ID)},
+			"reason":     {"Original approver is on leave"},
+		}), http.StatusSeeOther)
 
-	if !hasEvent(notificationTitles(t, s, second.ID), notify.EventApproverReassigned) {
-		t.Error("the sheet promises the new approver is told, and they were not")
-	}
-	// The person it must NOT go to: the approver it was taken away from has
-	// nothing left to do, and IncludeManager reads the row after the store moved
-	// it, so a row here would mean the event fired against the stale manager_id.
-	if hasEvent(notificationTitles(t, s, admin.ID), notify.EventApproverReassigned) {
-		t.Error("the outgoing approver was told to approve a request that is no longer theirs")
-	}
+		if !hasEvent(notificationTitles(t, s, second.ID), notify.EventApproverReassigned) {
+			t.Error("the sheet promises the new approver is told, and they were not")
+		}
+		// The person it must NOT go to: the approver it was taken away from has
+		// nothing left to do, and IncludeManager reads the row after the store moved
+		// it, so a row here would mean the event fired against the stale manager_id.
+		if hasEvent(notificationTitles(t, s, admin.ID), notify.EventApproverReassigned) {
+			t.Error("the outgoing approver was told to approve a request that is no longer theirs")
+		}
+	})
 
-	// Cancelling outright is the fourth cancellation path and the only one nobody
-	// asked for, which makes it the one the requester is least able to guess at.
-	// It is legal only from `approved` (legalTransitions, internal/store/requests.go:191),
-	// so the request is approved first — this is the manager killing money they
-	// had already agreed to, which is exactly why the requester needs telling.
-	cancelled := s.seedPendingRequest(932, requester.ID, admin.ID, headID, 150000)
-	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/approve", cancelled),
-		url.Values{"approved_amount": {"1500.00"}}), http.StatusSeeOther)
-	requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/cancel", cancelled), url.Values{
-		"reason": {"Duplicate of PR-2026-000931"},
-	}), http.StatusSeeOther)
+	t.Run("cancelling outright tells the requester", func(t *testing.T) {
+		s := s.withT(t)
+		// Cancelling outright is the fourth cancellation path and the only one nobody
+		// asked for, which makes it the one the requester is least able to guess at.
+		// It is legal only from `approved` (legalTransitions, internal/store/requests.go:191),
+		// so the request is approved first — this is the manager killing money they
+		// had already agreed to, which is exactly why the requester needs telling.
+		cancelled := s.seedPendingRequest(932, requester.ID, admin.ID, headID, 150000)
+		requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/approve", cancelled),
+			url.Values{"approved_amount": {"1500.00"}}), http.StatusSeeOther)
+		requireStatus(t, s.submitScreen(fmt.Sprintf("/requests/%d/cancel", cancelled), url.Values{
+			"reason": {"Duplicate of PR-2026-000931"},
+		}), http.StatusSeeOther)
 
-	if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventRequestCancelled) {
-		t.Error("the approver cancelled the request outright and the requester was never told")
-	}
+		if !hasEvent(notificationTitles(t, s, requester.ID), notify.EventRequestCancelled) {
+			t.Error("the approver cancelled the request outright and the requester was never told")
+		}
+	})
 }
 
 // PAY-D02: configured audiences are authoritative. A successful receipt may

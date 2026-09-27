@@ -872,87 +872,102 @@ func TestRolesAdminCreateEditCopyDelete(t *testing.T) {
 		"perm":          {"request:view"},
 		"scope_request": {"all"},
 	}
-	resp = s.postForm("/roles", save)
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
+	t.Run("saving the matrix expands cells and keeps the card", func(t *testing.T) {
+		s := s.withT(t)
+		resp := s.postForm("/roles", save)
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
 
-	grants, scopes, err := s.st.RolePermissions(s.ctx, reviewerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	held := map[string]bool{}
-	for _, g := range grants {
-		held[g.Resource+":"+g.Action] = true
-	}
-	for _, want := range []string{
-		"approval:approve", "approval:reject", "approval:return", "approval:reassign",
-		"approval:accept_partial", "report:view", "request:view",
-	} {
-		if !held[want] {
-			t.Fatalf("cell expansion did not grant %s (got %v)", want, grants)
+		grants, scopes, err := s.st.RolePermissions(s.ctx, reviewerID)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if len(grants) != 7 {
-		t.Fatalf("saved %d grants, want exactly the 7 the cells and refinement cover: %v", len(grants), grants)
-	}
-	if len(scopes) != 1 || scopes[0].Resource != "request" || scopes[0].Scope != "all" {
-		t.Fatalf("saved scopes = %v, want request=all", scopes)
-	}
-	role, err := s.st.Role(s.ctx, reviewerID)
-	if err != nil || role.Description != "Reviews and approves" {
-		t.Fatalf("role card did not save: %+v, %v", role, err)
-	}
-
-	// Clearing a cell revokes everything behind it: the same POST without
-	// requests:approve leaves only what is still submitted.
-	save.Del("cell")
-	save.Add("cell", "reports:view")
-	resp = s.postForm("/roles", save)
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
-	grants, _, err = s.st.RolePermissions(s.ctx, reviewerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, g := range grants {
-		if g.Resource == "approval" {
-			t.Fatalf("clearing the Approve cell left %s:%s behind", g.Resource, g.Action)
+		held := map[string]bool{}
+		for _, g := range grants {
+			held[g.Resource+":"+g.Action] = true
 		}
-	}
-	if len(grants) != 2 {
-		t.Fatalf("after clearing the cell: %v, want report:view + request:view", grants)
-	}
-
-	// A hand-crafted POST cannot invent a grant outside the vocabulary.
-	resp = s.postForm("/roles", url.Values{
-		"role_id": {strconvFormat(reviewerID)},
-		"name":    {"Reviewer"},
-		"perm":    {"payment:read"},
+		for _, want := range []string{
+			"approval:approve", "approval:reject", "approval:return", "approval:reassign",
+			"approval:accept_partial", "report:view", "request:view",
+		} {
+			if !held[want] {
+				t.Fatalf("cell expansion did not grant %s (got %v)", want, grants)
+			}
+		}
+		if len(grants) != 7 {
+			t.Fatalf("saved %d grants, want exactly the 7 the cells and refinement cover: %v", len(grants), grants)
+		}
+		if len(scopes) != 1 || scopes[0].Resource != "request" || scopes[0].Scope != "all" {
+			t.Fatalf("saved scopes = %v, want request=all", scopes)
+		}
+		role, err := s.st.Role(s.ctx, reviewerID)
+		if err != nil || role.Description != "Reviews and approves" {
+			t.Fatalf("role card did not save: %+v, %v", role, err)
+		}
 	})
-	requireStatus(t, resp, http.StatusBadRequest)
-	_ = responseBody(t, resp)
 
-	// Copy the role.
-	resp = s.postForm("/roles/"+strconvFormat(reviewerID)+"/copy", url.Values{"name": {"Reviewer Copy"}})
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
-
-	// Delete the custom role; deleting a system role is rejected.
-	resp = s.postForm("/roles/"+strconvFormat(reviewerID)+"/delete", nil)
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
-	if _, err := s.st.Role(s.ctx, reviewerID); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("Reviewer still present after delete: %v", err)
-	}
-	var adminID int64
-	for _, r := range roles {
-		if r.Name == "Admin" {
-			adminID = r.ID
+	t.Run("clearing a cell revokes everything behind it", func(t *testing.T) {
+		s := s.withT(t)
+		// Clearing a cell revokes everything behind it: the same POST without
+		// requests:approve leaves only what is still submitted.
+		save.Del("cell")
+		save.Add("cell", "reports:view")
+		resp := s.postForm("/roles", save)
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
+		grants, _, err := s.st.RolePermissions(s.ctx, reviewerID)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	resp = s.postForm("/roles/"+strconvFormat(adminID)+"/delete", nil)
-	requireStatus(t, resp, http.StatusForbidden)
-	_ = responseBody(t, resp)
+		for _, g := range grants {
+			if g.Resource == "approval" {
+				t.Fatalf("clearing the Approve cell left %s:%s behind", g.Resource, g.Action)
+			}
+		}
+		if len(grants) != 2 {
+			t.Fatalf("after clearing the cell: %v, want report:view + request:view", grants)
+		}
+	})
+
+	t.Run("a forged grant outside the vocabulary is refused", func(t *testing.T) {
+		s := s.withT(t)
+		// A hand-crafted POST cannot invent a grant outside the vocabulary.
+		resp := s.postForm("/roles", url.Values{
+			"role_id": {strconvFormat(reviewerID)},
+			"name":    {"Reviewer"},
+			"perm":    {"payment:read"},
+		})
+		requireStatus(t, resp, http.StatusBadRequest)
+		_ = responseBody(t, resp)
+	})
+
+	t.Run("copying a role", func(t *testing.T) {
+		s := s.withT(t)
+		// Copy the role.
+		resp := s.postForm("/roles/"+strconvFormat(reviewerID)+"/copy", url.Values{"name": {"Reviewer Copy"}})
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
+	})
+
+	t.Run("a custom role can be deleted and a system role cannot", func(t *testing.T) {
+		s := s.withT(t)
+		// Delete the custom role; deleting a system role is rejected.
+		resp := s.postForm("/roles/"+strconvFormat(reviewerID)+"/delete", nil)
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
+		if _, err := s.st.Role(s.ctx, reviewerID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("Reviewer still present after delete: %v", err)
+		}
+		var adminID int64
+		for _, r := range roles {
+			if r.Name == "Admin" {
+				adminID = r.ID
+			}
+		}
+		resp = s.postForm("/roles/"+strconvFormat(adminID)+"/delete", nil)
+		requireStatus(t, resp, http.StatusForbidden)
+		_ = responseBody(t, resp)
+	})
 }
 
 func TestUsersScreenAssignsMultipleRoles(t *testing.T) {

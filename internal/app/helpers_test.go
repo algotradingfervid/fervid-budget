@@ -279,6 +279,14 @@ func attachmentMultipart(t *testing.T, fields url.Values, name string, contents 
 	return &body, mw.FormDataContentType()
 }
 
+// withT is the same server and signed-in session reporting to t, for use
+// inside a subtest so helper failures land on the subtest that made them.
+func (s *appTestServer) withT(t *testing.T) *appTestServer {
+	clone := *s
+	clone.t = t
+	return &clone
+}
+
 // newAppTestClient gives a second, independently authenticated client against
 // the same server so one test can compare what two roles are shown.
 func newAppTestClient(t *testing.T, s *appTestServer) *appTestServer {
