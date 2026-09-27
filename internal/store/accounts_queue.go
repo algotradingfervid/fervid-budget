@@ -558,25 +558,10 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		return out, err
 	}
 
-	// Two payee columns, exactly as Request() reads them: vendor_payee is the raw
-	// snapshot, filled only for reimbursement and employee advance, and Vendor is
-	// the display payee a vendor_invoice actually has. A screen that renders the
-	// snapshot asks the accountant to pay a blank.
-	// short_title is selected because the dashboard's work-area rows render
-	// "{{.Number}} · {{.ShortTitle}}". Without it every row on the Accounts and
-	// administrator home screens ended in a separator with nothing after it.
-	q := `SELECT r.id, r.number, COALESCE(r.short_title,''), r.status, r.amount, r.approved_amount, COALESCE(r.vendor_payee,''),
-		COALESCE(NULLIF(v.name,''),r.vendor_payee,''),
-		COALESCE(p.name,''), COALESCE(h.name,''), r.requester_id, COALESCE(u.name,''), r.manager_id,
-		r.on_hold, COALESCE(r.hold_reason,''), r.processing_by, COALESCE(pu.name,''), r.processing_at,
-		r.head_id, COALESCE(r.needed_by,''), r.treatment, r.type, r.approved_at, r.concern_open, r.urgent,
- (SELECT COALESCE(SUM(ip.amount),0) FROM payments ip WHERE ip.request_id=r.id AND ip.voided_at IS NULL)
-		FROM payment_requests r
-		LEFT JOIN projects p ON p.id=r.project_id
-		LEFT JOIN heads h ON h.id=r.head_id
-		LEFT JOIN users pu ON pu.id=r.processing_by
-		LEFT JOIN vendors v ON v.id=r.vendor_id
-		JOIN users u ON u.id=r.requester_id
+	// The rows are full requests, read exactly as Request() reads them, so the
+	// queue shows the same display payee, short title and paid amount as the
+	// request's own screen.
+	q := requestSelect + `
 		WHERE `
 	var args []any
 	switch opts.Status {
@@ -627,7 +612,7 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 			amountClause += ` OR r.amount = ?`
 			extra = append(extra, paise)
 		}
-		q += ` AND (lower(r.number) LIKE ? ESCAPE '\' OR lower(u.name) LIKE ? ESCAPE '\' OR lower(COALESCE(NULLIF(v.name,''),r.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(h.name,'')) LIKE ? ESCAPE '\'` + amountClause + `)`
+		q += ` AND (lower(r.number) LIKE ? ESCAPE '\' OR lower(ru.name) LIKE ? ESCAPE '\' OR lower(COALESCE(NULLIF(v.name,''),r.vendor_payee,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(h.name,'')) LIKE ? ESCAPE '\'` + amountClause + `)`
 		args = append(args, extra...)
 	}
 	// CURRENT_TIMESTAMP is second-resolution, so a burst of approvals shares one
@@ -653,42 +638,13 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var r Request
-		var approved, processingBy, headID sql.NullInt64
-		var processingAt, approvedAt sql.NullTime
-		var onHold, concernOpen, urgent int
-		if err := rows.Scan(&r.ID, &r.Number, &r.ShortTitle, &r.Status, &r.Amount, &approved, &r.VendorPayee, &r.Vendor,
-			&r.Project, &r.Head, &r.RequesterID, &r.RequesterName, &r.ManagerID,
-			&onHold, &r.HoldReason, &processingBy, &r.ProcessingByName, &processingAt,
-			&headID, &r.NeededBy, &r.Treatment, &r.Type, &approvedAt, &concernOpen, &urgent, &r.PaidAmount); err != nil {
+		r, err := scanRequest(rows)
+		if err != nil {
 			return out, err
 		}
-		r.ConcernOpen = concernOpen == 1
-		if approved.Valid {
-			v := approved.Int64
-			r.ApprovedAmount = &v
-		}
-		if processingBy.Valid {
-			v := processingBy.Int64
-			r.ProcessingBy = &v
-		}
-		if headID.Valid {
-			v := headID.Int64
-			r.HeadID = &v
-		}
-		if processingAt.Valid {
-			v := processingAt.Time
-			r.ProcessingAt = &v
-		}
-		if approvedAt.Valid {
-			v := approvedAt.Time
-			r.ApprovedAt = &v
-		}
-		r.OnHold = onHold == 1
-		r.Urgent = urgent == 1
 		// Availability is re-derived from the row, never from the tab, so no tab
 		// can ever hand the UI a "Take for processing" button it must not have.
-		if r.Status == "approved" && !processingBy.Valid && !r.OnHold {
+		if r.Status == "approved" && r.ProcessingBy == nil && !r.OnHold {
 			out.Available = append(out.Available, r)
 		} else {
 			out.Unavailable = append(out.Unavailable, r)
