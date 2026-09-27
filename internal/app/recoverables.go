@@ -2,9 +2,7 @@ package app
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/csv"
-	"encoding/hex"
 	"errors"
 	"fervidbudget/internal/money"
 	"fmt"
@@ -187,22 +185,23 @@ func (a *App) recoverableDetail(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) recordRecovery(w http.ResponseWriter, r *http.Request) {
 	in := store.RecoveryInput{Kind: r.FormValue("kind"), AmountText: r.FormValue("amount"), OccurredOn: r.FormValue("occurred_on"), Reference: r.FormValue("reference"), Note: r.FormValue("note"), Token: r.FormValue("token")}
+	id := pathID(r)
 	amount, err := money.ParsePaise(in.AmountText)
-	if err == nil {
-		in.Amount = amount
-		_, err = a.st.RecordRecovery(r.Context(), auth.CurrentUser(r), parseID(r.PathValue("id")), in)
-	} else {
-		err = fmt.Errorf("%w: enter a positive recovery amount with up to two decimal places", store.ErrValidation)
-	}
 	if err != nil {
-		if errors.Is(err, store.ErrValidation) {
-			a.renderRecoverableDetail(w, r, in, strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": "), http.StatusUnprocessableEntity)
-		} else {
-			a.respondStoreError(w, r, err)
-		}
-		return
+		err = fmt.Errorf("%w: enter a positive recovery amount with up to two decimal places", store.ErrValidation)
+	} else {
+		in.Amount = amount
+		_, err = a.st.RecordRecovery(r.Context(), auth.CurrentUser(r), id, in)
 	}
-	http.Redirect(w, r, fmt.Sprintf("/recoverables/%d?saved=1#recovery-history", parseID(r.PathValue("id"))), http.StatusSeeOther)
+	switch {
+	case errors.Is(err, store.ErrValidation):
+		message := strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": ")
+		a.renderRecoverableDetail(w, r, in, message, http.StatusUnprocessableEntity)
+	case err != nil:
+		a.respondStoreError(w, r, err)
+	default:
+		http.Redirect(w, r, fmt.Sprintf("/recoverables/%d?saved=1#recovery-history", id), http.StatusSeeOther)
+	}
 }
 
 func (a *App) renderRecoverableDetail(w http.ResponseWriter, r *http.Request, input store.RecoveryInput, recoveryError string, status int) {
@@ -252,12 +251,12 @@ func (a *App) renderRecoverableDetail(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 	if input.Token == "" {
-		var token [24]byte
-		if _, err := rand.Read(token[:]); err != nil {
+		token, err := newFormToken()
+		if err != nil {
 			a.respondStoreError(w, r, err)
 			return
 		}
-		input.Token = hex.EncodeToString(token[:])
+		input.Token = token
 	}
 	if input.OccurredOn == "" {
 		input.OccurredOn = time.Now().Format("2006-01-02")

@@ -2,11 +2,14 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 
 	"fervidbudget/internal/auth"
@@ -243,16 +246,23 @@ func (a *App) requestCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Nothing was written, so nothing may be left on disk either.
 		removeStagedAttachment(a.log, r, stagedPath)
-		status := storeErrorStatus(err)
-		if status >= http.StatusInternalServerError {
+		if status, ok := userError(err); ok {
+			a.renderRejectedRequestForm(w, r, status, in, err)
+		} else {
 			a.respondStoreError(w, r, err)
-			return
 		}
-		a.renderRejectedRequestForm(w, r, status, in, err)
 		return
 	}
 	a.fire(r, notify.EventRequestSubmitted, id)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d/submitted", id), http.StatusSeeOther)
+}
+
+// userError reports whether err is a refusal the person can fix (any 4xx
+// status), so the form is shown again with the message, and returns that
+// status. Anything else is a server fault and gets the error page.
+func userError(err error) (int, bool) {
+	status := storeErrorStatus(err)
+	return status, status < http.StatusInternalServerError
 }
 
 // renderRejectedRequestForm puts the form back with the message and everything
@@ -300,15 +310,24 @@ func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
-	data.FormType = in.Type
 	data.Request2 = requestFromInput(in)
-	data.Categories = categoriesForType(in.Type, data.Categories)
-	data.RecCategory = resolveRecoverableCategory(in.RecoverableCategory, data.Categories)
-	if data.Vendors, err = a.vendorChoices(r, in.Type); err != nil {
+	if err := a.setFormType(r, &data, in.Type, in.RecoverableCategory); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
 	a.renderStatus(w, r, status, "request_form", data)
+}
+
+// setFormType narrows a request form to one request type: the recoverable
+// categories that type may use, the row of the chosen category (so the form
+// shows the fields it requires) and, for the vendor types, the vendor list.
+func (a *App) setFormType(r *http.Request, data *PageData, kind, category string) error {
+	data.FormType = kind
+	data.Categories = categoriesForType(kind, data.Categories)
+	data.RecCategory = resolveRecoverableCategory(category, data.Categories)
+	var err error
+	data.Vendors, err = a.vendorChoices(r, kind)
+	return err
 }
 
 // requestFromInput turns what was posted back into the shape the form renders
@@ -378,12 +397,22 @@ func (a *App) loadRequestByID(w http.ResponseWriter, r *http.Request, id int64) 
 		a.respondStoreError(w, r, err)
 		return store.Request{}, false
 	}
-	if !a.canSeeRequest(r, req) {
-		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
-			fmt.Errorf("request %d is outside the caller's data scope", req.ID))
+	if !a.visibleOr404(w, r, req) {
 		return store.Request{}, false
 	}
 	return req, true
+}
+
+// visibleOr404 reports whether the signed-in user may see req. When they may
+// not, it answers 404 with the same sentence a missing request gets, and logs
+// the attempt.
+func (a *App) visibleOr404(w http.ResponseWriter, r *http.Request, req store.Request) bool {
+	if a.canSeeRequest(r, req) {
+		return true
+	}
+	a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
+		fmt.Errorf("request %d is outside the caller's data scope", req.ID))
+	return false
 }
 
 // loadViewableRequest is loadRequestByID for the {id} in the URL path.
@@ -418,13 +447,7 @@ func (a *App) requestDuplicateCheck(w http.ResponseWriter, r *http.Request) {
 		a.log.ErrorContext(r.Context(), "duplicate check failed", "request_id", requestID(r), "error", err)
 		return
 	}
-	visible := similar[:0]
-	for _, match := range similar {
-		if a.canSeeRequest(r, match) {
-			visible = append(visible, match)
-		}
-	}
-	similar = visible
+	similar = slices.DeleteFunc(similar, func(match store.Request) bool { return !a.canSeeRequest(r, match) })
 	if len(similar) == 0 {
 		return
 	}
@@ -490,12 +513,14 @@ func requestInput(r *http.Request) (store.RequestInput, error) {
 // "?scope=own" is a filter an admin may use and "?scope=all" is not a way in.
 func (a *App) effectiveScope(u store.User, requested string) string {
 	scope := a.auth.Scope(u, "request")
-	rank := map[string]int{store.ScopeOwn: 1, store.ScopeAssigned: 2, store.ScopeAll: 3}
-	if rank[requested] > 0 && rank[requested] < rank[scope] {
+	if scopeRank[requested] > 0 && scopeRank[requested] < scopeRank[scope] {
 		return requested
 	}
 	return scope
 }
+
+// scopeRank orders the request data scopes from narrowest to widest.
+var scopeRank = map[string]int{store.ScopeOwn: 1, store.ScopeAssigned: 2, store.ScopeAll: 3}
 
 // requestFormData assembles everything the adaptive form needs. The approver
 // list comes from ListApprovers, so the requester's own name is structurally
@@ -557,33 +582,29 @@ var requestTabs = []requestTab{
 	{"open", "Open"}, {"needs-me", "Needs me"}, {"closed", "Closed"}, {"all", "All"},
 }
 
-func (a *App) requests(w http.ResponseWriter, r *http.Request) {
+// requestListOptions reads the request-list filters from the URL. The list
+// screen and its CSV export both use it, so the file always holds what the
+// screen shows. The bucket (tab) defaults to "open". A ?status= other than
+// "all" goes in Statuses, which the store applies instead of the bucket's own
+// statuses.
+func (a *App) requestListOptions(r *http.Request) store.RequestListOptions {
 	u := auth.CurrentUser(r)
 	q := r.URL.Query()
-	bucket := q.Get("bucket")
-	if bucket == "" {
-		bucket = "open"
-	}
-	// ?status= is honoured, as the CSV of the same URL already did. The screen used
-	// to ignore it silently, so one URL described two different sets on the page
-	// and in the file (F-G-014).
-	//
-	// It is passed as Statuses rather than Status because requestWhere reads Bucket
-	// *before* Status and the bucket always has a default — so a named status set
-	// on Status alone would go on being ignored. Statuses is the one field that
-	// wins, which is the right precedence anyway: the tab is where the reader is,
-	// the status is what they asked for.
-	status := q.Get("status")
 	opts := store.RequestListOptions{Scope: a.effectiveScope(u, q.Get("scope")), ViewerID: u.ID,
-		Bucket: bucket, Type: q.Get("type"), Treatment: q.Get("treatment"),
+		Bucket: queryDefault(r, "bucket", "open"), Type: q.Get("type"), Treatment: q.Get("treatment"),
 		ProjectID: parseID(q.Get("project_id")), Query: q.Get("q")}
-	if status != "" && status != "all" {
+	if status := q.Get("status"); status != "" && status != "all" {
 		opts.Statuses = []string{status}
 	}
-	// ListRequestsPage, not ListRequests: the row query was capped at 200 while
-	// the tab count beside it had no cap, so the All tab promised 214 and the list
-	// drew 200 with nothing on the page saying so (F-B-16). Total and Truncated are
-	// what the screen shows, and Offset is what makes the rest reachable.
+	return opts
+}
+
+// requests is the /requests list: one page of the reader's requests with a
+// count on every tab. The page reports its total so the screen can say how
+// many there are and link to the next page.
+func (a *App) requests(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	opts := a.requestListOptions(r)
 	page, err := a.st.ListRequestsPage(r.Context(), store.RequestPageOptions{
 		RequestListOptions: opts, Offset: int(parseID(q.Get("offset")))})
 	if err != nil {
@@ -610,7 +631,7 @@ func (a *App) requests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, r, "requests", PageData{Title: "Requests", Requests: page.Requests, Page: page,
-		Scope: opts.Scope, Bucket: bucket, Status: status,
+		Scope: opts.Scope, Bucket: opts.Bucket, Status: q.Get("status"),
 		TypeFilter: opts.Type, Treatment: opts.Treatment, Query: opts.Query,
 		RequestClearHref: requestClearURL(r, opts), Counts: counts, Projects: projects, RequestProjectID: opts.ProjectID, RequestVendorID: opts.VendorID})
 }
@@ -780,9 +801,9 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 	if err != nil {
 		return PageData{}, err
 	}
-	data.FormType = req.Type
-	data.Categories = categoriesForType(req.Type, data.Categories)
-	data.RecCategory = resolveRecoverableCategory(req.RecoverableCategory, data.Categories)
+	if err := a.setFormType(r, &data, req.Type, req.RecoverableCategory); err != nil {
+		return PageData{}, err
+	}
 	noteLegacyDeposit(&data, req)
 	if err := a.offerRetiredRefs(r, &data, req); err != nil {
 		return PageData{}, err
@@ -791,9 +812,6 @@ func (a *App) requestEditData(r *http.Request, req store.Request) (PageData, err
 		return PageData{}, err
 	}
 	if data.RequestAtts, err = a.st.RequestAttachments(r.Context(), req.ID); err != nil {
-		return PageData{}, err
-	}
-	if data.Vendors, err = a.vendorChoices(r, req.Type); err != nil {
 		return PageData{}, err
 	}
 	return data, nil
@@ -866,65 +884,45 @@ func noteLegacyDeposit(data *PageData, req store.Request) {
 // and "retired" is what the option has to say either way.
 func (a *App) offerRetiredRefs(r *http.Request, data *PageData, req store.Request) error {
 	var retired []string
-	if pid := deref(req.ProjectID); pid > 0 && !hasProject(data.Projects, pid) {
+	projectID := deref(req.ProjectID)
+	isChargedProject := func(p store.Project) bool { return p.ID == projectID }
+	if projectID > 0 && !slices.ContainsFunc(data.Projects, isChargedProject) {
 		all, err := a.st.ListProjects(r.Context(), false)
 		if err != nil {
 			return err
 		}
-		for _, p := range all {
-			if p.ID == pid {
-				p.Active = false
-				data.Projects = append(data.Projects, p)
-				retired = append(retired, "project "+p.Name)
-			}
+		if i := slices.IndexFunc(all, isChargedProject); i >= 0 {
+			all[i].Active = false
+			data.Projects = append(data.Projects, all[i])
+			retired = append(retired, "project "+all[i].Name)
 		}
 	}
-	if hid := deref(req.HeadID); hid > 0 && !hasHead(data.Heads, hid) {
+	headID := deref(req.HeadID)
+	isChargedHead := func(h store.Head) bool { return h.ID == headID }
+	if headID > 0 && !slices.ContainsFunc(data.Heads, isChargedHead) {
 		all, err := a.st.ListHeads(r.Context(), false)
 		if err != nil {
 			return err
 		}
-		for _, h := range all {
-			if h.ID == hid {
-				h.Active = false
-				data.Heads = append(data.Heads, h)
-				retired = append(retired, "head "+h.Name)
-			}
+		if i := slices.IndexFunc(all, isChargedHead); i >= 0 {
+			all[i].Active = false
+			data.Heads = append(data.Heads, all[i])
+			retired = append(retired, "head "+all[i].Name)
 		}
 	}
-	var warning string
-	switch len(retired) {
-	case 0:
-	case 1:
-		warning = "The " + retired[0] + " this request charges was retired after it was raised. Choose a project and head that are still open before saving."
-	default:
-		warning = "The " + strings.Join(retired, " and ") + " this request charges were retired after it was raised. Choose a project and head that are still open before saving."
+	if len(retired) == 0 {
+		return nil
 	}
-	if warning != "" {
-		data.Warnings = append(data.Warnings, Warning{
-			Title: "This request charges something that has since been retired",
-			Body:  warning,
-		})
+	verb := "were"
+	if len(retired) == 1 {
+		verb = "was"
 	}
+	data.Warnings = append(data.Warnings, Warning{
+		Title: "This request charges something that has since been retired",
+		Body: "The " + strings.Join(retired, " and ") + " this request charges " + verb +
+			" retired after it was raised. Choose a project and head that are still open before saving.",
+	})
 	return nil
-}
-
-func hasProject(projects []store.Project, id int64) bool {
-	for _, p := range projects {
-		if p.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-func hasHead(heads []store.Head, id int64) bool {
-	for _, h := range heads {
-		if h.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 // requestEdit saves a correction. "resubmit" is the returned screen's primary
@@ -960,12 +958,11 @@ func (a *App) requestEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		removeStagedAttachment(a.log, r, stagedPath)
-		status := storeErrorStatus(err)
-		if status >= http.StatusInternalServerError {
+		if status, ok := userError(err); ok {
+			a.renderRejectedEdit(w, r, req, in, status, err)
+		} else {
 			a.respondStoreError(w, r, err)
-			return
 		}
-		a.renderRejectedEdit(w, r, req, in, status, err)
 		return
 	}
 	// Not unconditionally. The seeded template for this event says the request
@@ -1030,12 +1027,13 @@ func editedRequest(stored store.Request, in store.RequestInput) store.Request {
 // approver may approve less than was asked for; the store is what refuses a
 // requester approving themselves, whatever this handler is sent.
 func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
-	req, e := a.st.Request(r.Context(), pathID(r))
-	if e != nil || req.ManagerID != auth.CurrentUser(r).ID {
+	u := auth.CurrentUser(r)
+	req, err := a.st.Request(r.Context(), pathID(r))
+	if err != nil || req.ManagerID != u.ID {
 		a.respondStoreError(w, r, store.ErrNotFound)
 		return
 	}
-	if _, ok := a.loadViewableRequest(w, r); !ok {
+	if !a.visibleOr404(w, r, req) {
 		return
 	}
 	amount, err := money.ParsePaise(r.FormValue("approved_amount"))
@@ -1043,7 +1041,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 		a.refuseRequestApproval(w, r, "Enter the amount you are approving.")
 		return
 	}
-	locked, err := a.lockedApprovalMonth(r)
+	locked, err := a.lockedApprovalMonth(r.Context(), req.NeededBy)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
@@ -1053,7 +1051,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 			locked+" is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.", nil)
 		return
 	}
-	if err := a.st.ApproveRequest(r.Context(), auth.CurrentUser(r), pathID(r), amount, r.FormValue("note")); err != nil {
+	if err := a.st.ApproveRequest(r.Context(), u, req.ID, amount, r.FormValue("note")); err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			a.refuseRequestApproval(w, r, friendly(err))
 			return
@@ -1061,7 +1059,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	a.fire(r, notify.EventRequestApproved, pathID(r))
+	a.fire(r, notify.EventRequestApproved, req.ID)
 	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
 }
 
@@ -1093,73 +1091,70 @@ func (a *App) refuseRequestApproval(w http.ResponseWriter, r *http.Request, mess
 	a.renderStatus(w, r, http.StatusBadRequest, "request_detail", data)
 }
 
-// lockedApprovalMonth names the locked month an approval would commit to, or ""
-// when there is none (F-G-021).
+// lockedApprovalMonth returns the YYYY-MM month of neededBy when that month is
+// locked, or "" when it is open or neededBy is empty.
 //
-// An approval is a promise that the request can be paid, and validatePayment
-// refuses a paid_on inside a locked month — so approving into one manufactures an
-// obligation nobody can discharge until the month is reopened, and the accountant
-// only discovers it at the settlement, having filled in the whole form. The month
-// tested is the one the requester asked for: needed_by is the only date a request
-// carries, and a request with no needed_by names no period and is unaffected.
-func (a *App) lockedApprovalMonth(r *http.Request) (string, error) {
-	req, err := a.st.Request(r.Context(), pathID(r))
-	if err != nil {
-		return "", err
-	}
-	if len(req.NeededBy) < 7 {
+// Approving is a promise that the request can be paid, and no payment can be
+// recorded in a locked month, so an approval into a locked month is refused up
+// front instead of surprising the accountant later. The month checked is the
+// request's needed-by date, the only date a request carries. A failed lock read
+// is returned as an error (MonthIsLocked, not IsLocked), so the approval is
+// refused rather than let through.
+func (a *App) lockedApprovalMonth(ctx context.Context, neededBy string) (string, error) {
+	if len(neededBy) < 7 {
 		return "", nil
 	}
-	month := req.NeededBy[:7]
-	// MonthIsLocked, not IsLocked: this gates the approval, so failing to read the
-	// lock must refuse rather than quietly answer "open" and let the approval
-	// manufacture the obligation this function exists to prevent.
-	locked, err := a.st.MonthIsLocked(r.Context(), month)
-	if err != nil {
+	month := neededBy[:7]
+	locked, err := a.st.MonthIsLocked(ctx, month)
+	if err != nil || !locked {
 		return "", err
-	}
-	if !locked {
-		return "", nil
 	}
 	return month, nil
 }
 
+// requestChange is one store call that moves a request to a new state.
+type requestChange func(ctx context.Context, u store.User, id int64) error
+
+// changeRequest is the shared body of the simple state-change handlers
+// (return, reject, withdraw, cancel, hold, release …). It loads the request in
+// the URL (404 if the reader's data scope does not reach it), runs change,
+// sends the event's notifications and redirects to dest. "{id}" in dest is
+// replaced by the request id. A refusal from the store is answered by
+// respondStoreError and nothing is sent.
+func (a *App) changeRequest(w http.ResponseWriter, r *http.Request, event, dest string, change requestChange) {
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := change(r.Context(), auth.CurrentUser(r), req.ID); err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.fire(r, event, req.ID)
+	http.Redirect(w, r, strings.ReplaceAll(dest, "{id}", strconv.FormatInt(req.ID, 10)), http.StatusSeeOther)
+}
+
+// requestReturn sends a pending request back to its requester for correction.
 func (a *App) requestReturn(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.loadViewableRequest(w, r); !ok {
-		return
-	}
-	if err := a.st.ReturnRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("comment"), r.FormValue("revision")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	a.fire(r, notify.EventRequestReturned, pathID(r))
-	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventRequestReturned, "/approvals", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.ReturnRequest(ctx, u, id, r.FormValue("comment"), r.FormValue("revision"))
+	})
 }
 
+// requestReject rejects a pending request. A rejection is final.
 func (a *App) requestReject(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.loadViewableRequest(w, r); !ok {
-		return
-	}
-	if err := a.st.RejectRequest(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("reason"), r.FormValue("revision")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	a.fire(r, notify.EventRequestRejected, pathID(r))
-	http.Redirect(w, r, "/approvals", http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventRequestRejected, "/approvals", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.RejectRequest(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
+	})
 }
 
+// requestWithdraw lets the requester take back a request that is not yet
+// approved. The approver is notified, because the item leaves their queue
+// without a decision.
 func (a *App) requestWithdraw(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.loadViewableRequest(w, r); !ok {
-		return
-	}
-	if err := a.st.WithdrawRequest(r.Context(), auth.CurrentUser(r), pathID(r)); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	// The approver's queue item has just disappeared without a decision, so they
-	// are told why (F-F-06).
-	a.fire(r, notify.EventRequestWithdrawn, pathID(r))
-	http.Redirect(w, r, fmt.Sprintf("/requests/%d", pathID(r)), http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventRequestWithdrawn, "/requests/{id}", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.WithdrawRequest(ctx, u, id)
+	})
 }
 
 // requestReraise lands on the confirmation screen rather than the source, and
@@ -1274,17 +1269,12 @@ func (a *App) requestCancelForm(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "request_cancel", PageData{Title: "Request cancellation", Request2: req})
 }
 
+// requestCancelAsk records the requester's request to cancel an approved
+// request. Payment is frozen until the approver decides.
 func (a *App) requestCancelAsk(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.loadViewableRequest(w, r); !ok {
-		return
-	}
-	id := pathID(r)
-	if err := a.st.RequestCancellation(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	a.fire(r, notify.EventCancellationRequested, id)
-	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventCancellationRequested, "/requests/{id}", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.RequestCancellation(ctx, u, id, r.FormValue("reason"))
+	})
 }
 
 // requestCancellationForm is the approver's side: the decision on a pending
@@ -1330,21 +1320,12 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, "/approvals?bucket=cancellations", http.StatusSeeOther)
 }
 
+// requestCancelOutright is the approver cancelling a request nobody asked to
+// cancel. The requester is notified, since they did not see it coming.
 func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.loadViewableRequest(w, r); !ok {
-		return
-	}
-	id := pathID(r)
-	if err := a.st.CancelRequest(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason"), r.FormValue("revision")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	// The fourth cancellation path, and the one F-F-06's repair missed. The
-	// other three tell the requester what became of their ask; this one ends the
-	// request without their having asked at all, which is the case they are
-	// least able to guess at.
-	a.fire(r, notify.EventRequestCancelled, id)
-	http.Redirect(w, r, fmt.Sprintf("/requests/%d", id), http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventRequestCancelled, "/requests/{id}", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.CancelRequest(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
+	})
 }
 
 // approvalTab is one `.segmented` tab on the manager queue. The queue is its
@@ -1403,37 +1384,13 @@ func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
 }
 
 func knownApprovalTab(key string) bool {
-	for _, tab := range approvalTabs {
-		if tab.Key == key {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(approvalTabs, func(tab approvalTab) bool { return tab.Key == key })
 }
 
 func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
-	q := r.URL.Query()
-	// The same bucket default the screen has. Without it a bare
-	// /requests/export.csv exported every status while /requests showed only the
-	// open ones, so the export silently meant something different from the list it
-	// sits on (F-G-014).
-	bucket := q.Get("bucket")
-	if bucket == "" {
-		bucket = "open"
-	}
-	// RequestsUnlimited: an export taken for reconciliation that drops fourteen
-	// rows without saying so is worse than no export (F-B-16/D3).
-	opts := store.RequestListOptions{
-		Scope: a.effectiveScope(u, q.Get("scope")), ViewerID: u.ID,
-		Bucket: bucket, Type: q.Get("type"),
-		Treatment: q.Get("treatment"), ProjectID: parseID(q.Get("project_id")), Query: q.Get("q"),
-		Limit: store.RequestsUnlimited}
-	// Statuses, not Status, and for the same reason the screen uses it: the bucket
-	// default would otherwise swallow a named status now that the export has one.
-	if status := q.Get("status"); status != "" && status != "all" {
-		opts.Statuses = []string{status}
-	}
+	opts := a.requestListOptions(r)
+	opts.Limit = store.RequestsUnlimited // an export for reconciliation must not drop rows
 	page, err := a.st.ListRequestsPage(r.Context(), store.RequestPageOptions{RequestListOptions: opts})
 	if err != nil {
 		a.respondStoreError(w, r, err)

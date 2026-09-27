@@ -1,11 +1,13 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
@@ -75,11 +77,12 @@ func (a *App) reservationConflict(w http.ResponseWriter, r *http.Request, req st
 	if holder == "" {
 		holder = "Someone else"
 	}
+	kind := conflictCause(req, cause)
 	a.log.WarnContext(r.Context(), "reservation conflict",
 		"request_id", requestID(r), "request", req.ID, "holder", holder,
-		"cause", conflictCause(req, cause), "error", cause)
+		"cause", kind, "error", cause)
 	title := "Already taken"
-	switch conflictCause(req, cause) {
+	switch kind {
 	case conflictHold:
 		title = "On hold"
 	case conflictNotApproved:
@@ -91,7 +94,7 @@ func (a *App) reservationConflict(w http.ResponseWriter, r *http.Request, req st
 		Title:         title,
 		Request2:      req,
 		Holder:        holder,
-		ConflictCause: conflictCause(req, cause),
+		ConflictCause: kind,
 	})
 }
 
@@ -216,13 +219,7 @@ func (a *App) accountsQueue(w http.ResponseWriter, r *http.Request) {
 	if tab == "" {
 		tab = queueTabs[0].Key
 	}
-	known := false
-	for _, t := range queueTabs {
-		if t.Key == tab {
-			known = true
-		}
-	}
-	if !known {
+	if !slices.ContainsFunc(queueTabs, func(t queueTab) bool { return t.Key == tab }) {
 		a.respondError(w, r, http.StatusBadRequest, "That queue tab does not exist.", nil)
 		return
 	}
@@ -256,14 +253,12 @@ func (a *App) pickerData(r *http.Request) (PageData, error) {
 	return PageData{Title: "Record a payment", Linkable: set, RecentPaid: recent, Query: q}, nil
 }
 
-// recentPaidByActor assembles "Recently paid by you" from the ledger. There is
-// no store method joining payments to their requests, and the store layer is
-// closed for this phase's UI work, so the join happens here: read the ledger
-// newest-first, keep the caller's own linked rows, and name each one from the
-// request it settled.
+// recentPaidByActor lists the actor's most recently entered payments that are
+// linked to a request, newest entry first, at most limit of them. It reads the
+// actor's own ledger rows (voided ones included), re-sorts them by entry time
+// (the ledger comes back ordered by payment date), and names each row from the
+// request it paid.
 func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]PaidRequestRow, error) {
-	// Scope "own": the panel is the actor's own entries, which is exactly the
-	// narrowing ListPayments makes, and an unscoped read now returns nothing.
 	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{Status: "all", Limit: 200, Scope: "own", ViewerID: actorID})
 	if err != nil {
 		return nil, err
@@ -274,26 +269,17 @@ func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]Pa
 		if len(out) == limit {
 			break
 		}
-		if p.EnteredBy != actorID {
+		if p.RequestID == nil {
 			continue
 		}
-		// ListPayments does not select the linkage columns — RequestID is
-		// always nil on its rows — so the linkage is re-read per candidate.
-		linked, perr := a.st.Payment(r.Context(), p.ID)
-		if perr != nil {
-			return nil, perr
-		}
-		if linked.RequestID == nil {
-			continue
-		}
-		req, rerr := a.st.Request(r.Context(), *linked.RequestID)
-		if rerr != nil {
-			return nil, rerr
+		req, err := a.st.Request(r.Context(), *p.RequestID)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, PaidRequestRow{
-			PaymentID: linked.ID, RequestID: req.ID, Number: req.Number,
-			Payee: linked.VendorPayee, Amount: linked.Amount, PaidOn: linked.PaidOn,
-			Settlement: linked.Settlement, Status: req.Status,
+			PaymentID: p.ID, RequestID: req.ID, Number: req.Number,
+			Payee: p.VendorPayee, Amount: p.Amount, PaidOn: p.PaidOn,
+			Settlement: p.Settlement, Status: req.Status,
 		})
 	}
 	return out, nil
@@ -314,10 +300,7 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 		a.reservationConflict(w, r, req, nil)
 		return
 	}
-	headID := int64(0)
-	if req.HeadID != nil {
-		headID = *req.HeadID
-	}
+	headID := deref(req.HeadID)
 	// The lock, before the form rather than after it. The grid renders "Locked"
 	// in place of its Add buttons and /budgets carries a locked banner; this
 	// screen carried nothing, so an accountant filled in the amount, the date,
@@ -325,8 +308,8 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 	// on the confirmation (F-G-020). The month tested is the one the date field
 	// opens on, which is the month a settlement recorded now would land in.
 	paidOn := time.Now().Format("2006-01-02")
-	var token [24]byte
-	if _, err := rand.Read(token[:]); err != nil {
+	token, err := newFormToken()
+	if err != nil {
 		a.respondError(w, r, http.StatusInternalServerError, "Could not prepare payment confirmation.", err)
 		return
 	}
@@ -344,19 +327,18 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 			a.respondStoreError(w, r, err)
 			return
 		}
+		// The vendor's usual mode is preselected when the form offers it.
 		if vendor.Bank != nil {
 			candidate := canonicalPaymentMode(vendor.Bank.DefaultPaymentMode)
-			for _, choice := range choices {
-				if choice.Value == candidate {
-					defaultMode = candidate
-				}
+			if slices.ContainsFunc(choices, func(c PaymentModeChoice) bool { return c.Value == candidate }) {
+				defaultMode = candidate
 			}
 		}
 	}
 	data := PageData{
 		PaymentModeChoices: choices, Vendor: vendor,
 		Title:          "Record payment",
-		SubmissionKey:  hex.EncodeToString(token[:]),
+		SubmissionKey:  token,
 		Request2:       req,
 		SelectedHeadID: headID,
 		ReserveMine:    true,
@@ -389,6 +371,16 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 		}
 	}
 	a.render(w, r, "payment_form", data)
+}
+
+// newFormToken returns a random 48-character hex token. A form carries it so
+// that the same submission sent twice is recorded only once.
+func newFormToken() (string, error) {
+	var token [24]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(token[:]), nil
 }
 
 // paymentLockStatus is the banner fragment the "Paid on" field re-asks for on
@@ -445,20 +437,20 @@ func (a *App) settlementPreview(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("%w: enter a valid amount", store.ErrValidation))
 		return
 	}
+	preview := newSettlementPreview(r, req, paid)
+	if preview.Match {
+		preview.Settlement = "settled"
+	}
+	a.renderSettlement(w, r, http.StatusOK, req, preview, "")
+}
+
+// newSettlementPreview compares what is still approved on req (the approved
+// amount less what has already been paid) with the amount being paid now, and
+// carries the entry form's fields along for the confirm step.
+func newSettlementPreview(r *http.Request, req store.Request, paid int64) SettlementPreview {
 	approved := approvedOf(req) - req.PaidAmount
-	a.renderSettlement(w, r, http.StatusOK, req, SettlementPreview{
-		Approved:   approved,
-		Paid:       paid,
-		Difference: approved - paid,
-		Match:      approved == paid,
-		Settlement: func() string {
-			if approved == paid {
-				return "settled"
-			}
-			return ""
-		}(),
-		Fields: settlementFields(r),
-	}, "")
+	return SettlementPreview{Approved: approved, Paid: paid, Difference: approved - paid,
+		Match: approved == paid, Fields: settlementFields(r)}
 }
 
 // settlementFields snapshots the entry form so the confirmation can post every
@@ -494,8 +486,8 @@ func (a *App) renderSettlement(w http.ResponseWriter, r *http.Request, status in
 // never loses the figures they typed. Server faults still take the error page —
 // re-rendering a sheet over a broken database would be a lie.
 func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID int64, in store.PaymentInput, rawAmount, settlement, partialReason string, cause error) {
-	status := storeErrorStatus(cause)
-	if status >= http.StatusInternalServerError {
+	status, ok := userError(cause)
+	if !ok {
 		a.respondStoreError(w, r, cause)
 		return
 	}
@@ -507,7 +499,6 @@ func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID i
 		status = http.StatusConflict
 		cause = fmt.Errorf("%w: this request is no longer reserved by you. Your payment was not saved", store.ErrForbidden)
 	}
-	approved := approvedOf(req) - req.PaidAmount
 	// The typed amount is echoed back even when it is what was rejected: a
 	// malformed figure parses to zero here and the field below still shows the
 	// characters the accountant actually entered.
@@ -515,10 +506,9 @@ func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID i
 	if in.Amount != 0 {
 		paid = in.Amount
 	}
-	a.renderSettlement(w, r, status, req, SettlementPreview{
-		Approved: approved, Paid: paid, Difference: approved - paid, Match: approved == paid,
-		Settlement: settlement, PartialReason: partialReason, Fields: settlementFields(r),
-	}, friendly(cause))
+	preview := newSettlementPreview(r, req, paid)
+	preview.Settlement, preview.PartialReason = settlement, partialReason
+	a.renderSettlement(w, r, status, req, preview, friendly(cause))
 }
 
 // ---------------------------------------------------------------------------
@@ -795,22 +785,10 @@ func reservationTrail(entries []store.AuditEntry) []store.AuditEntry {
 // screen is: a data scope that does not reach a request is not widened by
 // holding a reservation verb.
 func (a *App) requestRelease(w http.ResponseWriter, r *http.Request) {
-	req, ok := a.loadViewableRequest(w, r)
-	if !ok {
-		return
-	}
-	u := auth.CurrentUser(r)
-	if err := a.st.ReleaseRequest(r.Context(), u, req.ID, r.FormValue("reason"),
-		r.FormValue("confirm") == "on", a.auth.Can(u, "reservation", "reassign")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	// The screen's action bar states that the requester and the approver are both
-	// notified. It is now true (F-D-12/F-F-06): the seeded rule for this event
-	// includes both, and the invoice being unclaimed again is exactly the kind of
-	// interruption a hold already told them about.
-	a.fire(r, notify.EventReservationReleased, req.ID)
-	http.Redirect(w, r, "/accounts-queue", http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventReservationReleased, "/accounts-queue", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.ReleaseRequest(ctx, u, id, r.FormValue("reason"),
+			r.FormValue("confirm") == "on", a.auth.Can(u, "reservation", "reassign"))
+	})
 }
 
 // requestReassign hands the reservation to somebody else. The target select is
@@ -874,34 +852,18 @@ func (a *App) requestReassign(w http.ResponseWriter, r *http.Request) {
 // mandatory in the store, so an empty one is refused whether it arrives from
 // the sheet or from a script.
 func (a *App) requestHold(w http.ResponseWriter, r *http.Request) {
-	req, ok := a.loadViewableRequest(w, r)
-	if !ok {
-		return
-	}
-	if err := a.st.HoldRequest(r.Context(), auth.CurrentUser(r), req.ID, r.FormValue("reason")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	a.fire(r, notify.EventRequestOnHold, req.ID)
-	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventRequestOnHold, "/requests/{id}", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.HoldRequest(ctx, u, id, r.FormValue("reason"))
+	})
 }
 
 // requestUnhold puts it back in the queue. No reason is required: the hold
 // itself is the thing that needed explaining, and lifting it is answering the
 // question rather than asking a new one.
 func (a *App) requestUnhold(w http.ResponseWriter, r *http.Request) {
-	req, ok := a.loadViewableRequest(w, r)
-	if !ok {
-		return
-	}
-	if err := a.st.UnholdRequest(r.Context(), auth.CurrentUser(r), req.ID); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	// request_on_hold told the requester the pause began; this is the other half,
-	// and without it nobody was ever told the pause was over (F-D-12/F-F-06).
-	a.fire(r, notify.EventRequestUnheld, req.ID)
-	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
+	a.changeRequest(w, r, notify.EventRequestUnheld, "/requests/{id}", func(ctx context.Context, u store.User, id int64) error {
+		return a.st.UnholdRequest(ctx, u, id)
+	})
 }
 
 // requestStale is the 26-hour nudge (Q6). Nothing here releases anything and
@@ -948,7 +910,7 @@ func (a *App) requestStale(w http.ResponseWriter, r *http.Request) {
 // There is no store method spanning two entity types, so the two audit reads are
 // merged here and ordered oldest-first — a trail is a story, and a story is told
 // forwards.
-func (a *App) mergedTrail(r *http.Request, requestID int64, paymentID int64) ([]store.AuditEntry, error) {
+func (a *App) mergedTrail(r *http.Request, requestID int64, _ int64) ([]store.AuditEntry, error) {
 	entries, err := a.st.Audit(r.Context(), "payment_request", requestID, 200)
 	if err != nil {
 		return nil, err

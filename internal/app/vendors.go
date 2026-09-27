@@ -106,7 +106,7 @@ func (a *App) vendorCreate(w http.ResponseWriter, r *http.Request) {
 	in := vendorInputFromForm(r, perms)
 	id, err := a.st.CreateVendor(r.Context(), auth.CurrentUser(r), in)
 	if err != nil {
-		if status := storeErrorStatus(err); status < http.StatusInternalServerError {
+		if status, ok := userError(err); ok {
 			a.renderVendorForm(w, r, status, vendorFromInput(0, in), true, friendly(err))
 			return
 		}
@@ -121,7 +121,8 @@ func (a *App) vendorUpdate(w http.ResponseWriter, r *http.Request) {
 	perms := a.auth.Permissions(auth.CurrentUser(r))
 	in := vendorInputFromForm(r, perms)
 	if err := a.st.UpdateVendor(r.Context(), auth.CurrentUser(r), id, in, perms); err != nil {
-		if status := storeErrorStatus(err); status < http.StatusInternalServerError && status != http.StatusNotFound {
+		// A vendor that no longer exists gets the not-found page, not the form.
+		if status, ok := userError(err); ok && status != http.StatusNotFound {
 			a.renderVendorForm(w, r, status, vendorFromInput(id, in), true, friendly(err))
 			return
 		}
