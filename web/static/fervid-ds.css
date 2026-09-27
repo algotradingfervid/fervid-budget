@@ -4970,10 +4970,13 @@ select,
 textarea {
   border-color: var(--input-border);
 }
-input[aria-invalid="true"],
+/* The input selectors repeat the :not() pair so they are more specific than
+   the rule above (which the :not() pair makes outrank a plain
+   input[aria-invalid]); otherwise invalid text inputs stay grey. */
+input[aria-invalid="true"]:not([type="checkbox"]):not([type="radio"]),
 select[aria-invalid="true"],
 textarea[aria-invalid="true"],
-.field-error input,
+.field-error input:not([type="checkbox"]):not([type="radio"]),
 .field-error select,
 .field-error textarea {
   border-color: var(--fb-danger);
