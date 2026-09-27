@@ -173,7 +173,7 @@ func dueClass(dueDay, month, status string) string {
 	if !ok || !validMonthInput(month) {
 		return "none"
 	}
-	start, err := time.Parse("2006-01", month)
+	start, err := time.Parse(monthLayout, month)
 	if err != nil {
 		return "none"
 	}
@@ -182,7 +182,7 @@ func dueClass(dueDay, month, status string) string {
 		day = last
 	}
 	now := time.Now()
-	if now.Format("2006-01") != month {
+	if now.Format(monthLayout) != month {
 		target := time.Date(start.Year(), start.Month(), day, 0, 0, 0, 0, now.Location())
 		if target.Before(now) {
 			return "overdue"

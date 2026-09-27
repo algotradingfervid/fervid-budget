@@ -62,10 +62,10 @@ func (a *App) auditLog(w http.ResponseWriter, r *http.Request) {
 	data := PageData{Title: "Audit Log", Audit: page.Entries, AuditEntity: q.EntityType, AuditAction: q.Action, AuditActor: qs.Get("actor")}
 	data.AuditPage, data.AuditID = page, qs.Get("id")
 	if !from.IsZero() {
-		data.AuditFrom = from.Format("2006-01-02")
+		data.AuditFrom = from.Format(time.DateOnly)
 	}
 	if !to.IsZero() {
-		data.AuditTo = to.Format("2006-01-02")
+		data.AuditTo = to.Format(time.DateOnly)
 	}
 	a.render(w, r, "audit", data)
 }
@@ -76,7 +76,7 @@ const auditPageSize = 100
 // auditDay reads a from/to date as the start of that local day; anything else
 // leaves that side of the range open.
 func auditDay(v string) time.Time {
-	d, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(v), time.Local)
+	d, err := time.ParseInLocation(time.DateOnly, strings.TrimSpace(v), time.Local)
 	if err != nil {
 		return time.Time{}
 	}

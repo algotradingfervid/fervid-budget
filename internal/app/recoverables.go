@@ -244,7 +244,7 @@ func (a *App) renderRecoverableDetail(w http.ResponseWriter, r *http.Request, in
 		input.Token = token
 	}
 	if input.OccurredOn == "" {
-		input.OccurredOn = time.Now().Format("2006-01-02")
+		input.OccurredOn = time.Now().Format(time.DateOnly)
 	}
 	notice := ""
 	if r.URL.Query().Get("saved") == "1" {

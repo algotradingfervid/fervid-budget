@@ -4,18 +4,20 @@ package app
 // unlocking a month.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/money"
 	"fervidbudget/internal/store"
 )
 
+// grid shows the variance grid: budget against actual spend for every head in
+// a month, filtered by status and search text, plus a "Recent payments" panel.
 func (a *App) grid(w http.ResponseWriter, r *http.Request) {
 	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	status := r.URL.Query().Get("status")
@@ -25,23 +27,22 @@ func (a *App) grid(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// The full-month totals and the month-close panel always use the whole
+	// month, whatever the filters.
 	closeGrid, err := a.st.Grid(r.Context(), month, "", "")
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// grid:view opens the budget matrix. The Recent Payments panel is a second
-	// question: it carries amounts, payees and live /payments/{id} links, so it
-	// is gated on payment:view separately (F-A-02/F-G-032) and the caller who
-	// lacks that verb is simply handed no rows. The gate is here rather than in
-	// the template because a screen must not be trusted to hide data the handler
-	// loaded — /payments answers 403 to exactly this caller.
+	// The payments panel shows amounts, payees and links to payments, so it is
+	// loaded only for a reader with payment:view (grid:view alone is not
+	// enough). Deciding here rather than in the template means the data is
+	// never loaded for someone who may not see it.
 	u := auth.CurrentUser(r)
 	var payments []store.Payment
 	if a.auth.Can(u, "payment", "view") {
-		// ExcludeRecoverable: a recoverable is a deposit, not budget spend. The
-		// totals above already leave it out (V2), and so must this panel, or the
-		// grid lists a payment its own figures do not count (recoverables-2).
+		// Recoverables are deposits, not budget spend: the grid's totals leave
+		// them out, so this panel does too.
 		payments, err = a.st.ListPayments(r.Context(), store.PaymentListOptions{
 			Month: month, Status: "active", Limit: 10,
 			Scope: a.auth.Scope(u, "payment"), ViewerID: u.ID,
@@ -58,17 +59,31 @@ func (a *App) grid(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "grid", PageData{Title: "Variance Grid", Grid: grid, CloseGrid: closeGrid, Month: month, Status: status, Query: q, Payments: payments})
 }
 
+// monthsPageData is the monthly plans screen: every plan, newest first.
+func (a *App) monthsPageData(ctx context.Context) (PageData, error) {
+	plans, err := a.st.ListMonthPlans(ctx)
+	if err != nil {
+		return PageData{}, err
+	}
+	return PageData{Title: "Monthly Plans", MonthPlans: plans}, nil
+}
+
+// months shows the monthly plans screen, with the "new month" form
+// suggesting the month after the newest plan, copied from the month before.
 func (a *App) months(w http.ResponseWriter, r *http.Request) {
-	plans, err := a.st.ListMonthPlans(r.Context())
+	data, err := a.monthsPageData(r.Context())
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	target := defaultTargetMonth(plans)
-	source := previousMonth(target)
-	a.render(w, r, "months", PageData{Title: "Monthly Plans", MonthPlans: plans, TargetMonth: target, SourceMonth: source})
+	data.TargetMonth = defaultTargetMonth(data.MonthPlans)
+	data.SourceMonth = previousMonth(data.TargetMonth)
+	a.render(w, r, "months", data)
 }
 
+// monthCreate opens a new month plan, either empty or copied from a source
+// month. Copying budgets needs budget view and edit as well as month:create.
+// A refusal shows the screen again with the error and what was typed.
 func (a *App) monthCreate(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimSpace(r.FormValue("target_month"))
 	source := ""
@@ -85,65 +100,67 @@ func (a *App) monthCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := a.st.CreateMonthPlan(r.Context(), auth.CurrentUser(r), target, source); err != nil {
-		plans, listErr := a.st.ListMonthPlans(r.Context())
+		data, listErr := a.monthsPageData(r.Context())
 		if listErr != nil {
 			a.respondStoreError(w, r, listErr)
 			return
 		}
-		// The status is the store's, not a hardcoded 400: a locked month is a 409
-		// everywhere else and must be a 409 here too (F-G-026).
-		a.renderStatus(w, r, reRenderStatus(err), "months", PageData{Title: "Monthly Plans", MonthPlans: plans, TargetMonth: target, SourceMonth: source, Error: friendly(err)})
+		data.TargetMonth, data.SourceMonth, data.Error = target, source, friendly(err)
+		a.renderStatus(w, r, reRenderStatus(err), "months", data)
 		return
 	}
 	http.Redirect(w, r, "/budgets?month="+target, http.StatusSeeOther)
 }
 
-func (a *App) budgets(w http.ResponseWriter, r *http.Request) {
-	month := validMonthOrCurrent(r.URL.Query().Get("month"))
-	grid, err := a.st.Grid(r.Context(), month, "", "")
-	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
+// budgetsPageData is the budgets screen for one month: the grid, every
+// active head, and which heads have line-item (detailed) budgets.
+func (a *App) budgetsPageData(ctx context.Context, month string) (PageData, error) {
+	grid, gridErr := a.st.Grid(ctx, month, "", "")
+	heads, headsErr := a.st.ListHeads(ctx, true)
+	if gridErr != nil || headsErr != nil {
+		return PageData{}, errors.Join(gridErr, headsErr)
 	}
-	heads, err := a.st.ListHeads(r.Context(), true)
+	lineHeads, err := a.st.DetailedBudgetHeads(ctx, month)
 	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
+		return PageData{}, err
 	}
-	lineHeads, err := a.st.DetailedBudgetHeads(r.Context(), month)
-	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	a.render(w, r, "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetLineHeads: lineHeads})
+	return PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetLineHeads: lineHeads}, nil
 }
 
+// budgets shows the budgets screen for the month in ?month= (default: now).
+func (a *App) budgets(w http.ResponseWriter, r *http.Request) {
+	data, err := a.budgetsPageData(r.Context(), validMonthOrCurrent(r.URL.Query().Get("month")))
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	a.render(w, r, "budgets", data)
+}
+
+// budgetSave saves the budgets screen. Each "budget_<headID>" field is read
+// on its own: every amount that parses is saved, and the ones that do not are
+// marked on the screen with what was typed, so one typo does not throw away
+// the rest of the month.
 func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 	month := strings.TrimSpace(r.FormValue("month"))
 	if !validMonthInput(month) {
 		a.respondError(w, r, http.StatusBadRequest, "A valid month is required.", nil)
 		return
 	}
-	u := auth.CurrentUser(r)
 	inputs := make(map[int64]string)
 	fieldErrors := make(map[int64]string)
 	var updates []store.BudgetInput
-	// One unreadable field is one unreadable field. The whole batch used to be
-	// abandoned for any single failure, and because the screen renders ₹0.00 for
-	// every unbudgeted head — a value ParsePaise refuses — a month that had never
-	// been budgeted could not be budgeted at all (F-G-028). Every field that
-	// parses is now applied; the ones that do not are named back to the operator.
 	for k, v := range r.Form {
 		if !strings.HasPrefix(k, "budget_") {
 			continue
 		}
 		headID, idErr := strconv.ParseInt(strings.TrimPrefix(k, "budget_"), 10, 64)
+		if idErr != nil || headID <= 0 {
+			continue
+		}
 		raw := ""
 		if len(v) > 0 {
 			raw = v[0]
-		}
-		if idErr != nil || headID <= 0 {
-			continue
 		}
 		inputs[headID] = raw
 		amt, amountErr := parseBudgetPaise(raw)
@@ -155,36 +172,30 @@ func (a *App) budgetSave(w http.ResponseWriter, r *http.Request) {
 	}
 	var saveErr error
 	if len(updates) > 0 {
-		saveErr = a.st.SetBudgets(r.Context(), u, month, updates)
+		saveErr = a.st.SetBudgets(r.Context(), auth.CurrentUser(r), month, updates)
 	}
-	if saveErr != nil || len(fieldErrors) > 0 {
-		grid, gridErr := a.st.Grid(r.Context(), month, "", "")
-		heads, headsErr := a.st.ListHeads(r.Context(), true)
-		if gridErr != nil || headsErr != nil {
-			a.respondStoreError(w, r, errors.Join(gridErr, headsErr))
-			return
-		}
-		lineHeads, lineErr := a.st.DetailedBudgetHeads(r.Context(), month)
-		if lineErr != nil {
-			a.respondStoreError(w, r, lineErr)
-			return
-		}
-		message := friendly(saveErr)
-		if saveErr == nil {
-			// The wording keeps "invalid budget amount" from the message this
-			// replaces, because that phrase is what the reader — and the shipped
-			// regression guard — recognises. What it no longer says is that
-			// everything was refused, because it no longer is.
-			message = fmt.Sprintf("%d budget %s saved. %d invalid budget %s not saved; correct the marked fields below.",
-				len(updates), plural(len(updates), "amount", "amounts"), len(fieldErrors), plural(len(fieldErrors), "amount was", "amounts were"))
-		}
-		// reRenderStatus keeps a locked month a 409 here too (F-G-026).
-		a.renderStatus(w, r, reRenderStatus(saveErr), "budgets", PageData{Title: "Budgets", Month: month, Grid: grid, Heads: heads, BudgetInputs: inputs, BudgetErrors: fieldErrors, BudgetSaved: len(updates), BudgetSaveFailed: saveErr != nil, Error: message, BudgetLineHeads: lineHeads})
+	if saveErr == nil && len(fieldErrors) == 0 {
+		http.Redirect(w, r, "/budgets?month="+month, http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, "/budgets?month="+month, http.StatusSeeOther)
+	data, err := a.budgetsPageData(r.Context(), month)
+	if err != nil {
+		a.respondStoreError(w, r, err)
+		return
+	}
+	data.Error = friendly(saveErr)
+	if saveErr == nil {
+		// The valid amounts were saved; say how many, and how many were not.
+		data.Error = fmt.Sprintf("%d budget %s saved. %d invalid budget %s not saved; correct the marked fields below.",
+			len(updates), plural(len(updates), "amount", "amounts"), len(fieldErrors), plural(len(fieldErrors), "amount was", "amounts were"))
+	}
+	data.BudgetInputs, data.BudgetErrors = inputs, fieldErrors
+	data.BudgetSaved, data.BudgetSaveFailed = len(updates), saveErr != nil
+	a.renderStatus(w, r, reRenderStatus(saveErr), "budgets", data)
 }
 
+// budgetInputValue is what a budget field shows: what the user typed, when
+// the screen is shown again after a refused save, otherwise the saved amount.
 func budgetInputValue(inputs map[int64]string, headID, amount int64) string {
 	if raw, submitted := inputs[headID]; submitted {
 		return raw
@@ -192,12 +203,10 @@ func budgetInputValue(inputs map[int64]string, headID, amount int64) string {
 	return money.FormatPaise(amount)
 }
 
-// parseBudgetPaise reads a budget figure. A budget of zero is a real and
-// meaningful number — "this head has no budget this month" is the state the
-// screen renders by default, as ₹0.00 — so an empty or zero field is accepted
-// and money.ParsePaise, which rightly refuses a non-positive *payment*, is not
-// the parser for it. A negative budget is still refused; SetBudgets refuses it
-// again.
+// parseBudgetPaise reads a budget amount. Unlike a payment, a budget may be
+// zero (the screen shows ₹0.00 for a head with no budget), so an empty or
+// zero field means 0. Anything else goes through money.ParsePaise, which also
+// refuses a negative amount.
 func parseBudgetPaise(raw string) (int64, error) {
 	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "₹"))
 	if s == "" || s == "0" || s == "0.0" || s == "0.00" {
@@ -206,10 +215,9 @@ func parseBudgetPaise(raw string) (int64, error) {
 	return money.ParsePaise(raw)
 }
 
-// reRenderStatus is the status a handler that re-renders its own screen answers
-// with. Routing through storeErrorStatus is what keeps one condition to one
-// code: a locked month was a 409 through respondStoreError and a 400 on the two
-// screens that draw their own error (F-G-026).
+// reRenderStatus is the status for a screen shown again with an error: the
+// store error's own status (so a locked month is 409 here as everywhere
+// else), or 400 when the only problem was the form's own validation.
 func reRenderStatus(err error) int {
 	if err == nil {
 		return http.StatusBadRequest
@@ -217,31 +225,24 @@ func reRenderStatus(err error) int {
 	return storeErrorStatus(err)
 }
 
-// lockMonth and unlockMonth land on /grid?month=, which is the one screen that
-// renders the lock and its reason. They used to redirect to /?month=, which was
-// the variance grid before Phase 4 made / the dashboard — so an operator locked
-// a month and was dropped on a page that read the month parameter not at all and
-// confirmed nothing (F-G-019, and the same root cause as F-G-029).
-func (a *App) lockMonth(w http.ResponseWriter, r *http.Request) {
-	month := r.PathValue("month")
-	if err := a.st.LockMonth(r.Context(), auth.CurrentUser(r), month, r.FormValue("reason")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
+// setMonthLock returns the handler that locks or unlocks (depending on
+// change) the month in the path, with the reason from the form, and then
+// shows that month's grid, the screen that displays the lock.
+func (a *App) setMonthLock(change func(ctx context.Context, u store.User, month, reason string) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		month := r.PathValue("month")
+		if err := change(r.Context(), auth.CurrentUser(r), month, r.FormValue("reason")); err != nil {
+			a.respondStoreError(w, r, err)
+			return
+		}
+		http.Redirect(w, r, "/grid?month="+month, http.StatusSeeOther)
 	}
-	http.Redirect(w, r, "/grid?month="+month, http.StatusSeeOther)
 }
 
-func (a *App) unlockMonth(w http.ResponseWriter, r *http.Request) {
-	month := r.PathValue("month")
-	if err := a.st.UnlockMonth(r.Context(), auth.CurrentUser(r), month, r.FormValue("reason")); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	http.Redirect(w, r, "/grid?month="+month, http.StatusSeeOther)
-}
-
+// defaultTargetMonth is the month the "new month" form suggests: the month
+// after the newest plan, or the current month if that is later.
 func defaultTargetMonth(plans []store.MonthPlan) string {
-	now := time.Now().Format("2006-01")
+	now := currentMonth()
 	if len(plans) == 0 || plans[0].Month < now {
 		return now
 	}

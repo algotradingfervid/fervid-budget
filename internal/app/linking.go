@@ -274,7 +274,7 @@ func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int6
 		return
 	}
 	headID := deref(req.HeadID)
-	paidOn := time.Now().Format("2006-01-02")
+	paidOn := time.Now().Format(time.DateOnly)
 	token, err := newFormToken()
 	if err != nil {
 		a.respondError(w, r, http.StatusInternalServerError, "Could not prepare payment confirmation.", err)

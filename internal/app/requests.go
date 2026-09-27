@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"fervidbudget/internal/auth"
 	"fervidbudget/internal/money"
@@ -1289,7 +1290,7 @@ func (a *App) requestsExport(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = cw.Write([]string{csvText(req.Number), requestStatusText(csvText(req.Status)), typeLabel(req.Type), csvText(req.ShortTitle),
 			csvAmount(req.Amount), approved, csvText(req.Vendor), csvText(req.RequesterName), csvText(req.ManagerName),
-			req.CreatedAt.Format("2006-01-02")})
+			req.CreatedAt.Format(time.DateOnly)})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {
