@@ -1,3 +1,11 @@
+// requests.go holds the core of a payment request: numbering, reading a request
+// row, raising a new request, editing it (with the optional resubmit and
+// document upload in one transaction), comments and attachments.
+//
+// Related files: request_validation.go checks the form, request_transitions.go
+// moves a request between statuses, request_list.go answers list and count
+// queries, and request_thread.go builds the history shown on the request page.
+// Every write runs in one write transaction and records an audit row.
 package store
 
 import (
@@ -75,6 +83,9 @@ func NextRequestNumber(tx *sql.Tx, year string) (string, error) {
 	return fmt.Sprintf("%s-%s-%0*d", prefix, year, width, last), nil
 }
 
+// requestSelect reads one full Request, with the names of its project, head,
+// vendor and people joined in and the total paid so far (voided payments
+// excluded). Callers append a WHERE clause; scanRequest reads each row.
 const requestSelect = `SELECT r.id,r.number,r.status,r.treatment,r.type,r.recoverable_category,r.recoverable_category_id,
  r.project_id,COALESCE(p.name,''),r.head_id,COALESCE(h.name,''),
  r.vendor_id,COALESCE(NULLIF(v.name,''),r.vendor_payee),COALESCE(v.gstin,''),r.vendor_payee,r.short_title,
@@ -96,6 +107,8 @@ JOIN users mu ON mu.id=r.manager_id
 LEFT JOIN users au ON au.id=r.approved_by
 LEFT JOIN users pu ON pu.id=r.processing_by`
 
+// scanRequest reads one requestSelect row into a Request. Nullable columns
+// become nil pointers, and a missing row becomes ErrNotFound.
 func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 	var r Request
 	var catID, projID, headID, vendorID, approvedAmt, approvedBy, processingBy sql.NullInt64
@@ -145,10 +158,14 @@ func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
 	return r, nil
 }
 
+// Request loads one request by id, or ErrNotFound. It does not check who may
+// see it; callers apply the request scope.
 func (s *Store) Request(ctx context.Context, id int64) (Request, error) {
 	return scanRequest(s.db.QueryRowContext(ctx, requestSelect+` WHERE r.id=?`, id))
 }
 
+// requestInTx loads one request inside tx, so the checks that follow see the
+// row as it is under the transaction's write lock.
 func requestInTx(ctx context.Context, tx *sql.Tx, id int64) (Request, error) {
 	return scanRequest(tx.QueryRowContext(ctx, requestSelect+` WHERE r.id=?`, id))
 }
@@ -171,6 +188,7 @@ func (s *Store) RequestAttachments(ctx context.Context, requestID int64) ([]Requ
 	return out, rows.Err()
 }
 
+// nullableID stores a missing (zero or negative) id as SQL NULL.
 func nullableID(id int64) any {
 	if id <= 0 {
 		return nil
@@ -178,6 +196,7 @@ func nullableID(id int64) any {
 	return id
 }
 
+// nullableText stores blank text as SQL NULL.
 func nullableText(s string) any {
 	if strings.TrimSpace(s) == "" {
 		return nil
@@ -185,35 +204,12 @@ func nullableText(s string) any {
 	return s
 }
 
-// CreateRequest creates a request that is already submitted. D1: there are no
-// drafts — the row, its number and its submission timestamp are written in one
-// transaction, together with any file the requester staged on the form.
+// CreateRequest raises a new request, which is submitted ('pending') from the
+// start: there are no drafts. The row, its number and any documents staged on
+// the form are written in one transaction, and the new id is returned.
 func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) (int64, error) {
-	in.RequesterID = actor.ID
-	if forcesRequesterPayee(in.Type) {
-		in.VendorID = 0
-		in.VendorPayee = actor.Name
-	}
-	in = scrubFieldsNotOwned(in)
-	rules, err := s.recoverableRules(ctx)
+	in, categoryID, err := s.prepareRequestInput(ctx, actor, in)
 	if err != nil {
-		return 0, err
-	}
-	if err := validateRequestInput(in, rules); err != nil {
-		return 0, err
-	}
-	if err := s.validateRequestRefs(ctx, in); err != nil {
-		return 0, err
-	}
-	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
-	if err != nil {
-		return 0, err
-	}
-	mode, err := s.urgencyMode(ctx)
-	if err != nil {
-		return 0, err
-	}
-	if err := validateUrgency(in, mode); err != nil {
 		return 0, err
 	}
 	required, err := s.attachmentsRequired(ctx)
@@ -273,16 +269,10 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 			return 0, classify(err)
 		}
 	}
-	// P5 hook: notify in.ManagerID here.
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "submit", EntityType: "payment_request", EntityID: &id,
-		Summary: actor.Name + " submitted request " + number + " for " + money.FormatPaise(in.Amount) + func() string {
-			if strings.TrimSpace(in.DuplicateReason) != "" {
-				return " — duplicate override: " + strings.TrimSpace(in.DuplicateReason)
-			}
-			return ""
-		}(),
-		After: map[string]any{"number": number, "type": in.Type, "amount": in.Amount, "manager_id": in.ManagerID, "duplicate_override_reason": strings.TrimSpace(in.DuplicateReason)}}); err != nil {
+		Summary: actor.Name + " submitted request " + number + " for " + money.FormatPaise(in.Amount) + duplicateNote(in),
+		After:   map[string]any{"number": number, "type": in.Type, "amount": in.Amount, "manager_id": in.ManagerID, "duplicate_override_reason": strings.TrimSpace(in.DuplicateReason)}}); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -293,7 +283,7 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 
 // ListApprovers returns the active users who may approve a request, never
 // including excludeUserID. The request form's approver control is built from
-// exactly this list, so a requester's own name is never selectable (G8).
+// exactly this list, so a requester's own name is never selectable.
 func (s *Store) ListApprovers(ctx context.Context, excludeUserID int64) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id,u.email,u.name,u.password_hash,u.role,u.active,u.created_at,u.updated_at,u.default_approver_id,u.session_version
  FROM users u
@@ -316,12 +306,14 @@ func (s *Store) ListApprovers(ctx context.Context, excludeUserID int64) ([]User,
 	return out, rows.Err()
 }
 
-// editableStatuses: D1 removed 'draft'. A request may be corrected while it is
-// still pending, or after the approver returned it.
+// editableStatuses are the statuses in which the requester may still correct a
+// request: while it is pending, or after the approver returned it.
 var editableStatuses = map[string]bool{"returned": true, "pending": true}
 
+// UpdateRequest saves the requester's corrections to a pending or returned
+// request, validated exactly as a new request is.
 func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in RequestInput) error {
-	in, categoryID, err := s.prepareRequestUpdate(ctx, actor, in)
+	in, categoryID, err := s.prepareRequestInput(ctx, actor, in)
 	if err != nil {
 		return err
 	}
@@ -346,13 +338,17 @@ type RequestEdit struct {
 	Resubmit   bool
 }
 
-// RequestEditRevision binds an editor to its snapshot and audit generation.
-// The audit ID prevents same-second changes (including change-and-revert) from
-// making an old form current again. The snapshot keeps separate reads safe.
+// RequestEditRevision fingerprints a request as a screen showed it, so a later
+// form post can be refused if the request changed in between. The fingerprint
+// is a hash of the whole row plus the id of the request's newest audit row; the
+// audit id catches a change and revert inside the same second, which the row
+// hash alone would miss.
 func (s *Store) RequestEditRevision(ctx context.Context, req Request) (string, error) {
 	return requestEditRevision(ctx, s.db, req)
 }
 
+// requestEditRevision computes RequestEditRevision through q (the database or
+// a transaction).
 func requestEditRevision(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, req Request) (string, error) {
@@ -367,25 +363,29 @@ func requestEditRevision(ctx context.Context, q interface {
 	return fmt.Sprintf("%x-%d", sha256.Sum256(snapshot), generation), nil
 }
 
-// EditRequest applies one press of the correction form as a single transaction
-// (F-G-035, F-C-04).
+// requireRevision refuses, with msg, a form whose revision no longer matches
+// req as it is inside tx. A blank revision never matches.
+func requireRevision(ctx context.Context, tx *sql.Tx, req Request, revision, msg string) error {
+	current, err := requestEditRevision(ctx, tx, req)
+	if err != nil {
+		return err
+	}
+	if revision != current {
+		return fmt.Errorf("%w: %s", ErrValidation, msg)
+	}
+	return nil
+}
+
+// EditRequest applies one press of the correction form (edit, optional
+// document, optional resubmit) as a single transaction, so either all of it
+// and its audit rows are saved or none is. A resubmit that fails its checks
+// therefore leaves no half-saved edit behind.
 //
-// The handler used to call UpdateRequest, then AddRequestAttachment, then
-// SubmitRequest — three transactions for one button. A resubmit that failed its
-// own preconditions therefore left the edit written *and audited as "edited and
-// re-sent"* while the request sat in `returned`: the history asserted a change the
-// requester had just been told did not happen. Wave 4 hoisted the submit
-// preconditions ahead of the write, which closed the observable defect but left a
-// window — the row can change between calls, and only one call held a transaction
-// at a time.
-//
-// Ordering matters and is the reason the attachment belongs in here rather than
-// around the outside: the attachment policy counts rows in `request_attachments`,
-// so the document must be inserted before the submit is validated, or a request
-// whose only document is the one being uploaded is refused. Every audit row — edit,
-// attach, submit — commits or rolls back together.
+// The document is inserted before the resubmit is checked, because the
+// attachment policy counts the request's documents: a request whose only
+// document is the one being uploaded must pass.
 func (s *Store) EditRequest(ctx context.Context, actor User, id int64, e RequestEdit) error {
-	in, categoryID, err := s.prepareRequestUpdate(ctx, actor, e.Input)
+	in, categoryID, err := s.prepareRequestInput(ctx, actor, e.Input)
 	if err != nil {
 		return err
 	}
@@ -404,12 +404,8 @@ func (s *Store) EditRequest(ctx context.Context, actor User, id int64, e Request
 		if err != nil {
 			return err
 		}
-		revision, err := requestEditRevision(ctx, tx, current)
-		if err != nil {
+		if err := requireRevision(ctx, tx, current, e.Revision, "this request changed since you opened it. Your corrections have not been saved. Open the latest request and review its changes before editing again"); err != nil {
 			return err
-		}
-		if revision != e.Revision {
-			return fmt.Errorf("%w: this request changed since you opened it. Your corrections have not been saved. Open the latest request and review its changes before editing again", ErrValidation)
 		}
 	}
 	if err := s.updateRequestTx(ctx, tx, actor, id, in, categoryID); err != nil {
@@ -430,42 +426,10 @@ func (s *Store) EditRequest(ctx context.Context, actor User, id int64, e Request
 	return tx.Commit()
 }
 
-// prepareRequestUpdate runs every check that needs no transaction and returns the
-// scrubbed input plus the resolved recoverable category id. Shared so the edit and
-// the edit-and-resubmit paths cannot validate differently.
-func (s *Store) prepareRequestUpdate(ctx context.Context, actor User, in RequestInput) (RequestInput, any, error) {
-	in.RequesterID = actor.ID
-	if forcesRequesterPayee(in.Type) {
-		in.VendorID = 0
-		in.VendorPayee = actor.Name
-	}
-	in = scrubFieldsNotOwned(in)
-	rules, err := s.recoverableRules(ctx)
-	if err != nil {
-		return in, 0, err
-	}
-	if err := validateRequestInput(in, rules); err != nil {
-		return in, 0, err
-	}
-	// Same gate on the edit path: rerouting a request to a non-approver by
-	// editing it strands it exactly as raising it that way does (F-A-08).
-	if err := s.validateRequestRefs(ctx, in); err != nil {
-		return in, 0, err
-	}
-	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
-	if err != nil {
-		return in, 0, err
-	}
-	mode, err := s.urgencyMode(ctx)
-	if err != nil {
-		return in, 0, err
-	}
-	if err := validateUrgency(in, mode); err != nil {
-		return in, 0, err
-	}
-	return in, categoryID, nil
-}
-
+// updateRequestTx writes already-validated corrections inside tx. Only the
+// requester may edit, only while the request is pending or returned, and a
+// changed vendor invoice is checked for duplicates again. The UPDATE repeats
+// the status and requester it read, so a concurrent change refuses the edit.
 func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id int64, in RequestInput, categoryID any) error {
 	before, err := requestInTx(ctx, tx, id)
 	if err != nil {
@@ -483,7 +447,6 @@ func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 		}
 	}
 	// Pending edits reset the reminder timer and reroute to the chosen approver.
-	// P5 hook: re-notify the (possibly new) approver here.
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET
  treatment=?, type=?, recoverable_category=?, recoverable_category_id=?, project_id=?, head_id=?, vendor_id=?, vendor_payee=?,
  short_title=?, amount=?, purpose=?, needed_by=?, invoice_no=?, invoice_date=?, expense_date=?,
@@ -510,14 +473,22 @@ func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 	}
 	return recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "update", EntityType: "payment_request", EntityID: &id,
-		Summary: actor.Name + " edited request " + before.Number + func() string {
-			if strings.TrimSpace(in.DuplicateReason) != "" {
-				return " — duplicate override: " + strings.TrimSpace(in.DuplicateReason)
-			}
-			return ""
-		}(), Before: before, After: after})
+		Summary: actor.Name + " edited request " + before.Number + duplicateNote(in),
+		Before:  before, After: after})
 }
 
+// duplicateNote is the audit-summary suffix recorded when the requester
+// overrode the duplicate-invoice warning, or "" when there was no override.
+func duplicateNote(in RequestInput) string {
+	if r := strings.TrimSpace(in.DuplicateReason); r != "" {
+		return " — duplicate override: " + r
+	}
+	return ""
+}
+
+// AddRequestComment adds a comment to a request's conversation and returns its
+// id. When the accountant holding a partial review replies while a concern is
+// open, the reply closes the concern.
 func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int64, body string) (int64, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -560,6 +531,7 @@ func (s *Store) AddRequestComment(ctx context.Context, actor User, requestID int
 	return id, nil
 }
 
+// RequestComments lists a request's comments with their authors, oldest first.
 func (s *Store) RequestComments(ctx context.Context, requestID int64) ([]RequestComment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.request_id,c.author_id,COALESCE(u.name,''),c.body,c.created_at
  FROM request_comments c JOIN users u ON u.id=c.author_id WHERE c.request_id=? ORDER BY c.created_at, c.id`, requestID)
@@ -578,6 +550,8 @@ func (s *Store) RequestComments(ctx context.Context, requestID int64) ([]Request
 	return out, rows.Err()
 }
 
+// AddRequestAttachment records a document already saved to disk against a
+// request and returns its id. Who may upload is the caller's check.
 func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID int64, in AttachmentInput) (int64, error) {
 	if err := validateAttachment(in); err != nil {
 		return 0, err
@@ -597,13 +571,11 @@ func (s *Store) AddRequestAttachment(ctx context.Context, actor User, requestID 
 	return id, nil
 }
 
-// AddHeldRequestAttachment is the requester's answer to a hold — "Need GST
-// receipt" — given as a document rather than a comment (Q6/L7). It is the one
-// way a document reaches a request after the edit form has closed, and it is
-// open exactly as wide as the hold: the request must be the actor's own and on
-// hold at the moment of the write, both checked on the row inside the write
-// transaction, because the handler's answer came from a read made before it
-// and Accounts may have lifted the hold since (hold-1 review). Nothing else on
+// AddHeldRequestAttachment lets the requester answer an Accounts hold ("Need
+// GST receipt") with a document. It is the only way to add a document after the
+// edit form has closed, so it is allowed only while the request is the actor's
+// own and on hold, both checked on the row inside the write transaction
+// (Accounts may have lifted the hold since the page was drawn). Nothing else on
 // the request changes.
 func (s *Store) AddHeldRequestAttachment(ctx context.Context, actor User, requestID int64, in AttachmentInput) (int64, error) {
 	if err := validateAttachment(in); err != nil {

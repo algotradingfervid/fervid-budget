@@ -1,38 +1,44 @@
+// request_validation.go checks a request form before it is written: the pure
+// field rules (validateRequestInput), clearing fields the chosen type does not
+// use, database checks on the ids the form names (approver, project, head,
+// vendor), the urgency and attachment policies, and the duplicate-invoice
+// guard. prepareRequestInput runs them in one fixed order for both a new
+// request and an edit, so the two can never validate differently.
 package store
 
 import (
 	"context"
 	"database/sql"
-	"fervidbudget/internal/money"
 	"fmt"
 	"strings"
+
+	"fervidbudget/internal/money"
 )
 
-// requestTypes is what validateRequestInput accepts. There are five, and the
-// product's type chooser (`requestTypeOptions`, internal/app/requests.go) offers
-// all five since the 2026-09-25 fix wave (form-1 / recoverables-1).
-//
-// The fifth, `recoverable`, is the deposit or guarantee — EMD, PBG, ICD, a
-// security deposit — and it exists as a type of its own for one reason: its
-// payee. An employee advance always pays the person raising it
-// (forcesRequesterPayee), so while it was the only card that could carry the
-// recoverable treatment, a ₹10 lakh inter-corporate deposit was recorded as
-// "Paid to Rhea Requester" and Accounts were told to pay the employee. A deposit
-// is paid to the counterparty or the tender authority, so it is raised as its
-// own type with a payee the requester names (phase-2 spec §3, design Figure 2).
+// requestTypes are the request types validateRequestInput accepts. The
+// `recoverable` type is a deposit or guarantee (EMD, PBG, ICD, a security
+// deposit). It is a type of its own because of its payee: an employee advance
+// always pays the person raising it (forcesRequesterPayee), while a deposit is
+// paid to the counterparty or tender authority the requester names.
 var requestTypes = map[string]bool{
 	"vendor_invoice": true, "vendor_advance": true, "reimbursement": true,
 	"employee_advance": true, "recoverable": true,
 }
 
+// budgetOnlyTypes are the types that are always a budget expense against a
+// project head. The value names the type in the refusal message.
+var budgetOnlyTypes = map[string]string{
+	"vendor_invoice": "a vendor invoice",
+	"vendor_advance": "a vendor advance",
+	"reimbursement":  "reimbursement",
+}
+
+// recoverableRule is what one recoverable category demands of a request.
 type recoverableRule struct{ RequiresProject, RequiresCounterparty bool }
 
-// recoverableCategoryRules is the built-in default rule set.
-//
-// Phase 4 moved the authority to the recoverable_categories table, which
-// migration v6 seeds from exactly this map — so an admin can add a category and
-// have its rules enforced without a code change (V4). The map survives as the
-// seed and as the rule set the pure validator tests use;
+// recoverableCategoryRules is the built-in default rule set. The live rules
+// come from the recoverable_categories table (see recoverableRules), which the
+// migration seeds from this map; the map also serves the pure validator tests.
 // TestSeededCategoriesMatchPhase2Rules fails if the two ever drift.
 var recoverableCategoryRules = map[string]recoverableRule{
 	"emd":              {RequiresProject: true},
@@ -43,8 +49,11 @@ var recoverableCategoryRules = map[string]recoverableRule{
 	"other":            {},
 }
 
-// validateRequestInput stays pure: the caller supplies the recoverable rule set
-// so the rules can come from the database without this function reaching for it.
+// validateRequestInput checks a request form's own fields: amount, title,
+// purpose, approver (never the requester), treatment, type, date formats, and
+// then what each type requires (project and head, vendor, invoice details,
+// recoverable details). It reads no database; the caller passes the
+// recoverable category rules so they can come from the table.
 func validateRequestInput(in RequestInput, rules map[string]recoverableRule) error {
 	if in.Amount <= 0 || in.Amount > money.MaxAmount {
 		return fmt.Errorf("%w: a positive amount is required", ErrValidation)
@@ -58,8 +67,8 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 	if in.ManagerID <= 0 {
 		return fmt.Errorf("%w: choose an approver", ErrValidation)
 	}
-	// G8: self-approval is never acceptable, whatever roles the requester holds.
-	// admin-configuration.html renders this as checked-and-disabled: not a setting.
+	// Nobody may approve their own request, whatever roles they hold. This is
+	// a fixed rule, not a setting.
 	if in.RequesterID > 0 && in.ManagerID == in.RequesterID {
 		return fmt.Errorf("%w: you cannot approve your own request — choose another approver", ErrValidation)
 	}
@@ -110,14 +119,16 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 		}
 		return nil
 	}
-	switch in.Type {
-	case "vendor_invoice":
+	if noun, ok := budgetOnlyTypes[in.Type]; ok {
 		if in.Treatment != "budget" {
-			return fmt.Errorf("%w: a vendor invoice is a budget expense", ErrValidation)
+			return fmt.Errorf("%w: %s is a budget expense", ErrValidation, noun)
 		}
 		if err := needsProjectHead(); err != nil {
 			return err
 		}
+	}
+	switch in.Type {
+	case "vendor_invoice":
 		if err := needsVendor(); err != nil {
 			return err
 		}
@@ -128,12 +139,6 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 			return fmt.Errorf("%w: the invoice date is required", ErrValidation)
 		}
 	case "vendor_advance":
-		if in.Treatment != "budget" {
-			return fmt.Errorf("%w: a vendor advance is a budget expense", ErrValidation)
-		}
-		if err := needsProjectHead(); err != nil {
-			return err
-		}
 		if err := needsVendor(); err != nil {
 			return err
 		}
@@ -141,12 +146,6 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 			return fmt.Errorf("%w: say what the advance is for", ErrValidation)
 		}
 	case "reimbursement":
-		if in.Treatment != "budget" {
-			return fmt.Errorf("%w: reimbursement is a budget expense", ErrValidation)
-		}
-		if err := needsProjectHead(); err != nil {
-			return err
-		}
 		if !validDate(in.ExpenseDate) {
 			return fmt.Errorf("%w: the expense date is required", ErrValidation)
 		}
@@ -157,10 +156,10 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 		if in.Treatment == "budget" {
 			return needsProjectHead()
 		}
-		// The category is the type's, not the requester's to choose: an employee
-		// advance pays the person raising it, so an EMD, PBG or ICD filed under
-		// this type would be a deposit recorded as owed to the employee (form-1).
-		// The seeded code is the stable identity — renaming the category keeps it.
+		// An employee advance pays the person raising it, so its category is
+		// fixed: an EMD, PBG or ICD filed under this type would be a deposit
+		// recorded as owed to the employee. The seeded category code is the
+		// stable identity, so renaming the category keeps this rule working.
 		if in.RecoverableCategory != employeeAdvanceCategory {
 			return fmt.Errorf("%w: an employee advance is always in the Employee advance category — a deposit, guarantee or loan is raised as its own request type", ErrValidation)
 		}
@@ -175,8 +174,7 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 		if err := needsRecoverable(); err != nil {
 			return err
 		}
-		// Free, but not blank: this is who Accounts pays, and a request that
-		// names nobody cannot be paid.
+		// The payee is free text but may not be blank: it is who Accounts pays.
 		if strings.TrimSpace(in.VendorPayee) == "" {
 			return fmt.Errorf("%w: say who receives the money — the counterparty company or the authority holding the deposit", ErrValidation)
 		}
@@ -188,30 +186,23 @@ func validateRequestInput(in RequestInput, rules map[string]recoverableRule) err
 // Codes never change (see RecoverableCategory), so it survives a rename.
 const employeeAdvanceCategory = "employee_advance"
 
-// forcesRequesterPayee reports whether the payee must equal the requester.
-// These types never carry a vendor row — the payee snapshot is the only payee.
-//
-// `recoverable` is deliberately not here: a deposit or guarantee is paid to the
-// counterparty or the tender authority the requester names (form-1).
+// forcesRequesterPayee reports whether the payee must be the requester. These
+// types never carry a vendor row; the payee name is the only payee. The
+// `recoverable` type is not one of them: a deposit or guarantee is paid to the
+// counterparty or tender authority the requester names.
 func forcesRequesterPayee(t string) bool {
 	return t == "reimbursement" || t == "employee_advance"
 }
 
-// scrubFieldsNotOwned clears the columns a request's treatment and its type do
-// not own, before anything is written or validated.
+// scrubFieldsNotOwned clears the fields that the request's treatment and type
+// do not use, before anything is validated or written.
 //
-// The form renders these fieldsets as alternatives, so no browser can send both.
-// But `hidden` is not validation and neither is a `data-when` reveal: a crafted
-// POST used to store the concealed half, and request_detail prints every column
-// that is non-empty — so one request could read as recoverable to a person and
-// behave as a budget expense to every query, or carry an invoice number on a
-// reimbursement that has no invoice (F-B-15, F-B-04). Clearing here is the same
-// move forcesRequesterPayee already makes for vendor_id, applied to the rest of
-// the shape.
-//
-// It runs before validateRequestInput so the validator sees exactly what will be
-// stored, and so a value that is about to be dropped cannot be refused for being
-// malformed.
+// The form shows these fields as alternatives, but hiding a field is not
+// validation: a crafted POST could otherwise store both halves, and the detail
+// page prints every non-empty column, so one request could read as recoverable
+// while every query treats it as a budget expense. Clearing first also means the
+// validator sees exactly what will be stored, and a value about to be dropped
+// cannot be refused for being malformed.
 func scrubFieldsNotOwned(in RequestInput) RequestInput {
 	// Recoverable columns belong to the treatment, not the type: an employee
 	// advance is recoverable or budget depending on how it was raised.
@@ -242,16 +233,10 @@ func scrubFieldsNotOwned(in RequestInput) RequestInput {
 	return in
 }
 
-// requireApprover refuses a manager_id that cannot decide the request.
-//
-// The form's approver control is built from ListApprovers, so it only ever
-// offers active users holding approval:approve — and that was the only
-// enforcement. Every decision route is gated on the verb **and** on
-// manager_id == actor, so a request routed to anybody else can be decided by
-// nobody: the named person is refused by the route gate and every real manager
-// by the ownership check, leaving withdrawal as the only exit (F-A-08). The
-// query is ListApprovers' own, minus the ordering and the self-exclusion
-// validateRequestInput already applies.
+// requireApprover refuses an approver who could not decide the request: the
+// person must be active and hold approval:approve. The form only offers such
+// people (ListApprovers), but a hand-made POST could name anybody, and a
+// request routed to someone who cannot approve it would be stuck for good.
 func (s *Store) requireApprover(ctx context.Context, managerID int64) error {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users u
@@ -266,15 +251,11 @@ func (s *Store) requireApprover(ctx context.Context, managerID int64) error {
 	return nil
 }
 
-// validateRequestRefs re-checks, against the database, the ids whose only other
-// guard is a narrowed <select>: the approver must be able to approve (F-A-08),
-// the head must be live and must belong to the project the request names
-// (F-B-03, F-B-05), and the vendor must still be active (F-B-07).
-//
-// The head test is deliberately ListHeads(ctx, true)'s own condition —
-// `h.active=1 AND p.active=1` — because the form's list is built from exactly
-// that query, and a rule enforced only by the list it populates is a rule a
-// hand-rolled POST does not have to obey.
+// validateRequestRefs re-checks against the database the ids that the form
+// only narrows with a <select>: the approver must be able to approve, the head
+// must be open and belong to the project the request names (or, with no head,
+// the project must be open), and the vendor must still be active. The head test
+// uses the same condition as ListHeads(ctx, true), which builds the form's list.
 func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error {
 	if err := s.requireApprover(ctx, in.ManagerID); err != nil {
 		return err
@@ -301,9 +282,8 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 			return fmt.Errorf("%w: that budget head has been retired — choose a head that is still open", ErrValidation)
 		}
 	} else if in.ProjectID > 0 {
-		// A recoverable's project link carries no head (recoverables-7), so the
-		// head check above never sees it and the project is checked on its own:
-		// the register groups recoverables by this id.
+		// A recoverable may link a project without a head, so the project is
+		// checked on its own: the register groups recoverables by it.
 		var active int
 		err := s.db.QueryRowContext(ctx, `SELECT active FROM projects WHERE id=?`, in.ProjectID).Scan(&active)
 		if err == sql.ErrNoRows {
@@ -326,16 +306,53 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 			return err
 		}
 		if status != "active" {
-			// 'inactive' on a vendor is how this product says "do not pay these
-			// people any more", and the vendor master is the authority for a payee.
+			// An inactive vendor is one the business has decided not to pay.
 			return fmt.Errorf("%w: that vendor is no longer active — choose an active vendor", ErrValidation)
 		}
 	}
 	return nil
 }
 
-// urgencyMode returns the configured urgency policy: "reason" (default),
-// "free" or "disabled" (admin-configuration.html · Payments · Urgency).
+// prepareRequestInput normalises and validates a request form for both a new
+// request and an edit, in one fixed order: the requester is the actor, types
+// that pay the requester get the actor as payee, unused fields are cleared,
+// then the field rules, the database references and the urgency policy are
+// checked. It returns the cleaned input and the recoverable category's row id
+// (nil when the request is not recoverable). It needs no transaction.
+func (s *Store) prepareRequestInput(ctx context.Context, actor User, in RequestInput) (RequestInput, any, error) {
+	in.RequesterID = actor.ID
+	if forcesRequesterPayee(in.Type) {
+		in.VendorID = 0
+		in.VendorPayee = actor.Name
+	}
+	in = scrubFieldsNotOwned(in)
+	rules, err := s.recoverableRules(ctx)
+	if err != nil {
+		return in, 0, err
+	}
+	if err := validateRequestInput(in, rules); err != nil {
+		return in, 0, err
+	}
+	if err := s.validateRequestRefs(ctx, in); err != nil {
+		return in, 0, err
+	}
+	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
+	if err != nil {
+		return in, 0, err
+	}
+	mode, err := s.urgencyMode(ctx)
+	if err != nil {
+		return in, 0, err
+	}
+	if err := validateUrgency(in, mode); err != nil {
+		return in, 0, err
+	}
+	return in, categoryID, nil
+}
+
+// urgencyMode returns the configured urgency policy: "reason" (the default:
+// an urgent request must say why), "free" (no reason needed) or "disabled"
+// (nothing may be marked urgent).
 func (s *Store) urgencyMode(ctx context.Context) (string, error) {
 	mode, err := s.AppSetting(ctx, "urgency_mode")
 	if err != nil {
@@ -354,8 +371,9 @@ func (s *Store) urgencyMode(ctx context.Context) (string, error) {
 // message to the reason field with errors.Is instead of matching its wording.
 var ErrUrgencyReasonRequired = fmt.Errorf("%w: say why this is urgent", ErrValidation)
 
-// validateUrgency enforces G7. It is separate from validateRequestInput because
-// the rule is configuration-driven and validateRequestInput stays pure.
+// validateUrgency applies the urgency policy to an urgent request. It is kept
+// apart from validateRequestInput because the policy is a setting, and
+// validateRequestInput reads no database.
 func validateUrgency(in RequestInput, mode string) error {
 	if !in.Urgent {
 		return nil
@@ -373,9 +391,9 @@ func validateUrgency(in RequestInput, mode string) error {
 	return nil
 }
 
-// validateAttachmentPolicy implements G10. When attachments are compulsory the
-// system never hard-blocks: it asks for a written reason, because legitimate
-// documents are sometimes genuinely unavailable.
+// validateAttachmentPolicy applies the "attachments required" setting. It never
+// blocks outright: with no document the requester must give a written reason,
+// because a real document is sometimes genuinely unavailable.
 func validateAttachmentPolicy(required bool, attachmentCount int, exceptionReason string) error {
 	if !required || attachmentCount > 0 {
 		return nil
@@ -386,13 +404,18 @@ func validateAttachmentPolicy(required bool, attachmentCount int, exceptionReaso
 	return nil
 }
 
+// attachmentsRequired reports whether the "attachments required" setting is on.
 func (s *Store) attachmentsRequired(ctx context.Context) (bool, error) {
 	v, err := s.AppSetting(ctx, "require_attachments")
 	return v == "1", err
 }
 
-// Duplicate invoice matches are vendor + normalized invoice + invoice year.
-// They are warnings with a recorded exception, never an unoverridable ban.
+// requireDuplicateReasonTx refuses a vendor invoice that matches another live
+// request (same vendor, same invoice number ignoring case and surrounding spaces, same
+// invoice year) unless the requester gives an override reason of at least 10
+// characters. A duplicate is a warning with a recorded reason, never a ban.
+// excludeID is the request being edited (0 for a new one). The check counts
+// every request, not only those the requester may see, but reveals none of them.
 func requireDuplicateReasonTx(ctx context.Context, tx *sql.Tx, in RequestInput, excludeID int64) error {
 	if in.Type != "vendor_invoice" || in.VendorID <= 0 || strings.TrimSpace(in.InvoiceNo) == "" {
 		return nil

@@ -1,3 +1,6 @@
+// request_thread.go builds the "History and conversation" panel of a request:
+// audit events, comments and uploads merged in time order, with the fields an
+// edit changed and people's names in place of user ids.
 package store
 
 import (
@@ -10,7 +13,7 @@ import (
 	"strings"
 )
 
-// initials renders "Arun Mehta" as "AM" for the `.tl-dot` avatar.
+// initials renders "Arun Mehta" as "AM" for the avatar dot in the history.
 func initials(name string) string {
 	parts := strings.Fields(name)
 	if len(parts) == 0 {
@@ -23,11 +26,19 @@ func initials(name string) string {
 	return out
 }
 
-// threadDiffFields are the fields an edit reports in `.tl-change`. Everything
-// else changes too rarely, or too noisily, to be worth a line in the story.
-var threadDiffFields = []string{"amount", "approved_amount", "needed_by", "invoice_no",
-	"invoice_date", "expense_date", "manager_id", "short_title", "purpose", "urgent"}
+// threadDiffFields are the fields an edit reports as changes in the history:
+// col is the column name shown to the reader (ThreadChange.Field) and key the
+// Request field name under which the audit JSON stores it. Other fields change
+// too rarely, or too noisily, to be worth a line.
+var threadDiffFields = []struct{ col, key string }{
+	{"amount", "Amount"}, {"approved_amount", "ApprovedAmount"}, {"needed_by", "NeededBy"},
+	{"invoice_no", "InvoiceNo"}, {"invoice_date", "InvoiceDate"}, {"expense_date", "ExpenseDate"},
+	{"manager_id", "ManagerID"}, {"short_title", "ShortTitle"}, {"purpose", "Purpose"}, {"urgent", "Urgent"},
+}
 
+// diffRequestAudit compares the before and after JSON of one audit row and
+// returns the threadDiffFields that changed. It returns nil when either side is
+// not a JSON object (for example an event that recorded no snapshot).
 func diffRequestAudit(beforeJSON, afterJSON string) []ThreadChange {
 	var before, after map[string]any
 	if json.Unmarshal([]byte(beforeJSON), &before) != nil || json.Unmarshal([]byte(afterJSON), &after) != nil {
@@ -35,24 +46,21 @@ func diffRequestAudit(beforeJSON, afterJSON string) []ThreadChange {
 	}
 	var out []ThreadChange
 	for _, f := range threadDiffFields {
-		key := auditFieldKey(f)
-		was, now := fmt.Sprint(before[key]), fmt.Sprint(after[key])
-		if before[key] == nil && after[key] == nil {
+		was, now := fmt.Sprint(before[f.key]), fmt.Sprint(after[f.key])
+		if before[f.key] == nil && after[f.key] == nil {
 			continue
 		}
 		if was != now {
-			out = append(out, ThreadChange{Field: f, Was: was, Now: now})
+			out = append(out, ThreadChange{Field: f.col, Was: was, Now: now})
 		}
 	}
 	return out
 }
 
-// nameUsersInChanges turns the user ids a `manager_id` change carries into the
-// people they are. The audit serialises Request.ManagerID, so a reassignment or
-// an edit that moved the approver diffed as "Approver 3 → 4" — internal ids on
-// the one screen every reader of a request opens. A name that cannot be
-// resolved (a value that is not an id, or an id nobody has) is left as it was
-// rather than dropped, so the change is still recorded as a change.
+// nameUsersInChanges replaces the user ids in a manager_id change with the
+// people's names, so the history reads "Asha → Ravi" rather than "3 → 4". A
+// value that cannot be resolved (not an id, or an id nobody has) is left as it
+// was, so the change is still shown.
 func (s *Store) nameUsersInChanges(ctx context.Context, changes []ThreadChange) ([]ThreadChange, error) {
 	for i, c := range changes {
 		if c.Field != "manager_id" {
@@ -77,29 +85,6 @@ func (s *Store) nameUsersInChanges(ctx context.Context, changes []ThreadChange) 
 		}
 	}
 	return changes, nil
-}
-
-// auditFieldKey maps a column name to the key recordAuditTx serialised, which
-// is the Go field name on Request (Amount, NeededBy, …).
-func auditFieldKey(column string) string {
-	parts := strings.Split(column, "_")
-	for i, p := range parts {
-		if p == "" {
-			continue
-		}
-		parts[i] = strings.ToUpper(p[:1]) + p[1:]
-	}
-	key := strings.Join(parts, "")
-	if key == "InvoiceNo" {
-		return "InvoiceNo"
-	}
-	if key == "ManagerId" {
-		return "ManagerID"
-	}
-	if key == "ApprovedAmount" {
-		return "ApprovedAmount"
-	}
-	return key
 }
 
 // RequestAuditNote reads the note recorded by this decision, never the request's
@@ -129,9 +114,10 @@ func RequestAuditNote(a AuditEntry) string {
 	return strings.TrimSpace(after.DecisionReason)
 }
 
-// RequestThread merges the audit trail, the conversation and the file uploads
-// into one chronological stream — the single "History and conversation" list
-// the design renders as `.thread` (UI/UX §9).
+// RequestThread merges a request's audit trail, comments and uploaded
+// documents into one list, oldest first: the "History and conversation" panel
+// on the request page. Audit rows for comments, uploads and concerns are
+// skipped because those appear through their own, richer entries.
 func (s *Store) RequestThread(ctx context.Context, requestID int64) ([]ThreadEntry, error) {
 	audit, err := s.Audit(ctx, "payment_request", requestID, 200)
 	if err != nil {

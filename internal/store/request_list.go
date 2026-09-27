@@ -1,3 +1,7 @@
+// request_list.go answers "which requests" questions: the filtered, paged and
+// counted request lists behind the list screens, queues, dashboard panels and
+// CSV export, plus the similar-request and duplicate-invoice lookups shown on
+// the request form. Every list applies the viewer's request scope in SQL.
 package store
 
 import (
@@ -6,8 +10,8 @@ import (
 	"strings"
 )
 
-// requestBuckets back the `.segmented` tabs. "needs-me" is scope-dependent and
-// handled separately in requestWhere.
+// requestBuckets are the status groups behind the list screen's tabs. The
+// "needs-me" tab depends on the viewer and is built in requestWhere instead.
 var requestBuckets = map[string][]string{
 	"open":   {"pending", "returned", "approved", "cancellation_requested", "processing", "partial_review"},
 	"closed": {"rejected", "withdrawn", "cancelled", "completed", "completed_partial"},
@@ -46,11 +50,10 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 			args = append(args, st)
 		}
 	case opts.Bucket == "needs-me":
-		// The one line the whole design turns on: who owes the next action.
-		//
-		// A partial review is the manager's decision, and an open concern on one is
-		// the holder's answer to give — both were missing, so a manager's "Needs me"
-		// said 0 while the request itself said "Waiting on you" (settlement-3/-8).
+		// Requests where the viewer owes the next action: their own returned
+		// requests; requests they must decide as approver (including partial
+		// reviews); and partial reviews they hold as the accountant while a
+		// concern is waiting for their answer.
 		where = append(where, `((r.requester_id=? AND r.status='returned')
  OR (r.manager_id=? AND r.status IN ('pending','cancellation_requested','partial_review'))
  OR (r.processing_by=? AND r.status='partial_review' AND r.concern_open=1))`)
@@ -84,11 +87,10 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 		where = append(where, `r.project_id=?`)
 		args = append(args, opts.ProjectID)
 	}
-	if q := strings.ToLower(strings.TrimSpace(opts.Query)); q != "" {
+	if q := escapeLike(opts.Query); q != "" {
 		where = append(where, `(lower(r.number) LIKE ? ESCAPE '\' OR lower(r.purpose) LIKE ? ESCAPE '\'
  OR lower(r.short_title) LIKE ? ESCAPE '\' OR lower(r.invoice_no) LIKE ? ESCAPE '\'
  OR lower(COALESCE(v.name,r.vendor_payee)) LIKE ? ESCAPE '\' OR lower(ru.name) LIKE ? ESCAPE '\')`)
-		q = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
 		needle := "%" + q + "%"
 		args = append(args, needle, needle, needle, needle, needle, needle)
 	}
@@ -100,8 +102,8 @@ func requestWhere(opts RequestListOptions) (string, []any) {
 }
 
 // RequestsUnlimited asks for every row the filter matches, with no cap at all.
-// The CSV export is what needs it: an export taken for reconciliation that drops
-// rows without saying so is worse than no export (D3, F-B-16).
+// The CSV export uses it: an export that silently dropped rows would be worse
+// than none.
 const RequestsUnlimited = -1
 
 // defaultRequestLimit is the cap applied when a caller names no number. It is a
@@ -110,14 +112,9 @@ const RequestsUnlimited = -1
 // the total and whether anything was left out.
 const defaultRequestLimit = 200
 
-// RequestPage is a list of requests that knows what it is not showing.
-//
-// F-B-16: ListRequests capped itself at 200 rows while CountRequests — the tab
-// count rendered right beside it — had no cap at all, so a queue promised 214 and
-// drew 200 with nothing on the page saying so, and the CSV export dropped the
-// same fourteen rows just as quietly. Silence was the defect. Total and Truncated
-// are what a screen needs in order to stop lying: page on Offset/Limit and say
-// which page this is, or ask for RequestsUnlimited and carry every row.
+// RequestPage is one page of requests plus the total the filter matches, so a
+// screen can say "showing 200 of 214" and offer the next page instead of
+// silently dropping rows.
 type RequestPage struct {
 	Requests []Request
 	// Total rows matching the same filter, ignoring Limit and Offset. This is
@@ -171,6 +168,8 @@ func (s *Store) ListRequests(ctx context.Context, opts RequestListOptions) ([]Re
 	return s.listRequestRows(ctx, opts, 0)
 }
 
+// effectiveRequestLimit is the row cap for a requested limit: the limit itself,
+// or defaultRequestLimit when none was given.
 func effectiveRequestLimit(limit int) int {
 	if limit <= 0 {
 		return defaultRequestLimit
@@ -178,15 +177,13 @@ func effectiveRequestLimit(limit int) int {
 	return limit
 }
 
+// listRequestRows runs the list query for opts, starting offset rows in and
+// capped at the effective limit (or uncapped for RequestsUnlimited).
 func (s *Store) listRequestRows(ctx context.Context, opts RequestListOptions, offset int) ([]Request, error) {
 	clause, args := requestWhere(opts)
-	// F-B-18: urgent first, then **oldest** first. The comment here and the
-	// sub-line on requests-list.html both say the list is sorted by who has been
-	// kept waiting longest, and that is created_at ASC — it used to be DESC, so
-	// the most neglected request was the last one on the page, or on no page at
-	// all once the 200-row cap bit. CURRENT_TIMESTAMP resolves only to the second,
-	// so a burst of submissions shares one value; id breaks the tie and keeps them
-	// in the order they arrived.
+	// Urgent first, then oldest first, so the request kept waiting longest is
+	// at the top. Timestamps are only to the second, so id breaks ties in
+	// arrival order.
 	q := requestSelect + clause + ` ORDER BY r.urgent DESC, r.created_at, r.id`
 	switch {
 	case opts.Limit == RequestsUnlimited && offset > 0:
@@ -217,6 +214,7 @@ func (s *Store) listRequestRows(ctx context.Context, opts RequestListOptions, of
 	return out, rows.Err()
 }
 
+// CountRequests counts the requests the filter matches, ignoring Limit.
 func (s *Store) CountRequests(ctx context.Context, opts RequestListOptions) (int, error) {
 	clause, args := requestWhere(opts)
 	q := `SELECT COUNT(*) FROM payment_requests r
@@ -230,7 +228,7 @@ func (s *Store) CountRequests(ctx context.Context, opts RequestListOptions) (int
 // SimilarRequests reports recent requests that look like the one being raised:
 // the same payee, and either a near-identical amount or the very same invoice
 // reference, inside the configured window. It is a warning, not a gate — callers
-// must never refuse a submit on the strength of a non-empty result (G6).
+// must never refuse a submit on the strength of a non-empty result.
 func (s *Store) SimilarRequests(ctx context.Context, opt SimilarRequestOptions) ([]Request, error) {
 	if opt.Days <= 0 {
 		opt.Days = 30
@@ -277,8 +275,11 @@ func (s *Store) SimilarRequests(ctx context.Context, opt SimilarRequestOptions) 
 	return out, rows.Err()
 }
 
-// DuplicateInvoices returns only matches the viewer may read. The write guard
-// still catches matches outside their scope without disclosing another record.
+// DuplicateInvoices lists the live vendor invoices that match in (same vendor,
+// same invoice number ignoring case and surrounding spaces, same invoice year), limited to
+// the requests the viewer may see under opts. The write guard
+// (requireDuplicateReasonTx) still counts matches outside their scope, without
+// revealing them.
 func (s *Store) DuplicateInvoices(ctx context.Context, in RequestInput, opts RequestListOptions) ([]Request, error) {
 	opts.Type = "vendor_invoice"
 	opts.Bucket = "all"

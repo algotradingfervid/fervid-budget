@@ -1,27 +1,34 @@
+// request_transitions.go moves a payment request between statuses: resubmit,
+// withdraw, approve, return, reject, reassign, re-raise, the cancellation
+// paths, and continuing a partly paid request.
+//
+// Every transition follows the same pattern. It opens a write transaction
+// (which holds SQLite's write lock from BEGIN, see tx.go), re-reads the request,
+// checks who is acting and whether the move is allowed from the current status,
+// then runs an UPDATE whose WHERE repeats the status (and owner) it just read
+// and checks that exactly one row changed (affectedOne). The lock decides who
+// goes first; the repeated condition decides whether going second still makes
+// sense. Each transition writes an audit row in the same transaction.
 package store
 
 import (
 	"context"
 	"database/sql"
-	"fervidbudget/internal/money"
 	"fmt"
 	"strings"
 	"time"
+
+	"fervidbudget/internal/money"
 )
 
-// Writers guard their UPDATE with the state they expect and check RowsAffected,
-// the shape ReserveRequest uses: the write lock (taken at BEGIN, see tx.go)
-// decides who goes first, the condition decides whether going second still
-// makes sense.
-
-// ErrRequestRaced is the loser of a write race: the row moved between the read
-// that authorised this call and the conditional UPDATE that would have applied
-// it. It is a validation error, not a server error, so the reader is told the
-// request was already decided instead of meeting an internal-error page
-// (F-B-10, F-C-05).
+// ErrRequestRaced is the refusal for losing a write race: the row changed
+// between the read that authorised this call and the conditional UPDATE. It is
+// a validation error, so the person is told to reload instead of seeing an
+// internal-error page.
 var ErrRequestRaced = fmt.Errorf("%w: somebody else changed this request a moment ago — reload it and look again", ErrValidation)
 
-// affectedOne turns a conditional UPDATE's row count into the race refusal.
+// affectedOne turns a conditional UPDATE that changed no row into
+// ErrRequestRaced.
 func affectedOne(res sql.Result) error {
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -33,74 +40,45 @@ func affectedOne(res sql.Result) error {
 	return nil
 }
 
-// requestStatuses is the complete status enum — every value that can appear in
-// payment_requests.status, in workflow order (F-C-08).
-//
-// It listed seven until the 2026-07-27 audit, on the strength of a comment
-// saying "Phase 3 appends" the rest. Phase 3 shipped the four extra statuses and
-// never came back for the comment, so a reader consulting the enum for the set
-// of states this system has was told four of the eleven do not exist —
-// including both terminal ones.
-//
-// Two things are deliberately NOT here:
-//
-//   - 'draft'. D1: a request exists only once submitted, and
-//     migrations.go's CHECK (status <> 'draft') makes the value unrepresentable
-//     for the life of the table, not merely unused.
-//   - 'on_hold'. The old comment named it as a status Phase 3 would append. It
-//     is not a status and never was: it is a boolean column that qualifies
-//     'approved', which is exactly the confusion the activeHold predicate and
-//     the "on_hold implies approved" invariant exist to prevent. A request on
-//     hold has status 'approved'.
-//
-// docs/superpowers/specs/2026-07-25-payment-requests-overview.md still describes
-// nine statuses and omits cancellation_requested, cancelled and
-// completed_partial. This map is the authority; the document is the thing that
-// is wrong, and correcting it is not this file's to do.
+// requestStatuses lists every value payment_requests.status can hold, in
+// workflow order. There is no 'draft': a request exists only once submitted,
+// and the table's CHECK constraint forbids the value. 'On hold' is not a status
+// either: it is the on_hold flag on an approved request.
 var requestStatuses = map[string]bool{
 	"pending": true, "returned": true, "approved": true, "rejected": true,
 	"withdrawn": true, "cancellation_requested": true, "cancelled": true,
-	// Phase 3, the settlement half.
 	"processing": true, "partial_review": true,
 	"completed": true, "completed_partial": true,
 }
 
+// legalTransitions says which status changes canTransition allows. Final
+// states (rejected, withdrawn, cancelled, completed, completed_partial) have
+// no entry. 'processing' has no entry either, but it is not final: Accounts'
+// reservation and settlement code moves requests in and out of it with its own
+// guarded UPDATEs rather than through this table.
 var legalTransitions = map[string]map[string]bool{
 	"returned": {"pending": true},
 	"pending":  {"approved": true, "returned": true, "rejected": true, "withdrawn": true},
-	// G1/G2: post-approval cancellation. An approved request may be frozen by
-	// the requester (cancellation_requested) or cancelled outright by a manager.
+	// After approval the requester may ask for cancellation (freezing payment),
+	// or the approver may cancel outright.
 	"approved": {"cancellation_requested": true, "cancelled": true},
-	// The edge back to 'approved' belongs to DecideCancellation(accept=false)
-	// alone — that path is gated on approval:cancel, demands a written reason and
-	// records `cancel_decline`. ApproveRequest used to borrow it through
-	// canTransition and so lifted the requester's freeze with none of the three
-	// (F-C-03); it now tests for 'pending' itself.
+	// cancellation_requested -> approved is used only when the approver declines
+	// the cancellation (DecideCancellation), never by ApproveRequest.
 	"cancellation_requested": {"cancelled": true, "approved": true},
-	// Phase 3 (G14): a manager-accepted partial closes distinctly from a clean pay.
-	// "completed_partial" has no outgoing edges — terminal, like "completed".
-	//
-	// F-C-08: the edge to "completed" used to be declared here and no code could
-	// traverse it. Only two writers produce a completed state and neither starts
-	// from partial_review — RecordPaymentForRequest writes 'completed' WHERE
-	// status='processing', and AcceptPartial writes 'completed_partial' WHERE
-	// status='partial_review'. A shortfall the manager accepts closes as
-	// completed_partial precisely so that the difference between "paid in full"
-	// and "balance written off" survives in the record, so an edge that would
-	// erase it is not one to leave lying about for a future caller of
-	// decideRequest to reach for. Removed rather than implemented.
+	// A shortfall the approver accepts closes as completed_partial, so the
+	// record keeps "paid in full" and "balance written off" apart.
 	"partial_review": {"completed_partial": true},
 }
 
+// canTransition reports whether legalTransitions allows moving from one status
+// to another.
 func canTransition(from, to string) bool {
 	return legalTransitions[from][to]
 }
 
-// statusPhrase names a request in a status the way a refusal reads it: with
-// its article and in plain words. The transition refusals used to drop the raw
-// status code after a fixed "a", which produced "a approved request cannot be
-// withdrawn" and "a completed_partial request cannot be returned" — a code
-// nobody outside this package speaks, and a grammar nobody speaks at all.
+// statusPhrase names a request in a status the way a refusal reads it, with
+// the right article and plain words ("an approved request", "a request with
+// Accounts") instead of the raw status code.
 func statusPhrase(status string) string {
 	switch status {
 	case "approved":
@@ -117,8 +95,29 @@ func statusPhrase(status string) string {
 	return "a " + strings.ReplaceAll(status, "_", " ") + " request"
 }
 
-// SubmitRequest resubmits a request the approver returned for correction. It is
-// the only remaining transition into `pending` after creation (D1).
+// refuseIfPaid stops a cancellation once any money has been paid. After an
+// installment a request can be back in 'approved', and cancelling it would hide
+// the paid amount and any balance still to recover.
+func refuseIfPaid(r Request) error {
+	if r.PaidAmount > 0 {
+		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	}
+	return nil
+}
+
+// checkDecisionRevision binds an approver's decision to the request as their
+// screen showed it. HTTP handlers always pass the form's revision, and a blank
+// or out-of-date one is refused. Trusted internal callers pass none, which
+// skips the check.
+func checkDecisionRevision(ctx context.Context, tx *sql.Tx, req Request, revisions []string) error {
+	if len(revisions) == 0 {
+		return nil
+	}
+	return requireRevision(ctx, tx, req, revisions[0], "this request changed; reload and review it before deciding")
+}
+
+// SubmitRequest resubmits a request the approver returned for correction. It
+// is the only way back into 'pending' after a request is raised.
 func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -131,10 +130,11 @@ func (s *Store) SubmitRequest(ctx context.Context, actor User, id int64) error {
 	return tx.Commit()
 }
 
-// submitRequestTx is SubmitRequest's body without the transaction, so that
-// UpdateAndResubmit can run the edit and the submit as one unit (F-G-035). It
-// re-reads the row through tx, which is what makes composition safe: called after
-// updateRequestTx it validates the *edited* row, not the row as it was on entry.
+// submitRequestTx is SubmitRequest inside the caller's transaction, so
+// EditRequest can save corrections and resubmit as one unit. It re-reads the
+// row through tx, so after an edit it checks the edited row. Only the requester
+// may resubmit, and the attachment policy is checked against the documents the
+// request has now.
 func (s *Store) submitRequestTx(ctx context.Context, tx *sql.Tx, actor User, id int64) error {
 	before, err := requestInTx(ctx, tx, id)
 	if err != nil {
@@ -172,6 +172,8 @@ func (s *Store) submitRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 		Summary: actor.Name + " resubmitted request " + before.Number, Before: before, After: after})
 }
 
+// WithdrawRequest lets the requester take back a request that is still
+// pending. A withdrawn request is final.
 func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -206,10 +208,12 @@ func (s *Store) WithdrawRequest(ctx context.Context, actor User, id int64) error
 	return tx.Commit()
 }
 
-// ApproveRequest records the approver's decision. Two rules make it narrower
-// than the transition table alone: the decision is legal from 'pending' and from
-// nowhere else (F-C-03), and the approved amount — which is the ceiling Accounts
-// may pay to (G13) — may be reduced and never raised (F-C-01).
+// ApproveRequest records the approver's approval and the amount approved.
+// Only the request's approver may approve, never the requester, and only from
+// 'pending'. The approved amount is the most Accounts may pay, so it may be
+// lower than the amount asked for but never higher. A request whose required-by
+// month is locked cannot be approved. revisions binds the decision to the
+// request as the approver saw it (see checkDecisionRevision).
 func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmount int64, note string, revisions ...string) error {
 	if approvedAmount <= 0 {
 		return fmt.Errorf("%w: approved amount must be positive", ErrValidation)
@@ -226,33 +230,22 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 	if before.ManagerID != actor.ID {
 		return ErrForbidden
 	}
-	// G8: last line of defence. The form never offers it, validateRequestInput
-	// rejects it, and this refuses it even if a row reached that state.
+	// Last line of defence against self-approval: the form never offers it and
+	// validateRequestInput refuses it, but a row could still reach this state.
 	if before.RequesterID == actor.ID {
 		return ErrForbidden
 	}
-	// F-C-03: not canTransition. legalTransitions also carries
-	// cancellation_requested → approved, and that edge belongs to
-	// DecideCancellation(accept=false) alone — the path that is gated on
-	// approval:cancel, requires a written reason and writes `cancel_decline`,
-	// because the requester and Accounts both read it. Approving from the frozen
-	// state lifted the freeze with none of those, rewrote approved_amount,
-	// re-stamped approved_at and left a stale cancel_reason on an approved row
-	// that no screen renders — so the override was invisible to the person who
-	// asked for the cancellation.
+	// Not canTransition: the table also allows cancellation_requested ->
+	// approved, but that move belongs to DecideCancellation, which needs its own
+	// grant, a written reason and its own audit entry.
 	if before.Status == "cancellation_requested" {
 		return fmt.Errorf("%w: this request is waiting on your cancellation decision — decide that first, and declining it is what returns it to approved", ErrValidation)
 	}
 	if before.Status != "pending" {
 		return fmt.Errorf("%w: %s cannot be approved", ErrValidation, statusPhrase(before.Status))
 	}
-	// F-C-01: the approved amount is not a note, it is the authority to pay —
-	// G13 caps a payment at it (store.go:900–910). Approving above the request
-	// therefore raises that ceiling above what anybody asked for, on one person's
-	// signature, and the audit trail cannot tell it from an ordinary approval.
-	// Downwards is the adjustment the approve sheet offers ("You may approve a
-	// smaller amount than was asked for"); upwards is a different obligation, and
-	// the answer to that is a new request.
+	// The approved amount can be lowered but never raised: approving more than
+	// was asked for would need a new request.
 	if approvedAmount > before.Amount {
 		return fmt.Errorf("%w: you cannot approve more than the %s that was requested — approve up to that amount, or cancel this request and ask for a new one", ErrValidation, money.FormatPaise(before.Amount))
 	}
@@ -289,6 +282,9 @@ func (s *Store) ApproveRequest(ctx context.Context, actor User, id, approvedAmou
 	return tx.Commit()
 }
 
+// decideRequest applies an approver's return or reject decision (to is
+// "returned" or "rejected"). A written reason is required; missingMsg is the
+// refusal when it is blank. Only the request's approver may decide.
 func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, action, reason, missingMsg string, revisions ...string) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -334,20 +330,22 @@ func (s *Store) decideRequest(ctx context.Context, actor User, id int64, to, act
 	return tx.Commit()
 }
 
+// ReturnRequest sends a pending request back to the requester for correction,
+// with a comment saying what to fix.
 func (s *Store) ReturnRequest(ctx context.Context, actor User, id int64, comment string, revisions ...string) error {
 	return s.decideRequest(ctx, actor, id, "returned", "return", comment, "a comment is required to return a request", revisions...)
 }
 
+// RejectRequest closes a pending request as rejected, with a reason. The
+// requester can re-raise it as a new request (ReraiseRequest).
 func (s *Store) RejectRequest(ctx context.Context, actor User, id int64, reason string, revisions ...string) error {
 	return s.decideRequest(ctx, actor, id, "rejected", "reject", reason, "a reason is required to reject a request", revisions...)
 }
 
-// reassignableStatuses are the states in which a request is somebody's to
-// decide, and so can be handed to somebody else. They are exactly the states
-// RequestsAwaitingApprover warns about when that person is deactivated
-// (approverOpenStatuses): the warning tells the administrator to reassign each
-// one, so each one has to be reassignable, or the way out it promises is a
-// dead end for a frozen cancellation or a partial review (F-G-025).
+// reassignableStatuses are the states in which a request is waiting on its
+// approver, and so can be handed to another. They match the states the
+// deactivate-user warning lists (approverOpenStatuses), so every request that
+// warning tells the administrator to reassign can in fact be reassigned.
 var reassignableStatuses = map[string]bool{
 	"pending": true, "returned": true, "cancellation_requested": true, "partial_review": true,
 }
@@ -356,19 +354,16 @@ var reassignableStatuses = map[string]bool{
 // status, so a screen can withhold the control where the POST would refuse.
 func Reassignable(status string) bool { return reassignableStatuses[status] }
 
-// ReassignRequest hands a request to a different approver. Whether the actor
-// is entitled to is the caller's question, and its answer arrives as
-// asAdministrator: false means the actor is the request's own approver handing
-// it on, true means a holder of the admin-level grant rescuing one whose
-// approver cannot act. The store asks the first case's question again on the
-// row it is about to change — the caller decided it on a read made before this
-// transaction, and between the two an administrator may already have moved the
-// request, in which case the actor is a former approver and has no say (rbac-8
-// review). The UPDATE matches the approver it read for the same reason.
+// ReassignRequest hands a request to a different approver, with a reason.
 //
-// One rule is the store's whoever the actor is: nobody hands a request to
-// themselves. A manager who could not decide a request must not be able to
-// make it theirs and then decide it (A5).
+// Whether the actor may do so is decided by the caller and passed as
+// asAdministrator: false means the actor is the request's own approver handing
+// it on, true means an administrator rescuing a request whose approver cannot
+// act. For the first case the store checks again, on the row inside the
+// transaction, that the actor is still the approver, because an administrator
+// may have moved the request since the caller looked. Whoever the actor is,
+// nobody may reassign a request to themselves or to its requester, and the new
+// approver must be able to approve.
 func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerID int64, reason string, asAdministrator bool) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -380,8 +375,6 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	if newManagerID == actor.ID {
 		return fmt.Errorf("%w: you cannot reassign a request to yourself", ErrValidation)
 	}
-	// Reassignment is F-A-08's recovery path, so it must not be a way back into
-	// the same hole: the new approver has to be able to approve.
 	if err := s.requireApprover(ctx, newManagerID); err != nil {
 		return err
 	}
@@ -400,14 +393,13 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	if !asAdministrator && before.ManagerID != actor.ID {
 		return fmt.Errorf("%w: this request is with %s now, so it is not yours to reassign", ErrForbidden, before.ManagerName)
 	}
-	// G8 holds for reassignment too.
 	if newManagerID == before.RequesterID {
 		return fmt.Errorf("%w: a request cannot be reassigned to its own requester", ErrValidation)
 	}
-	// decision_reason is the reassignment's note only while the request is
-	// pending. On a returned request it is the correction the requester is
-	// reading, and on a frozen or partial one it is the approval note — the
-	// reason is in the audit row either way, so nothing is lost by leaving them.
+	// The reason is written to decision_reason only while the request is
+	// pending. On a returned request that column holds the correction the
+	// requester is reading, and on a frozen or partial one the approval note;
+	// the reason is in the audit row either way.
 	reasonSQL := `decision_reason=?, `
 	args := []any{newManagerID, reason, id, before.Status, before.ManagerID}
 	if before.Status != "pending" {
@@ -427,10 +419,8 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 		return err
 	}
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
-		// Not "reassign": reservation reassignment writes that action on this
-		// same entity type, and one name for two different events makes an
-		// approver swap read as somebody taking over the payment in every
-		// trail that filters on it.
+		// Not "reassign": that action name means handing over an Accounts
+		// reservation on the same entity type.
 		Action: "approval_reassign", EntityType: "payment_request", EntityID: &id,
 		Summary: actor.Name + " reassigned request " + before.Number + " to " + after.ManagerName + ": " + reason,
 		Before:  before, After: after}); err != nil {
@@ -439,11 +429,10 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	return tx.Commit()
 }
 
-// ReraiseRequest copies a rejected request into a new one. D1: the copy is
-// created already pending with its own number — there is no draft to land in.
+// ReraiseRequest copies the requester's own rejected request into a new
+// request, which is pending from the start with its own number. It returns the
+// new request's id.
 func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64, error) {
-	// Reads the source row and the numbering settings before it writes, so it
-	// needs the write lock up front for the same reason CreateRequest does.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
@@ -499,9 +488,10 @@ func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64
 	return newID, nil
 }
 
-// RequestCancellation is G1: the requester asks for an approved request to be
-// cancelled. Payment freezes the moment this succeeds, because the request is
-// no longer in the `approved` state that Accounts reserves from.
+// RequestCancellation lets the requester ask for an approved request to be
+// cancelled, with a reason. Payment freezes at once, because Accounts only
+// reserve requests that are 'approved'. The approver then accepts or declines
+// (DecideCancellation). A request with money already paid cannot be cancelled.
 func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, reason string) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -522,29 +512,15 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 	if !canTransition(before.Status, "cancellation_requested") {
 		return fmt.Errorf("%w: %s cannot be sent for cancellation", ErrValidation, statusPhrase(before.Status))
 	}
-	// Installments can return to approved after money has left. Cancellation
-	// must never hide that paid obligation or its recoverable balance.
-	if before.PaidAmount > 0 {
-		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	if err := refuseIfPaid(before); err != nil {
+		return err
 	}
-
-	// The hold is suspended by the freeze, not destroyed by it (F-C-07).
-	//
-	// `on_hold=1` still implies `status='approved'` — that invariant is what lets
-	// the hold tab, the hold pill and ReserveRequest all trust one column — so the
-	// flag is cleared here. `hold_reason` is deliberately **not**: it is the
-	// accountant's unanswered question, and it is what DecideCancellation reads to
-	// restore the pause when the cancellation is declined. Clearing both used to
-	// cost requirement L7, "On hold (only Accounts lifts)": a requester asking for
-	// cancellation and an approver declining it lifted an accountant's hold
-	// between them, and the request came back genuinely re-reservable with the
-	// question still unanswered.
-	//
-	// A non-empty hold_reason with on_hold=0 is never rendered as a hold: every
-	// reader of HoldReason is gated on OnHold or on activeHold, so the frozen
-	// request shows the cancellation banner and only that. UnholdRequest requires
-	// on_hold=1, so nobody can quietly discard the suspended question either — it
-	// comes back with the request, and Accounts lifts it or does not.
+	// An Accounts hold is suspended, not removed. on_hold=1 must imply
+	// status='approved' (the hold tab, the hold pill and ReserveRequest rely on
+	// it), so the flag is cleared. hold_reason is kept: it is the accountant's
+	// unanswered question, and DecideCancellation restores the hold from it if
+	// the cancellation is declined. Screens show a hold only when on_hold=1, so
+	// the kept reason is not displayed meanwhile.
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancellation_requested', cancel_reason=?, on_hold=0, updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status='approved' AND requester_id=?`, reason, id, actor.ID)
 	if err != nil {
@@ -557,7 +533,6 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 	if err != nil {
 		return err
 	}
-	// P5 hook: notify the approver, and any accountant holding a reservation.
 	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name,
 		Action: "cancel_request", EntityType: "payment_request", EntityID: &id,
 		Summary: actor.Name + " asked for cancellation of " + before.Number + ": " + reason + ". Payment frozen.",
@@ -567,30 +542,26 @@ func (s *Store) RequestCancellation(ctx context.Context, actor User, id int64, r
 	return tx.Commit()
 }
 
-// DecideCancellation is the approver's answer to G1. Accepting closes the
-// request permanently; declining unfreezes it back to approved and requires a
-// written reason, because Accounts and the requester both read it.
+// DecideCancellation is the approver's answer to a cancellation request.
+// Accepting cancels the request for good (and is refused once money has been
+// paid). Declining returns it to 'approved' and needs a written reason, because
+// Accounts and the requester both read it. The decision is bound to the
+// revision the approver saw, like approve, return and reject.
 func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, accept bool, note string, revisions ...string) error {
 	note = strings.TrimSpace(note)
 	if !accept && note == "" {
 		return fmt.Errorf("%w: say why it should still be paid", ErrValidation)
 	}
-	// Accepting a cancellation *is* cancelling the request, so it lands on the
-	// thread under the same `cancel` action as an outright cancel — only the
-	// summary says who asked for it. A separate `cancel_accept` action would
-	// split one event across two names for no reader's benefit.
+	// Accepting a cancellation is cancelling the request, so it is recorded
+	// under the same "cancel" action as an outright cancel; the summary says
+	// who asked for it.
 	to, action := "cancelled", "cancel"
 	if !accept {
 		to, action = "approved", "cancel_decline"
 	}
-	// The hold's fate follows the decision (F-C-07). Accepting kills the request,
-	// and nothing may still be "on hold" on a dead row — the hold tab would keep
-	// listing it and offering "Read reply" on a request no reply can change, so
-	// both columns go. Declining returns the request to 'approved', which is the
-	// one status a hold may describe, so the pause RequestCancellation suspended
-	// comes back: only Accounts lifts a hold (L7), and neither the requester who
-	// asked for the cancellation nor the approver who refused it has answered the
-	// accountant's question. hold_reason is the record that there was one.
+	// Accepting clears any suspended Accounts hold, since a cancelled request
+	// cannot be on hold. Declining restores the hold that RequestCancellation
+	// suspended, if there was one: only Accounts lifts a hold.
 	holdSQL := `, on_hold=0, hold_reason=''`
 	if !accept {
 		holdSQL = `, on_hold=CASE WHEN COALESCE(hold_reason,'') <> '' THEN 1 ELSE 0 END`
@@ -610,14 +581,11 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 	if before.Status != "cancellation_requested" || !canTransition(before.Status, to) {
 		return fmt.Errorf("%w: there is no cancellation to decide on %s", ErrValidation, statusPhrase(before.Status))
 	}
-	// Installments can return to approved after money has left. Cancellation
-	// must never hide that paid obligation or its recoverable balance.
-	if accept && before.PaidAmount > 0 {
-		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	if accept {
+		if err := refuseIfPaid(before); err != nil {
+			return err
+		}
 	}
-	// Like approve/return/reject, the decision holds only for the request the
-	// approver was looking at: an edit, comment or other change since the
-	// screen was drawn refuses it.
 	if err := checkDecisionRevision(ctx, tx, before, revisions); err != nil {
 		return err
 	}
@@ -646,8 +614,10 @@ func (s *Store) DecideCancellation(ctx context.Context, actor User, id int64, ac
 	return tx.Commit()
 }
 
-// CancelRequest is G2: the approver cancels an approved request outright,
-// without the requester having asked. A reason is always required.
+// CancelRequest lets the approver cancel an approved request outright, without
+// the requester asking. A reason is required, a request with money already paid
+// cannot be cancelled, and the decision is bound to the revision the approver
+// saw. Any Accounts hold is cleared, since a cancelled request cannot be on hold.
 func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason string, revisions ...string) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -668,19 +638,13 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 	if !canTransition(before.Status, "cancelled") {
 		return fmt.Errorf("%w: %s cannot be cancelled", ErrValidation, statusPhrase(before.Status))
 	}
-	// Installments can return to approved after money has left. Cancellation
-	// must never hide that paid obligation or its recoverable balance.
-	if before.PaidAmount > 0 {
-		return fmt.Errorf("%w: a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling", ErrValidation)
+	if err := refuseIfPaid(before); err != nil {
+		return err
 	}
-	// Bound to the revision the approver saw, as approve/return/reject are.
 	if err := checkDecisionRevision(ctx, tx, before, revisions); err != nil {
 		return err
 	}
 
-	// A cancelled request is dead, so nothing may still be "on hold" on it: the
-	// hold tab would keep listing it and offering "Read reply" on a request no
-	// reply can change.
 	res, err := tx.ExecContext(ctx, `UPDATE payment_requests SET status='cancelled', cancel_reason=?, on_hold=0, hold_reason='', updated_at=CURRENT_TIMESTAMP
  WHERE id=? AND status=? AND manager_id=?`, reason, id, before.Status, actor.ID)
 	if err != nil {
@@ -702,23 +666,11 @@ func (s *Store) CancelRequest(ctx context.Context, actor User, id int64, reason 
 	return tx.Commit()
 }
 
-// HTTP decisions always supply the revision displayed on the reviewed form.
-func checkDecisionRevision(ctx context.Context, tx *sql.Tx, req Request, revisions []string) error {
-	if len(revisions) == 0 {
-		return nil
-	} // Trusted internal callers have no browser snapshot.
-	current, err := requestEditRevision(ctx, tx, req)
-	if err != nil {
-		return err
-	}
-	if revisions[0] == "" || revisions[0] != current {
-		return fmt.Errorf("%w: this request changed; reload and review it before deciding", ErrValidation)
-	}
-	return nil
-}
-
-// ContinuePartial returns a manager-reviewed shortfall to the existing approval.
-// It never raises the approved ceiling or alters any recorded payment.
+// ContinuePartial is the approver's answer to a partial review when the rest
+// of the approved amount should still be paid: the request goes back to
+// 'approved' and Accounts can pay the balance. It never raises the approved
+// amount or changes a recorded payment. The actor must still be able to see the
+// request, be its approver, and there must be a balance left to pay.
 func (s *Store) ContinuePartial(ctx context.Context, actor User, id int64, note string) error {
 	if strings.TrimSpace(note) == "" {
 		return fmt.Errorf("%w: explain when the remaining balance should be paid", ErrValidation)
