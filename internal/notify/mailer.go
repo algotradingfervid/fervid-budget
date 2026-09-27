@@ -1,8 +1,14 @@
+// This file sends email. The SMTP mailer talks TLS only (port 587 with
+// STARTTLS or port 465), and only to a host the operator has allowed and that
+// resolves to a public address, because the SMTP password goes wherever the
+// admin-editable host setting points.
+
 package notify
 
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"mime"
 	"net"
@@ -14,6 +20,8 @@ import (
 	"fervidbudget/internal/store"
 )
 
+// Message is one email: a From header, To and Cc addresses, a subject and a
+// plain-text body.
 type Message struct {
 	From    string
 	To      []string
@@ -22,6 +30,7 @@ type Message struct {
 	Body    string
 }
 
+// Mailer sends one email. SMTPMailer is the real one; tests substitute fakes.
 type Mailer interface {
 	Send(ctx context.Context, msg Message) error
 }
@@ -45,16 +54,21 @@ func NewSMTPMailer(st *store.Store, password string, allowedHosts []string) *SMT
 	return &SMTPMailer{st: st, password: password, allowedHosts: allowedHosts}
 }
 
+// Send delivers msg using the SMTP settings currently saved by the admin. It
+// fails when no host is set or the host is not on the operator's allowlist,
+// does nothing when there are no recipients, uses port 587 when none is set,
+// and signs in with the environment's SMTP password only when a username is
+// set.
 func (m *SMTPMailer) Send(ctx context.Context, msg Message) error {
 	app, err := m.st.GetMailSettings(ctx)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(app.SMTPHost) == "" {
-		return fmt.Errorf("smtp host is not configured")
+		return errors.New("smtp host is not configured")
 	}
 	if !AllowedSMTPHost(app.SMTPHost, m.allowedHosts) {
-		return fmt.Errorf("SMTP host is not in the operator allowlist")
+		return errors.New("SMTP host is not in the operator allowlist")
 	}
 	port := app.SMTPPort
 	if port == 0 {
@@ -75,6 +89,7 @@ func (m *SMTPMailer) Send(ctx context.Context, msg Message) error {
 	return sendTLSMail(ctx, app.SMTPHost, port, auth, envelopeAddr(app.SMTPFromAddr, msg.From), recipients, []byte(buildRFC822(msg)))
 }
 
+// buildRFC822 writes the message headers and body in email wire format.
 func buildRFC822(msg Message) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", encodeFromHeader(msg.From))
@@ -85,7 +100,7 @@ func buildRFC822(msg Message) string {
 	// Header text must be ASCII unless the server negotiated SMTPUTF8, which
 	// net/smtp does only when the server offers it — and every default subject
 	// carries a ₹ or an em dash. An RFC 2047 encoded-word is readable by every
-	// MTA and client; QEncoding leaves an all-ASCII subject untouched (notify-3).
+	// MTA and client; QEncoding leaves an all-ASCII subject untouched.
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", msg.Subject))
 	b.WriteString("MIME-Version: 1.0\r\n")
 	// UTF-8 matters: every amount in this product carries a ₹.
@@ -129,7 +144,11 @@ func envelopeAddr(fromAddr, fromHeader string) string {
 	return fromHeader
 }
 
-// Only an operator may authorize the destination to which the SMTP secret is sent.
+// AllowedSMTPHost reports whether host is on the operator's allowlist
+// (FERVID_SMTP_ALLOWED_HOSTS), ignoring case and surrounding spaces. A host
+// containing a line break, slash, backslash, colon or "@" is always refused.
+// Only the operator, not an admin in the app, may choose where the SMTP
+// password is sent.
 func AllowedSMTPHost(host string, allowed []string) bool {
 	if strings.ContainsAny(host, "\r\n") {
 		return false
@@ -145,27 +164,33 @@ func AllowedSMTPHost(host string, allowed []string) bool {
 	}
 	return false
 }
+
+// sendTLSMail delivers one message over a verified TLS connection within ten
+// seconds. It refuses any port but 587 (STARTTLS) and 465 (TLS from the
+// start), and any host that resolves to an address that is not public
+// (private, loopback, link-local and the like). Each failure returns a fixed,
+// short message that names the step that failed and nothing else.
 func sendTLSMail(ctx context.Context, host string, port int, auth smtp.Auth, from string, to []string, msg []byte) error {
 	if port != 587 && port != 465 {
-		return fmt.Errorf("SMTP port must be 587 or 465")
+		return errors.New("SMTP port must be 587 or 465")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
-		return fmt.Errorf("SMTP resolution failed")
+		return errors.New("SMTP resolution failed")
 	}
 	if len(ips) == 0 {
-		return fmt.Errorf("SMTP resolution failed")
+		return errors.New("SMTP resolution failed")
 	}
 	for _, ip := range ips {
 		if !ip.IP.IsGlobalUnicast() || ip.IP.IsPrivate() || ip.IP.IsLoopback() || ip.IP.IsLinkLocalUnicast() {
-			return fmt.Errorf("SMTP destination is not public")
+			return errors.New("SMTP destination is not public")
 		}
 	}
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ips[0].IP.String(), fmt.Sprint(port)))
 	if err != nil {
-		return fmt.Errorf("SMTP connection failed")
+		return errors.New("SMTP connection failed")
 	}
 	defer conn.Close()
 	deadline, _ := ctx.Deadline()
@@ -177,42 +202,42 @@ func sendTLSMail(ctx context.Context, host string, port int, auth smtp.Auth, fro
 	if port == 465 {
 		secured := tls.Client(conn, tc)
 		if err := secured.HandshakeContext(ctx); err != nil {
-			return fmt.Errorf("SMTP TLS failed")
+			return errors.New("SMTP TLS failed")
 		}
 		conn = secured
 	}
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
-		return fmt.Errorf("SMTP greeting failed")
+		return errors.New("SMTP greeting failed")
 	}
 	defer client.Close()
 	if port == 587 {
 		if err := client.StartTLS(tc); err != nil {
-			return fmt.Errorf("SMTP requires verified TLS")
+			return errors.New("SMTP requires verified TLS")
 		}
 	}
 	if auth != nil {
 		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("SMTP authentication failed")
+			return errors.New("SMTP authentication failed")
 		}
 	}
 	if err := client.Mail(from); err != nil {
-		return fmt.Errorf("SMTP sender refused")
+		return errors.New("SMTP sender refused")
 	}
 	for _, recipient := range to {
 		if err := client.Rcpt(recipient); err != nil {
-			return fmt.Errorf("SMTP recipient refused")
+			return errors.New("SMTP recipient refused")
 		}
 	}
 	w, err := client.Data()
 	if err != nil {
-		return fmt.Errorf("SMTP data refused")
+		return errors.New("SMTP data refused")
 	}
 	if _, err = w.Write(msg); err != nil {
-		return fmt.Errorf("SMTP delivery failed")
+		return errors.New("SMTP delivery failed")
 	}
 	if err = w.Close(); err != nil {
-		return fmt.Errorf("SMTP delivery failed")
+		return errors.New("SMTP delivery failed")
 	}
 	return client.Quit()
 }

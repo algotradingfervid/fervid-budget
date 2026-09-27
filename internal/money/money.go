@@ -1,6 +1,11 @@
+// Package money parses and formats rupee amounts. Every amount in the
+// application is held as a whole number of paise (1 rupee = 100 paise) in an
+// int64, so sums are exact; this package converts between that and the text
+// people type and read (Indian digit grouping, lakh and crore).
 package money
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -11,6 +16,9 @@ import (
 // MaxAmount bounds an individual financial entry to 100 crore rupees.
 const MaxAmount int64 = 100_000_000_000
 
+// groupedAmount matches an amount written with digit-group commas, in either
+// the Indian style (12,34,567) or the international one (1,234,567), with an
+// optional leading "+" and up to two decimal places.
 var groupedAmount = regexp.MustCompile(`^[+]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,2}(?:,[0-9]{2})*,[0-9]{3})(?:\.[0-9]{1,2})?$`)
 
 // ParsePaise converts a user-supplied rupee amount into exact integer paise.
@@ -21,14 +29,14 @@ func ParsePaise(input string) (int64, error) {
 	s := strings.TrimSpace(input)
 	s = strings.TrimSpace(strings.TrimPrefix(s, "₹"))
 	if strings.Contains(s, ",") && !groupedAmount.MatchString(s) {
-		return 0, fmt.Errorf("invalid digit grouping")
+		return 0, errors.New("invalid digit grouping")
 	}
 	s = strings.ReplaceAll(s, ",", "")
 	if s == "" {
-		return 0, fmt.Errorf("amount is required")
+		return 0, errors.New("amount is required")
 	}
 	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "−") {
-		return 0, fmt.Errorf("amount must be positive")
+		return 0, errors.New("amount must be positive")
 	}
 	s = strings.TrimPrefix(s, "+")
 	var exponent int64
@@ -36,45 +44,48 @@ func ParsePaise(input string) (int64, error) {
 		var err error
 		exponent, err = strconv.ParseInt(s[i+1:], 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("invalid amount")
+			return 0, errors.New("invalid amount")
 		}
 		s = s[:i]
 	}
 	whole, fraction, _ := strings.Cut(s, ".")
 	digits := whole + fraction
 	if digits == "" {
-		return 0, fmt.Errorf("invalid amount")
+		return 0, errors.New("invalid amount")
 	}
 	for _, digit := range digits {
 		if digit < '0' || digit > '9' {
-			return 0, fmt.Errorf("invalid amount")
+			return 0, errors.New("invalid amount")
 		}
 	}
 	digits = strings.TrimLeft(digits, "0")
 	if digits == "" {
-		return 0, fmt.Errorf("amount must be positive")
+		return 0, errors.New("amount must be positive")
 	}
 
 	// Bound the exponent before subtracting or allocating. At most nineteen
 	// digits fit in positive int64 paise, including the two decimal places.
 	fractionDigits := int64(len(fraction))
 	if exponent < fractionDigits-2 {
-		return 0, fmt.Errorf("amount must have at most two decimal places")
+		return 0, errors.New("amount must have at most two decimal places")
 	}
 	if exponent > fractionDigits+19 {
-		return 0, fmt.Errorf("amount is too large")
+		return 0, errors.New("amount is too large")
 	}
 	zeros := 2 - (fractionDigits - exponent)
 	if int64(len(digits))+zeros > 19 {
-		return 0, fmt.Errorf("amount is too large")
+		return 0, errors.New("amount is too large")
 	}
 	paise, err := strconv.ParseInt(digits+strings.Repeat("0", int(zeros)), 10, 64)
 	if err != nil || paise > MaxAmount {
-		return 0, fmt.Errorf("amount is too large (maximum 100 crore rupees)")
+		return 0, errors.New("amount is too large (maximum 100 crore rupees)")
 	}
 	return paise, nil
 }
 
+// FormatPaise formats paise as rupees with Indian digit grouping and two
+// decimal places: 123456789 becomes "₹12,34,567.89" and -5000 becomes
+// "-₹50.00".
 func FormatPaise(paise int64) string {
 	sign := ""
 	if paise < 0 {
@@ -86,6 +97,9 @@ func FormatPaise(paise int64) string {
 	return fmt.Sprintf("%s₹%s.%02d", sign, indianGroup(rupees), cents)
 }
 
+// FormatShort abbreviates large amounts for tiles and charts: one crore
+// rupees or more as "₹1.25 Cr", one lakh or more as "₹3.40 L" (two decimal
+// places, rounded), and anything smaller exactly as FormatPaise does.
 func FormatShort(paise int64) string {
 	abs := math.Abs(float64(paise) / 100)
 	sign := ""
@@ -102,6 +116,8 @@ func FormatShort(paise int64) string {
 	}
 }
 
+// indianGroup writes a non-negative whole number with Indian digit grouping:
+// the last three digits, then groups of two (1234567 becomes "12,34,567").
 func indianGroup(n int64) string {
 	s := strconv.FormatInt(n, 10)
 	if len(s) <= 3 {
@@ -212,6 +228,8 @@ func twoWords(n int64) string {
 	return s
 }
 
+// Percent returns variance as a percentage of budget with one decimal place
+// ("12.5%"), or "N/A" when the budget is zero.
 func Percent(variance, budget int64) string {
 	if budget == 0 {
 		return "N/A"

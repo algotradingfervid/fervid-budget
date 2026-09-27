@@ -1,3 +1,6 @@
+// admin_validation.go holds validation shared by the admin screens: a user's
+// default approver and notification recipient lists.
+
 package store
 
 import (
@@ -8,8 +11,10 @@ import (
 	"strings"
 )
 
-// Validate against the same live grant as ListApprovers, inside the caller's
-// write transaction so a user save cannot commit half a profile update.
+// requireDefaultApproverTx checks that approverID (0 means none) is an active
+// user other than userID who holds approval:approve, the same rule
+// ListApprovers uses. It runs inside the caller's transaction so the whole user
+// save succeeds or fails together.
 func requireDefaultApproverTx(ctx context.Context, tx *sql.Tx, userID, approverID int64) error {
 	if approverID == 0 {
 		return nil
@@ -29,8 +34,9 @@ func requireDefaultApproverTx(ctx context.Context, tx *sql.Tx, userID, approverI
 	return nil
 }
 
-// Notification delivery consumes comma-separated bare addresses. Validate that
-// exact grammar before storing a rule, including rules whose email is off.
+// validateRecipientList accepts an empty value or comma-separated bare email
+// addresses on one line (name@example.com, no display names), the format
+// notification delivery reads. label names the field in the error.
 func validateRecipientList(label, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return nil
