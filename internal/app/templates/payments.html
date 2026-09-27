@@ -1,0 +1,348 @@
+{{/* Payments ledger: the historical payment edit form (payment_edit_form), the
+     payments list (payments), a payment's detail page (payment_detail, with
+     payment_detail_historical for payments with no request), and the "Paid on"
+     lock banner used by payment entry (payment_lock_banner). Each {{define}}
+     is rendered by name from the Go handlers. */}}
+{{/* Edit form for a historical payment. A payment recorded before requests
+     existed has no request behind it and stays editable; new payments are
+     always recorded against a request through payment entry. */}}
+{{define "payment_edit_form"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Daily entry</div>
+    <h1>{{.Title}}</h1>
+    <p class="sub muted">Record the head, date, amount, reference details, and proof in one pass.</p>
+  </div>
+  <a class="btn outline" href="/grid?month={{.Month}}">Back to grid</a>
+</section>
+{{if .Locked}}<div class="locked" role="status">This payment belongs to a locked or voided period and is read-only.</div>{{end}}
+<form class="panel payment-form" method="post" enctype="multipart/form-data" action="{{if .Payment.ID}}/payments/{{.Payment.ID}}/edit{{else}}/payments{{end}}">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <fieldset class="payment-section payment-core" {{if .Locked}}disabled{{end}}><legend>Payment</legend><div class="form-grid">
+    <label class="field span-6">Project / Head<select name="head_id" required>
+      {{range .Heads}}
+        <option value="{{.ID}}" {{if eq $.Payment.HeadID .ID}}selected{{end}}>{{.Project}} / {{.Name}}</option>
+      {{end}}
+    </select></label>
+    <label class="field span-3">Paid on<input type="date" name="paid_on" value="{{.Payment.PaidOn}}" required></label>
+    <label class="field span-3">Amount<input name="amount" inputmode="decimal" value="{{if .PaymentAmount}}{{.PaymentAmount}}{{else if .Payment.Amount}}{{money .Payment.Amount}}{{end}}" placeholder="₹0.00" required><small class="hint">Use rupees. Commas and ₹ are accepted.</small></label>
+  </div></fieldset>
+  <fieldset class="payment-section payment-reference" {{if .Locked}}disabled{{end}}><legend>Vendor and reference</legend><div class="form-grid">
+    <label class="field span-4">Vendor / Payee<input name="vendor_payee" value="{{.Payment.VendorPayee}}"></label>
+    <label class="field span-3">Payment mode<select name="payment_mode">
+      <option value="">Select</option>
+      {{range .PaymentModeChoices}}
+        <option value="{{.Value}}" {{select .Value $.Payment.PaymentMode}}>{{.Label}}</option>
+      {{end}}
+    </select></label>
+    <label class="field span-3">Invoice / Bill No<input name="invoice_no" value="{{.Payment.InvoiceNo}}"></label>
+    <label class="field span-2">Reference No<input name="reference_no" value="{{.Payment.ReferenceNo}}"></label>
+  </div></fieldset>
+  <fieldset class="payment-section payment-proof" {{if .Locked}}disabled{{end}}><legend>Proof and notes</legend><div class="form-grid">
+    <label class="field span-5">Attachment<input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png"><small class="hint">Optional bill, receipt, or payment proof. PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB.</small></label>
+    <label class="field span-7">Remarks<textarea name="remarks">{{.Payment.Remarks}}</textarea></label>
+  </div></fieldset>
+  <div class="form-actions">
+    <button class="primary" name="submit_action" value="save" {{if .Locked}}disabled{{end}}>Save Payment</button>{{if not .Payment.ID}}<button name="submit_action" value="add_another" {{if .Locked}}disabled{{end}}>Save and add another</button>{{end}}
+  </div>
+</form>
+{{template "bottom" .}}
+{{end}}
+
+{{define "payments"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Payment ledger</div>
+    <h1>Payments</h1>
+    <p class="sub muted">{{.Month}} · {{len .Payments}} entries · active total {{money .PaymentTotal}}</p>
+  </div>
+  {{if .Locked}}<span class="pill warn">Locked</span>{{else}}<a class="btn primary" href="/payments/new?month={{.Month}}">+ Add payment</a>{{end}}
+</section>
+<form class="toolbar" method="get" action="/payments">
+  <label>Month<input type="month" name="month" value="{{.Month}}"></label>
+  <label>Status<select name="status">
+    <option value="active" {{select .Status "active"}}>Active</option>
+    <option value="voided" {{select .Status "voided"}}>Removed / voided</option>
+    <option value="all" {{select .Status "all"}}>All</option>
+  </select></label>
+  <label class="search-label">Search<input name="q" value="{{.Query}}" placeholder="Project, head, payee, invoice..."></label>
+  <button>Filter</button><a class="btn outline" href="/payments">Reset</a>
+</form>
+<div class="table-wrap payments-table" tabindex="0" role="region" aria-label="Payments table, scrollable">
+  <table class="t-cards">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Project / Head</th>
+        <th class="num">Amount</th>
+        <th>Payee</th>
+        <th>Mode</th>
+        <th>Reference</th>
+        <th>Entered by</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Payments}}
+        <tr class="{{if voided .}}is-voided{{end}}">
+          <td class="t-lead" data-label="Date">{{.PaidOn}}</td>
+          <td data-label="Project / Head"><a href="/payments/{{.ID}}">{{if eq .Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span>{{else}}{{.Project}} / {{.Head}}{{end}}</a></td>
+          <td class="num" data-label="Amount">{{money .Amount}}</td>
+          <td data-label="Payee">{{.VendorPayee}}</td>
+          <td data-label="Mode">{{paymentMode .PaymentMode}}</td>
+          <td data-label="Reference"><span><span class="nowrap">{{.InvoiceNo}}</span>{{if .ReferenceNo}}<br><small>{{.ReferenceNo}}</small>{{end}}</span></td>
+          <td data-label="Entered by">{{.EnteredByName}}</td>
+          <td data-label="Status">{{if voided .}}<span class="pill bad">Removed</span>{{else}}<span class="pill good">Active</span>{{end}}</td>
+          <td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/payments/{{.ID}}">View</a>{{if and ($.Perms.Can "payment" "edit") (not .RequestID) (not $.Locked) (not (voided .))}}<a class="btn small outline" href="/payments/{{.ID}}/edit">Edit</a>{{if $.Perms.Can "payment" "void"}}
+                <details class="inline-danger">
+                  <summary>Remove</summary>
+                  <form method="post" action="/payments/{{.ID}}/void" data-confirm="Remove payment #{{.ID}} from actual totals?">
+                    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="next" value="/payments?month={{$.Month}}&status={{$.Status}}&q={{urlquery $.Query}}"><label>Reason<input name="reason" required></label><button class="danger">Remove</button>
+                  </form>
+                </details>
+              {{end}}{{else if voided .}}<small class="muted">{{.VoidReason}}</small>{{else if $.Locked}}<small class="muted">Locked</small>{{end}}</span></td>
+        </tr>
+      {{else}}
+        <tr>
+          <td colspan="9" class="empty" data-label="">No payments match these filters. <a href="/payments/new">Record a payment</a></td>
+        </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{template "bottom" .}}
+{{end}}
+
+{{/* A recorded payment's detail page. A payment linked to a request shows what
+     was approved beside what was paid, the proof, and the full trail from
+     submission to settlement. It offers no edit or void controls, because the
+     store refuses to change a linked payment. A payment with no request is
+     still an editable ledger row and renders payment_detail_historical. */}}
+{{define "payment_detail"}}
+{{template "top" .}}
+{{if .Request2.ID}}
+{{/* The banner reports how the reader got here (.Outcome), not that a payment
+     exists: "Payment saved" shows only on the redirect from the confirming
+     POST, and a repeat confirm the store refused gets its own banner. */}}
+{{if eq .Outcome "saved"}}
+<div class="banner good">
+  <span class="b-ico" aria-hidden="true">✓</span>
+  <div>
+    <b>Payment saved. The request is {{if eq .Request2.Status "partial_review"}}with the manager{{else if eq .Request2.Status "approved"}}still payable for the remaining balance{{else}}completed{{end}}.</b>
+    <p>{{if ne .Request2.Status "approved"}}The payment is recorded against this request. {{else}}The remaining balance stays on the same approval. {{end}}This payment can no longer be edited or cancelled.</p>
+  </div>
+</div>
+{{else if eq .Outcome "duplicate"}}
+<div class="banner warn">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>This payment confirmation was already recorded</b>
+    <p>PAY-{{.Payment.ID}} for {{money .Payment.Amount}} was already recorded against {{.Request2.Number}}. No additional payment was saved. The current request balance is shown below.</p>
+  </div>
+</div>
+{{else if eq .Outcome "immutable"}}
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>This payment cannot be edited</b>
+    <p>It was recorded against {{.Request2.Number}}, and a payment linked to a request is never amended or cancelled. Nothing was changed. The current request balance is shown below.</p>
+  </div>
+</div>
+{{end}}
+
+<div class="req-head">
+  <div class="rh-top"><span class="rh-no">PAY-{{.Payment.ID}} · from {{.Request2.Number}}</span><span class="rh-amt">{{money .Payment.Amount}}</span></div>
+  <h1>{{.Payment.VendorPayee}}</h1>
+  {{/* A recoverable payment is charged to no head, so it is labelled
+       "Recoverable" rather than printed as an empty "Project / Head". */}}
+  <p class="rh-meta">{{if eq .Payment.Treatment "recoverable"}}Recoverable{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Payment.Project}} / {{.Payment.Head}}{{end}} · paid {{dateLong .Payment.PaidOn}}</p>
+  {{/* Status and "waiting on" come from the same helpers as the request list,
+       queue and request detail, so every screen gives the same answer (and
+       says "you" to the current user). */}}
+  <div class="rh-status">
+    {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
+    {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
+  </div>
+</div>
+
+<div class="compare" style="margin-bottom:14px">
+  <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
+  <div class="cmp-row"><span class="l">Paid</span><span class="v">{{money .Payment.Amount}}</span></div>
+  <div class="cmp-row"><span class="l">Total paid on this request</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
+  {{/* The balance row reads the request's status, not the payment's
+       settlement: an accepted shortfall keeps settlement="partial" for ever,
+       so only the request status can tell "still owed" from "written off". */}}
+  {{if eq .Request2.Status "completed_partial"}}
+  <div class="cmp-row">
+    <span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span>
+  </div>
+  {{else if ne .Request2.Status "completed"}}
+  <div class="cmp-row diff">
+    <span class="l">Still owed to the payee{{if eq .Request2.Status "partial_review"}} · awaiting manager decision{{else}} · remaining approved balance{{end}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span>
+  </div>
+  {{else}}
+  <div class="cmp-row match">
+    <span class="l">Difference · {{if gt (sub (approvedOf .Request2) .Request2.PaidAmount) 0}}agreed deduction or adjustment · {{end}}confirmed settled by Accounts</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Payment</h2><span class="pill neutral no-dot">Read-only</span></div>
+  <dl class="dl">
+    <div><dt>Paid on</dt><dd>{{dateLong .Payment.PaidOn}}</dd></div>
+    <div><dt>Mode</dt><dd>{{paymentMode .Payment.PaymentMode}}</dd></div>
+    {{if .Payment.ReferenceNo}}<div><dt>Reference</dt><dd class="num">{{.Payment.ReferenceNo}}</dd></div>{{end}}
+    <div><dt>Recorded by</dt><dd>{{.Payment.EnteredByName}} at {{date .Payment.CreatedAt}}</dd></div>
+    <div>
+      <dt>Payee</dt>
+      <dd>{{if and .Request2.VendorID (.Perms.Can "vendor" "view")}}<a href="/vendors/{{deref .Request2.VendorID}}">{{.Payment.VendorPayee}}</a>{{else}}{{.Payment.VendorPayee}}{{end}}</dd>
+    </div>
+    {{if .Payment.InvoiceNo}}<div><dt>Invoice</dt><dd class="num">{{.Payment.InvoiceNo}}</dd></div>{{end}}
+    <div><dt>Recorded settlement</dt><dd>{{if eq .Payment.Settlement "partial"}}Partial payment recorded{{else}}Fully settled — deductions handled outside this system{{end}}</dd></div>
+    {{if .Payment.PartialReason}}<div style="grid-column:1/-1"><dt>Settlement reason</dt><dd>{{.Payment.PartialReason}}</dd></div>{{end}}
+    {{if .Payment.Remarks}}<div style="grid-column:1/-1"><dt>Processing note</dt><dd>{{.Payment.Remarks}}</dd></div>{{end}}
+  </dl>
+  {{/* Shown on every visit, since the confirmation banner shows only once: a
+       reader arriving from the ledger later still learns why there is no Edit. */}}
+  <p class="hint">This payment was recorded against {{.Request2.Number}} and can no longer be edited or cancelled. The current request balance is shown above.</p>
+</div>
+
+{{if or .Attachments .RequestAtts}}
+<div class="section-head"><h2>Proof</h2></div>
+<div class="stack-8">
+  {{range .Attachments}}
+  <div class="file-row">
+    <span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span>
+    <span><b>{{.OriginalName}}</b><small>{{fileSize .SizeBytes}} · added {{date .CreatedAt}}</small></span>
+    {{if $.Perms.Can "attachment" "view"}}<span class="f-actions"><a class="btn small outline" href="/attachments/{{.ID}}">Download</a></span>{{end}}
+  </div>
+  {{end}}
+  {{/* The request's own invoice, shown beside the payment proof so nobody has
+       to open the request to check what was billed. */}}
+  {{/* Served by the request's attachment route: /attachments/{id} reads
+       payment attachments, whose ids are unrelated to request attachment ids. */}}
+  {{range .RequestAtts}}
+  <div class="file-row">
+    <span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span>
+    <span><b>{{.OriginalName}}</b><small>Invoice from the request · {{fileSize .SizeBytes}}</small></span>
+    {{if $.Perms.Can "attachment" "view"}}<span class="f-actions"><a class="btn small outline" href="/requests/{{$.Request2.ID}}/attachments/{{.ID}}">Download</a></span>{{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+<div class="section-head"><h2>Full trail, request to payment</h2></div>
+<ol class="thread">
+  {{range .Audit}}{{$a := trailAction .}}
+  <li>
+    <span class="tl-dot {{auditTone $a}}" aria-hidden="true">{{auditGlyph $a}}</span>
+    <div class="tl-head"><b>{{.ActorName}} {{auditPhrase $a}}</b><time>{{date .CreatedAt}}</time></div>
+    <div class="tl-body">{{trailBody .}}</div>
+  </li>
+  {{else}}<li><span class="tl-dot" aria-hidden="true">·</span><div class="tl-body muted">No history recorded.</div></li>{{end}}
+</ol>
+
+<div class="action-bar">
+  <span class="ab-note d-only">Refunds and reversals are outside this version.</span>
+  <span class="row-end"></span>
+  {{if .Perms.Can "request" "view"}}<a class="btn outline" href="/requests/{{.Request2.ID}}">Open the request</a>{{end}}
+  <a class="btn" href="/payments">Back to ledger</a>
+</div>
+{{else}}
+{{template "payment_detail_historical" .}}
+{{end}}
+{{template "bottom" .}}
+{{end}}
+
+{{/* Detail page for a payment with no request behind it, the only kind that
+     can still be edited, given attachments, or voided. */}}
+{{define "payment_detail_historical"}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Payment record</div>
+    <h1>Payment #{{.Payment.ID}}</h1>
+    <p class="sub muted">{{.Payment.Project}} / {{.Payment.Head}} · {{money .Payment.Amount}}</p>
+  </div>
+  {{if voided .Payment}}<span class="pill bad">Voided</span>{{else if .Locked}}<span class="pill warn">Locked</span>{{else if .Perms.Can "payment" "edit"}}<a class="btn outline" href="/payments/{{.Payment.ID}}/edit">Edit</a>{{end}}
+</section>
+{{if voided .Payment}}
+  <div class="locked">Voided payment. Reason: {{.Payment.VoidReason}}</div>
+{{else if .Locked}}
+  <div class="locked">This payment belongs to a locked month and is read-only.</div>
+{{end}}
+<dl class="details detail-grid">
+  <div><dt>Project / Head</dt><dd>{{.Payment.Project}} / {{.Payment.Head}}</dd></div>
+  <div><dt>Date</dt><dd>{{.Payment.PaidOn}}</dd></div>
+  <div><dt>Amount</dt><dd>{{money .Payment.Amount}}</dd></div>
+  <div><dt>Payee</dt><dd>{{.Payment.VendorPayee}}</dd></div>
+  <div><dt>Mode</dt><dd>{{paymentMode .Payment.PaymentMode}}</dd></div>
+  <div><dt>Invoice</dt><dd>{{.Payment.InvoiceNo}}</dd></div>
+  <div><dt>Reference</dt><dd>{{.Payment.ReferenceNo}}</dd></div>
+  <div><dt>Entered by</dt><dd>{{.Payment.EnteredByName}} at {{date .Payment.CreatedAt}}</dd></div>
+  <div><dt>Remarks</dt><dd>{{.Payment.Remarks}}</dd></div>
+</dl>
+<section class="split">
+  <div>
+    <h2>Attachments</h2>
+    {{if and (not .Locked) (not (voided .Payment))}}
+      <form class="cluster" method="post" enctype="multipart/form-data" action="/payments/{{.Payment.ID}}/attachments">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" aria-label="Attachment" required><small class="hint">PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small><button>Upload</button>
+      </form>
+    {{end}}
+    <ul class="file-list">
+      {{range .Attachments}}
+        <li><a href="/attachments/{{.ID}}">{{.OriginalName}}</a><small>{{fileSize .SizeBytes}}</small></li>
+      {{else}}
+        <li class="muted">No attachments.</li>
+      {{end}}
+    </ul>
+  </div>
+  {{if and (.Perms.Can "payment" "void") (not .Locked) (not (voided .Payment))}}
+    <div class="danger-zone">
+      <h2>Void Payment</h2>
+      <p class="muted">Voiding keeps the audit trail but excludes this payment from actual totals.</p>
+      <form method="post" action="/payments/{{.Payment.ID}}/void" data-confirm="Void payment #{{.Payment.ID}}? This cannot be undone without a new correction.">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><label>Reason<input name="reason" required></label><button class="danger">Void</button>
+      </form>
+    </div>
+  {{end}}
+</section>
+<h2>Transaction Audit Trail</h2>
+<ol class="timeline">
+  {{range .Audit}}<li class="timeline-item {{actionClass .Action}}">
+      <div class="audit-meta">
+        <strong>{{actionText .Action}}</strong><span>{{date .CreatedAt}}</span><span>{{.ActorName}}</span>
+      </div>
+      <p>{{.Summary}}</p>
+      {{if or (hasText .BeforeJSON) (hasText .AfterJSON)}}
+        <details>
+          <summary>Before / after</summary>
+          {{if hasText .BeforeJSON}}
+            <pre>{{jsonPretty .BeforeJSON}}</pre>
+          {{end}}{{if hasText .AfterJSON}}
+            <pre>{{jsonPretty .AfterJSON}}</pre>
+          {{end}}
+        </details>
+      {{end}}</li>{{else}}
+    <li class="muted">No audit entries.</li>
+  {{end}}
+</ol>
+{{end}}
+
+{{/* Warns that the chosen "Paid on" month is locked. The #lock-banner wrapper
+     is always rendered so htmx has a target: payment_form draws it inline, and
+     GET /payments/lock-status returns it alone when "Paid on" changes. It sits
+     in a .form-grid, so the wrapper is display:contents (leaving no gap when
+     empty) and the banner itself spans the row. */}}
+{{define "payment_lock_banner"}}
+<div id="lock-banner" style="display:contents">
+  {{if .Locked}}
+    <div class="locked" role="status" style="grid-column:1/-1;margin:0">
+      {{.Month}} is locked, so a payment dated in it will be refused. Pick a date in an open month, or ask for {{.Month}} to be unlocked.</div>
+  {{end}}
+</div>
+{{end}}

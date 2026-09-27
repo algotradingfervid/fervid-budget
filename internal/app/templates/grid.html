@@ -1,0 +1,234 @@
+{{/* Budget vs actuals variance grid (grid): filters, month metrics, the
+     project/head matrix on desktop or an accordion on a phone, recent payments
+     and Month Close. usedcell is the shared "Used" bar cell. Each {{define}} is
+     rendered by name from the Go handlers. */}}
+{{define "grid"}}
+{{template "top" .}}
+<div class="gridhead">
+  <div class="between" id="grid-summary">
+    <div>
+      <div class="eyebrow">Budget vs actuals</div>
+      <h1>Variance grid</h1>
+      <p class="sub muted">{{.Month}} · {{.Grid.ScopeLabel}} · {{len .Grid.Rows}} {{plural (len .Grid.Rows) "head" "heads"}} · remaining = budget - actual</p>
+    </div>
+    <div class="head-actions">
+      <span class="countpill">{{len .Grid.Projects}} {{plural (len .Grid.Projects) "project" "projects"}}</span>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}
+    </div>
+  </div>
+  <div class="metric-strip compact" id="grid-metrics">
+    <div class="metric"><span class="metric-label">Budget</span><span class="metric-value">{{short .Grid.Total.Budget}}</span></div>
+    <div class="metric"><span class="metric-label">Actual</span><span class="metric-value">{{short .Grid.Total.Actual}}</span></div>
+    <div class="metric"><span class="metric-label">Remaining</span><span class="metric-value {{varClass .Grid.Total.Variance}}">{{short .Grid.Total.Variance}}</span></div>
+    <div class="metric"><span class="metric-label">Used</span><span class="metric-value">{{usedText .Grid.Total.Budget .Grid.Total.Actual}}</span></div>
+  </div>
+  {{/* action is /grid, not /, because / is the dashboard. Export and Add
+       payment are gated on the verbs their own routes require (grid:export,
+       payment:create), not on grid:view.
+
+       The form is a plain GET, so Apply filters with no JavaScript. With htmx
+       it swaps #grid-body in on change and pushes the filtered URL, so the
+       address bar, Back and a shared link all say what is shown. The response
+       has no shell; the other filter-dependent pieces ride along by id via
+       hx-select-oob. The form itself is never swapped, so the search box keeps
+       its focus and caret while typing.
+
+       hx-sync queues rather than replaces: replacing aborts the request in
+       flight, and htmx logs every abort as a console error (typing a search and
+       pressing Enter inside the live-search pause would cause one).
+       data-skip-shown-filters lets fervid-app.js drop a late live-search
+       request when the grid already shows those filters. hx-history="false"
+       stops htmx snapshotting the page: a snapshot holds the rows but not the
+       control values, so Back would show a filtered grid under an empty search
+       box. Back and Forward instead ask the server, which renders both. */}}
+  <form class="toolbar" method="get" action="/grid" aria-label="Grid filters"
+        hx-get="/grid" hx-trigger="change, input changed delay:350ms from:find input[name='q'], submit"
+        hx-target="#grid-body" hx-select="#grid-body" hx-swap="outerHTML"
+        hx-select-oob="#grid-summary,#grid-metrics,#grid-legend,#grid-export,#grid-add"
+        hx-push-url="true" hx-sync="this:queue last" hx-history="false" data-skip-shown-filters>
+    <label>Month<input class="input" type="month" name="month" value="{{.Month}}"></label>
+    <label>Status<select class="select" name="status">
+      <option value="all">All</option>
+      <option value="unbudgeted" {{select .Status "unbudgeted"}}>Unbudgeted spend</option>
+      <option value="over" {{select .Status "over"}}>Over budget</option>
+      <option value="under" {{select .Status "under"}}>Under budget</option>
+      <option value="on-track" {{select .Status "on-track"}}>On track</option>
+      <option value="no-activity" {{select .Status "no-activity"}}>No activity</option>
+      <option value="not-paid" {{select .Status "not-paid"}}>Not paid</option>
+    </select></label>
+    <label class="search-label">Search<input class="input" name="q" value="{{.Query}}" placeholder="Search head or project..."></label>
+    <div class="spacer"></div>
+    <button>Apply</button>{{if .Perms.Can "grid" "export"}}<a class="btn outline" id="grid-export" href="/export.csv?month={{.Month}}&status={{.Status}}&q={{.Query}}">⤓ Export</a>{{end}}{{if .Perms.Can "payment" "create"}}<a class="btn primary" id="grid-add" href="/payments/new?month={{.Month}}">+ Add payment</a>{{end}}
+  </form>
+  <div class="legend" id="grid-legend">
+    <span class="lk"><span class="sw none"></span>No activity {{.Grid.NoActivity}}</span><span class="lk"><span class="sw none"></span>Not paid {{.Grid.NotPaid}}</span><span class="lk"><span class="sw warn"></span>Unbudgeted {{.Grid.Unbudgeted}}</span><span class="lk"><span class="sw ok"></span>Under {{.Grid.Under}}</span><span class="lk"><span class="sw track"></span>On track {{.Grid.OnTrack}}</span><span class="lk"><span class="sw bad"></span>Over {{.Grid.Over}}</span>
+  </div>
+</div>
+<div id="grid-body">
+<p class="grid-scope-note">Actuals show payments recorded against each head. A recorded payment does not mean every request is fully settled; open requests can still have a payable balance.</p>
+{{if .Grid.Filtered}}
+  <p class="grid-scope-note">Showing {{len .Grid.Rows}} of {{len .CloseGrid.Rows}} heads. Totals and status counts above describe the filtered rows. <a href="/grid?month={{.Month}}">Clear filters</a></p>
+  <p class="grid-scope-note">Full month company total: budget {{money .CloseGrid.Total.Budget}} · actual {{money .CloseGrid.Total.Actual}} · remaining {{money .CloseGrid.Total.Variance}}. Month Close always reviews the full month.</p>
+{{end}}
+{{if .Grid.Locked}}<div class="locked">Month {{.Month}} is locked by {{.Grid.Lock.ActorName}}. Reason: {{.Grid.Lock.Reason}}</div>{{end}}
+<div class="gridwrap d-only">
+  <div class="card scroll">
+    <table class="matrix grid">
+      <caption class="sr-only">Budget versus actuals by project and head</caption>
+      <thead>
+        <tr>
+          <th class="sticky project-col">Project</th>
+          <th class="sticky head-col">Head</th>
+          <th class="c">Due</th>
+          <th class="num">Budget</th>
+          <th class="num">Actual</th>
+          <th class="num">Remaining ₹</th>
+          <th class="num">Remaining %</th>
+          <th class="c">Used</th>
+          <th class="c">Status</th>
+          <th class="c">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Grid.Groups}}
+          <tr class="project-row" data-project-id="{{.ProjectID}}">
+            <td class="sticky project-col" colspan="2"><button class="project-toggle" type="button" data-project-toggle="{{.ProjectID}}" aria-expanded="true"><span class="chev" aria-hidden="true">▾</span><span class="project-title" title="{{.Project}}">{{.Project}}</span><span class="project-count">{{len .Rows}} {{plural (len .Rows) "head" "heads"}}</span></button></td>
+            <td></td>
+            <td class="num">{{money .Total.Budget}}</td>
+            <td class="num">{{money .Total.Actual}}</td>
+            <td class="num {{varClass .Total.Variance}}">{{money .Total.Variance}}</td>
+            <td class="num">{{remainingText .Total.Budget .Total.Actual}}</td>
+            <td>
+              {{template "usedcell" (dict "Status" (statusFor .Total.Budget .Total.Actual) "Budget" .Total.Budget "Actual" .Total.Actual)}}
+            </td>
+            <td></td>
+            <td></td>
+          </tr>
+          {{range .Rows}}
+            <tr class="head {{if eq .Status "not-paid"}}unpaid{{end}}" data-project-row="{{.ProjectID}}">
+              <td class="sticky project-col project-spacer" aria-hidden="true"></td>
+              <td class="sticky head-col"><span class="hname">{{.Head}}</span></td>
+              <td class="c due"><span class="duepill {{dueClass .DueDay $.Month .Status}}">{{dueText .DueDay $.Month .Status}}</span><small>{{.DueDay}}</small></td>
+              <td class="num">{{money .Budget}}</td>
+              <td class="num">{{money .Actual}}</td>
+              <td class="num {{varClass .Variance}}">{{money .Variance}}</td>
+              <td class="num">{{remainingText .Budget .Actual}}</td>
+              <td>
+                {{template "usedcell" (dict "Status" .Status "Budget" .Budget "Actual" .Actual)}}
+              </td>
+              <td class="c"><span class="pill {{.Status}}">{{statusText .Status}}</span></td>
+              <td class="c">{{if and .Active (not $.Grid.Locked) ($.Perms.Can "payment" "create")}}<a class="btn small" href="/payments/new?month={{$.Month}}&head_id={{.HeadID}}">Add</a>{{else if $.Grid.Locked}}<small class="muted">Locked</small>{{else if not .Active}}<small class="muted">Retired</small>{{end}}</td>
+            </tr>
+          {{end}}{{else}}
+          <tr>
+            <td colspan="10" class="empty">{{if .Grid.Filtered}}No heads match these filters. <a href="/grid?month={{.Month}}">Clear filters</a> to show all heads for {{.Month}}.{{else}}No heads found. <a href="/heads">Add projects and heads</a> to begin.{{end}}</td>
+          </tr>
+        {{end}}
+      </tbody>
+      <tfoot>
+        <tr class="total">
+          <td colspan="2"><span class="tlabel">{{.Grid.ScopeLabel}}</span></td>
+          <td class="c">—</td>
+          <td class="num">{{money .Grid.Total.Budget}}</td>
+          <td class="num">{{money .Grid.Total.Actual}}</td>
+          <td class="num {{varClass .Grid.Total.Variance}}">{{money .Grid.Total.Variance}}</td>
+          <td class="num">{{remainingText .Grid.Total.Budget .Grid.Total.Actual}}</td>
+          <td>
+            {{template "usedcell" (dict "Status" (statusFor .Grid.Total.Budget .Grid.Total.Actual) "Budget" .Grid.Total.Budget "Actual" .Grid.Total.Actual)}}
+          </td>
+          <td></td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+{{/* The matrix cannot restack into cards (a head means nothing without its
+     project, budget and actual side by side), so on a phone it becomes a
+     project accordion. It uses the same .Grid.Groups data as the matrix, so
+     the two cannot disagree. .is-open in the markup is the open state that
+     fervid-app.js's accordion reads and mirrors into aria-expanded. */}}
+<div class="acc m-only">
+  {{range .Grid.Groups}}
+  <div class="acc-item is-open">
+    <button class="acc-head" type="button" aria-expanded="true"><span class="chev" aria-hidden="true">›</span>
+      <span class="ah-main"><b>{{.Project}}</b><small>{{len .Rows}} {{plural (len .Rows) "head" "heads"}} · {{usedText .Total.Budget .Total.Actual}} used</small></span>
+      <span class="ah-amt"><b>{{money .Total.Variance}}</b><small class="muted">remaining</small></span>
+    </button>
+    <div class="acc-body">
+      {{range .Rows}}
+      <div class="head-row">
+        <div class="hr-top"><span class="hr-name">{{.Head}}</span><span class="pill {{.Status}}">{{statusText .Status}}</span></div>
+        <div class="hr-figs">
+          <span class="hr-fig"><span class="l">Budget</span><span class="v">{{money .Budget}}</span></span>
+          <span class="hr-fig"><span class="l">Actual</span><span class="v">{{money .Actual}}</span></span>
+          <span class="hr-fig"><span class="l">Left</span><span class="v {{varClass .Variance}}">{{money .Variance}}</span></span>
+        </div>
+        <div class="hr-bar"><div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div></div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">
+    {{if .Grid.Filtered}}No heads match these filters. <a href="/grid?month={{.Month}}">Clear filters</a> to show all heads for {{.Month}}.{{else}}No heads found. <a href="/heads">Add projects and heads</a> to begin.{{end}}
+  </div>
+  {{end}}
+</div>
+
+{{/* Recent Payments needs payment:view, not grid:view. The handler gives a
+     caller without that verb no rows, and the panel is not rendered for them:
+     an empty panel would say "No payments in this month." beside actuals the
+     same page shows as paid. */}}
+{{if or (.Perms.Can "payment" "view") (.Perms.Can "month" "lock")}}
+  <section class="split">
+    {{if .Perms.Can "payment" "view"}}
+      <div>
+        <h2>Recent Payments for {{.Month}}</h2>
+        <div class="table-wrap">
+          <table class="t-cards">
+            <thead><tr><th>Date</th><th>Project / Head</th><th>Amount</th><th>Payee</th></tr></thead>
+            <tbody>
+              {{range .Payments}}
+                <tr>
+                  <td class="t-lead" data-label="Date">{{.PaidOn}}</td>
+                  <td data-label="Project / Head"><a href="/payments/{{.ID}}">{{.Project}} / {{.Head}}</a></td>
+                  <td class="num" data-label="Amount">{{money .Amount}}</td>
+                  <td data-label="Payee">{{.VendorPayee}}</td>
+                </tr>
+              {{else}}
+                <tr><td colspan="4" class="empty" data-label="">No payments in this month.</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {{end}}{{if .Perms.Can "month" "lock"}}
+      <div>
+        <h2>Month Close</h2>
+        {{if .Grid.Locked}}
+          <p class="muted">Unlocking reopens this month for budget and payment changes.</p>
+          <form method="post" action="/months/{{.Month}}/unlock" data-confirm="Unlock {{.Month}} and allow changes again?">
+            <input type="hidden" name="csrf" value="{{.CSRF}}"><label>Unlock reason<input name="reason" required></label><button>Unlock Month</button>
+          </form>
+        {{else}}
+          <p class="muted">Full month: {{.CloseGrid.NotPaid}} {{plural .CloseGrid.NotPaid "budgeted head is" "budgeted heads are"}} unpaid, {{.CloseGrid.Unbudgeted}} {{plural .CloseGrid.Unbudgeted "has" "have"}} unbudgeted spend, and {{.CloseGrid.Over}} {{plural .CloseGrid.Over "is" "are"}} over budget. {{.CloseGrid.NoActivity}} heads have no budget or activity and are excluded from unpaid counts. Review before closing.</p>
+          <form method="post" action="/months/{{.Month}}/lock" data-confirm="Lock {{.Month}}? Budgets and payments will become read-only.">
+            <input type="hidden" name="csrf" value="{{.CSRF}}"><label>Lock reason<input name="reason" required></label><button>Lock Month</button>
+          </form>
+        {{end}}
+      </div>
+    {{end}}
+  </section>
+{{end}}
+</div>
+{{template "bottom" .}}
+{{end}}
+
+{{/* The "Used" cell: a bar filled to the share of the budget spent, coloured
+     by .Status, with the percentage beside it. Called with (dict "Status"
+     <status> "Budget" <paise> "Actual" <paise>). Head rows pass their stored
+     status; project and total rows pass one computed from the two amounts. */}}
+{{define "usedcell"}}<div class="usedcell">
+  <div class="vbar {{barClass .Status}}"><i style="--pct:{{usedPct .Budget .Actual}}"></i><span class="mark"></span></div><span class="pctxt">{{usedText .Budget .Actual}}</span>
+</div>{{end}}

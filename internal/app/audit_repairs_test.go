@@ -1475,7 +1475,7 @@ func TestToolbarSearchTokenHasARuleBehindIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(templates, `class="field search"`) {
+	if !strings.Contains(string(templateSource(t)), `class="field search"`) {
 		t.Skip("no template uses the search token any more")
 	}
 	// Comments are stripped first, or the comment ABOVE the rule — which quotes

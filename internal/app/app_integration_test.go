@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
@@ -874,11 +875,27 @@ func TestChromeNoneRendersWithoutTheAppShell(t *testing.T) {
 	}
 }
 
-func TestTemplatesNeverCompareRoleNames(t *testing.T) {
-	source, err := os.ReadFile("templates.go")
-	if err != nil {
-		t.Fatal(err)
+// templateSource returns the text of every embedded template file, joined,
+// for tests that check what the markup may or may not contain.
+func templateSource(t *testing.T) []byte {
+	t.Helper()
+	names, err := fs.Glob(templateFiles, "templates/*.html")
+	if err != nil || len(names) == 0 {
+		t.Fatalf("no template files found: %v", err)
 	}
+	var source []byte
+	for _, name := range names {
+		b, err := templateFiles.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source = append(source, b...)
+	}
+	return source
+}
+
+func TestTemplatesNeverCompareRoleNames(t *testing.T) {
+	source := templateSource(t)
 	for _, banned := range []string{`eq .User.Role`, `eq $.User.Role`, `.User.Role "`} {
 		if count := strings.Count(string(source), banned); count != 0 {
 			t.Fatalf("templates.go still compares role names: %d occurrences of %q", count, banned)
@@ -889,10 +906,7 @@ func TestTemplatesNeverCompareRoleNames(t *testing.T) {
 // Decision D5: the design system standardises on .pill. .badge survives in the
 // stylesheet as a safety net for one release, but no template may emit it.
 func TestNoTemplateUsesLegacyBadgeClass(t *testing.T) {
-	source, err := os.ReadFile("templates.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := templateSource(t)
 	if count := strings.Count(string(source), `class="badge`); count != 0 {
 		t.Fatalf(`templates.go still emits class="badge" %d times; the design system uses .pill`, count)
 	}
@@ -958,10 +972,7 @@ func TestInlineRowEditorsNameTheirFieldAndRow(t *testing.T) {
 // request, not on two independently built policies. If the body ever grows its
 // own policy again, a control can appear on a screen the nav hides.
 func TestPageBodyGatesOnTheRequestPermissionSet(t *testing.T) {
-	source, err := os.ReadFile("templates.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := templateSource(t)
 	for _, banned := range []string{"internal/auth", "internal/config"} {
 		if strings.Contains(string(source), banned) {
 			t.Fatalf("templates.go imports %q; permissions come from PageData.Perms, resolved in renderStatus", banned)
