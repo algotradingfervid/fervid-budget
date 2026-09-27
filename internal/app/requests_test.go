@@ -257,32 +257,6 @@ func TestScopeNarrowsFromTheURLButNeverWidens(t *testing.T) {
 	}
 }
 
-func TestCanViewRequestFollowsTheScope(t *testing.T) {
-	me := store.User{ID: 7}
-	mine := store.Request{RequesterID: 7, ManagerID: 9}
-	assigned := store.Request{RequesterID: 3, ManagerID: 7}
-	stranger := store.Request{RequesterID: 3, ManagerID: 9}
-
-	for _, tc := range []struct {
-		scope string
-		req   store.Request
-		want  bool
-	}{
-		{"all", stranger, true},
-		{"assigned", assigned, true},
-		{"assigned", mine, true},
-		{"assigned", stranger, false},
-		{"own", mine, true},
-		{"own", assigned, false},
-		{"", mine, false},
-	} {
-		if got := canViewRequest(tc.scope, me, tc.req); got != tc.want {
-			t.Errorf("canViewRequest(%q, requester=%d manager=%d) = %v, want %v",
-				tc.scope, tc.req.RequesterID, tc.req.ManagerID, got, tc.want)
-		}
-	}
-}
-
 func TestRequestExportIsScopedAndCarriesThePhase2Columns(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Exp")

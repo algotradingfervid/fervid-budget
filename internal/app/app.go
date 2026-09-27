@@ -1012,7 +1012,7 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusBadRequest, "Payments must be linked to an approved request.", nil)
 		return
 	}
-	if _, ok := a.loadPaymentRequest(w, r, linkedID); !ok {
+	if _, ok := a.loadRequestByID(w, r, linkedID); !ok {
 		return
 	}
 	settlement := r.FormValue("settlement")
@@ -1117,8 +1117,7 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 		// Half this screen is the request: its number, its people, its whole
 		// history. Reading it therefore obeys the same row scope /requests/{id}
 		// obeys, or payment:view becomes a way around Q5/R6.
-		u := auth.CurrentUser(r)
-		if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+		if !a.canSeeRequest(r, req) {
 			// 404, not 403, and the same sentence a missing payment gets. This was
 			// the last route where the pair still distinguished "exists but is not
 			// yours" from "does not exist", which is the enumeration oracle F-G-002
@@ -1300,7 +1299,7 @@ func (a *App) canReadPayment(r *http.Request, p store.Payment) bool {
 		if err != nil {
 			return false
 		}
-		return canViewRequest(a.auth.Scope(u, "request"), u, req)
+		return a.canSeeRequest(r, req)
 	}
 	return a.auth.Can(u, "payment", "view") &&
 		paymentScopeReaches(a.auth.Scope(u, "payment"), u.ID, p)
@@ -1415,7 +1414,6 @@ func (a *App) requestAttachmentDownload(w http.ResponseWriter, r *http.Request) 
 		a.notFoundAttachment(w, r, "attachment belongs to another request", attachmentID)
 		return
 	}
-	u := auth.CurrentUser(r)
 	req, err := a.st.Request(r.Context(), att.RequestID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -1425,7 +1423,7 @@ func (a *App) requestAttachmentDownload(w http.ResponseWriter, r *http.Request) 
 		a.respondStoreError(w, r, err)
 		return
 	}
-	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
+	if !a.canSeeRequest(r, req) {
 		a.notFoundAttachment(w, r, "request out of the caller's scope", attachmentID)
 		return
 	}
@@ -2037,15 +2035,8 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 // (rbac-8). The store refuses the self-assignment as well, whoever the actor is.
 func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
-	req, err := a.st.Request(r.Context(), pathID(r))
-	if err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	}
-	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
-		// 404 and not 403: a request outside the caller's scope answers the same
-		// way whether or not it exists (F-G-002).
-		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)
+	req, ok := a.loadViewableRequest(w, r)
+	if !ok {
 		return
 	}
 	if !a.mayReassignApprover(u, req) {
@@ -2417,7 +2408,7 @@ func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntr
 		id := *entry.EntityID
 		if _, known := visible[id]; !known {
 			req, err := a.st.Request(r.Context(), id)
-			visible[id] = err == nil && a.auth.Can(u, "request", "view") && canViewRequest(scope, u, req)
+			visible[id] = err == nil && a.auth.Can(u, "request", "view") && store.RequestInScope(scope, u.ID, req)
 		}
 		if visible[id] {
 			out = append(out, entry)

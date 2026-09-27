@@ -1920,28 +1920,25 @@ var requestBuckets = map[string][]string{
 	"closed": {"rejected", "withdrawn", "cancelled", "completed", "completed_partial"},
 }
 
-// requestWhere fails closed on the scope: only ScopeAll is unrestricted, and an
-// empty or unrecognised scope — the role editor's "None" is stored as no scope
-// row at all — reads no rows. It used to add no predicate for "", so a role
-// with request:view and no scope listed and exported every request while
-// canViewRequest 404ed each of them by id (fixwave rbac-2). recoverableScope
-// has always worked this way.
+// requestWhere turns the list options into a WHERE clause. The scope comes from
+// requestScopeSQL, the one SQL spelling of who may see a request; it fails
+// closed, so an empty or unrecognised scope reads no rows. The work-queue
+// filters (RoutedToViewer, HeldByViewer) are layered on top of the scope and
+// never replace it: a queue must not list a request whose detail page the same
+// person is refused.
 func requestWhere(opts RequestListOptions) (string, []any) {
 	var where []string
 	var args []any
-	switch opts.Scope {
-	case ScopeAll:
-	case "own":
-		where = append(where, `r.requester_id=?`)
-		args = append(args, opts.ViewerID)
-	case "assigned":
+	scopeSQL, scopeArgs := requestScopeSQL("r", opts.Scope, opts.ViewerID)
+	where = append(where, scopeSQL)
+	args = append(args, scopeArgs...)
+	if opts.RoutedToViewer {
 		where = append(where, `r.manager_id=?`)
 		args = append(args, opts.ViewerID)
-	case "held":
+	}
+	if opts.HeldByViewer {
 		where = append(where, `r.processing_by=?`)
 		args = append(args, opts.ViewerID)
-	default:
-		where = append(where, `0`)
 	}
 	if opts.ConcernOpen {
 		where = append(where, `r.concern_open=1`)

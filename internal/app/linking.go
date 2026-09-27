@@ -139,29 +139,13 @@ func heldByCaller(req store.Request, userID int64) bool {
 	return req.Status == "processing" && req.ProcessingBy != nil && *req.ProcessingBy == userID
 }
 
-// loadPaymentRequest applies the same current data scope as request details.
-// Holding a reservation or knowing its ID does not bypass a revoked scope.
-func (a *App) loadPaymentRequest(w http.ResponseWriter, r *http.Request, id int64) (store.Request, bool) {
-	u := auth.CurrentUser(r)
-	req, err := a.st.Request(r.Context(), id)
-	if err != nil {
-		a.respondStoreError(w, r, err)
-		return store.Request{}, false
-	}
-	if !canViewRequest(a.auth.Scope(u, "request"), u, req) {
-		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.", nil)
-		return store.Request{}, false
-	}
-	return req, true
-}
-
 // requestRecordPayment is the reservation entry point. It is gated on
 // reservation:reserve rather than payment:create because taking work out of the
 // queue is a different act from recording money leaving the bank.
 func (a *App) requestRecordPayment(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	u := auth.CurrentUser(r)
-	if _, ok := a.loadPaymentRequest(w, r, id); !ok {
+	if _, ok := a.loadRequestByID(w, r, id); !ok {
 		return
 	}
 	if err := a.st.ReserveRequest(r.Context(), u, id); err != nil {
@@ -324,7 +308,7 @@ func (a *App) recentPaidByActor(r *http.Request, actorID int64, limit int) ([]Pa
 // reader needs to know who has it and what they can do instead (G15).
 func (a *App) paymentEntry(w http.ResponseWriter, r *http.Request, linkedID int64) {
 	u := auth.CurrentUser(r)
-	req, ok := a.loadPaymentRequest(w, r, linkedID)
+	req, ok := a.loadRequestByID(w, r, linkedID)
 	if !ok {
 		return
 	}
@@ -447,7 +431,7 @@ func (a *App) paymentPickerOptions(w http.ResponseWriter, r *http.Request) {
 func (a *App) settlementPreview(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	id := pathID(r)
-	req, ok := a.loadPaymentRequest(w, r, id)
+	req, ok := a.loadRequestByID(w, r, id)
 	if !ok {
 		return
 	}
@@ -517,7 +501,7 @@ func (a *App) settlementError(w http.ResponseWriter, r *http.Request, linkedID i
 		a.respondStoreError(w, r, cause)
 		return
 	}
-	req, ok := a.loadPaymentRequest(w, r, linkedID)
+	req, ok := a.loadRequestByID(w, r, linkedID)
 	if !ok {
 		return
 	}
@@ -652,7 +636,7 @@ func partialTrail(entries []store.AuditEntry, comments []store.RequestComment) [
 // was written off stays visible for the life of the record.
 func (a *App) requestAcceptPartial(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
-	if _, ok := a.loadPaymentRequest(w, r, id); !ok {
+	if _, ok := a.loadRequestByID(w, r, id); !ok {
 		return
 	}
 	if r.FormValue("decision") == "continue" {
