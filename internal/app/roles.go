@@ -1,7 +1,7 @@
 package app
 
-// The roles admin screen: the permission matrix and creating, copying
-// and deleting roles.
+// The roles admin screen: the permission matrix for one role, and creating,
+// copying, saving and deleting roles.
 
 import (
 	"errors"
@@ -13,7 +13,9 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// newRoleForm retains a refused create without changing the selected role.
+// newRoleForm is the "New role" drawer when a create is refused: shown open
+// with the error and what was typed, while the screen keeps the role that was
+// selected.
 type newRoleForm struct {
 	Open        bool
 	Error       string
@@ -21,6 +23,8 @@ type newRoleForm struct {
 	Description string
 }
 
+// rolesPage shows the roles screen with the role in ?role= selected (the
+// first role when none is given).
 func (a *App) rolesPage(w http.ResponseWriter, r *http.Request) {
 	data, err := a.rolesPageData(r, parseID(r.URL.Query().Get("role")))
 	if err != nil {
@@ -30,6 +34,8 @@ func (a *App) rolesPage(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "roles", data)
 }
 
+// rolesPageData is the roles screen's data: every role, the selected role's
+// permission matrix, and how many users hold each role.
 func (a *App) rolesPageData(r *http.Request, selected int64) (PageData, error) {
 	roles, err := a.st.AllRoles(r.Context())
 	if err != nil {
@@ -46,18 +52,18 @@ func (a *App) rolesPageData(r *http.Request, selected int64) (PageData, error) {
 	if err != nil {
 		return PageData{}, err
 	}
-	counts := map[int64]int{}
 	users, err := a.st.ListUsers(r.Context())
 	if err != nil {
 		return PageData{}, err
 	}
-	for _, u := range users {
-		urs, err := a.st.UserRoles(r.Context(), u.ID)
-		if err != nil {
-			return PageData{}, err
-		}
-		for _, ur := range urs {
-			counts[ur.ID]++
+	sets, err := a.userRoleSets(r.Context(), users)
+	if err != nil {
+		return PageData{}, err
+	}
+	counts := map[int64]int{}
+	for _, set := range sets {
+		for roleID := range set {
+			counts[roleID]++
 		}
 	}
 	return PageData{
@@ -70,15 +76,13 @@ func (a *App) rolesPageData(r *http.Request, selected int64) (PageData, error) {
 	}, nil
 }
 
-// rolesSave persists the matrix. The Advanced checkboxes are the grant set:
-// what is ticked there is saved and what is unticked is revoked, even under a
-// cell that is still ticked. The save used to start from every ticked cell
-// expanded, so unticking one Advanced box under a ticked cell was silently
-// re-granted (fixwave rbac-1). A ticked cell counts only when none of the
-// boxes behind it is ticked — the JavaScript-less path, where ticking a cell
-// cannot tick its boxes — and then expands to every canonical action behind
-// it. UpdateRolePermissions then replaces the role's whole grant set, so
-// anything absent here is revoked.
+// rolesSave saves a role's name, description and permission matrix.
+//
+// The ticked "perm" boxes (resource:action, from the Advanced view) are the
+// grants. A ticked matrix "cell" adds every action behind it, but only when
+// none of its Advanced boxes was sent: that is the form without JavaScript,
+// where ticking a cell cannot tick its boxes. Anything not ticked is revoked,
+// because the store replaces the role's whole grant set.
 func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 	roleID := parseID(r.FormValue("role_id"))
 	var grants []store.Grant
@@ -112,11 +116,10 @@ func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 			grants = append(grants, g)
 		}
 	}
-	// The two matrices carry two scope radio groups. They must not share a name:
-	// same-name radios are one group across the whole form, so enabling the
-	// mobile set would silently clear the desktop selection. The desktop group
-	// wins when it is enabled; the mobile group is the fallback. An empty value
-	// is the explicit "None" state and stores no scope row at all.
+	// The desktop and mobile matrices each have their own scope radio group
+	// ("scope_x" and "m_scope_x"); radios sharing a name would be one group
+	// across the whole form. The desktop value wins when set. An empty value
+	// means "None" and stores no scope.
 	var scopes []store.ScopeGrant
 	for _, res := range scopedMatrixResources() {
 		v := strings.TrimSpace(r.FormValue("scope_" + res))
@@ -127,11 +130,9 @@ func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 			scopes = append(scopes, store.ScopeGrant{Resource: res, Scope: v})
 		}
 	}
-	// Screen the grants before writing anything. UpdateRole and
-	// UpdateRolePermissions are two transactions, so a grant rejected by the
-	// second would otherwise leave the first one's rename committed. Every grant
-	// is re-validated inside UpdateRolePermissions as well — this is a guard
-	// against a half-applied save, not the security boundary.
+	// Check every grant before writing anything: the rename and the grants
+	// are two separate store writes, and an unknown grant must not leave the
+	// rename saved on its own. The store checks the grants again itself.
 	for _, g := range grants {
 		if !store.ValidGrant(g.Resource, g.Action) {
 			a.respondError(w, r, http.StatusBadRequest, "That permission does not exist.", nil)
@@ -149,6 +150,9 @@ func (a *App) rolesSave(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/roles?role="+strconv.FormatInt(roleID, 10), http.StatusSeeOther)
 }
 
+// roleCreate creates an empty role and selects it. A duplicate or invalid
+// name shows the screen again with the New role drawer open (when the caller
+// can view roles); any other failure is an error page.
 func (a *App) roleCreate(w http.ResponseWriter, r *http.Request) {
 	id, err := a.st.CreateRole(r.Context(), auth.CurrentUser(r), r.FormValue("name"), r.FormValue("description"))
 	if err != nil {
@@ -172,6 +176,8 @@ func (a *App) roleCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/roles?role="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
 
+// roleCopy creates a new role with the given name and the path role's
+// permissions, and selects it.
 func (a *App) roleCopy(w http.ResponseWriter, r *http.Request) {
 	id, err := a.st.CopyRole(r.Context(), auth.CurrentUser(r), pathID(r), r.FormValue("name"))
 	if err != nil {
@@ -181,17 +187,10 @@ func (a *App) roleCopy(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/roles?role="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
 
+// roleDelete deletes a role. The store refuses a system role and a role that
+// someone still holds; respondStoreError shows the store's reason with 403.
 func (a *App) roleDelete(w http.ResponseWriter, r *http.Request) {
 	if err := a.st.DeleteRole(r.Context(), auth.CurrentUser(r), pathID(r)); err != nil {
-		// respondStoreError replaces every ErrForbidden with "You do not have
-		// permission to perform this action.", which told the holder of all 66
-		// grants that they held none (F-G-023). Both refusals this route can
-		// produce — a system role, and a role somebody still holds — are rules
-		// with reasons, so the reason is what the reader gets.
-		if errors.Is(err, store.ErrForbidden) {
-			a.respondError(w, r, storeErrorStatus(err), friendly(err), err)
-			return
-		}
 		a.respondStoreError(w, r, err)
 		return
 	}

@@ -11,23 +11,15 @@ import (
 	"fervidbudget/internal/notify"
 )
 
-// requestReassignApprover hands a pending request to a different approver, with
-// a reason, and records it as its own `approval_reassign` event (coverage A7).
+// requestReassignApprover hands a pending request to a different approver,
+// with a reason, recorded in the request's history as "Approval reassigned".
 //
-// store.ReassignRequest has always carried every rule this needs — pending only,
-// a real approver at the other end, G8, a mandatory reason, its own audit action
-// — and had no HTTP caller at all, so `approval:reassign` was a grant an
-// administrator could give and revoke with nothing behind it (F-A-06/F-C-02).
-// This is also the repair for a request routed to somebody who cannot approve
-// (F-A-08) and for a stranded approval (F-G-025).
-//
-// Who may do it: the route asks for `approval:reassign`, the caller's request
-// data scope must reach the row, and then mayReassignApprover decides — the
-// request's own approver handing it on, or a holder of user:edit rescuing one
-// whose approver cannot act. The gate used to stop at the scope, and the seeded
-// Manager role holds both approval:reassign and request scope `all`, so any
-// manager could take another manager's request for themselves and approve it
-// (rbac-8). The store refuses the self-assignment as well, whoever the actor is.
+// The route needs approval:reassign and the request must be in the caller's
+// request scope. mayReassignApprover then allows only the request's own
+// approver, or a holder of user:edit rescuing a request whose approver cannot
+// act; otherwise any manager could take another manager's request and approve
+// it themselves. The store also refuses reassigning a request to yourself or
+// to its own requester. The new approver is notified.
 func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	req, ok := a.loadViewableRequest(w, r)
@@ -48,21 +40,17 @@ func (a *App) requestReassignApprover(w http.ResponseWriter, r *http.Request) {
 		a.respondError(w, r, http.StatusBadRequest, "Give a reason for the reassignment.", nil)
 		return
 	}
-	// The store re-checks "is this still the approver" on the row inside its
-	// write transaction, because req above was read before it; only the
-	// admin-level grant mayReassignApprover honours lets that check be skipped.
+	// The store checks again, inside its write transaction, that the caller is
+	// still the request's approver, unless the caller holds user:edit.
 	if err := a.st.ReassignRequest(r.Context(), u, req.ID, to, r.FormValue("reason"), a.auth.Can(u, "user", "edit")); err != nil {
-		status := storeErrorStatus(err)
-		if status >= http.StatusInternalServerError {
+		if status, fixable := userError(err); fixable {
+			a.respondError(w, r, status, friendly(err), err)
+		} else {
 			a.respondStoreError(w, r, err)
-			return
 		}
-		a.respondError(w, r, status, friendly(err), err)
 		return
 	}
-	// The sheet says "The new approver is told". Fired after the store call, so
-	// the notification addresses the manager_id ReassignRequest has just written
-	// rather than the one it replaced.
+	// Notify after the write, so the message goes to the new approver.
 	a.fire(r, notify.EventApproverReassigned, req.ID)
 	http.Redirect(w, r, fmt.Sprintf("/requests/%d", req.ID), http.StatusSeeOther)
 }
