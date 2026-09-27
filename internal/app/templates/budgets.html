@@ -1,50 +1,228 @@
 {{define "months"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Month control</div><h1>Monthly Plans</h1><p class="sub muted">Create each month, review prior months, and open locked history whenever needed.</p></div><a class="btn outline" href="/reports/monthly">Reports</a></section>
-{{if and (.Perms.Can "month" "create") (.Perms.Can "budget" "edit")}}<div class="card" style="padding:24px;margin-bottom:24px"><h2>Create a monthly budget</h2><p>Start blank or copy an existing month, add projects and expense heads, then review your budget lines before saving.</p><a class="btn primary" href="/budgets/new">Create budget</a></div>{{end}}
-{{if .Error}}<form class="toolbar setup-form" method="post" action="/months"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>New month<input type="month" name="target_month" value="{{.TargetMonth}}" required></label><label>Plan type<select name="source_mode"><option value="copy">Copy from month</option><option value="blank">Start blank</option></select></label><label>Source month<input type="month" name="source_month" value="{{.SourceMonth}}"></label><button class="primary">Create Month</button></form>{{end}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Month control</div>
+    <h1>Monthly Plans</h1>
+    <p class="sub muted">Create each month, review prior months, and open locked history whenever needed.</p>
+  </div>
+  <a class="btn outline" href="/reports/monthly">Reports</a>
+</section>
+{{if and (.Perms.Can "month" "create") (.Perms.Can "budget" "edit")}}
+  <div class="card" style="padding:24px;margin-bottom:24px">
+    <h2>Create a monthly budget</h2>
+    <p>Start blank or copy an existing month, add projects and expense heads, then review your budget lines before saving.</p>
+    <a class="btn primary" href="/budgets/new">Create budget</a>
+  </div>
+{{end}}
+{{if .Error}}
+  <form class="toolbar setup-form" method="post" action="/months">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><label>New month<input type="month" name="target_month" value="{{.TargetMonth}}" required></label><label>Plan type<select name="source_mode">
+      <option value="copy">Copy from month</option>
+      <option value="blank">Start blank</option>
+    </select></label><label>Source month<input type="month" name="source_month" value="{{.SourceMonth}}"></label><button class="primary">Create Month</button>
+  </form>
+{{end}}
 
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Month</th><th>Status</th><th>Source</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th><th>Created</th><th>Actions</th></tr></thead><tbody>{{range .MonthPlans}}<tr><td class="t-lead" data-label="Month"><strong>{{.Month}}</strong><br><small>{{.HeadCount}} {{plural .HeadCount "head" "heads"}}</small></td><td data-label="Status"><span><span class="pill {{.Status}}">{{planStatusText .Status}}</span>{{if .LockedAt}}<br><small>{{datep .LockedAt}}</small>{{end}}</span></td><td data-label="Source">{{if .SourceMonth}}{{.SourceMonth}}{{else}}<span class="muted">Manual</span>{{end}}</td><td class="num" data-label="Budget">{{money .Budget}}</td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td><td class="num" data-label="Used">{{.UsedPercent}}</td><td data-label="Created">{{if .CreatedAt}}{{datep .CreatedAt}}{{else}}<span class="muted">Imported history</span>{{end}}</td><td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/grid?month={{.Month}}">Grid</a><a class="btn small outline" href="/budgets?month={{.Month}}">Budget</a><a class="btn small outline" href="/payments?month={{.Month}}">Payments</a><a class="btn small outline" href="/reports/heads?from={{.Month}}&to={{.Month}}">Report</a></span></td></tr>{{else}}<tr><td colspan="9" class="empty" data-label="">No monthly plans yet. <a href="/months">Open a month</a> to start one.</td></tr>{{end}}</tbody></table></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead>
+      <tr>
+        <th>Month</th>
+        <th>Status</th>
+        <th>Source</th>
+        <th class="num">Budget</th>
+        <th class="num">Actual</th>
+        <th class="num">Remaining</th>
+        <th class="num">Used</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .MonthPlans}}
+        <tr>
+          <td class="t-lead" data-label="Month"><strong>{{.Month}}</strong><br><small>{{.HeadCount}} {{plural .HeadCount "head" "heads"}}</small></td>
+          <td data-label="Status"><span><span class="pill {{.Status}}">{{planStatusText .Status}}</span>{{if .LockedAt}}<br><small>{{datep .LockedAt}}</small>{{end}}</span></td>
+          <td data-label="Source">{{if .SourceMonth}}{{.SourceMonth}}{{else}}<span class="muted">Manual</span>{{end}}</td>
+          <td class="num" data-label="Budget">{{money .Budget}}</td>
+          <td class="num" data-label="Actual">{{money .Actual}}</td>
+          <td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td>
+          <td class="num" data-label="Used">{{.UsedPercent}}</td>
+          <td data-label="Created">{{if .CreatedAt}}{{datep .CreatedAt}}{{else}}<span class="muted">Imported history</span>{{end}}</td>
+          <td class="actions-cell" data-label="Actions"><span><a class="btn small" href="/grid?month={{.Month}}">Grid</a><a class="btn small outline" href="/budgets?month={{.Month}}">Budget</a><a class="btn small outline" href="/payments?month={{.Month}}">Payments</a><a class="btn small outline" href="/reports/heads?from={{.Month}}&to={{.Month}}">Report</a></span></td>
+        </tr>
+      {{else}}
+        <tr>
+          <td colspan="9" class="empty" data-label="">No monthly plans yet. <a href="/months">Open a month</a> to start one.</td>
+        </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
 {{template "bottom" .}}
 {{end}}
 
 {{define "budgets"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Monthly plan</div><h1>Budgets</h1><p class="sub muted">Review monthly spending or create a budget with projects, expense heads, and detailed lines.</p></div>{{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}</section>
-{{if .Perms.Can "budget" "edit"}}<div class="toolbar">{{if .Perms.Can "month" "create"}}<a class="btn primary" href="/budgets/new">Create budget</a>{{end}}<a class="btn outline" href="/budgets/plan?month={{.Month}}">Edit budget lines</a></div>{{end}}
-<form class="toolbar" method="get"><label>Month<input type="month" name="month" value="{{.Month}}"></label><button>Open</button><a class="btn outline" href="/months">Month history</a><a class="btn outline" href="/grid?month={{.Month}}">View grid</a></form>{{if .Grid.Locked}}<div class="locked">This month is locked. Unlock it with a reason before changing budgets or payments.</div>{{end}}
-{{if .BudgetErrors}}<div class="budget-error-summary" role="region" aria-labelledby="budget-errors-heading" tabindex="-1"><h2 id="budget-errors-heading">Correct the unsaved budgets</h2><ul>{{range .Grid.Rows}}{{$row := .}}{{with index $.BudgetErrors .HeadID}}<li><a href="#budget_{{$row.HeadID}}">{{$row.Project}} / {{$row.Head}}: {{.}}</a></li>{{end}}{{end}}</ul></div>{{end}}
-<form class="budget-editor" method="post" action="/budgets"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="month" value="{{.Month}}"><table class="t-cards"><thead><tr><th>Project</th><th>Head</th><th>Status</th><th>Budget</th><th class="num">Actual</th><th class="num">Used</th></tr></thead><tbody>{{range .Grid.Rows}}{{$row := .}}<tr><td data-label="Project">{{.Project}}</td><td class="t-lead" data-label="Head">{{.Head}}</td><td data-label="Status">{{if .Active}}<span class="pill good">Active</span>{{else}}<span class="pill neutral">Retired</span>{{end}}</td><td data-label="Budget"><span><input id="budget_{{.HeadID}}" name="budget_{{.HeadID}}" inputmode="decimal" {{if index $.BudgetErrors .HeadID}}aria-invalid="true" aria-describedby="budget_error_{{.HeadID}}"{{end}} aria-label="Budget for {{.Project}} / {{.Head}}" value="{{budgetInputValue $.BudgetInputs .HeadID .Budget}}" {{if or (not ($.Perms.Can "budget" "edit")) $.Grid.Locked (not .Active) (index $.BudgetLineHeads .HeadID)}}disabled{{end}}>{{if index $.BudgetLineHeads .HeadID}}{{if $.Perms.Can "budget" "edit"}}<a class="hint" href="/budgets/plan?month={{$.Month}}#head-{{.HeadID}}">Edit lines</a>{{else}}<span class="hint">Total of saved budget lines.</span>{{end}}{{end}}{{with index $.BudgetErrors .HeadID}}<span class="field-error" id="budget_error_{{$row.HeadID}}">Not saved: {{.}}</span>{{else}}{{if and $.BudgetInputs (not $.BudgetSaveFailed)}}<span class="budget-saved">Saved</span>{{end}}{{end}}{{if not .Active}}<span class="hint">Retired: kept for history, not editable.</span>{{end}}</span></td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No active heads for this month.{{if .Perms.Can "head" "create"}} <a href="/heads">Add a head</a> first.{{end}}</td></tr>{{end}}</tbody></table>{{if .Perms.Can "budget" "edit"}}<div class="form-actions"><button class="primary" {{if .Grid.Locked}}disabled{{end}}>Save Budgets</button></div>{{end}}</form>
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Monthly plan</div>
+    <h1>Budgets</h1>
+    <p class="sub muted">Review monthly spending or create a budget with projects, expense heads, and detailed lines.</p>
+  </div>
+  {{if .Grid.Locked}}<span class="pill warn">Locked</span>{{end}}
+</section>
+{{if .Perms.Can "budget" "edit"}}
+  <div class="toolbar">
+    {{if .Perms.Can "month" "create"}}<a class="btn primary" href="/budgets/new">Create budget</a>{{end}}<a class="btn outline" href="/budgets/plan?month={{.Month}}">Edit budget lines</a>
+  </div>
+{{end}}
+<form class="toolbar" method="get">
+  <label>Month<input type="month" name="month" value="{{.Month}}"></label><button>Open</button><a class="btn outline" href="/months">Month history</a><a class="btn outline" href="/grid?month={{.Month}}">View grid</a>
+</form>
+{{if .Grid.Locked}}
+  <div class="locked">This month is locked. Unlock it with a reason before changing budgets or payments.</div>
+{{end}}
+{{if .BudgetErrors}}
+  <div class="budget-error-summary" role="region" aria-labelledby="budget-errors-heading" tabindex="-1">
+    <h2 id="budget-errors-heading">Correct the unsaved budgets</h2>
+    <ul>
+      {{range .Grid.Rows}}{{$row := .}}{{with index $.BudgetErrors .HeadID}}
+          <li><a href="#budget_{{$row.HeadID}}">{{$row.Project}} / {{$row.Head}}: {{.}}</a></li>
+        {{end}}{{end}}
+    </ul>
+  </div>
+{{end}}
+<form class="budget-editor" method="post" action="/budgets">
+  <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="month" value="{{.Month}}">
+  <table class="t-cards">
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Head</th>
+        <th>Status</th>
+        <th>Budget</th>
+        <th class="num">Actual</th>
+        <th class="num">Used</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Grid.Rows}}{{$row := .}}
+        <tr>
+          <td data-label="Project">{{.Project}}</td>
+          <td class="t-lead" data-label="Head">{{.Head}}</td>
+          <td data-label="Status">{{if .Active}}<span class="pill good">Active</span>{{else}}<span class="pill neutral">Retired</span>{{end}}</td>
+          <td data-label="Budget"><span><input id="budget_{{.HeadID}}" name="budget_{{.HeadID}}" inputmode="decimal"
+              {{if index $.BudgetErrors .HeadID}}aria-invalid="true" aria-describedby="budget_error_{{.HeadID}}"{{end}}
+              aria-label="Budget for {{.Project}} / {{.Head}}" value="{{budgetInputValue $.BudgetInputs .HeadID .Budget}}"
+              {{if or (not ($.Perms.Can "budget" "edit")) $.Grid.Locked (not .Active) (index $.BudgetLineHeads .HeadID)}}disabled{{end}}>
+            {{- if index $.BudgetLineHeads .HeadID}}{{if $.Perms.Can "budget" "edit"}}<a class="hint" href="/budgets/plan?month={{$.Month}}#head-{{.HeadID}}">Edit lines</a>{{else}}<span class="hint">Total of saved budget lines.</span>{{end}}{{end}}
+            {{- with index $.BudgetErrors .HeadID}}<span class="field-error" id="budget_error_{{$row.HeadID}}">Not saved: {{.}}</span>{{else}}{{if and $.BudgetInputs (not $.BudgetSaveFailed)}}<span class="budget-saved">Saved</span>{{end}}{{end}}
+            {{- if not .Active}}<span class="hint">Retired: kept for history, not editable.</span>{{end}}</span></td>
+          <td class="num" data-label="Actual">{{money .Actual}}</td>
+          <td class="num" data-label="Used">{{usedText .Budget .Actual}}</td>
+        </tr>
+      {{else}}
+        <tr>
+          <td colspan="6" class="empty" data-label="">No active heads for this month.{{if .Perms.Can "head" "create"}} <a href="/heads">Add a head</a> first.{{end}}</td>
+        </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{if .Perms.Can "budget" "edit"}}
+    <div class="form-actions">
+      <button class="primary" {{if .Grid.Locked}}disabled{{end}}>Save Budgets</button>
+    </div>
+  {{end}}
+</form>
 {{template "bottom" .}}
 {{end}}
 
 {{define "projects"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Setup</div><h1>Projects</h1><p class="sub muted">Manage project buckets used by the grid and payment entry.</p></div></section>
-{{if .Perms.Can "project" "create"}}<form class="toolbar setup-form" method="post" action="/projects"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project name<input name="name" required></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Project</button></form>{{end}}
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Name</th><th>Status</th><th>Order</th><th>Update</th></tr></thead><tbody>{{range .Projects}}<tr><td class="t-lead" data-label="Name"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} name="name" aria-label="Name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Status"><label class="checkline"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update">{{if $.Perms.Can "project" "edit"}}<span><form id="project-{{.ID}}" method="post" action="/projects"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="project-{{.ID}}">Save</button></span>{{else}}<span class="muted">Read only</span>{{end}}</td></tr>{{else}}<tr><td colspan="4" class="empty" data-label="">No projects yet.{{if .Perms.Can "project" "create"}} Add the first one above.{{end}}</td></tr>{{end}}</tbody></table></div>
+{{if .Perms.Can "project" "create"}}
+  <form class="toolbar setup-form" method="post" action="/projects">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project name<input name="name" required></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Project</button>
+  </form>
+{{end}}
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Name</th><th>Status</th><th>Order</th><th>Update</th></tr></thead>
+    <tbody>
+      {{range .Projects}}
+        <tr>
+          <td class="t-lead" data-label="Name"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} name="name" aria-label="Name for {{.Name}}" value="{{.Name}}" required></td>
+          <td data-label="Status"><label class="checkline"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td>
+          <td data-label="Order"><input form="project-{{.ID}}" {{if not ($.Perms.Can "project" "edit")}}disabled{{end}} name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td>
+          <td data-label="Update">{{if $.Perms.Can "project" "edit"}}<span>
+              <form id="project-{{.ID}}" method="post" action="/projects">
+                <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+              </form>
+              <button form="project-{{.ID}}">Save</button></span>{{else}}<span class="muted">Read only</span>{{end}}</td>
+        </tr>
+      {{else}}
+        <tr>
+          <td colspan="4" class="empty" data-label="">No projects yet.{{if .Perms.Can "project" "create"}} Add the first one above.{{end}}</td>
+        </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
 {{template "bottom" .}}
 {{end}}
 
 {{define "heads"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Setup</div><h1>Heads</h1><p class="sub muted">Maintain spend heads, due days, and sort order.</p></div></section>
-{{if .Perms.Can "head" "create"}}<form class="toolbar setup-form heads-setup-form" method="post" action="/heads"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project<select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label><label>Head name<input name="name" required></label><label>Due day<input name="due_day" type="number" min="1" max="31" placeholder="5"></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Head</button></form>{{end}}
-<div class="table-wrap"><table class="t-cards heads-editor"><thead><tr><th>Project</th><th>Head</th><th>Due</th><th>Status</th><th>Order</th><th>Update</th></tr></thead><tbody>{{range .Heads}}{{$head := .}}<tr><td data-label="Project">{{/* $.AllProjects, not $.Projects. This screen lists every head, retired
-     projects included (T12), and the row select used to be populated from the
-     active set only — so a head whose project had been retired had no matching
-     option, the browser selected the first one, and that row's own Save moved the
-     head to a project nobody chose, taking every payment ever recorded against it
-     into another project's variance (F-G-033). The "Add head" form above keeps the
-     active set: a *new* head may not be filed under a retired project.
-
-     Only the project this head is filed under is rendered here. fervid-app.js
-     swaps in the full list from the shared <template> below the moment somebody
-     reaches for the control, because rendering all of them in all of the rows is
-     229 x 24 option elements and 470 KB, of which a reader ever reads one. The
-     one option that is rendered is looked up rather than taken from the head, so
-     it keeps its "(retired)" marker: which project a head is filed under is the
-     whole point of the column. */}}<select form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="project_id" aria-label="Project for {{.Name}}" title="{{.Project}}" data-project-select data-chosen="{{$head.ProjectID}}">{{range $.AllProjects}}{{if eq .ID $head.ProjectID}}<option value="{{.ID}}" selected>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}</select></td><td class="t-lead" data-label="Head"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td><td data-label="Due"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td><td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td><td data-label="Order"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td><td data-label="Update">{{if $.Perms.Can "head" "edit"}}<span><form id="head-{{.ID}}" method="post" action="/heads"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"></form><button form="head-{{.ID}}">Save</button></span>{{else}}<span class="muted">Read only</span>{{end}}</td></tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No heads yet.{{if .Perms.Can "head" "create"}} Add the first one above.{{end}}</td></tr>{{end}}</tbody></table></div>
+{{if .Perms.Can "head" "create"}}
+  <form class="toolbar setup-form heads-setup-form" method="post" action="/heads">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><label>Project<select name="project_id" required>
+      {{range .Projects}}
+        <option value="{{.ID}}">{{.Name}}</option>
+      {{end}}
+    </select></label><label>Head name<input name="name" required></label><label>Due day<input name="due_day" type="number" min="1" max="31" placeholder="5"></label><label>Order<input name="sort_order" type="number" value="0"></label><label class="checkline"><input type="checkbox" name="active" checked> Active</label><button class="primary">Add Head</button>
+  </form>
+{{end}}
+{{/* Each row's project select renders only the project the head is filed
+     under, looked up in .AllProjects (retired projects included) so it keeps
+     its "(retired)" marker. If the option were missing, the browser would
+     select the first one and saving the row would move the head to a project
+     nobody chose. fervid-app.js swaps in the full list from the shared
+     <template id="project-options"> below when someone opens the control;
+     rendering every project in every row would add hundreds of KB. The "Add
+     head" form above offers only active projects, because a new head may not
+     be filed under a retired project. */}}
+<div class="table-wrap">
+  <table class="t-cards heads-editor">
+    <thead><tr><th>Project</th><th>Head</th><th>Due</th><th>Status</th><th>Order</th><th>Update</th></tr></thead>
+    <tbody>
+      {{range .Heads}}{{$head := .}}
+        <tr>
+          <td data-label="Project"><select form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="project_id" aria-label="Project for {{.Name}}" title="{{.Project}}" data-project-select data-chosen="{{$head.ProjectID}}">
+              {{range $.AllProjects}}{{if eq .ID $head.ProjectID}}
+                  <option value="{{.ID}}" selected>{{.Name}}{{if not .Active}} (retired){{end}}</option>
+                {{end}}{{end}}
+            </select></td>
+          <td class="t-lead" data-label="Head"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="name" aria-label="Head name for {{.Name}}" value="{{.Name}}" required></td>
+          <td data-label="Due"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="due_day" type="number" min="1" max="31" aria-label="Due day for {{.Name}}" value="{{.DueDay}}"></td>
+          <td data-label="Status"><label class="checkline"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} type="checkbox" name="active" {{check .Active}}> {{boolText .Active}}</label></td>
+          <td data-label="Order"><input form="head-{{.ID}}" {{if not ($.Perms.Can "head" "edit")}}disabled{{end}} name="sort_order" type="number" aria-label="Sort order for {{.Name}}" value="{{.SortOrder}}"></td>
+          <td data-label="Update">{{if $.Perms.Can "head" "edit"}}<span>
+              <form id="head-{{.ID}}" method="post" action="/heads">
+                <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+              </form>
+              <button form="head-{{.ID}}">Save</button></span>{{else}}<span class="muted">Read only</span>{{end}}</td>
+        </tr>
+      {{else}}
+        <tr>
+          <td colspan="6" class="empty" data-label="">No heads yet.{{if .Perms.Can "head" "create"}} Add the first one above.{{end}}</td>
+        </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
 {{/* Every project, once, for the row pickers above. Retired ones are included
      and marked, because a head already filed under a retired project must keep
      showing it — only the Add form above is restricted to the active set. */}}

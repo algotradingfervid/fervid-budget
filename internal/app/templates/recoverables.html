@@ -28,7 +28,9 @@
   <a class="metric" href="/recoverables/list?ageing=outstanding"><span class="metric-label">Outstanding</span><span class="metric-value">{{short .RecMetrics.OutstandingAmount}}</span><span class="metric-foot">{{.RecMetrics.OutstandingCount}} {{plural .RecMetrics.OutstandingCount "recoverable" "recoverables"}}</span></a>
   <a class="metric warn" href="/recoverables/list?ageing=overdue"><span class="metric-label">Past expected return</span><span class="metric-value">{{short .RecMetrics.OverdueAmount}}</span><span class="metric-foot">{{.RecMetrics.OverdueCount}} overdue</span></a>
   <a class="metric" href="/recoverables/list?ageing=due30"><span class="metric-label">Due in 30 days</span><span class="metric-value">{{short .RecMetrics.DueIn30Amount}}</span><span class="metric-foot">{{.RecMetrics.DueIn30Count}} {{plural .RecMetrics.DueIn30Count "recoverable" "recoverables"}}</span></a>
-  <div class="metric"><span class="metric-label">Paid out this month</span><span class="metric-value">{{short .RecMetrics.PaidThisMonthAmount}}</span><span class="metric-foot">{{.RecMetrics.PaidThisMonthCount}} {{plural .RecMetrics.PaidThisMonthCount "payment" "payments"}}</span></div>
+  <div class="metric">
+    <span class="metric-label">Paid out this month</span><span class="metric-value">{{short .RecMetrics.PaidThisMonthAmount}}</span><span class="metric-foot">{{.RecMetrics.PaidThisMonthCount}} {{plural .RecMetrics.PaidThisMonthCount "payment" "payments"}}</span>
+  </div>
 </div>
 
 <div class="section-head"><h2>By category</h2><a class="more-link" href="/recoverables/list">Full list →</a></div>
@@ -90,7 +92,9 @@
     <h1>{{if eq .Ageing "outstanding"}}Outstanding recoverables{{else}}All recoverables{{end}}</h1>
     <p class="sub">Aged against the expected return date · overdue shown in red{{if .RecoveryCounterparty}} · Counterparty: {{.RecoveryCounterparty}}{{end}}</p>
   </div>
-  <div class="pb-actions">{{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?category={{.CategoryID}}&amp;ageing={{.Ageing}}&amp;q={{urlquery .Query}}&amp;counterparty={{urlquery .RecoveryCounterparty}}&amp;from={{.From}}&amp;to={{.To}}&amp;order={{.RecoveryOrder}}">⤓ Export CSV</a>{{end}}</div>
+  <div class="pb-actions">
+    {{if .Perms.Can "recoverable_report" "export"}}<a class="btn outline" href="/recoverables/list.csv?category={{.CategoryID}}&amp;ageing={{.Ageing}}&amp;q={{urlquery .Query}}&amp;counterparty={{urlquery .RecoveryCounterparty}}&amp;from={{.From}}&amp;to={{.To}}&amp;order={{.RecoveryOrder}}">⤓ Export CSV</a>{{end}}
+  </div>
 </section>
 
 <form class="toolbar d-only" method="get" action="/recoverables/list">
@@ -116,8 +120,21 @@
  <form class="stack-12" method="get" action="/recoverables/list">
  <input type="hidden" name="counterparty" value="{{.RecoveryCounterparty}}"><input type="hidden" name="from" value="{{.From}}"><input type="hidden" name="to" value="{{.To}}"><input type="hidden" name="order" value="{{.RecoveryOrder}}">
   <label for="rec-mobile-q">Search</label><input id="rec-mobile-q" name="q" value="{{.Query}}" placeholder="Search recoverables…">
-  <label for="rec-mobile-category">Category</label><select id="rec-mobile-category" name="category"><option value="0">All categories</option>{{range .Categories}}<option value="{{.ID}}" {{if eq $.CategoryID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
-  <label for="rec-mobile-ageing">Ageing</label><select id="rec-mobile-ageing" name="ageing"><option value="">All</option><option value="outstanding" {{select .Ageing "outstanding"}}>Outstanding</option><option value="overdue" {{select .Ageing "overdue"}}>Overdue</option><option value="due30" {{select .Ageing "due30"}}>Due in 30 days</option><option value="later" {{select .Ageing "later"}}>Due later</option><option value="unpaid" {{select .Ageing "unpaid"}}>Not yet paid</option><option value="recovered" {{select .Ageing "recovered"}}>Reconciled</option></select>
+  <label for="rec-mobile-category">Category</label><select id="rec-mobile-category" name="category">
+    <option value="0">All categories</option>
+    {{range .Categories}}
+      <option value="{{.ID}}" {{if eq $.CategoryID .ID}}selected{{end}}>{{.Name}}</option>
+    {{end}}
+  </select>
+  <label for="rec-mobile-ageing">Ageing</label><select id="rec-mobile-ageing" name="ageing">
+    <option value="">All</option>
+    <option value="outstanding" {{select .Ageing "outstanding"}}>Outstanding</option>
+    <option value="overdue" {{select .Ageing "overdue"}}>Overdue</option>
+    <option value="due30" {{select .Ageing "due30"}}>Due in 30 days</option>
+    <option value="later" {{select .Ageing "later"}}>Due later</option>
+    <option value="unpaid" {{select .Ageing "unpaid"}}>Not yet paid</option>
+    <option value="recovered" {{select .Ageing "recovered"}}>Reconciled</option>
+  </select>
   <div class="cluster"><button class="btn primary" type="submit">Apply filters</button><a class="btn outline" href="/recoverables/list">Reset</a></div>
  </form>
 </details>
@@ -128,13 +145,31 @@
        ever looked at the register had no way to know the download said more
        (F-E-04). The table scrolls inside its own .table-wrap, so eleven columns cost
        the page no horizontal scroll. */}}
-  <thead><tr><th>Request</th><th>Category</th><th>Counterparty</th><th>Project</th><th class="num">Outstanding</th><th class="num">Paid out</th><th class="num">Returned / reconciled</th><th>Paid on</th><th>Expected back</th><th>Ageing</th><th>Status</th><th>Requester</th><th>Repayment notes</th></tr></thead>
+  <thead>
+    <tr>
+      <th>Request</th>
+      <th>Category</th>
+      <th>Counterparty</th>
+      <th>Project</th>
+      <th class="num">Outstanding</th>
+      <th class="num">Paid out</th>
+      <th class="num">Returned / reconciled</th>
+      <th>Paid on</th>
+      <th>Expected back</th>
+      <th>Ageing</th>
+      <th>Status</th>
+      <th>Requester</th>
+      <th>Repayment notes</th>
+    </tr>
+  </thead>
   <tbody>{{range .Recoverables}}<tr>
     <td class="t-lead" data-label="Request"><a href="/recoverables/{{.RequestID}}">{{.Number}}</a></td>
     <td data-label="Category"><span class="pill recoverable">{{.Category}}</span></td>
     <td data-label="Counterparty">{{if .Counterparty}}{{.Counterparty}}{{else}}Not recorded{{end}}</td>
     <td data-label="Project">{{if .Project}}{{.Project}}{{else}}Not project linked{{end}}</td>
-    <td class="num" data-label="Outstanding">{{money .Amount}}</td><td class="num" data-label="Paid out">{{money .PaidAmount}}</td><td class="num" data-label="Returned / reconciled">{{money .RecoveredAmount}}</td>
+    <td class="num" data-label="Outstanding">{{money .Amount}}</td>
+    <td class="num" data-label="Paid out">{{money .PaidAmount}}</td>
+    <td class="num" data-label="Returned / reconciled">{{money .RecoveredAmount}}</td>
     <td data-label="Paid on">{{if .PaidOn}}{{.PaidOn}}{{else}}Not yet paid{{end}}</td>
     <td data-label="Expected back">{{if .HasReturnDate}}{{.ExpectedReturnDate}}{{else}}No fixed date{{end}}</td>
     <td data-label="Ageing"><span class="pill {{.AgeingTone}}">{{.AgeingLabel}}</span></td>
@@ -169,7 +204,9 @@
   <h1>{{.Request2.Purpose}}</h1>
   <p class="rh-meta">Raised by {{.Request2.RequesterName}}{{if .Recoverable.PaidOn}} · first paid {{.Recoverable.PaidOn}}{{end}} · <span class="pill recoverable">Recoverable · {{.Recoverable.Category}}</span></p>
   <p class="rh-meta">Outstanding balance · {{money .Recoverable.Amount}}</p>
-  <div class="rh-status"><span>Payout:</span> {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span><span>Recovery:</span> <span class="pill {{.Recoverable.AgeingTone}}">{{.Recoverable.AgeingLabel}}</span></div>
+  <div class="rh-status">
+    <span>Payout:</span> {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span><span>Recovery:</span> <span class="pill {{.Recoverable.AgeingTone}}">{{.Recoverable.AgeingLabel}}</span>
+  </div>
 </div>
 
 {{if .Recoverable.Overdue}}
@@ -209,32 +246,76 @@
     <div><dt>Payee</dt><dd>{{.RecPayment.VendorPayee}}</dd></div>
   </dl>
 {{else}}
-  <p class="empty">{{if eq .Request2.Status "pending"}}Awaiting approval. No payment has been recorded.{{else if eq .Request2.Status "returned"}}Returned for correction. No payment has been recorded.{{else if eq .Request2.Status "rejected"}}This request was rejected. No payment was recorded.{{else if eq .Request2.Status "cancelled"}}This request was cancelled. No payment was recorded.{{else if eq .Request2.Status "withdrawn"}}This request was withdrawn. No payment was recorded.{{else if eq .Request2.Status "approved"}}Approved but not yet paid.{{else if eq .Request2.Status "processing"}}With Accounts for payment. No payment has been recorded.{{else if eq .Request2.Status "cancellation_requested"}}Cancellation requested. No payment has been recorded.{{else}}No payment has been recorded for this request.{{end}} There is no recorded payout to recover.</p>
+  <p class="empty">
+    {{- if eq .Request2.Status "pending"}}Awaiting approval. No payment has been recorded.
+    {{- else if eq .Request2.Status "returned"}}Returned for correction. No payment has been recorded.
+    {{- else if eq .Request2.Status "rejected"}}This request was rejected. No payment was recorded.
+    {{- else if eq .Request2.Status "cancelled"}}This request was cancelled. No payment was recorded.
+    {{- else if eq .Request2.Status "withdrawn"}}This request was withdrawn. No payment was recorded.
+    {{- else if eq .Request2.Status "approved"}}Approved but not yet paid.
+    {{- else if eq .Request2.Status "processing"}}With Accounts for payment. No payment has been recorded.
+    {{- else if eq .Request2.Status "cancellation_requested"}}Cancellation requested. No payment has been recorded.
+    {{- else}}No payment has been recorded for this request.
+    {{- end}} There is no recorded payout to recover.</p>
 {{end}}
 </div>
 
 <section id="recovery-history">
  <div class="section-head"><h2>Recovery history</h2></div>
  <p class="hint">Every entry reduces the outstanding balance. Original payouts remain unchanged. Expense reconciliations and adjustments record an approved accounting entry; they do not automatically charge a budget head. Reference the bank receipt, expense report, or authorised journal.</p>
- <ol class="thread">{{range .RecoveryEvents}}<li><span class="tl-dot" aria-hidden="true">↩</span><div class="tl-head"><b>{{.Label}} · {{money .Amount}}</b><time>{{.OccurredOn}}</time></div><div class="tl-body"><p><b>Reference:</b> {{.Reference}}</p><p>{{.Note}}</p><small>Recorded by {{.ActorName}} · {{date .CreatedAt}}</small></div></li>{{else}}<li><p class="empty">No returns or reconciliations recorded yet.</p></li>{{end}}</ol>
+ <ol class="thread">
+   {{range .RecoveryEvents}}
+     <li><span class="tl-dot" aria-hidden="true">↩</span>
+       <div class="tl-head"><b>{{.Label}} · {{money .Amount}}</b><time>{{.OccurredOn}}</time></div>
+       <div class="tl-body">
+         <p><b>Reference:</b> {{.Reference}}</p>
+         <p>{{.Note}}</p>
+         <small>Recorded by {{.ActorName}} · {{date .CreatedAt}}</small>
+       </div>
+     </li>
+   {{else}}
+     <li><p class="empty">No returns or reconciliations recorded yet.</p></li>
+   {{end}}
+ </ol>
 </section>
 {{if .CanRecordRecovery}}
 <section class="card" id="record-recovery">
  <div class="card-head"><h2>Record recovery</h2></div>
- {{if .RecoveryError}}<div id="recovery-error" class="banner warn error-summary" role="alert" tabindex="-1"><div><h2>Recovery was not saved</h2><p>{{.RecoveryError}}</p><a href="#recovery-amount">Review the recovery details</a></div></div>{{end}}
+ {{if .RecoveryError}}
+   <div id="recovery-error" class="banner warn error-summary" role="alert" tabindex="-1">
+     <div>
+       <h2>Recovery was not saved</h2>
+       <p>{{.RecoveryError}}</p>
+       <a href="#recovery-amount">Review the recovery details</a>
+     </div>
+   </div>
+ {{end}}
  <form method="post" action="/recoverables/{{.Request2.ID}}/events" class="stack-12" data-confirm="Record this recovery permanently? Check the amount, date, and evidence before continuing.">
   <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="token" value="{{.RecoveryInput.Token}}">
   <div class="form-grid">
-   <div class="field span-6"><label for="recovery-kind">Recovery type</label><select id="recovery-kind" name="kind" required><option value="">Choose a type</option><option value="return" {{select .RecoveryInput.Kind "return"}}>Money returned</option><option value="expense" {{select .RecoveryInput.Kind "expense"}}>Expense reconciled</option><option value="adjustment" {{select .RecoveryInput.Kind "adjustment"}}>Balance adjustment</option></select></div>
-   <div class="field span-6"><label for="recovery-amount">Amount received or reconciled (₹)</label><input id="recovery-amount" name="amount" data-money inputmode="decimal" value="{{.RecoveryInput.AmountText}}" required aria-describedby="recovery-amount-help{{if .RecoveryError}} recovery-error{{end}}"><span id="recovery-amount-help" class="hint">Up to {{money .Recoverable.Amount}} outstanding. Each entry is permanent.</span></div>
+   <div class="field span-6">
+     <label for="recovery-kind">Recovery type</label><select id="recovery-kind" name="kind" required>
+       <option value="">Choose a type</option>
+       <option value="return" {{select .RecoveryInput.Kind "return"}}>Money returned</option>
+       <option value="expense" {{select .RecoveryInput.Kind "expense"}}>Expense reconciled</option>
+       <option value="adjustment" {{select .RecoveryInput.Kind "adjustment"}}>Balance adjustment</option>
+     </select>
+   </div>
+   <div class="field span-6">
+     <label for="recovery-amount">Amount received or reconciled (₹)</label><input id="recovery-amount" name="amount" data-money inputmode="decimal" value="{{.RecoveryInput.AmountText}}" required aria-describedby="recovery-amount-help{{if .RecoveryError}} recovery-error{{end}}"><span id="recovery-amount-help" class="hint">Up to {{money .Recoverable.Amount}} outstanding. Each entry is permanent.</span>
+   </div>
    <div class="field span-6"><label for="recovery-date">Recovery date</label><input id="recovery-date" type="date" name="occurred_on" value="{{.RecoveryInput.OccurredOn}}" required></div>
    <div class="field span-6"><label for="recovery-ref">Bank / accounting reference</label><input id="recovery-ref" name="reference" value="{{.RecoveryInput.Reference}}" maxlength="240" required></div>
-   <div class="field span-12"><label for="recovery-note">Evidence and explanation</label><textarea id="recovery-note" name="note" rows="3" maxlength="4000" required aria-describedby="recovery-note-help">{{.RecoveryInput.Note}}</textarea><span id="recovery-note-help" class="hint">State what happened and where the receipt or approved expense/journal is kept. For an adjustment, include who authorised it and why.</span></div>
+   <div class="field span-12">
+     <label for="recovery-note">Evidence and explanation</label><textarea id="recovery-note" name="note" rows="3" maxlength="4000" required aria-describedby="recovery-note-help">{{.RecoveryInput.Note}}</textarea><span id="recovery-note-help" class="hint">State what happened and where the receipt or approved expense/journal is kept. For an adjustment, include who authorised it and why.</span>
+   </div>
   </div>
   <button class="btn primary" type="submit">Record recovery</button>
  </form>
 </section>
-{{else if .HasPayment}}<p class="hint">{{if eq .Recoverable.Amount 0}}Fully reconciled. All recovery entries remain available above.{{else}}Accounts can record a return or reconciliation for this balance.{{end}}</p>{{end}}
+{{else if .HasPayment}}
+<p class="hint">{{if eq .Recoverable.Amount 0}}Fully reconciled. All recovery entries remain available above.{{else}}Accounts can record a return or reconciliation for this balance.{{end}}</p>
+{{end}}
 
 <div class="section-head"><h2>History and conversation</h2></div>
 <ol class="thread">
@@ -245,7 +326,11 @@
     <div class="tl-body">
       {{with .Body}}<p>{{.}}</p>{{end}}
       {{if eq .Kind "attachment"}}<span class="tl-file">📎 {{.FileName}} · {{fileSize .FileSize}}</span>{{end}}
-      {{if .Changes}}<div class="tl-change">{{range .Changes}}{{threadField .Field}} <span class="was">{{threadValue .Field .Was}}</span> → <span class="now">{{threadValue .Field .Now}}</span><br>{{end}}</div>{{end}}
+      {{if .Changes}}
+        <div class="tl-change">
+          {{range .Changes}}{{threadField .Field}} <span class="was">{{threadValue .Field .Was}}</span> → <span class="now">{{threadValue .Field .Now}}</span><br>{{end}}
+        </div>
+      {{end}}
     </div>
   </li>
   {{else}}<li><span class="tl-dot" aria-hidden="true">·</span><div class="tl-body muted">Nothing has happened yet.</div></li>{{end}}

@@ -166,7 +166,9 @@
       <label for="head">Head <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "head"}}<span class="field-error-message" id="error-head">{{.}}</span>{{end}}
       <select id="head" name="head_id" aria-required="true" {{if index .RequestFieldErrors "head"}}aria-invalid="true" aria-describedby="error-head"{{end}}>
         <option value="">Choose a head</option>
-        {{range .Heads}}{{if or (not (deref $.Request2.ProjectID)) (eq .ProjectID (deref $.Request2.ProjectID))}}<option value="{{.ID}}" {{if eq (deref $.Request2.HeadID) .ID}}selected{{end}}>{{.Project}} / {{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}{{end}}
+        {{range .Heads}}{{if or (not (deref $.Request2.ProjectID)) (eq .ProjectID (deref $.Request2.ProjectID))}}
+            <option value="{{.ID}}" {{if eq (deref $.Request2.HeadID) .ID}}selected{{end}}>{{.Project}} / {{.Name}}{{if not .Active}} (retired){{end}}</option>
+          {{end}}{{end}}
       </select>
     </div>
   </div>
@@ -307,7 +309,9 @@
           <label for="vendor-plain">Or pick from the list</label>
           <select id="vendor-plain" name="vendor_id">
             <option value="">Choose a vendor</option>
-            {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
+            {{range .Vendors}}
+              <option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>
+            {{end}}
           </select>
         </noscript>
         {{/* Last, so that with scripting off the <noscript> select above is the
@@ -317,7 +321,9 @@
         {{else}}
         <select id="vendor" name="vendor_id" aria-required="true" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
           <option value="">Choose a vendor</option>
-          {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
+          {{range .Vendors}}
+            <option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>
+          {{end}}
         </select>
         <span class="hint">Bank details stay in the vendor record — never on this form.</span>
         {{end}}
@@ -406,7 +412,15 @@
   </fieldset>
 
   {{$routingUnavailable := and (eq (index .Settings "allow_approver_choice") "0") (not (approverAvailable .Request2.ManagerID .Approvers))}}
-  {{if $routingUnavailable}}<div class="banner warn" role="alert"><div><strong>Your default approver is unavailable.</strong><p>Ask an administrator to set an active default approver with permission to approve requests on your user record. Your organisation requires its assigned approver, so you cannot submit until this is corrected.</p>{{if .Perms.Can "user" "edit"}}<a href="/users">Open Users to correct the default approver</a>{{end}}</div></div>{{end}}
+  {{if $routingUnavailable}}
+    <div class="banner warn" role="alert">
+      <div>
+        <strong>Your default approver is unavailable.</strong>
+        <p>Ask an administrator to set an active default approver with permission to approve requests on your user record. Your organisation requires its assigned approver, so you cannot submit until this is corrected.</p>
+        {{if .Perms.Can "user" "edit"}}<a href="/users">Open Users to correct the default approver</a>{{end}}
+      </div>
+    </div>
+  {{end}}
   <fieldset>
     <legend>Who approves it</legend>
     <div class="form-grid">
@@ -437,7 +451,11 @@
        between the requester and the submit button: an empty answer leaves it
        empty, and a full one only points. */}}
   <div id="dup-check" aria-live="polite">{{if .Similar}}{{template "request_duplicates" .}}{{end}}</div>
-  {{if eq .FormType "vendor_invoice"}}<div class="field"><label for="duplicate-reason">Duplicate invoice override reason <span class="opt">only if a match is found</span></label><textarea id="duplicate-reason" name="duplicate_reason">{{.DuplicateReason}}</textarea><span class="hint">Check existing requests first. To intentionally reuse the same vendor invoice in the same year, explain why in at least 10 characters. The reason is recorded in the audit trail.</span></div>{{end}}
+  {{if eq .FormType "vendor_invoice"}}
+    <div class="field">
+      <label for="duplicate-reason">Duplicate invoice override reason <span class="opt">only if a match is found</span></label><textarea id="duplicate-reason" name="duplicate_reason">{{.DuplicateReason}}</textarea><span class="hint">Check existing requests first. To intentionally reuse the same vendor invoice in the same year, explain why in at least 10 characters. The reason is recorded in the audit trail.</span>
+    </div>
+  {{end}}
 
   <div class="action-bar">
     <span class="ab-note d-only">Submitting sends it to your approver and creates the request number.</span>
@@ -496,7 +514,9 @@
     <label for="vendor-plain">Or pick from the list</label>
     <select id="vendor-plain" name="vendor_id">
       <option value="">Choose a vendor</option>
-      {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
+      {{range .Vendors}}
+        <option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>
+      {{end}}
     </select>
   </noscript>
   <input type="hidden" name="vendor_id" id="vendor-id" data-combo-value value="{{deref .Request2.VendorID}}">
@@ -504,7 +524,9 @@
   {{else}}
   <select id="vendor" name="vendor_id" aria-required="true" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
     <option value="">Choose a vendor</option>
-    {{range .Vendors}}<option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>{{end}}
+    {{range .Vendors}}
+      <option value="{{.ID}}" {{if eq (deref $.Request2.VendorID) .ID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{if ne .DisplayName .Name}} ({{.Name}}){{end}}{{else}}{{.Name}}{{end}}</option>
+    {{end}}
   </select>
   <span class="hint">Bank details stay in the vendor record — never on this form.</span>
   {{end}}
@@ -622,10 +644,16 @@
     <div class="form-grid">
       {{template "request_vendor_field" .}}
       {{if eq .FormType "vendor_invoice"}}
-      <div class="field span-3 m-half"><label for="inv">Invoice number <span class="req" aria-hidden="true">*</span></label><input id="inv" name="invoice_no" value="{{.Request2.InvoiceNo}}" required></div>
-      <div class="field span-3 m-half"><label for="idate">Invoice date <span class="req" aria-hidden="true">*</span></label><input id="idate" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required></div>
+      <div class="field span-3 m-half">
+        <label for="inv">Invoice number <span class="req" aria-hidden="true">*</span></label><input id="inv" name="invoice_no" value="{{.Request2.InvoiceNo}}" required>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="idate">Invoice date <span class="req" aria-hidden="true">*</span></label><input id="idate" type="date" name="invoice_date" value="{{.Request2.InvoiceDate}}" required>
+      </div>
       {{else}}
-      <div class="field span-6"><label for="areason">Reason for the advance <span class="req" aria-hidden="true">*</span></label><input id="areason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required></div>
+      <div class="field span-6">
+        <label for="areason">Reason for the advance <span class="req" aria-hidden="true">*</span></label><input id="areason" name="advance_reason" value="{{.Request2.AdvanceReason}}" required>
+      </div>
       {{end}}
     </div>
   </fieldset>
@@ -635,8 +663,12 @@
   <fieldset>
     <legend>Your expense</legend>
     <div class="form-grid">
-      <div class="field span-6 m-half"><label for="paid">Paid to</label><input id="paid" value="{{.Request2.RequesterName}}" readonly><span class="hint">Reimbursements always pay the person raising them.</span></div>
-      <div class="field span-6 m-half"><label for="edate">Expense date <span class="req" aria-hidden="true">*</span></label><input id="edate" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required></div>
+      <div class="field span-6 m-half">
+        <label for="paid">Paid to</label><input id="paid" value="{{.Request2.RequesterName}}" readonly><span class="hint">Reimbursements always pay the person raising them.</span>
+      </div>
+      <div class="field span-6 m-half">
+        <label for="edate">Expense date <span class="req" aria-hidden="true">*</span></label><input id="edate" type="date" name="expense_date" value="{{.Request2.ExpenseDate}}" required>
+      </div>
     </div>
   </fieldset>
   {{end}}
@@ -646,7 +678,9 @@
     <legend>Advance details</legend>
     <div class="form-grid">
       <div class="field span-6 m-half"><label for="adv-to">Paid to</label><input id="adv-to" value="{{.Request2.RequesterName}}" readonly></div>
-      <div class="field span-12"><label for="areason2">What the money is for <span class="req" aria-hidden="true">*</span></label><input id="areason2" name="advance_reason" value="{{.Request2.AdvanceReason}}" required></div>
+      <div class="field span-12">
+        <label for="areason2">What the money is for <span class="req" aria-hidden="true">*</span></label><input id="areason2" name="advance_reason" value="{{.Request2.AdvanceReason}}" required>
+      </div>
     </div>
   </fieldset>
   {{end}}
@@ -658,7 +692,11 @@
       <div class="field span-12">
         <span class="flabel">Documents</span>
         <div class="stack-8">
-          {{range .RequestAtts}}<div class="file-row"><span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span><span><b>{{.OriginalName}}</b><small>{{fileSize .SizeBytes}}</small></span>{{if $.Perms.Can "attachment" "view"}}<span class="f-actions"><a class="btn small outline" href="/requests/{{$.Request2.ID}}/attachments/{{.ID}}">Download</a></span>{{end}}</div>{{end}}
+          {{range .RequestAtts}}
+            <div class="file-row">
+              <span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span><span><b>{{.OriginalName}}</b><small>{{fileSize .SizeBytes}}</small></span>{{if $.Perms.Can "attachment" "view"}}<span class="f-actions"><a class="btn small outline" href="/requests/{{$.Request2.ID}}/attachments/{{.ID}}">Download</a></span>{{end}}
+            </div>
+          {{end}}
           <div class="uploader">
             <div class="up-ico" aria-hidden="true">⇪</div>
             <label for="attachment"><b>Add another document</b></label>
@@ -710,8 +748,17 @@
      exist — the same rent, the same monthly retainer. The system points, the
      person decides." The endpoint that renders this is a read; the submit does
      not consult it and cannot be failed by it. */}}
-{{define "duplicate_override"}}{{if eq .Request2.Type "vendor_invoice"}}<div class="field"><label for="duplicate-reason">Duplicate invoice override reason</label><textarea id="duplicate-reason" name="duplicate_reason">{{.DuplicateReason}}</textarea><span class="hint">Only needed when changing this to a vendor invoice already recorded in the same year. Explain why in at least 10 characters.</span></div>{{end}}{{end}}
-{{define "request_error_summary"}}{{if .RequestFieldErrors}}<div class="error-summary" role="alert" tabindex="-1"><h2>Check the highlighted fields</h2><ul>{{range $id,$message := .RequestFieldErrors}}<li><a href="#{{$id}}">{{$message}}</a></li>{{end}}</ul></div>{{end}}{{end}}
+{{define "duplicate_override"}}{{if eq .Request2.Type "vendor_invoice"}}
+  <div class="field">
+    <label for="duplicate-reason">Duplicate invoice override reason</label><textarea id="duplicate-reason" name="duplicate_reason">{{.DuplicateReason}}</textarea><span class="hint">Only needed when changing this to a vendor invoice already recorded in the same year. Explain why in at least 10 characters.</span>
+  </div>
+{{end}}{{end}}
+{{define "request_error_summary"}}{{if .RequestFieldErrors}}
+  <div class="error-summary" role="alert" tabindex="-1">
+    <h2>Check the highlighted fields</h2>
+    <ul>{{range $id,$message := .RequestFieldErrors}}<li><a href="#{{$id}}">{{$message}}</a></li>{{end}}</ul>
+  </div>
+{{end}}{{end}}
 {{define "request_duplicates"}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">⚠</span>

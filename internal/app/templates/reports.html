@@ -1,12 +1,104 @@
 {{define "reports"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Analysis</div><h1>Reports</h1><p class="sub muted">{{.From}} to {{.To}} · {{.Mode}} view</p></div><div class="head-actions">{{if .Perms.Can "budget" "view"}}<a class="btn outline" href="/months">Monthly plans</a>{{end}}{{if .Perms.Can "report" "export"}}<a class="btn outline" href="/reports/ytd.csv?from={{.From}}&to={{.To}}&level={{.Mode}}">{{if or .ReportProjectID .ReportHeadID}}Export full {{.Mode}} report CSV{{else}}Export CSV{{end}}</a>{{end}}</div></section>
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Analysis</div>
+    <h1>Reports</h1>
+    <p class="sub muted">{{.From}} to {{.To}} · {{.Mode}} view</p>
+  </div>
+  <div class="head-actions">
+    {{if .Perms.Can "budget" "view"}}<a class="btn outline" href="/months">Monthly plans</a>{{end}}{{if .Perms.Can "report" "export"}}<a class="btn outline" href="/reports/ytd.csv?from={{.From}}&to={{.To}}&level={{.Mode}}">{{if or .ReportProjectID .ReportHeadID}}Export full {{.Mode}} report CSV{{else}}Export CSV{{end}}</a>{{end}}
+  </div>
+</section>
 {{if .ReportBack}}<p><a class="btn outline" href="{{.ReportBack}}">← Back to source report</a></p>{{end}}
 {{if .ReportContext}}<p class="report-context"><b>Showing: {{.ReportContext}}</b> · {{.From}} to {{.To}}</p>{{end}}
 <div class="tabs"><a class="tab {{if eq .Mode "monthly"}}is-active{{end}}" href="/reports/monthly?from={{.From}}&to={{.To}}">Monthly</a><a class="tab {{if eq .Mode "projects"}}is-active{{end}}" href="/reports/projects?from={{.From}}&to={{.To}}{{if .ReportProjectID}}&project_id={{.ReportProjectID}}{{end}}">Projects</a><a class="tab {{if eq .Mode "heads"}}is-active{{end}}" href="/reports/heads?from={{.From}}&to={{.To}}{{if .ReportProjectID}}&project_id={{.ReportProjectID}}{{end}}">Heads</a></div>
-<form class="toolbar" method="get">{{if .ReportProjectID}}<input type="hidden" name="project_id" value="{{.ReportProjectID}}">{{end}}{{if .ReportHeadID}}<input type="hidden" name="head_id" value="{{.ReportHeadID}}">{{end}}{{if .ReportBack}}<input type="hidden" name="back" value="{{.ReportBack}}">{{end}}<label>From<input type="month" name="from" value="{{.From}}"></label><label>To<input type="month" name="to" value="{{.To}}"></label><button>Run</button><a class="btn outline" href="/reports/{{.Mode}}?from={{.Month}}&to={{.Month}}{{if .ReportProjectID}}&project_id={{.ReportProjectID}}{{end}}{{if .ReportHeadID}}&head_id={{.ReportHeadID}}{{end}}{{if .ReportBack}}&back={{.ReportBack}}{{end}}">Current month</a></form>
-<div class="metric-strip"><div class="metric"><span class="metric-label">Budget</span><span class="metric-value">{{short .Summary.Budget}}</span></div><div class="metric"><span class="metric-label">Actual</span><span class="metric-value">{{short .Summary.Actual}}</span></div><div class="metric"><span class="metric-label">Remaining</span><span class="metric-value {{varClass .Summary.Variance}}">{{short .Summary.Variance}}</span></div><div class="metric"><span class="metric-label">Used</span><span class="metric-value">{{.Summary.UsedPercent}}</span></div></div>
-<div class="table-wrap"><table class="t-cards"><thead><tr><th>Period</th>{{if ne .Mode "monthly"}}<th>Project</th>{{end}}{{if eq .Mode "heads"}}<th>Head</th>{{end}}<th class="num">Budget</th><th class="num">Actual</th><th class="num">Remaining</th><th class="num">Used</th><th>Details</th></tr></thead><tbody>{{range .Reports}}<tr><td class="t-lead" data-label="Period">{{.Period}}</td>{{if ne $.Mode "monthly"}}<td data-label="Project">{{.Project}}</td>{{end}}{{if eq $.Mode "heads"}}<td data-label="Head">{{.Head}}</td>{{end}}<td class="num" data-label="Budget">{{money .Budget}}</td><td class="num" data-label="Actual">{{money .Actual}}</td><td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td><td class="num" data-label="Used">{{usedText .Budget .Actual}}</td><td data-label="Details">{{if $.ReportHeadID}}{{if $.Perms.Can "budget" "view"}}<a href="/budgets?month={{.Period}}&report_back={{$.ReportURL}}#budget_{{.HeadID}}">View budget</a>{{end}}{{else}}<a href="{{reportDetailURL . $.ReportURL}}">{{if eq $.Mode "monthly"}}View projects{{else if eq $.Mode "projects"}}View heads{{else}}View budget and payments{{end}}</a>{{end}}</td></tr>{{else}}<tr><td colspan="8" class="empty" data-label="">No report rows for this range. {{if .Perms.Can "budget" "view"}}<a href="/budgets">Set a budget</a> to start comparing.{{else}}An authorised budget editor can check the monthly plan.{{end}}</td></tr>{{end}}</tbody></table></div>
-{{if .ReportHeadID}}{{if .Perms.Can "payment" "view"}}<section class="report-payments"><h2>Payments behind these actuals</h2><p class="muted">Active budget payments for this head and date range, limited to the latest 300 per month and your payment access. Recoverable deposits and voided payments are excluded. Restricted payment access may show fewer records than the report total.</p><div class="table-wrap"><table class="t-cards"><thead><tr><th>Date</th><th>Payee</th><th>Invoice / reference</th><th class="num">Amount</th><th>Record</th></tr></thead><tbody>{{range .Payments}}<tr><td data-label="Date">{{.PaidOn}}</td><td data-label="Payee">{{.VendorPayee}}</td><td data-label="Invoice / reference">{{.InvoiceNo}} {{.ReferenceNo}}</td><td class="num" data-label="Amount">{{money .Amount}}</td><td data-label="Record"><a href="/payments/{{.ID}}?report_back={{$.ReportURL}}">Open payment {{.ID}}</a></td></tr>{{else}}<tr><td colspan="5" class="empty" data-label="">No matching payments available with your payment access.</td></tr>{{end}}</tbody></table></div></section>{{end}}{{end}}
+<form class="toolbar" method="get">
+  {{if .ReportProjectID}}<input type="hidden" name="project_id" value="{{.ReportProjectID}}">{{end}}
+  {{- if .ReportHeadID}}<input type="hidden" name="head_id" value="{{.ReportHeadID}}">{{end}}
+  {{- if .ReportBack}}<input type="hidden" name="back" value="{{.ReportBack}}">{{end}}<label>From<input type="month" name="from" value="{{.From}}"></label><label>To<input type="month" name="to" value="{{.To}}"></label><button>Run</button><a class="btn outline" href="/reports/{{.Mode}}?from={{.Month}}&to={{.Month}}{{if .ReportProjectID}}&project_id={{.ReportProjectID}}{{end}}{{if .ReportHeadID}}&head_id={{.ReportHeadID}}{{end}}{{if .ReportBack}}&back={{.ReportBack}}{{end}}">Current month</a>
+</form>
+<div class="metric-strip">
+  <div class="metric">
+    <span class="metric-label">Budget</span><span class="metric-value">{{short .Summary.Budget}}</span>
+  </div>
+  <div class="metric">
+    <span class="metric-label">Actual</span><span class="metric-value">{{short .Summary.Actual}}</span>
+  </div>
+  <div class="metric">
+    <span class="metric-label">Remaining</span><span class="metric-value {{varClass .Summary.Variance}}">{{short .Summary.Variance}}</span>
+  </div>
+  <div class="metric">
+    <span class="metric-label">Used</span><span class="metric-value">{{.Summary.UsedPercent}}</span>
+  </div>
+</div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead>
+      <tr>
+        <th>Period</th>
+        {{if ne .Mode "monthly"}}
+          <th>Project</th>
+        {{end}}{{if eq .Mode "heads"}}
+          <th>Head</th>
+        {{end}}
+        <th class="num">Budget</th>
+        <th class="num">Actual</th>
+        <th class="num">Remaining</th>
+        <th class="num">Used</th>
+        <th>Details</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Reports}}
+        <tr>
+          <td class="t-lead" data-label="Period">{{.Period}}</td>
+          {{if ne $.Mode "monthly"}}
+            <td data-label="Project">{{.Project}}</td>
+          {{end}}{{if eq $.Mode "heads"}}
+            <td data-label="Head">{{.Head}}</td>
+          {{end}}
+          <td class="num" data-label="Budget">{{money .Budget}}</td>
+          <td class="num" data-label="Actual">{{money .Actual}}</td>
+          <td class="num {{varClass .Variance}}" data-label="Remaining">{{money .Variance}}</td>
+          <td class="num" data-label="Used">{{usedText .Budget .Actual}}</td>
+          <td data-label="Details">{{if $.ReportHeadID}}{{if $.Perms.Can "budget" "view"}}<a href="/budgets?month={{.Period}}&report_back={{$.ReportURL}}#budget_{{.HeadID}}">View budget</a>{{end}}{{else}}<a href="{{reportDetailURL . $.ReportURL}}">{{if eq $.Mode "monthly"}}View projects{{else if eq $.Mode "projects"}}View heads{{else}}View budget and payments{{end}}</a>{{end}}</td>
+        </tr>
+      {{else}}
+        <tr>
+          <td colspan="8" class="empty" data-label="">No report rows for this range. {{if .Perms.Can "budget" "view"}}<a href="/budgets">Set a budget</a> to start comparing.{{else}}An authorised budget editor can check the monthly plan.{{end}}</td>
+        </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{if .ReportHeadID}}{{if .Perms.Can "payment" "view"}}
+    <section class="report-payments">
+      <h2>Payments behind these actuals</h2>
+      <p class="muted">Active budget payments for this head and date range, limited to the latest 300 per month and your payment access. Recoverable deposits and voided payments are excluded. Restricted payment access may show fewer records than the report total.</p>
+      <div class="table-wrap">
+        <table class="t-cards">
+          <thead>
+            <tr><th>Date</th><th>Payee</th><th>Invoice / reference</th><th class="num">Amount</th><th>Record</th></tr>
+          </thead>
+          <tbody>
+            {{range .Payments}}
+              <tr>
+                <td data-label="Date">{{.PaidOn}}</td>
+                <td data-label="Payee">{{.VendorPayee}}</td>
+                <td data-label="Invoice / reference">{{.InvoiceNo}} {{.ReferenceNo}}</td>
+                <td class="num" data-label="Amount">{{money .Amount}}</td>
+                <td data-label="Record"><a href="/payments/{{.ID}}?report_back={{$.ReportURL}}">Open payment {{.ID}}</a></td>
+              </tr>
+            {{else}}
+              <tr>
+                <td colspan="5" class="empty" data-label="">No matching payments available with your payment access.</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {{end}}{{end}}
 {{template "bottom" .}}
 {{end}}

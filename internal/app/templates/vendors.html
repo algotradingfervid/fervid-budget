@@ -135,13 +135,17 @@
     <legend>Identity</legend>
     <div class="form-grid">
       <div class="field span-6"><label for="v-name">Vendor name <span class="req" aria-hidden="true">*</span></label><input id="v-name" name="name" value="{{.Vendor.Name}}" required></div>
-      <div class="field span-3 m-half"><label for="v-short">Short name</label><input id="v-short" name="display_name" value="{{.Vendor.DisplayName}}"><span class="hint">Used in lists and dropdowns.</span></div>
+      <div class="field span-3 m-half">
+        <label for="v-short">Short name</label><input id="v-short" name="display_name" value="{{.Vendor.DisplayName}}"><span class="hint">Used in lists and dropdowns.</span>
+      </div>
       <div class="field span-3 m-half"><label for="v-type">Type <span class="req" aria-hidden="true">*</span></label><select id="v-type" name="vendor_type">
         <option value="company" {{select .Vendor.VendorType "company"}}>Company</option>
         <option value="proprietor" {{select .Vendor.VendorType "proprietor"}}>Proprietor</option>
         <option value="individual" {{select .Vendor.VendorType "individual"}}>Individual</option>
       </select></div>
-      <div class="field span-6"><label for="v-cat">Categories</label><input id="v-cat" name="categories" value="{{.Vendor.Categories}}"><span class="hint">Comma separated. Used for vendor reporting.</span></div>
+      <div class="field span-6">
+        <label for="v-cat">Categories</label><input id="v-cat" name="categories" value="{{.Vendor.Categories}}"><span class="hint">Comma separated. Used for vendor reporting.</span>
+      </div>
       <div class="field span-6 m-half"><label for="v-status">Status</label><select id="v-status" name="status">
         <option value="active" {{select .Vendor.Status "active"}}>Active</option>
         <option value="inactive" {{select .Vendor.Status "inactive"}}>Inactive</option>
@@ -152,7 +156,9 @@
   <fieldset {{if not .VendorEditable}}disabled{{end}}>
     <legend>Statutory</legend>
     <div class="form-grid">
-      <div class="field span-4 m-half"><label for="v-gst">GSTIN</label><input id="v-gst" class="num" name="gstin" value="{{.Vendor.GSTIN}}" maxlength="15" {{if .VendorGSTError}}aria-invalid="true" aria-describedby="v-gst-error"{{end}}>{{if .VendorGSTError}}<span id="v-gst-error" class="field-error">{{.VendorGSTError}}</span>{{end}}<span class="hint">15 characters, or blank if the vendor has none.</span></div>
+      <div class="field span-4 m-half">
+        <label for="v-gst">GSTIN</label><input id="v-gst" class="num" name="gstin" value="{{.Vendor.GSTIN}}" maxlength="15" {{if .VendorGSTError}}aria-invalid="true" aria-describedby="v-gst-error"{{end}}>{{if .VendorGSTError}}<span id="v-gst-error" class="field-error">{{.VendorGSTError}}</span>{{end}}<span class="hint">15 characters, or blank if the vendor has none.</span>
+      </div>
       <div class="field span-4 m-half"><label for="v-pan">PAN</label><input id="v-pan" class="num" name="pan" value="{{.Vendor.PAN}}"></div>
       <div class="field span-4 m-half"><label for="v-msme">MSME / Udyam number</label><input id="v-msme" class="num" name="msme_udyam" value="{{.Vendor.MSMEUdyam}}"></div>
       <div class="field span-4 m-half"><label for="v-tds">TDS section</label><select id="v-tds" name="tds_section">
@@ -175,7 +181,9 @@
       <div class="field span-12"><label for="v-addr">Billing address</label><textarea id="v-addr" name="address">{{.Vendor.Address}}</textarea></div>
       <div class="field span-4 m-half"><label for="v-city">City</label><input id="v-city" name="city" value="{{.Vendor.City}}"></div>
       <div class="field span-4 m-half"><label for="v-state">State</label><input id="v-state" name="state" value="{{.Vendor.State}}"></div>
-      <div class="field span-4 m-half"><label for="v-code">State code</label><input id="v-code" class="num" name="state_code" value="{{.Vendor.StateCode}}"><span class="hint">The first two digits of the GSTIN.</span></div>
+      <div class="field span-4 m-half">
+        <label for="v-code">State code</label><input id="v-code" class="num" name="state_code" value="{{.Vendor.StateCode}}"><span class="hint">The first two digits of the GSTIN.</span>
+      </div>
     </div>
   </fieldset>
 
@@ -190,17 +198,31 @@
       </div>
     </div>
     <div class="form-grid">
-      <div class="field span-6"><label for="b-name">Account name</label><input id="b-name" name="bank_account_name" value="{{.Vendor.Bank.AccountName}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
-      <div class="field span-3 m-half"><label for="b-acc">Account number</label><input id="b-acc" class="num" name="bank_account_number" value="{{.Vendor.Bank.AccountNumber}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
-      <div class="field span-3 m-half"><label for="b-ifsc">IFSC</label><input id="b-ifsc" class="num" name="bank_ifsc" value="{{.Vendor.Bank.IFSC}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
-      <div class="field span-3 m-half"><label for="b-bank">Bank</label><input id="b-bank" name="bank_name" value="{{.Vendor.Bank.BankName}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
-      <div class="field span-3 m-half"><label for="b-branch">Branch</label><input id="b-branch" name="bank_branch" value="{{.Vendor.Bank.Branch}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
-      <div class="field span-3 m-half"><label for="b-upi">UPI ID</label><input id="b-upi" name="upi_id" value="{{.Vendor.Bank.UPIID}}" placeholder="Optional" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-6">
+        <label for="b-name">Account name</label><input id="b-name" name="bank_account_name" value="{{.Vendor.Bank.AccountName}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="b-acc">Account number</label><input id="b-acc" class="num" name="bank_account_number" value="{{.Vendor.Bank.AccountNumber}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="b-ifsc">IFSC</label><input id="b-ifsc" class="num" name="bank_ifsc" value="{{.Vendor.Bank.IFSC}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="b-bank">Bank</label><input id="b-bank" name="bank_name" value="{{.Vendor.Bank.BankName}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="b-branch">Branch</label><input id="b-branch" name="bank_branch" value="{{.Vendor.Bank.Branch}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+      </div>
+      <div class="field span-3 m-half">
+        <label for="b-upi">UPI ID</label><input id="b-upi" name="upi_id" value="{{.Vendor.Bank.UPIID}}" placeholder="Optional" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+      </div>
       <div class="field span-3 m-half"><label for="b-mode">Default mode</label><select id="b-mode" name="default_payment_mode" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
         <option value="" {{select .Vendor.Bank.DefaultPaymentMode ""}}>Not set</option>
         {{range .VendorModeOptions}}<option value="{{.}}" {{select . $.Vendor.Bank.DefaultPaymentMode}}>{{.}}</option>{{end}}
       </select></div>
-      <div class="field span-3 m-half"><label for="b-terms">Payment terms (days)</label><input id="b-terms" class="num" type="number" min="0" name="payment_terms_days" value="{{.Vendor.Bank.PaymentTermsDays}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}></div>
+      <div class="field span-3 m-half">
+        <label for="b-terms">Payment terms (days)</label><input id="b-terms" class="num" type="number" min="0" name="payment_terms_days" value="{{.Vendor.Bank.PaymentTermsDays}}" {{if not (.Perms.Can "vendor_bank" "edit")}}disabled{{end}}>
+      </div>
     </div>
   </fieldset>
   {{else}}
@@ -240,10 +262,76 @@
 </nav>{{end}}
 {{define "vendor_related"}}
 {{template "top" .}}
-<section class="page-banner"><div><div class="eyebrow">Vendor · {{.VendorTab}}</div><h1>{{.Vendor.Name}}</h1><p class="sub">Only records your permissions allow you to view are shown.</p></div><a class="btn outline" href="/vendors">Back to vendors</a></section>
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Vendor · {{.VendorTab}}</div>
+    <h1>{{.Vendor.Name}}</h1>
+    <p class="sub">Only records your permissions allow you to view are shown.</p>
+  </div>
+  <a class="btn outline" href="/vendors">Back to vendors</a>
+</section>
 {{template "vendor_tabs" .}}
-{{if eq .VendorTab "requests"}}<div class="table-wrap"><table class="t-cards"><thead><tr><th>Request</th><th>Purpose</th><th>Amount</th><th>Status</th></tr></thead><tbody>{{range .Requests}}<tr><td data-label="Request"><a href="/requests/{{.ID}}?return_to=/vendors/{{$.Vendor.ID}}/requests">{{.Number}}</a></td><td data-label="Purpose">{{.Purpose}}</td><td data-label="Amount">{{money .Amount}}</td><td data-label="Status">{{.Status}}</td></tr>{{else}}<tr><td colspan="4" data-label="">No requests for this vendor within your access.</td></tr>{{end}}</tbody></table></div>{{end}}
-{{if eq .VendorTab "payments"}}<p class="muted">Payments linked to this vendor's requests, including voided records. Historical unlinked payments have no verified vendor association.</p><div class="table-wrap"><table class="t-cards"><thead><tr><th>Payment</th><th>Paid on</th><th>Amount</th><th>Invoice</th><th>Status</th></tr></thead><tbody>{{range .Payments}}<tr><td data-label="Payment"><a href="/payments/{{.ID}}?return_to=/vendors/{{$.Vendor.ID}}/payments">Payment {{.ID}}</a></td><td data-label="Paid on">{{.PaidOn}}</td><td data-label="Amount">{{money .Amount}}</td><td data-label="Invoice">{{.InvoiceNo}}</td><td data-label="Status">{{if .VoidedAt}}Voided{{else}}Recorded{{end}}</td></tr>{{else}}<tr><td colspan="5" data-label="">No linked payments for this vendor within your access.</td></tr>{{end}}</tbody></table></div>{{end}}
-{{if eq .VendorTab "history"}}<div class="table-wrap"><table class="t-cards"><thead><tr><th>When</th><th>By</th><th>Change</th></tr></thead><tbody>{{range .Audit}}<tr><td data-label="When">{{.CreatedAt}}</td><td data-label="By">{{.ActorName}}</td><td data-label="Change">{{.Summary}}<details><summary>Details</summary><ul>{{range vendorAuditChanges .}}<li>{{.}}</li>{{end}}</ul></details></td></tr>{{else}}<tr><td colspan="3" data-label="">No vendor history within your access.</td></tr>{{end}}</tbody></table></div>{{end}}
-<div class="cluster">{{if .Page.Offset}}<a class="btn outline" href="/vendors/{{.Vendor.ID}}/{{.VendorTab}}?offset={{sub0 .Page.Offset 50}}">Previous</a>{{end}}{{if .Page.Truncated}}<a class="btn outline" href="/vendors/{{.Vendor.ID}}/{{.VendorTab}}?offset={{add .Page.Offset 50}}">Next</a>{{end}}</div>
+{{if eq .VendorTab "requests"}}
+  <div class="table-wrap">
+    <table class="t-cards">
+      <thead><tr><th>Request</th><th>Purpose</th><th>Amount</th><th>Status</th></tr></thead>
+      <tbody>
+        {{range .Requests}}
+          <tr>
+            <td data-label="Request"><a href="/requests/{{.ID}}?return_to=/vendors/{{$.Vendor.ID}}/requests">{{.Number}}</a></td>
+            <td data-label="Purpose">{{.Purpose}}</td>
+            <td data-label="Amount">{{money .Amount}}</td>
+            <td data-label="Status">{{.Status}}</td>
+          </tr>
+        {{else}}
+          <tr><td colspan="4" data-label="">No requests for this vendor within your access.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+{{end}}
+{{if eq .VendorTab "payments"}}
+  <p class="muted">Payments linked to this vendor's requests, including voided records. Historical unlinked payments have no verified vendor association.</p>
+  <div class="table-wrap">
+    <table class="t-cards">
+      <thead><tr><th>Payment</th><th>Paid on</th><th>Amount</th><th>Invoice</th><th>Status</th></tr></thead>
+      <tbody>
+        {{range .Payments}}
+          <tr>
+            <td data-label="Payment"><a href="/payments/{{.ID}}?return_to=/vendors/{{$.Vendor.ID}}/payments">Payment {{.ID}}</a></td>
+            <td data-label="Paid on">{{.PaidOn}}</td>
+            <td data-label="Amount">{{money .Amount}}</td>
+            <td data-label="Invoice">{{.InvoiceNo}}</td>
+            <td data-label="Status">{{if .VoidedAt}}Voided{{else}}Recorded{{end}}</td>
+          </tr>
+        {{else}}
+          <tr><td colspan="5" data-label="">No linked payments for this vendor within your access.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+{{end}}
+{{if eq .VendorTab "history"}}
+  <div class="table-wrap">
+    <table class="t-cards">
+      <thead><tr><th>When</th><th>By</th><th>Change</th></tr></thead>
+      <tbody>
+        {{range .Audit}}
+          <tr>
+            <td data-label="When">{{.CreatedAt}}</td>
+            <td data-label="By">{{.ActorName}}</td>
+            <td data-label="Change">{{.Summary}}
+              <details><summary>Details</summary><ul>{{range vendorAuditChanges .}}<li>{{.}}</li>{{end}}</ul></details>
+            </td>
+          </tr>
+        {{else}}
+          <tr><td colspan="3" data-label="">No vendor history within your access.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+{{end}}
+<div class="cluster">
+  {{if .Page.Offset}}<a class="btn outline" href="/vendors/{{.Vendor.ID}}/{{.VendorTab}}?offset={{sub0 .Page.Offset 50}}">Previous</a>{{end}}{{if .Page.Truncated}}<a class="btn outline" href="/vendors/{{.Vendor.ID}}/{{.VendorTab}}?offset={{add .Page.Offset 50}}">Next</a>{{end}}
+</div>
 {{template "bottom" .}}{{end}}

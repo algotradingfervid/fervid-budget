@@ -36,7 +36,9 @@
 {{define "shell_sidebar"}}<aside class="sidebar">
   <div class="side-brand"><span class="sq">F</span><span><b>Fervid Budget</b><small>Smart Solutions</small></span></div>
   {{range .Shell.Groups}}{{if .Title}}<div class="sgroup">{{.Title}}</div>{{end}}
-  <nav class="side-nav" aria-label="{{if .Title}}{{.Title}}{{else}}Primary{{end}}">{{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a class="{{if eq $.Shell.Active .Key}}active{{end}}" href="{{.Href}}"{{if eq $.Shell.Active .Key}} aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}</nav>
+  <nav class="side-nav" aria-label="{{if .Title}}{{.Title}}{{else}}Primary{{end}}">
+    {{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a class="{{if eq $.Shell.Active .Key}}active{{end}}" href="{{.Href}}"{{if eq $.Shell.Active .Key}} aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}
+  </nav>
   {{end}}
   <div class="side-user"><span class="avatar">{{.Initials}}</span><span><strong>{{.User.Name}}</strong><small>{{.Shell.RoleNames}}</small></span></div>
   {{/* "Log out" here and in the More sheet: one action, one name on every device. */}}
@@ -46,7 +48,9 @@
 {{define "shell_topbar"}}<header class="m-topbar">
   <a class="m-back" href="{{if .Shell.BackHref}}{{.Shell.BackHref}}{{else}}/{{end}}" aria-label="{{if .Shell.BackHref}}Back{{else}}Home{{end}}">{{if .Shell.BackHref}}‹{{else}}⌂{{end}}</a>
   <div class="m-title"><b>{{if .Shell.Title}}{{.Shell.Title}}{{else}}Fervid Budget{{end}}</b>{{if .Shell.Sub}}<small>{{.Shell.Sub}}</small>{{end}}</div>
-  <div class="m-actions">{{if and .Shell.ActionLabel .Shell.ActionHref}}<a class="m-cta" href="{{.Shell.ActionHref}}">{{.Shell.ActionLabel}}</a>{{end}}<a class="m-icon" href="/notifications" aria-label="Notifications">✉{{if .Shell.Unread}}<span class="dot">{{.Shell.Unread}}</span>{{end}}</a></div>
+  <div class="m-actions">
+    {{if and .Shell.ActionLabel .Shell.ActionHref}}<a class="m-cta" href="{{.Shell.ActionHref}}">{{.Shell.ActionLabel}}</a>{{end}}<a class="m-icon" href="/notifications" aria-label="Notifications">✉{{if .Shell.Unread}}<span class="dot">{{.Shell.Unread}}</span>{{end}}</a>
+  </div>
 </header>{{end}}
 
 {{define "shell_tabbar"}}<nav class="tabbar" aria-label="Primary">
@@ -58,10 +62,16 @@
 {{define "shell_more"}}<div class="more-sheet" id="more-navigation" role="dialog" aria-modal="true" aria-label="More navigation" hidden>
   <div class="ms-head"><b>{{.User.Name}}</b><button type="button" class="ms-close" aria-label="Close">✕</button></div>
   {{range .Shell.Groups}}<div class="ms-group">{{if .Title}}{{.Title}}{{else}}Overview{{end}}</div>
-  <div class="ms-list">{{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a href="{{.Href}}"{{if eq $.Shell.Active .Key}} class="active" aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}</div>
+  <div class="ms-list">
+    {{range .Items}}{{if .Soon}}<a class="soon" aria-disabled="true"><span class="ico">{{.Icon}}</span>{{.Label}}<span class="n">Soon</span></a>{{else}}<a href="{{.Href}}"{{if eq $.Shell.Active .Key}} class="active" aria-current="page"{{end}}><span class="ico">{{.Icon}}</span>{{.Label}}{{$count := index $.Shell.Badges .Badge}}{{if $count}}<span class="n">{{$count}}</span>{{end}}</a>{{end}}{{end}}
+  </div>
   {{end}}
   <div class="ms-group">Session</div>
-  <div class="ms-list"><form class="ms-logout" method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit"><span class="ico">⏻</span>Log out</button></form></div>
+  <div class="ms-list">
+    <form class="ms-logout" method="post" action="/logout">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit"><span class="ico">⏻</span>Log out</button>
+    </form>
+  </div>
 </div>{{end}}
 
 {{define "error_page"}}

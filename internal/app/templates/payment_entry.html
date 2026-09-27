@@ -21,7 +21,10 @@
     <div><dt>Approved amount</dt><dd class="big">{{money (approvedOf .Request2)}}</dd></div>
     <div><dt>Approved by</dt><dd>{{.Request2.ApprovedByName}}{{if .Request2.ApprovedAt}} · {{datep .Request2.ApprovedAt}}{{end}}</dd></div>
     <div><dt>Payee</dt><dd>{{.Request2.Vendor}}</dd></div>
-    <div><dt>Charge to</dt><dd>{{if eq .Request2.Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span> Not charged to a budget{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Request2.Project}} / {{.Request2.Head}}{{end}}</dd></div>
+    <div>
+      <dt>Charge to</dt>
+      <dd>{{if eq .Request2.Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span> Not charged to a budget{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Request2.Project}} / {{.Request2.Head}}{{end}}</dd>
+    </div>
     <div style="grid-column:1/-1"><dt>Purpose</dt><dd>{{.Request2.Purpose}}</dd></div>
   </dl>
 </div>
@@ -34,7 +37,18 @@
   <input type="hidden" name="head_id" value="{{.SelectedHeadID}}">
   <input type="hidden" name="vendor_payee" value="{{.Request2.Vendor}}">
   <input type="hidden" name="invoice_no" value="{{.Request2.InvoiceNo}}">
-  {{if .Vendor.Bank}}<section class="banner"><div><b>Vendor payment destination · {{.Vendor.Name}}</b>{{if .Vendor.Bank.UPIID}}<p>UPI ID: <strong>{{.Vendor.Bank.UPIID}}</strong></p>{{end}}{{if .Vendor.Bank.AccountNumber}}<p>Bank: {{.Vendor.Bank.AccountName}} · account {{.Vendor.Bank.AccountNumber}} · IFSC {{.Vendor.Bank.IFSC}}</p>{{end}}<p>Use the destination that matches the payment mode. Confirm current details with the vendor before making a transfer.</p></div></section>{{end}}
+  {{if .Vendor.Bank}}
+    <section class="banner">
+      <div>
+        <b>Vendor payment destination · {{.Vendor.Name}}</b>{{if .Vendor.Bank.UPIID}}
+          <p>UPI ID: <strong>{{.Vendor.Bank.UPIID}}</strong></p>
+        {{end}}{{if .Vendor.Bank.AccountNumber}}
+          <p>Bank: {{.Vendor.Bank.AccountName}} · account {{.Vendor.Bank.AccountNumber}} · IFSC {{.Vendor.Bank.IFSC}}</p>
+        {{end}}
+        <p>Use the destination that matches the payment mode. Confirm current details with the vendor before making a transfer.</p>
+      </div>
+    </section>
+  {{end}}
   <fieldset>
     <legend>Payment</legend>
     <div class="form-grid">
@@ -67,7 +81,8 @@
            re-asks GET /payments/lock-status on change and this banner is
            swapped for the one the new date's month calls for. */}}
       {{template "payment_lock_banner" .}}
-      <div class="field span-4 m-half"><label for="paid_on">Paid on <span class="req" aria-hidden="true">*</span></label><input id="paid_on" name="paid_on" type="date" value="{{.Payment.PaidOn}}" required
+      <div class="field span-4 m-half">
+        <label for="paid_on">Paid on <span class="req" aria-hidden="true">*</span></label><input id="paid_on" name="paid_on" type="date" value="{{.Payment.PaidOn}}" required
                hx-get="/payments/lock-status" hx-trigger="change" hx-target="#lock-banner" hx-swap="outerHTML"></div>
       <div class="field span-4 m-half"><label for="payment_mode">Payment mode <span class="req" aria-hidden="true">*</span></label>
         <select id="payment_mode" name="payment_mode" required>
@@ -75,7 +90,9 @@
           {{range .PaymentModeChoices}}<option value="{{.Value}}" {{select .Value $.Payment.PaymentMode}}>{{.Label}}</option>{{end}}
         </select>
       </div>
-      <div class="field span-4"><label for="reference_no">Transaction / UTR reference <span class="req" aria-hidden="true">*</span></label><input id="reference_no" name="reference_no" data-payment-reference class="num" value="{{.Payment.ReferenceNo}}" required></div>
+      <div class="field span-4">
+        <label for="reference_no">Transaction / UTR reference <span class="req" aria-hidden="true">*</span></label><input id="reference_no" name="reference_no" data-payment-reference class="num" value="{{.Payment.ReferenceNo}}" required>
+      </div>
     </div>
   </fieldset>
 
@@ -84,7 +101,9 @@
     <div class="form-grid">
       <div class="field span-12">
         <span class="flabel">Payment advice or proof</span>
-        <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Add the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+        <label class="uploader">
+        <div class="up-ico" aria-hidden="true">⇪</div>
+        <b>Add the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
       </div>
       <div class="field span-12">
         <label for="remarks">Processing note <span class="opt" aria-hidden="true">optional</span></label>
@@ -145,15 +164,32 @@
       {{if not .ReserveMine}}<a class="sh-close" href="/requests/{{.Request2.ID}}" aria-label="Close">✕</a>{{else if .Settlement.Fragment}}<a class="sh-close" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet" aria-label="Close">✕</a>{{else}}<button class="sh-close" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate aria-label="Close">✕</button>{{end}}
     </div>
     <div class="sh-body stack-12">
-      {{if .Error}}<div class="banner bad" style="margin:0"><span class="b-ico" aria-hidden="true">✕</span><div><b>{{.Error}}</b><p>{{if .ReserveMine}}Nothing has been saved. Correct it and confirm again.{{else}}Your entered figures are shown below for reference. Open the request to see its current status.{{end}}</p></div></div>{{end}}
-      {{if not .ReserveMine}}<div class="banner warn" role="status"><div><b>{{if and (eq .Request2.Status "processing") .Request2.ProcessingBy}}Reserved by {{.Request2.ProcessingByName}}{{else}}This request is not available for you to pay{{end}}</b><p>Confirmation is disabled because you no longer hold an active reservation.</p></div></div>{{end}}
+      {{if .Error}}
+        <div class="banner bad" style="margin:0">
+          <span class="b-ico" aria-hidden="true">✕</span>
+          <div>
+            <b>{{.Error}}</b>
+            <p>{{if .ReserveMine}}Nothing has been saved. Correct it and confirm again.{{else}}Your entered figures are shown below for reference. Open the request to see its current status.{{end}}</p>
+          </div>
+        </div>
+      {{end}}
+      {{if not .ReserveMine}}
+        <div class="banner warn" role="status">
+          <div>
+            <b>{{if and (eq .Request2.Status "processing") .Request2.ProcessingBy}}Reserved by {{.Request2.ProcessingByName}}{{else}}This request is not available for you to pay{{end}}</b>
+            <p>Confirmation is disabled because you no longer hold an active reservation.</p>
+          </div>
+        </div>
+      {{end}}
       <div class="compare">
         <div class="cmp-row"><span class="l">Remaining before this payment</span><span class="v">{{money .Settlement.Approved}}</span></div>
         <div class="cmp-row"><span class="l">Actually paid</span><span class="v">{{money .Settlement.Paid}}</span></div>
         {{if .Settlement.Match}}
         <div class="cmp-row match"><span class="l">Difference</span><span class="v">{{money 0}}</span></div>
         {{else}}
-        <div class="cmp-row diff"><span class="l">Difference</span><span class="v">{{if lt .Settlement.Difference 0}}Amount exceeds the remaining approved balance{{else}}{{money .Settlement.Difference}} remaining{{end}} ⚠</span></div>
+        <div class="cmp-row diff">
+          <span class="l">Difference</span><span class="v">{{if lt .Settlement.Difference 0}}Amount exceeds the remaining approved balance{{else}}{{money .Settlement.Difference}} remaining{{end}} ⚠</span>
+        </div>
         {{end}}
       </div>
 
@@ -225,7 +261,9 @@
   {{range $k, $v := .Settlement.Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
   {{if .ReserveMine}}<div class="field">
     <span class="flabel">Payment advice or proof <span class="opt" aria-hidden="true">optional</span></span>
-    <label class="uploader"><div class="up-ico" aria-hidden="true">⇪</div><b>Attach the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB. Uploaded once, when you confirm.</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+    <label class="uploader">
+    <div class="up-ico" aria-hidden="true">⇪</div>
+    <b>Attach the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB. Uploaded once, when you confirm.</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
   </div>
   {{end}}
   {{template "settlement_sheet" .}}
@@ -276,7 +314,11 @@
     <span class="co-amt">{{money (sub (approvedOf .) .PaidAmount)}}</span>
   </a>
   {{end}}
-  {{if and (not .Linkable.Available) (not .Linkable.Unavailable)}}<div class="co"><span class="co-main"><b>No approved requests match</b><small>Clear the search, or check the queue.</small></span></div>{{end}}
+  {{if and (not .Linkable.Available) (not .Linkable.Unavailable)}}
+    <div class="co">
+      <span class="co-main"><b>No approved requests match</b><small>Clear the search, or check the queue.</small></span>
+    </div>
+  {{end}}
 </div>
 {{end}}
 

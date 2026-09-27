@@ -22,9 +22,15 @@
 </section>
 
 <div class="metric-strip">
-  <div class="metric"><span class="metric-label">Approved, unclaimed</span><span class="metric-value">{{.Linkable.Counts.Approved}}</span><span class="metric-foot">{{money .Linkable.Counts.ApprovedAmount}}</span></div>
-  <div class="metric"><span class="metric-label">Reserved by you</span><span class="metric-value">{{.Linkable.Counts.ReservedByMe}}</span><span class="metric-foot">{{if .Linkable.Counts.StaleReservations}}{{.Linkable.Counts.StaleReservations}} open over a day{{else}}All recent{{end}}</span></div>
-  <div class="metric"><span class="metric-label">Reserved by others</span><span class="metric-value">{{.Linkable.Counts.ReservedByOthers}}</span><span class="metric-foot">Visible, not yours</span></div>
+  <div class="metric">
+    <span class="metric-label">Approved, unclaimed</span><span class="metric-value">{{.Linkable.Counts.Approved}}</span><span class="metric-foot">{{money .Linkable.Counts.ApprovedAmount}}</span>
+  </div>
+  <div class="metric">
+    <span class="metric-label">Reserved by you</span><span class="metric-value">{{.Linkable.Counts.ReservedByMe}}</span><span class="metric-foot">{{if .Linkable.Counts.StaleReservations}}{{.Linkable.Counts.StaleReservations}} open over a day{{else}}All recent{{end}}</span>
+  </div>
+  <div class="metric">
+    <span class="metric-label">Reserved by others</span><span class="metric-value">{{.Linkable.Counts.ReservedByOthers}}</span><span class="metric-foot">Visible, not yours</span>
+  </div>
   <div class="metric"><span class="metric-label">On hold</span><span class="metric-value">{{.Linkable.Counts.Hold}}</span><span class="metric-foot">Waiting on the requester</span></div>
 </div>
 
@@ -79,7 +85,11 @@
         <td class="num" data-label="Amount">{{if or (eq .Status "approved") (eq .Status "processing")}}{{money (sub (approvedOf .) .PaidAmount)}}<span class="subline">remaining approved</span>{{else}}{{money (approvedOf .)}}{{end}}</td>
         <td data-label="Needed by">{{if .NeededBy}}{{dateLong .NeededBy}}{{else}}—{{end}}</td>
         <td data-label="Status">{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}<span class="pill approved">Approved</span></td>
-        <td class="c" data-label="Action">{{if $.Perms.Can "reservation" "reserve"}}<form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn small primary" type="submit">Take for processing</button></form>{{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}</td>
+        <td class="c" data-label="Action">{{if $.Perms.Can "reservation" "reserve"}}
+            <form method="post" action="/requests/{{.ID}}/record-payment">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn small primary" type="submit">Take for processing</button>
+            </form>
+          {{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}</td>
       </tr>
       {{end}}
       {{range .Linkable.Unavailable}}
@@ -218,7 +228,9 @@
        same route, so the concurrency guarantee is the same one (S1/S2). */}}
   {{if and (eq .ConflictCause "unclaimed") (.Perms.Can "reservation" "reserve")}}
   <a class="btn outline" href="/accounts-queue">Back to queue</a>
-  <form method="post" action="/requests/{{.Request2.ID}}/record-payment"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Take it for processing</button></form>
+  <form method="post" action="/requests/{{.Request2.ID}}/record-payment">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Take it for processing</button>
+  </form>
   {{else}}
   <a class="btn primary" href="/accounts-queue">Back to queue</a>
   {{end}}
@@ -357,11 +369,24 @@
   <button class="btn primary" type="button" data-open="close-sheet">Accept and close</button>
 </div>
 
-{{if and (eq .Request2.ManagerID .User.ID) (.Perms.Can "approval" "accept_partial")}}<form class="card stack-12" method="post" action="/requests/{{.Request2.ID}}/accept-partial"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="decision" value="continue"><h2>Pay the remaining balance later</h2><p>Keep {{money (sub (approvedOf .Request2) .Request2.PaidAmount)}} payable on this approval. No new request is needed.</p><label for="continue-note">Payment plan or reason</label><textarea id="continue-note" name="note" required></textarea><button class="btn primary" type="submit">Keep balance payable</button></form>{{end}}
+{{if and (eq .Request2.ManagerID .User.ID) (.Perms.Can "approval" "accept_partial")}}
+  <form class="card stack-12" method="post" action="/requests/{{.Request2.ID}}/accept-partial">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="decision" value="continue">
+    <h2>Pay the remaining balance later</h2>
+    <p>Keep {{money (sub (approvedOf .Request2) .Request2.PaidAmount)}} payable on this approval. No new request is needed.</p>
+    <label for="continue-note">Payment plan or reason</label><textarea id="continue-note" name="note" required></textarea><button class="btn primary" type="submit">Keep balance payable</button>
+  </form>
+{{end}}
 <div class="overlay" id="close-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/accept-partial">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <div class="sh-head"><div><h2>Accept {{money .Request2.PaidAmount}} and close?</h2><p class="sh-sub">{{.Request2.Number}} · {{money (sub (approvedOf .Request2) .Request2.PaidAmount)}} will never be paid against this request</p></div><button class="sh-close" type="button" data-close="close-sheet" aria-label="Close">✕</button></div>
+    <div class="sh-head">
+      <div>
+        <h2>Accept {{money .Request2.PaidAmount}} and close?</h2>
+        <p class="sh-sub">{{.Request2.Number}} · {{money (sub (approvedOf .Request2) .Request2.PaidAmount)}} will never be paid against this request</p>
+      </div>
+      <button class="sh-close" type="button" data-close="close-sheet" aria-label="Close">✕</button>
+    </div>
     <div class="sh-body stack-12">
       <div class="compare">
         <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
@@ -369,21 +394,41 @@
         <div class="cmp-row diff"><span class="l">Written off from this request</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
       </div>
       <p class="hint" style="margin:0">The request closes as <b>Completed — partial accepted</b>. Only accept this if the balance is no longer owed. Otherwise choose Keep balance payable to continue against this approval.</p>
-      <div class="field"><label for="cl-note">Note <span class="opt" aria-hidden="true">optional</span></label><textarea id="cl-note" name="note" placeholder="Recorded in the history and visible to everyone."></textarea></div>
+      <div class="field">
+        <label for="cl-note">Note <span class="opt" aria-hidden="true">optional</span></label><textarea id="cl-note" name="note" placeholder="Recorded in the history and visible to everyone."></textarea>
+      </div>
     </div>
-    <div class="sh-foot"><button class="btn outline" type="button" data-close="close-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Accept and close</button></div>
+    <div class="sh-foot">
+      <button class="btn outline" type="button" data-close="close-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Accept and close</button>
+    </div>
   </form>
 </div>
 
 <div class="overlay" id="concern-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/raise-concern">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <div class="sh-head"><div><h2>Raise a concern</h2><p class="sh-sub">The request stays open as Partial — under discussion until {{.Payment.EnteredByName}} answers; your objection is recorded on the thread</p></div><button class="sh-close" type="button" data-close="concern-sheet" aria-label="Close">✕</button></div>
-    <div class="sh-body stack-12">
-      <div class="field"><label for="cn-reason">What is wrong <span class="req" aria-hidden="true">*</span></label><textarea id="cn-reason" name="comment" required placeholder="Accounts can reply in the conversation, but the recorded payment cannot be changed."></textarea></div>
-      <div class="banner warn" style="margin:0"><span class="b-ico" aria-hidden="true">i</span><div><b>This does not reverse anything</b><p>The {{money .Payment.Amount}} has left the bank. Raising a concern keeps the request open so the two of you can agree what happens next.</p></div></div>
+    <div class="sh-head">
+      <div>
+        <h2>Raise a concern</h2>
+        <p class="sh-sub">The request stays open as Partial — under discussion until {{.Payment.EnteredByName}} answers; your objection is recorded on the thread</p>
+      </div>
+      <button class="sh-close" type="button" data-close="concern-sheet" aria-label="Close">✕</button>
     </div>
-    <div class="sh-foot"><button class="btn outline" type="button" data-close="concern-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Raise concern</button></div>
+    <div class="sh-body stack-12">
+      <div class="field">
+        <label for="cn-reason">What is wrong <span class="req" aria-hidden="true">*</span></label><textarea id="cn-reason" name="comment" required placeholder="Accounts can reply in the conversation, but the recorded payment cannot be changed."></textarea>
+      </div>
+      <div class="banner warn" style="margin:0">
+        <span class="b-ico" aria-hidden="true">i</span>
+        <div>
+          <b>This does not reverse anything</b>
+          <p>The {{money .Payment.Amount}} has left the bank. Raising a concern keeps the request open so the two of you can agree what happens next.</p>
+        </div>
+      </div>
+    </div>
+    <div class="sh-foot">
+      <button class="btn outline" type="button" data-close="concern-sheet">Back</button><span class="row-end"></span><button class="btn primary" type="submit">Raise concern</button>
+    </div>
   </form>
 </div>
 {{else}}

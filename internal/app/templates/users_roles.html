@@ -14,12 +14,23 @@
   <div><b>{{.Lead}}</b><p>{{.Consequence}}</p></div>
 </div>
 <div class="table-wrap"><table class="t-cards"><thead><tr><th>Request</th><th>Title</th><th>Status</th><th class="r">Amount</th></tr></thead><tbody>
-{{range .Requests}}<tr><td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a></td><td data-label="Title">{{.Title}}</td><td data-label="Status">{{reqStatus .Status}}</td><td class="r" data-label="Amount">{{money .Amount}}</td></tr>{{end}}
+{{range .Requests}}
+  <tr>
+    <td class="t-lead" data-label="Request"><a href="/requests/{{.ID}}">{{.Number}}</a></td>
+    <td data-label="Title">{{.Title}}</td>
+    <td data-label="Status">{{reqStatus .Status}}</td>
+    <td class="r" data-label="Amount">{{money .Amount}}</td>
+  </tr>
+{{end}}
 </tbody></table></div>
 <form method="post" action="{{.Action}}" class="stack-12">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   {{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
-  {{if .AskPassword}}<div class="field"><label for="confirm-pw">New password</label><input id="confirm-pw" name="password" type="password" minlength="12" required><span class="hint">You set a new password. Type it again, because it is never sent back to the page.</span></div>{{end}}
+  {{if .AskPassword}}
+    <div class="field">
+      <label for="confirm-pw">New password</label><input id="confirm-pw" name="password" type="password" minlength="12" required><span class="hint">You set a new password. Type it again, because it is never sent back to the page.</span>
+    </div>
+  {{end}}
   <label class="checkline"><input type="checkbox" name="confirm" value="on" required> {{.ConfirmText}}</label>
   <div class="row"><a class="btn outline" href="{{.Back}}">Cancel</a><button class="btn primary" type="submit">Deactivate anyway</button></div>
 </form>
@@ -69,7 +80,9 @@
       <div class="sh-body stack-12">
         <div class="field"><label for="u-name-{{.ID}}">Name</label><input id="u-name-{{.ID}}" name="name" value="{{.Name}}" required></div>
         <div class="field"><span class="flabel">Roles</span>
-          <div class="stack-8">{{$uid := .ID}}{{range $.AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}" {{if index (index $.UserRoleIDs $uid) .ID}}checked{{end}}> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}</div>
+          <div class="stack-8">
+            {{$uid := .ID}}{{range $.AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}" {{if index (index $.UserRoleIDs $uid) .ID}}checked{{end}}> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}
+          </div>
         </div>
         <div class="field"><label for="u-apr-{{.ID}}">Default approver for their own requests</label>
           {{/* Left empty on purpose. fervid-app.js fills it from the single
@@ -83,11 +96,15 @@
           </select>
           <span class="hint">Only active users with permission to approve requests are offered. Self-approval is not allowed.</span>{{if and .DefaultApproverID (not (approverAvailable .DefaultApproverID $.Approvers))}}<span class="field-error-message">The saved default approver can no longer approve requests. Choose an eligible approver before saving.</span>{{end}}
         </div>
-        <div class="field"><label for="u-pw-{{.ID}}">Reset password</label><input id="u-pw-{{.ID}}" name="password" type="password" minlength="12" placeholder="Leave blank to keep the current one"></div>
+        <div class="field">
+          <label for="u-pw-{{.ID}}">Reset password</label><input id="u-pw-{{.ID}}" name="password" type="password" minlength="12" placeholder="Leave blank to keep the current one">
+        </div>
         <input type="hidden" name="role" value="{{.Role}}">
         <label class="checkline"><input type="checkbox" name="active" {{check .Active}}> Active</label>
       </div>
-      <div class="sh-foot"><button class="btn outline" type="button" data-close="user-{{.ID}}">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Save user</button></div>
+      <div class="sh-foot">
+        <button class="btn outline" type="button" data-close="user-{{.ID}}">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Save user</button>
+      </div>
     </form>
   </div>
 </div>
@@ -119,7 +136,9 @@
              and "Data entry" was mapped to the Accounts role, which can settle
              and void payments. */}}
         <div class="field"><span class="flabel">Roles <span class="req" aria-hidden="true">*</span></span>
-          <div class="stack-8">{{range .AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}"{{if index $.NewUser.RoleIDs .ID}} checked{{end}}> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}</div>
+          <div class="stack-8">
+            {{range .AllRoles}}<label class="checkline"><input type="checkbox" name="role_ids" value="{{.ID}}"{{if index $.NewUser.RoleIDs .ID}} checked{{end}}> {{.Name}}{{if .Description}} — {{.Description}}{{end}}</label>{{end}}
+          </div>
           <span class="hint">A person can hold several roles at once. Their permissions are everything their roles allow.</span>
         </div>
         <div class="field"><label for="nu-pw">Password</label><input id="nu-pw" name="password" type="password" minlength="12" required></div>
@@ -206,14 +225,18 @@
         {{range .PermMatrix}}
         <tr>
           <td class="perm-row-head">{{.Label}}</td>
-          {{range .Cells}}<td class="c">{{if .Available}}<input type="checkbox" name="cell" value="{{.Value}}" data-cell="{{.Value}}" aria-label="{{.Label}}" {{if .Granted}}checked{{end}}{{if .Partial}} data-partial="1"{{end}}>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
+          {{range .Cells}}
+            <td class="c">{{if .Available}}<input type="checkbox" name="cell" value="{{.Value}}" data-cell="{{.Value}}" aria-label="{{.Label}}" {{if .Granted}}checked{{end}}{{if .Partial}} data-partial="1"{{end}}>{{else}}<span class="muted">—</span>{{end}}</td>
+          {{end}}
           <td>{{if .Scoped}}{{template "permscope" .}}{{else}}<span class="perm-scope"><label class="is-on">None</label></span>{{end}}</td>
         </tr>
         <tr class="perm-advanced">
           <td colspan="9">
             <details>
               <summary>Advanced — every permission behind this row</summary>
-              <div class="row">{{range .Advanced}}<label class="checkline"><input type="checkbox" name="perm" value="{{.Resource}}:{{.Action}}" data-cell="{{.Cell}}" {{if .Granted}}checked{{end}}> {{.Label}}</label>{{end}}</div>
+              <div class="row">
+                {{range .Advanced}}<label class="checkline"><input type="checkbox" name="perm" value="{{.Resource}}:{{.Action}}" data-cell="{{.Cell}}" {{if .Granted}}checked{{end}}> {{.Label}}</label>{{end}}
+              </div>
             </details>
           </td>
         </tr>
@@ -255,10 +278,14 @@
       <input type="hidden" name="selected_role_id" value="{{.Role.ID}}">
       <div class="sh-head"><div><h2>New role</h2><p class="sh-sub">It starts with no permissions at all.</p></div><button class="sh-close" type="button" data-close="role-new">✕</button></div>
       <div class="sh-body stack-12">
-        <div class="field"><label for="nr-name">Role name</label><input id="nr-name" name="name" value="{{.NewRole.Name}}" required {{if .NewRole.Error}}aria-invalid="true" aria-describedby="nr-error" data-dialog-initial-focus{{end}}>{{if .NewRole.Error}}<span id="nr-error" class="field-error-message" role="alert">{{.NewRole.Error}}</span>{{end}}</div>
+        <div class="field">
+          <label for="nr-name">Role name</label><input id="nr-name" name="name" value="{{.NewRole.Name}}" required {{if .NewRole.Error}}aria-invalid="true" aria-describedby="nr-error" data-dialog-initial-focus{{end}}>{{if .NewRole.Error}}<span id="nr-error" class="field-error-message" role="alert">{{.NewRole.Error}}</span>{{end}}
+        </div>
         <div class="field"><label for="nr-desc">Description</label><input id="nr-desc" name="description" value="{{.NewRole.Description}}"></div>
       </div>
-      <div class="sh-foot"><button class="btn outline" type="button" data-close="role-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Create role</button></div>
+      <div class="sh-foot">
+        <button class="btn outline" type="button" data-close="role-new">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Create role</button>
+      </div>
     </form>
   </div>
 </div>
@@ -267,11 +294,19 @@
   <div class="sheet">
     <form method="post" action="/roles/{{.Role.ID}}/copy">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <div class="sh-head"><div><h2>Copy {{.Role.Name}}</h2><p class="sh-sub">The copy starts with the same permissions and data scope.</p></div><button class="sh-close" type="button" data-close="role-copy">✕</button></div>
+      <div class="sh-head">
+        <div>
+          <h2>Copy {{.Role.Name}}</h2>
+          <p class="sh-sub">The copy starts with the same permissions and data scope.</p>
+        </div>
+        <button class="sh-close" type="button" data-close="role-copy">✕</button>
+      </div>
       <div class="sh-body stack-12">
         <div class="field"><label for="cr-name">New role name</label><input id="cr-name" name="name" required></div>
       </div>
-      <div class="sh-foot"><button class="btn outline" type="button" data-close="role-copy">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Copy role</button></div>
+      <div class="sh-foot">
+        <button class="btn outline" type="button" data-close="role-copy">Cancel</button><span class="row-end"></span><button class="btn primary" type="submit">Copy role</button>
+      </div>
     </form>
   </div>
 </div>
@@ -283,13 +318,27 @@
 <div class="overlay" id="role-delete" hidden>
   <div class="sheet">
     {{if gt $holders 0}}
-    <div class="sh-head"><div><h2>Delete {{.Role.Name}}?</h2><p class="sh-sub">{{$holders}} {{plural $holders "user holds" "users hold"}} this role, so it cannot be deleted yet. Remove it from {{plural $holders "that user" "those users"}} on the Users screen first; they would otherwise lose everything it grants without warning.</p></div><button class="sh-close" type="button" data-close="role-delete">✕</button></div>
+    <div class="sh-head">
+      <div>
+        <h2>Delete {{.Role.Name}}?</h2>
+        <p class="sh-sub">{{$holders}} {{plural $holders "user holds" "users hold"}} this role, so it cannot be deleted yet. Remove it from {{plural $holders "that user" "those users"}} on the Users screen first; they would otherwise lose everything it grants without warning.</p>
+      </div>
+      <button class="sh-close" type="button" data-close="role-delete">✕</button>
+    </div>
     <div class="sh-foot"><button class="btn outline" type="button" data-close="role-delete">Cancel</button><span class="row-end"></span><a class="btn primary" href="/users">Open Users</a></div>
     {{else}}
     <form method="post" action="/roles/{{.Role.ID}}/delete">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <div class="sh-head"><div><h2>Delete {{.Role.Name}}?</h2><p class="sh-sub">Nobody holds this role. Deleting it cannot be undone.</p></div><button class="sh-close" type="button" data-close="role-delete">✕</button></div>
-      <div class="sh-foot"><button class="btn outline" type="button" data-close="role-delete">Cancel</button><span class="row-end"></span><button class="btn danger" type="submit">Delete role</button></div>
+      <div class="sh-head">
+        <div>
+          <h2>Delete {{.Role.Name}}?</h2>
+          <p class="sh-sub">Nobody holds this role. Deleting it cannot be undone.</p>
+        </div>
+        <button class="sh-close" type="button" data-close="role-delete">✕</button>
+      </div>
+      <div class="sh-foot">
+        <button class="btn outline" type="button" data-close="role-delete">Cancel</button><span class="row-end"></span><button class="btn danger" type="submit">Delete role</button>
+      </div>
     </form>
     {{end}}
   </div>
