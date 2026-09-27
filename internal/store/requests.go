@@ -826,6 +826,11 @@ func (s *Store) urgencyMode(ctx context.Context) (string, error) {
 	}
 }
 
+// ErrUrgencyReasonRequired refuses an urgent request with no reason when the
+// configuration asks for one. It is a sentinel so the request form can tie the
+// message to the reason field with errors.Is instead of matching its wording.
+var ErrUrgencyReasonRequired = fmt.Errorf("%w: say why this is urgent", ErrValidation)
+
 // validateUrgency enforces G7. It is separate from validateRequestInput because
 // the rule is configuration-driven and validateRequestInput stays pure.
 func validateUrgency(in RequestInput, mode string) error {
@@ -839,7 +844,7 @@ func validateUrgency(in RequestInput, mode string) error {
 		return nil
 	default:
 		if strings.TrimSpace(in.UrgencyReason) == "" {
-			return fmt.Errorf("%w: say why this is urgent", ErrValidation)
+			return ErrUrgencyReasonRequired
 		}
 	}
 	return nil

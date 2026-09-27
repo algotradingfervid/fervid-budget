@@ -140,7 +140,10 @@ type PageData struct {
 	ReportURL            string
 	ReportContext        string
 	ErrorCode            int
-	RequestID            string
+	// UrgencyReasonError marks .Error as the missing urgency reason, so the
+	// shell ties the alert to that field (data-server-error-for) for the script.
+	UrgencyReasonError bool
+	RequestID          string
 
 	// Roles admin screen.
 	Roles          []store.Role

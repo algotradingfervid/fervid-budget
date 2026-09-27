@@ -49,7 +49,7 @@ const templates = `
 <main class="page" id="main-content" tabindex="-1">
 <div class="page-inner">
 {{if .ContextBackHref}}<p class="context-back"><a href="{{.ContextBackHref}}">← {{.ContextBackLabel}}</a></p>{{end}}
-{{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive"{{if eq .Error "say why this is urgent"}} data-server-error-for="urgency_reason"{{end}}>{{.Error}}</div>{{end}}
+{{if and .Error (not .ErrorCode)}}<div class="alert error" role="alert" aria-live="assertive"{{if .UrgencyReasonError}} data-server-error-for="urgency_reason"{{end}}>{{.Error}}</div>{{end}}
 {{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
 {{end}}
 
