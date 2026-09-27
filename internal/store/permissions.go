@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -203,11 +204,11 @@ func ValidScope(resource, scope string) bool {
 }
 
 // scanRole reads one roles row; sql.ErrNoRows becomes ErrNotFound.
-func scanRole(scanner interface{ Scan(...any) error }) (Role, error) {
+func scanRole(scanner rowScanner) (Role, error) {
 	var r Role
 	var sys int
 	err := scanner.Scan(&r.ID, &r.Name, &r.Description, &sys, &r.CreatedAt, &r.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
 	r.IsSystem = sys == 1
@@ -287,7 +288,7 @@ func (s *Store) UpdateRole(ctx context.Context, actor User, id int64, name, desc
 	var current string
 	var sys int
 	err = tx.QueryRowContext(ctx, `SELECT name,is_system FROM roles WHERE id=?`, id).Scan(&current, &sys)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -320,7 +321,7 @@ func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 	var name string
 	var sys int
 	err = tx.QueryRowContext(ctx, `SELECT name,is_system FROM roles WHERE id=?`, id).Scan(&name, &sys)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -382,7 +383,7 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 
 	var name string
 	if err := tx.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, roleID).Scan(&name); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -525,7 +526,7 @@ func (s *Store) CopyRole(ctx context.Context, actor User, srcID int64, name stri
 
 	var srcName string
 	if err := tx.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, srcID).Scan(&srcName); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotFound
 		}
 		return 0, err
@@ -641,7 +642,7 @@ func (s *Store) SetUserDefaultApprover(ctx context.Context, actor User, userID, 
 
 	var name string
 	if err := tx.QueryRowContext(ctx, `SELECT name FROM users WHERE id=?`, userID).Scan(&name); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err

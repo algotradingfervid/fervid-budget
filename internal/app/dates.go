@@ -28,6 +28,8 @@ func datepText(t *time.Time) string {
 }
 
 // validMonthInput reports whether s is a real month written as "YYYY-MM".
+// The store checks months again with its own validMonth, which is the same
+// test, before it writes or filters by one.
 func validMonthInput(s string) bool {
 	_, err := time.Parse(monthLayout, s)
 	return err == nil

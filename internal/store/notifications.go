@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -99,12 +100,12 @@ const notificationSettingSelect = `SELECT event,label,audience,email_enabled,to_
 
 // scanNotificationSetting reads one notification_settings row; sql.ErrNoRows
 // becomes ErrNotFound.
-func scanNotificationSetting(sc interface{ Scan(...any) error }) (NotificationSetting, error) {
+func scanNotificationSetting(sc rowScanner) (NotificationSetting, error) {
 	var n NotificationSetting
 	var email, req, mgr, acct int
 	err := sc.Scan(&n.Event, &n.Label, &n.Audience, &email, &n.ToRecipients, &n.CcRecipients,
 		&req, &mgr, &acct, &n.SubjectTemplate, &n.BodyTemplate)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return n, ErrNotFound
 	}
 	n.EmailEnabled, n.IncludeRequester, n.IncludeManager, n.IncludeAccounts = email == 1, req == 1, mgr == 1, acct == 1

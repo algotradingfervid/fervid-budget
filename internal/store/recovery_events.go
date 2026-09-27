@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -159,7 +160,7 @@ func (s *Store) RecordRecovery(ctx context.Context, actor User, requestID int64,
 		}
 		return e.ID, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	if locked, err := isLocked(ctx, tx, in.OccurredOn[:7]); err != nil {

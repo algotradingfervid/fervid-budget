@@ -193,3 +193,16 @@ func (a *App) userSave(w http.ResponseWriter, r *http.Request) {
 		Summary: summary + strings.ToLower(strings.TrimSpace(r.FormValue("email")))})
 	http.Redirect(w, r, "/users", http.StatusSeeOther)
 }
+
+// approverAvailable reports whether the user with this id is in approvers,
+// the list of people who may currently approve. The user and request forms
+// call it from their templates to warn when a saved default approver can no
+// longer approve.
+func approverAvailable(id int64, approvers []store.User) bool {
+	for _, user := range approvers {
+		if user.ID == id {
+			return true
+		}
+	}
+	return false
+}

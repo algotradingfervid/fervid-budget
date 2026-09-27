@@ -948,7 +948,7 @@ func (a *App) requestApprove(w http.ResponseWriter, r *http.Request) {
 			locked+" is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.", nil)
 		return
 	}
-	if err := a.st.ApproveRequest(r.Context(), u, req.ID, amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
+	if err := a.st.ApproveRequestAtRevision(r.Context(), u, req.ID, amount, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			a.refuseRequestApproval(w, r, friendly(err))
 			return
@@ -1035,14 +1035,14 @@ func (a *App) changeRequest(w http.ResponseWriter, r *http.Request, event, dest 
 // requestReturn sends a pending request back to its requester for correction.
 func (a *App) requestReturn(w http.ResponseWriter, r *http.Request) {
 	a.changeRequest(w, r, notify.EventRequestReturned, "/approvals", func(ctx context.Context, u store.User, id int64) error {
-		return a.st.ReturnRequest(ctx, u, id, r.FormValue("comment"), r.FormValue("revision"))
+		return a.st.ReturnRequestAtRevision(ctx, u, id, r.FormValue("comment"), r.FormValue("revision"))
 	})
 }
 
 // requestReject rejects a pending request. A rejection is final.
 func (a *App) requestReject(w http.ResponseWriter, r *http.Request) {
 	a.changeRequest(w, r, notify.EventRequestRejected, "/approvals", func(ctx context.Context, u store.User, id int64) error {
-		return a.st.RejectRequest(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
+		return a.st.RejectRequestAtRevision(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
 	})
 }
 
@@ -1189,7 +1189,7 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 	}
 	id := pathID(r)
 	accept := r.FormValue("decision") == "accept"
-	if err := a.st.DecideCancellation(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note"), r.FormValue("revision")); err != nil {
+	if err := a.st.DecideCancellationAtRevision(r.Context(), auth.CurrentUser(r), id, accept, r.FormValue("note"), r.FormValue("revision")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -1205,7 +1205,7 @@ func (a *App) requestCancellationDecide(w http.ResponseWriter, r *http.Request) 
 // cancel. The requester is notified, since they did not see it coming.
 func (a *App) requestCancelOutright(w http.ResponseWriter, r *http.Request) {
 	a.changeRequest(w, r, notify.EventRequestCancelled, "/requests/{id}", func(ctx context.Context, u store.User, id int64) error {
-		return a.st.CancelRequest(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
+		return a.st.CancelRequestAtRevision(ctx, u, id, r.FormValue("reason"), r.FormValue("revision"))
 	})
 }
 

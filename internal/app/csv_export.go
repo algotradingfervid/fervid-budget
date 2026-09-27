@@ -2,7 +2,7 @@ package app
 
 // CSV downloads. Every export builds its header and rows, records its own
 // "export" audit row, and hands the rows to sendCSV. Text cells go through
-// csvText (security.go), which stops a cell being read as a spreadsheet
+// csvText, which stops a cell being read as a spreadsheet
 // formula; money cells go through csvAmount.
 
 import (
@@ -10,6 +10,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // sendCSV answers with header and rows as a downloadable CSV file called
@@ -37,4 +38,17 @@ func csvAmount(paise int64) string {
 		sign, paise = "-", -paise
 	}
 	return fmt.Sprintf("%s%d.%02d", sign, paise/100, paise%100)
+}
+
+// csvText makes a value safe for a CSV cell that a spreadsheet will open. A
+// value that a spreadsheet would treat as a formula (starting with = + - or @,
+// after any leading blanks or byte-order mark), that starts with a byte-order
+// mark, or that contains a tab or line break, is prefixed with an apostrophe
+// so it is shown as plain text.
+func csvText(value string) string {
+	trimmed := strings.TrimLeft(value, " \t\r\n\uFEFF")
+	if strings.ContainsAny(value, "\t\r\n") || strings.HasPrefix(value, "\uFEFF") || (trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0]))) {
+		return "'" + value
+	}
+	return value
 }

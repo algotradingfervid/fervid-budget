@@ -399,64 +399,6 @@ func trailAction(e store.AuditEntry) string {
 	}
 }
 
-// auditStyle is how one audit action is drawn on a history trail: the colour
-// class of its dot, the symbol inside the dot, and the verb phrase printed after
-// the actor's name ("Priya Nair reserved it for processing"). These trails are
-// built from audit rows; the request conversation uses threadDot/threadGlyph
-// instead, which differ for a few actions.
-type auditStyle struct{ Tone, Glyph, Phrase string }
-
-// auditStyles has one line per audit action. An empty field falls back: no
-// tone, the "·" glyph, or the generic label from actionText. The attach glyph
-// is a text symbol rather than an emoji, so the CSS can tint it like the rest.
-var auditStyles = map[string]auditStyle{
-	"submit":            {"brand", "＋", "submitted the request"},
-	"reraise":           {"brand", "＋", "raised the request again"},
-	"process":           {"brand", "◷", "reserved it for processing"},
-	"reassign":          {"brand", "◷", "reassigned the reservation"},
-	"approval_reassign": {"brand", "✎", "reassigned the approval"},
-	"unhold":            {"brand", "◷", "took the request off hold"}, // back in the takeable queue
-	"approve":           {"ok", "✓", "approved the request"},
-	"settle":            {"ok", "✓", "settled the request"},
-	"accept_partial":    {"ok", "✓", "accepted the partial payment"},
-	"record_payment":    {"ok", "₹", "recorded a payment"},
-	"hold":              {"warn", "⏸", "put the request on hold"},
-	"mark_partial":      {"warn", "₹", "marked it a partial payment"},
-	"release":           {"warn", "↩", "released the reservation"},
-	"concern":           {"warn", "₹", "raised a concern"},
-	"return":            {"warn", "↩", "returned the request for correction"},
-	"reject":            {"bad", "✕", "rejected the request"},
-	"cancel":            {"bad", "✕", "cancelled the request"},
-	"withdraw":          {"bad", "✕", "withdrew the request"},
-	"void":              {"bad", "✕", "voided the payment"},
-	"create":            {"", "＋", ""},
-	"update":            {"", "✎", "edited the request"},
-	"amend_payment":     {"", "✎", "corrected the payment"},
-	"attach":            {"", "⇪", "attached a document"},
-	"attach_payment":    {"", "⇪", "attached proof of payment"},
-	"comment":           {"", "", "commented"},
-	"cancel_request":    {"", "", "asked for the request to be cancelled"},
-}
-
-// auditTone is the colour class of an audit action's dot ("" for none).
-func auditTone(action string) string { return auditStyles[action].Tone }
-
-// auditGlyph is the symbol in an audit action's dot.
-func auditGlyph(action string) string {
-	if glyph := auditStyles[action].Glyph; glyph != "" {
-		return glyph
-	}
-	return "·"
-}
-
-// auditPhrase is the verb phrase that follows the actor's name on a trail.
-func auditPhrase(action string) string {
-	if phrase := auditStyles[action].Phrase; phrase != "" {
-		return phrase
-	}
-	return actionText(action)
-}
-
 // trailBody is an audit entry's summary as printed on a trail, below a heading
 // that already names the actor. Request summaries start with the actor's name
 // ("Priya Nair approved …"), so that name is removed and the next letter

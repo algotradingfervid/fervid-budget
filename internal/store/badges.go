@@ -4,10 +4,8 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"maps"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -48,36 +46,29 @@ var badgeSpecs = []badgeSpec{
 	},
 }
 
-// badgeCacheKey identifies one memo: the database, the user, the set of badges
-// they may see, and the invalidation revision it was computed under.
+// badgeCacheKey identifies one memo in a Store's badgeCache: the user, the
+// set of badges they may see, and the invalidation revision it was computed
+// under.
 type badgeCacheKey struct {
-	db       *sql.DB
 	user     int64
 	specs    string
 	revision uint64
 }
 
-// badgeCacheEntry is one memoised result and when it was computed.
+// badgeCacheEntry is one memoised result and when it was computed. Entries
+// are immutable: a stored map is never written to again and callers always
+// receive a copy, so concurrent shell renders share the cache without
+// locking beyond the sync.Map itself.
 type badgeCacheEntry struct {
 	at     time.Time
 	counts map[string]int
 }
 
-// badgeCache holds immutable entries only: a stored map is never written to
-// again and callers always receive a copy, so concurrent shell renders share
-// it without locking beyond the sync.Map itself.
-var badgeCache sync.Map
-
 // InvalidateBadgeCounts makes the next shell reflect a completed mutation.
 // The revision prevents an in-flight reader from restoring an older snapshot.
 func (s *Store) InvalidateBadgeCounts() {
 	s.badgeRevision.Add(1)
-	badgeCache.Range(func(key, _ any) bool {
-		if k, ok := key.(badgeCacheKey); ok && k.db == s.db {
-			badgeCache.Delete(key)
-		}
-		return true
-	})
+	s.badgeCache.Clear()
 }
 
 // BadgeCounts returns the nav badge counts the caller is entitled to see.
@@ -99,8 +90,8 @@ func (s *Store) BadgeCounts(ctx context.Context, userID int64, perms PermissionS
 		return map[string]int{}, nil
 	}
 
-	key := badgeCacheKey{db: s.db, user: userID, specs: badgeFingerprint(specs), revision: s.badgeRevision.Load()}
-	if cached, ok := badgeCache.Load(key); ok {
+	key := badgeCacheKey{user: userID, specs: badgeFingerprint(specs), revision: s.badgeRevision.Load()}
+	if cached, ok := s.badgeCache.Load(key); ok {
 		if entry, ok := cached.(badgeCacheEntry); ok && time.Since(entry.at) < badgeCacheTTL {
 			return maps.Clone(entry.counts), nil
 		}
@@ -130,7 +121,7 @@ func (s *Store) BadgeCounts(ctx context.Context, userID int64, perms PermissionS
 		counts[spec.Key] = values[i]
 	}
 	if key.revision == s.badgeRevision.Load() {
-		badgeCache.Store(key, badgeCacheEntry{at: time.Now(), counts: counts})
+		s.badgeCache.Store(key, badgeCacheEntry{at: time.Now(), counts: counts})
 	}
 	return maps.Clone(counts), nil
 }

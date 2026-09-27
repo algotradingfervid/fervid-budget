@@ -106,8 +106,7 @@ var navSpec = []NavGroup{
 }
 
 // buildShell filters navSpec down to what the holder of perms may reach.
-// Groups left with no items disappear entirely. An item whose route is not
-// built yet (see routeBuilt) is shown as Soon.
+// Groups left with no items disappear entirely.
 func buildShell(perms store.PermissionSet) []NavGroup {
 	groups := make([]NavGroup, 0, len(navSpec))
 	for _, group := range navSpec {
@@ -116,7 +115,6 @@ func buildShell(perms store.PermissionSet) []NavGroup {
 			if item.Resource != "" && !can(perms, item.Resource, item.Action) {
 				continue
 			}
-			item.Soon = item.Soon || !routeBuilt(item.Href)
 			items = append(items, item)
 		}
 		if len(items) == 0 {
@@ -258,16 +256,16 @@ var moreTab = TabItem{Key: "more", Label: "More", Href: "#more", Icon: "⋯"}
 func resolveTabs(perms store.PermissionSet) TabBar {
 	tabs := TabBar{Left: []TabItem{homeTab}, Fab: homeTab}
 	// The tab bar is a phone's only navigation, so every tab is gated on the
-	// same permission as its route and screens not built yet are skipped: a
-	// tab that leads to a refusal or a 404 is worse than no tab.
+	// same permission as its route: a tab that leads to a refusal is worse
+	// than no tab.
 	grid := TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"}
-	if requests := (TabItem{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"}); can(perms, "request", "view") && routeBuilt(requests.Href) {
+	if requests := (TabItem{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"}); can(perms, "request", "view") {
 		tabs.Left = append(tabs.Left, requests)
 	} else if can(perms, "grid", "view") {
 		tabs.Left = append(tabs.Left, grid)
 	}
 	for _, candidate := range centreActions {
-		if can(perms, candidate.Resource, candidate.Action) && routeBuilt(candidate.Tab.Href) {
+		if can(perms, candidate.Resource, candidate.Action) {
 			tabs.Fab = candidate.Tab
 			break
 		}
@@ -286,24 +284,4 @@ func resolveTabs(perms store.PermissionSet) TabBar {
 // nothing.
 func can(perms store.PermissionSet, resource, action string) bool {
 	return perms != nil && perms.Can(resource, action)
-}
-
-// unbuiltPrefixes lists paths that have a nav entry but no route yet. Such
-// entries show as Soon in the sidebar and are left off the tab bar. Every
-// screen is built today, so it is empty; add a prefix while a new screen's
-// nav entry exists without its route.
-var unbuiltPrefixes []string
-
-// routeBuilt reports whether href is served, i.e. not under unbuiltPrefixes.
-// An empty href or a "#" toggle counts as built.
-func routeBuilt(href string) bool {
-	if href == "" || strings.HasPrefix(href, "#") {
-		return true // not a route: an announcement, or the More sheet toggle
-	}
-	for _, prefix := range unbuiltPrefixes {
-		if href == prefix || strings.HasPrefix(href, prefix+"/") {
-			return false
-		}
-	}
-	return true
 }
