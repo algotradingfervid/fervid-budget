@@ -1,8 +1,11 @@
+// badges.go computes, and briefly caches, the count badges in the navigation.
+
 package store
 
 import (
 	"context"
 	"database/sql"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +19,9 @@ var badgeCacheTTL = 15 * time.Second
 // badgeSpec is one nav badge: the count, the permission that entitles the
 // caller to see it, and the scalar sub-select that produces it.
 //
-// Every spec here reads a table that exists today. The "approvals" and
-// "accounts_queue" badges the nav already references stay dormant until Phase 1
-// creates the requests table; adding them is a matter of appending two specs.
+// badgeSpecs covers the simple count badges. The request-queue badges
+// (approvals, accounts_queue) need scope-aware counts and are computed in
+// internal/app/nav.go.
 type badgeSpec struct {
 	Key      string
 	Resource string
@@ -45,6 +48,8 @@ var badgeSpecs = []badgeSpec{
 	},
 }
 
+// badgeCacheKey identifies one memo: the database, the user, the set of badges
+// they may see, and the invalidation revision it was computed under.
 type badgeCacheKey struct {
 	db       *sql.DB
 	user     int64
@@ -52,6 +57,7 @@ type badgeCacheKey struct {
 	revision uint64
 }
 
+// badgeCacheEntry is one memoised result and when it was computed.
 type badgeCacheEntry struct {
 	at     time.Time
 	counts map[string]int
@@ -96,31 +102,26 @@ func (s *Store) BadgeCounts(ctx context.Context, userID int64, perms PermissionS
 	key := badgeCacheKey{db: s.db, user: userID, specs: badgeFingerprint(specs), revision: s.badgeRevision.Load()}
 	if cached, ok := badgeCache.Load(key); ok {
 		if entry, ok := cached.(badgeCacheEntry); ok && time.Since(entry.at) < badgeCacheTTL {
-			return copyCounts(entry.counts), nil
+			return maps.Clone(entry.counts), nil
 		}
 	}
 
-	var query strings.Builder
-	query.WriteString("SELECT ")
+	parts := make([]string, len(specs))
 	args := make([]any, 0, len(specs))
 	for i, spec := range specs {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString("(")
-		query.WriteString(spec.Expr)
-		query.WriteString(")")
+		parts[i] = "(" + spec.Expr + ")"
 		if spec.PerUser {
 			args = append(args, userID)
 		}
 	}
+	query := "SELECT " + strings.Join(parts, ", ")
 
 	values := make([]int, len(specs))
 	targets := make([]any, len(specs))
 	for i := range values {
 		targets[i] = &values[i]
 	}
-	if err := s.db.QueryRowContext(ctx, query.String(), args...).Scan(targets...); err != nil {
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(targets...); err != nil {
 		return nil, err
 	}
 
@@ -131,7 +132,7 @@ func (s *Store) BadgeCounts(ctx context.Context, userID int64, perms PermissionS
 	if key.revision == s.badgeRevision.Load() {
 		badgeCache.Store(key, badgeCacheEntry{at: time.Now(), counts: counts})
 	}
-	return copyCounts(counts), nil
+	return maps.Clone(counts), nil
 }
 
 // badgeFingerprint keeps permission changes from reading a memo built for a
@@ -142,12 +143,4 @@ func badgeFingerprint(specs []badgeSpec) string {
 		keys = append(keys, spec.Key)
 	}
 	return strings.Join(keys, ",")
-}
-
-func copyCounts(counts map[string]int) map[string]int {
-	out := make(map[string]int, len(counts))
-	for key, value := range counts {
-		out[key] = value
-	}
-	return out
 }
