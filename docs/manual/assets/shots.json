@@ -141,11 +141,11 @@
       "role": "accounts",
       "title": "The payments ledger",
       "shows": "Every payment recorded, filtered by month.",
-      "url": "/payments",
+      "url": "/payments?month=2026-06",
       "file": "accounts/payments-ledger.png",
-      "bytes": 16130,
-      "clipped": false,
-      "pageHeight": 1200,
+      "bytes": 41362,
+      "clipped": true,
+      "pageHeight": 2859,
       "headings": [
         "H1:Payments"
       ],
@@ -367,9 +367,9 @@
       "shows": "Who did what and when, in a record that cannot be edited.",
       "url": "/audit",
       "file": "admin/audit.png",
-      "bytes": 46991,
+      "bytes": 46618,
       "clipped": true,
-      "pageHeight": 4461,
+      "pageHeight": 4424,
       "headings": [
         "H1:Audit Log"
       ],
@@ -382,7 +382,7 @@
       "shows": "The list of database copies taken, and the control for taking another.",
       "url": "/backups",
       "file": "admin/backups.png",
-      "bytes": 13549,
+      "bytes": 9959,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -396,9 +396,9 @@
       "role": "admin",
       "title": "Budgets",
       "shows": "The figures each head is allowed, month by month.",
-      "url": "/budgets",
+      "url": "/budgets?month=2026-07",
       "file": "admin/budgets.png",
-      "bytes": 132946,
+      "bytes": 134827,
       "clipped": true,
       "pageHeight": 12650,
       "headings": [
@@ -542,7 +542,7 @@
       "shows": "Starting a new role from an existing one rather than from nothing.",
       "url": "/roles",
       "file": "admin/role-copy-sheet.png",
-      "bytes": 53490,
+      "bytes": 53396,
       "clipped": false,
       "pageHeight": 1312,
       "headings": [
@@ -559,7 +559,7 @@
       "shows": "The panel for adding a role of your own, alongside the four built-in ones.",
       "url": "/roles",
       "file": "admin/role-new-sheet.png",
-      "bytes": 53490,
+      "bytes": 53396,
       "clipped": false,
       "pageHeight": 1312,
       "headings": [
@@ -576,7 +576,7 @@
       "shows": "The permission matrix: what each role may do, and how much data it may see.",
       "url": "/roles",
       "file": "admin/roles.png",
-      "bytes": 53289,
+      "bytes": 53195,
       "clipped": false,
       "pageHeight": 1312,
       "headings": [
@@ -592,9 +592,9 @@
       "shows": "The panel for changing somebody’s roles, approver or password.",
       "url": "/users",
       "file": "admin/user-edit-sheet.png",
-      "bytes": 203957,
-      "clipped": true,
-      "pageHeight": 2760,
+      "bytes": 188038,
+      "clipped": false,
+      "pageHeight": 2717,
       "headings": [
         "H1:Users",
         "H2:Rahul Gupta"
@@ -608,9 +608,9 @@
       "shows": "The panel for creating an account: email, name, roles and a starting password.",
       "url": "/users",
       "file": "admin/user-new-sheet.png",
-      "bytes": 203264,
-      "clipped": true,
-      "pageHeight": 2760,
+      "bytes": 187345,
+      "clipped": false,
+      "pageHeight": 2717,
       "headings": [
         "H1:Users",
         "H2:Add user"
@@ -624,9 +624,9 @@
       "shows": "Everybody with an account, the roles they hold, and who approves their requests.",
       "url": "/users",
       "file": "admin/users.png",
-      "bytes": 202532,
+      "bytes": 186622,
       "clipped": true,
-      "pageHeight": 2760,
+      "pageHeight": 2717,
       "headings": [
         "H1:Users"
       ],
@@ -1022,11 +1022,11 @@
       "role": "manager",
       "title": "The report by expense head",
       "shows": "Spending broken down to the individual budget line.",
-      "url": "/reports/heads",
+      "url": "/reports/heads?from=2026-05&to=2026-07",
       "file": "manager/reports-heads.png",
-      "bytes": 7588,
-      "clipped": false,
-      "pageHeight": 1200,
+      "bytes": 486556,
+      "clipped": true,
+      "pageHeight": 25461,
       "headings": [
         "H1:Reports"
       ],
@@ -1037,9 +1037,9 @@
       "role": "manager",
       "title": "The monthly report",
       "shows": "Spending by month across the whole organisation.",
-      "url": "/reports/monthly",
+      "url": "/reports/monthly?from=2026-05&to=2026-07",
       "file": "manager/reports-monthly.png",
-      "bytes": 7426,
+      "bytes": 8540,
       "clipped": false,
       "pageHeight": 1200,
       "headings": [
@@ -1052,11 +1052,11 @@
       "role": "manager",
       "title": "The report by project",
       "shows": "The same figures grouped by project instead of by month.",
-      "url": "/reports/projects",
+      "url": "/reports/projects?from=2026-05&to=2026-07",
       "file": "manager/reports-projects.png",
-      "bytes": 7470,
-      "clipped": false,
-      "pageHeight": 1200,
+      "bytes": 48331,
+      "clipped": true,
+      "pageHeight": 2859,
       "headings": [
         "H1:Reports"
       ],

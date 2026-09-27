@@ -16,7 +16,7 @@ export default page({
     shot('requester/form-vendor-invoice', 'The uploader sits in the Purpose and documents fieldset, below the purpose box.'),
     prose(
       `The uploader is labelled **Add invoice, receipt or proof**, with the accepted shape underneath:
-       *PDF, JPG or PNG up to 10 MB*. The size is a setting your administrator controls, so the number
+       *PDF, JPG or PNG up to 10 MiB*. The size is a setting your administrator controls, so the number
        you see may differ from the one here. Below that is a **Choose File** control, reading
        *No file chosen* until you pick something.`,
     ),

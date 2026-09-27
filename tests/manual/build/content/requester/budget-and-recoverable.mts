@@ -8,8 +8,8 @@ export default page({
   blocks: [
     prose(
       `Every request carries a *treatment* as well as a type. The type says what kind of payment it is;
-       the treatment says what happens to the money afterwards. There are two, and the form asks you
-       to pick one before it asks anything else.`,
+       the treatment says what happens to the money afterwards. There are two. Only an employee
+       advance lets you choose; every other type states its treatment near the top of the form.`,
     ),
     table(
       ['Treatment', 'What the form says about it', 'Where the money lands'],
@@ -17,7 +17,7 @@ export default page({
         ['**Budget expense**', 'Money spent and gone. Counts against a project and head.', 'Against the budget for that head, in the variance figures.'],
         ['**Refundable or recoverable**', 'A deposit, guarantee, loan or advance you expect back. Kept out of budget actuals.', 'In the recoverables register, tracked until it comes back.'],
       ],
-      'The descriptions are the radio buttons’ own wording.',
+      'The descriptions are the employee advance form’s own wording.',
     ),
 
     section('Which one you want'),
@@ -36,17 +36,21 @@ export default page({
     section('Where the choice lives'),
     shot('requester/form-employee-advance', 'The treatment radio sits in the first fieldset, above everything the choice affects.'),
     prose(
-      `The two radio buttons appear on all four request types under **How should this be treated**.
-       Whichever one is selected is highlighted; the block immediately below changes with it.`,
+      `On an **Employee advance** the two choices sit under **How should this be treated**, and the
+       form opens on **Refundable or recoverable**. Whichever one is selected is highlighted; the
+       block immediately below changes with it.
+
+       The other types do not ask. Under **How this is treated** a vendor invoice payment, a vendor
+       advance and a reimbursement show a fixed line, *Budget expense. Money spent and gone. It
+       counts against a project and head.*, with the hint *Only an employee advance can be marked
+       refundable or recoverable. A deposit or guarantee is its own request type.* A **Deposit or
+       guarantee** shows the opposite fixed line, *Refundable or recoverable.*, because it is always
+       money expected back.`,
     ),
-    warning(
-      `The radio is offered on every form, but only an **Employee advance** is accepted as recoverable.
-       Submit a vendor invoice, a vendor advance or a reimbursement with **Refundable or recoverable**
-       selected and the form comes back with one sentence — \`a vendor invoice is a budget expense\`,
-       \`a vendor advance is a budget expense\` or \`reimbursement is a budget expense\`. If money you
-       expect back is going to a vendor, that is a deposit somebody else in your organisation books;
-       ask your approver or Accounts how it should be raised.`,
-      'Only one type may be recoverable',
+    note(
+      `If money you expect back is going to another company or authority — a tender deposit, a
+       guarantee — raise it as a **Deposit or guarantee**, not as a vendor payment.`,
+      'Money a vendor will return',
     ),
 
     section('The recoverable fieldset'),

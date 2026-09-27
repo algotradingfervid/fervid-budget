@@ -97,12 +97,16 @@ export default page({
     prose(`Above the tabs is a toolbar with three controls and an **Apply** button. **Search** matches
        the request number, the payee, the invoice number, the purpose, the short title and the
        requester's name — its placeholder lists most of them: *Number, payee, invoice, purpose…*.
-       **Type** narrows to one of the four request types. **Treatment** narrows to **Budget
-       expense** or **Recoverable**.
+       **Type** narrows to one of the five request types. **Treatment** narrows to **Budget
+       expense** or **Recoverable**. Beneath the toolbar, **Clear filters** empties all three at
+       once.
 
-       When nothing matches, the body reads **No requests match. Try another tab, or clear the
-       filters.** Note that the tab counts fall to zero with it — the counts are computed under the
-       same filters as the rows, so a tab can never promise a number the list does not show.`),
+       When nothing matches, the body reads *No requests match. Clear filters or choose another
+       tab.*, where **Clear filters** is a link that does the same as the button. Note that the tab
+       counts fall to zero with it — the counts are computed under the same filters as the rows, so a
+       tab can never promise a number the list does not show.`),
+
+    shot('requester/requests-search-empty', 'A search that matched nothing. Every tab count reads 0, and the body offers Clear filters.'),
 
     tip(`Filters survive when you change tabs, and they are in the address. If a colleague asks what
        happened to a particular invoice, search for the invoice number on **All** and send them the

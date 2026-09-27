@@ -17,7 +17,7 @@ export default page({
       [`Status pill`, `What has happened`, `Waiting on`],
       [
         [`**Approved — awaiting payment**`, `Your approver signed it. Nobody in Accounts has claimed it yet.`, `Accounts`],
-        [`**With Accounts**`, `An accountant has claimed the request and is working on it. Nobody else can pay it while they hold it.`, `Accounts`],
+        [`**With Accounts — taken by …**`, `An accountant has claimed the request and is working on it; the pill names them. Nobody else can pay it while they hold it.`, `That accountant`],
         [`**Completed**`, `The payment has been recorded and covers what was approved.`, `Nothing pending`],
         [`**Completed — partial accepted**`, `Less was paid than approved, and your approver agreed to close it anyway.`, `Nothing pending`],
       ],
@@ -34,16 +34,24 @@ export default page({
 
     subsection(`Claimed by Accounts`),
 
-    prose(`When an accountant takes the request, the status becomes **With Accounts** and a line
-       appears in the history, naming the accountant: *Harsh Agarwal reserved the request for
-       processing*. That claim is exclusive — it exists so two people cannot pay the same request
-       twice.`),
+    prose(`When an accountant takes the request, the status pill becomes **With Accounts — taken by**
+       and their name, the sentence beside it reads *Waiting on* followed by their name and *(Accounts)*, and the history
+       gains the line *Reserved request for processing*. That claim is exclusive — it exists so two
+       people cannot pay the same request twice. If they hold it for too long without paying, the
+       history also records each *Stale-reservation reminder sent to* them.`),
+
+    shot('requester/detail-processing', 'A request claimed by Accounts. The pill names the accountant who took it, and the history ends with the reservation and the reminders sent to them.'),
 
     subsection(`Paid`),
 
     prose(`A recorded payment adds a **Payment outcome** block between the details and the attachments.
-       It has two or three rows: **Approved** with the signed figure, **Paid on** with the date and
-       the amount that actually went out, and a third row naming the difference between them.`),
+       It always has three rows: **Approved** with the signed figure, **Total paid to date** with
+       everything paid against the request so far, and a third row naming the difference between
+       them. Beneath it, **Payment history** lists each linked payment on one line — its number, the
+       date it was paid, the amount and the transaction reference, for example *PAY-17 · 19 June
+       2026 · ₹5,300.00 · UTR00000537*.`),
+
+    shot('requester/detail-completed', 'A completed request. Payment outcome shows Approved, Total paid to date and a ₹0.00 difference confirmed settled by Accounts; Payment history lists the one payment.'),
 
     section(`Reading a payment that is short`),
 
@@ -54,14 +62,17 @@ export default page({
     table(
       [`The third row says`, `What it means`],
       [
-        [`**Difference · confirmed settled by Accounts**`, `Accounts declared the obligation discharged. Where they paid the full amount, the difference is ₹0.00; where they paid slightly less, they have confirmed nothing more is owed.`],
-        [`**Still owed to the payee**`, `A genuine shortfall. The balance has not been paid, and the request has gone to your approver to decide what happens to it.`],
+        [`**Difference · confirmed settled by Accounts**`, `The request is **Completed** and paid in full; the difference is ₹0.00.`],
+        [`**Difference · agreed deduction or adjustment · confirmed settled by Accounts**`, `The request is **Completed**, but less than the approved figure was paid. Accounts declared the obligation discharged and recorded why; nothing more is owed.`],
+        [`**Still owed to the payee · awaiting manager decision**`, `A genuine shortfall. The balance has not been paid, and the request has gone to your approver to decide what happens to it.`],
+        [`**Still owed to the payee · remaining approved balance**`, `An installment. Part has been paid and the rest is still payable under the same approval.`],
+        [`**Balance written off · shortfall accepted by …**`, `Your approver, named in the row, accepted the shortfall and the request closed as **Completed — partial accepted**.`],
       ],
     ),
 
-    prose(`A partial payment always carries a written reason, and it appears on your request as a
-       banner headed with the accountant's name and the words **marked this a genuine partial
-       payment**, their sentence beneath it. The status becomes **Partial — manager review**, and
+    prose(`A partial payment always carries a written reason, and it appears on your request under the
+       payment outcome as a banner headed with the accountant's name and the words **provided this
+       settlement reason**, their sentence beneath it. The status becomes **Partial — manager review**, and
        the request goes back to your approver, who can Keep balance payable for another
        installment, accept the shortfall and close as **Completed — partial accepted**, or raise a
        concern with Accounts.`),

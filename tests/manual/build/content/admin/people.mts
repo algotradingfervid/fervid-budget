@@ -37,16 +37,18 @@ export default page({
       { text: `Select **＋ Add user** at the top right.` },
       { text: `Type their **Email**. This is what they will sign in with.` },
       { text: `Type their **Name**.` },
-      { text: `Choose a **Role**.`, note: `This field offers two values only — \`Data entry\` and \`Admin\`. It is the account-level flag, not the role list; the fuller set of roles is assigned afterwards from the edit panel.` },
-      { text: `Type a starting **Password**.`, note: `At least 12 characters, and it must contain a letter and a number. Anything shorter is refused.` },
+      { text: `Tick one or more **Roles**.`, note: `One tick box per role, each followed by its description. At least one is required; a new account with no role ticked is refused with \`Choose at least one role for the new user.\`` },
+      { text: `Type a starting **Password**.`, note: `12 to 72 characters, and it must contain a letter and a number. Anything else is refused.` },
       { text: `Leave **Active** ticked unless you are creating an account that should not be usable yet.` },
       { text: `Select **Add User**.`, note: `The new account appears in the list, and the creation is written to the audit trail.` },
     ]),
 
-    note(`The **Role** choice on this panel also seeds the person’s first role: choosing \`Admin\`
-       gives the new account the Admin role, and choosing \`Data entry\` gives it Accounts. If
-       neither is what you want, open the new row’s **Edit** panel straight away and set the roles
-       properly.`, `What the Role field actually does`),
+    shot('admin/user-new-sheet', 'The Add user panel: Email, Name, a tick box for each role, Password and Active.'),
+
+    note(`If the save is refused, the panel opens again with the reason at the top and the email,
+       name and roles you entered still filled in. The password is never kept, so type it again.
+       An email address that already belongs to an account is refused with \`A user with this
+       email address already exists.\``, `When adding is refused`),
 
     warning(`Give the starting password over a trusted channel. **Can’t sign in?** offers email reset
        when configured, or an administrator/operator route when it is not. Administrators can set a
@@ -57,10 +59,12 @@ export default page({
     fields([
       { name: `Name`, required: true, note: `How they appear on every request, approval and payment.` },
       { name: `Roles`, required: false, note: `One tick box per role, each with its description: \`Accounts — Process approved requests and record payments.\`, \`Admin — Full administrative access.\`, \`Manager — Review and decide on payment requests.\`, \`Requester — Raise and manage your own payment requests.\` Tick as many as apply.` },
-      { name: `Default approver for their own requests`, required: false, note: `Who their requests go to by default. The person themselves is never in their own list — the hint under the field says so, and the save refuses it again on the server. \`None\` is a valid answer for somebody who raises nothing.` },
+      { name: `Default approver for their own requests`, required: false, note: `Who their requests go to by default. Only active people allowed to approve are offered, and never the person themselves. The hint under the field reads *Only active users with permission to approve requests are offered. Self-approval is not allowed.*, and the save refuses self-approval again on the server. \`None\` is a valid answer for somebody who raises nothing.` },
       { name: `Reset password`, required: false, note: `Leave blank to keep the current one. Anything you type replaces it immediately, with the same 12-character, letter-and-number rule as a new account.` },
       { name: `Active`, required: false, note: `Untick to switch the account off. See below.` },
     ]),
+
+    shot('admin/user-edit-sheet', 'The edit panel for one person: their name, a tick box for each role, their default approver, a password reset and Active.'),
 
     steps([
       { text: `Select **Edit** on the person’s row.` },
