@@ -1,3 +1,8 @@
+// This file is the notification service itself: for one event on one request
+// it works out who should be told, writes their in-app notifications, and
+// sends the email when the admin has switched email on for that event. It also
+// renders the admin-editable {{token}} templates used for both.
+
 package notify
 
 import (
@@ -11,18 +16,22 @@ import (
 	"fervidbudget/internal/store"
 )
 
+// Service sends workflow notifications. The application builds one at
+// start-up and shares it with the reminder job, so both use the same mailer.
 type Service struct {
 	st     *store.Store
 	mailer Mailer
 }
 
+// NewService builds a Service that reads rules and people from st and sends
+// email through mailer.
 func NewService(st *store.Store, mailer Mailer) *Service {
 	return &Service{st: st, mailer: mailer}
 }
 
 // RequestView is the flattened request an email template renders from. It
 // carries display strings, not store types, so a template can never reach into
-// the model and so the placeholder vocabulary has exactly one definition.
+// the model; templateFields decides which of these a template may use.
 type RequestView struct {
 	Number, Treatment, Type, Project, Head, Payee, Purpose, Status string
 	Amount, ApprovedAmount                                         int64
@@ -33,30 +42,34 @@ type RequestView struct {
 	// PaidAmount and PaidOn describe the payment linked to the request, and
 	// are zero until one exists. They are what the settlement events mean by
 	// "paid": Amount is what was asked for, ApprovedAmount what was signed
-	// off, and neither is what left the bank (settlement-1).
+	// off, and neither is what left the bank.
 	PaidAmount int64
 	PaidOn     string
 	Link       string
 	// HolderEmail is the accountant holding the reservation (processing_by),
-	// empty when nobody holds it. It is routing data, not a template token: the
-	// events routesToHolder names are emailed to this one address, the same
-	// person resolveInAppUsers writes the in-app row for (notify-1).
+	// empty when nobody holds it or the holder may not see the request. It is
+	// routing data, not a template token: the events routesToHolder names are
+	// emailed to this one address instead of the whole Accounts group.
 	HolderEmail string
 }
 
-// Notify writes the in-app rows first — they always fire (G19) — and then, only
-// if the event's email channel is switched on, resolves email recipients and
+// Notify writes the in-app rows first — they always fire — and then, only if
+// the event's email channel is switched on, resolves email recipients and
 // sends. A failure to send email never costs the user their in-app record.
 func (s *Service) Notify(ctx context.Context, event string, req store.Request) error {
 	_, err := s.notify(ctx, event, req)
 	return err
 }
 
-// notify is Notify with a report of who it reached. Only the reminder scheduler
-// needs it: its audit row is the only witness the stale-reservation screen's
-// "a reminder went out" claim has (F-F-02), and that row has to name who was
-// told. Resolving the recipients a second time to write the row is exactly how
-// the row and the delivery would drift apart, so the delivery reports itself.
+// notify is Notify that also returns the names of the people who got an
+// in-app notification. The reminder job records those names on the request's
+// history; taking them from the delivery itself, rather than resolving the
+// recipients a second time, keeps the history and the delivery in step.
+//
+// Everyone is checked against the request's visibility rules first: Accounts
+// users who may not see the request are dropped, and the requester's,
+// approver's or holder's email address is blanked if that person may not see
+// it. An unknown event (no rule row) is silently ignored.
 func (s *Service) notify(ctx context.Context, event string, req store.Request) ([]string, error) {
 	cfg, err := s.st.NotificationSetting(ctx, event)
 	if errors.Is(err, store.ErrNotFound) {
@@ -95,7 +108,7 @@ func (s *Service) notify(ctx context.Context, event string, req store.Request) (
 	if req.ProcessingBy != nil && !s.st.UserCanViewRequest(ctx, *req.ProcessingBy, req) {
 		view.HolderEmail = ""
 	}
-	// 1. In-app, unconditionally (G19).
+	// 1. In-app, always.
 	told, err := s.writeInApp(ctx, event, cfg, req, view, accountUsers)
 	if err != nil {
 		return told, err
@@ -120,6 +133,8 @@ func (s *Service) notify(ctx context.Context, event string, req store.Request) (
 	return told, s.mailer.Send(ctx, Message{From: formatFrom(app), To: to, Cc: cc, Subject: subject, Body: body})
 }
 
+// accountsUsers loads the Accounts group (everyone who can process payments)
+// when the rule includes Accounts, and nobody otherwise.
 func (s *Service) accountsUsers(ctx context.Context, cfg store.NotificationSetting) ([]store.User, error) {
 	if !cfg.IncludeAccounts {
 		return nil, nil
@@ -127,14 +142,14 @@ func (s *Service) accountsUsers(ctx context.Context, cfg store.NotificationSetti
 	return s.st.UsersWithPermission(ctx, "payment", "process")
 }
 
-// writeInApp creates one notifications row per resolved recipient and returns
-// the recipients' names, which is what lets the reminder scheduler record who it
-// told (F-F-02) without resolving them twice. The title is the rendered subject
-// when the template is valid and a plain fallback when it is not — a broken
-// email template must never cost the user their in-app record.
+// writeInApp creates one notifications row per resolved recipient who may see
+// the request, and returns those recipients' names so the reminder job can
+// record who it told. The title is the rendered subject when the template is
+// valid and a plain fallback when it is not — a broken email template must
+// never cost the user their in-app record.
 //
 // Kind is left empty: store.AddNotification derives it from the event, which is
-// the one definition the .segmented filter queries.
+// the one definition the notification centre's filter queries.
 func (s *Service) writeInApp(ctx context.Context, event string, cfg store.NotificationSetting, req store.Request, v RequestView, accountUsers []store.User) ([]string, error) {
 	var accountIDs []int64
 	names := map[int64]string{}
@@ -178,7 +193,7 @@ func (s *Service) writeInApp(ctx context.Context, event string, cfg store.Notifi
 		}
 		name, ok := names[uid]
 		if !ok {
-			// The assignee addressed personally below need not still hold
+			// The reservation holder addressed personally need not still hold
 			// payment:process — a reservation outlives a role change — so their
 			// name is not always in the group already loaded.
 			//
@@ -198,18 +213,51 @@ func (s *Service) writeInApp(ctx context.Context, event string, cfg store.Notifi
 	return told, nil
 }
 
-// resolveInAppUsers mirrors resolveRecipients in user-id space. The include
-// flags are the same switches an admin sees; the assigned accountant is
-// addressed personally for the events the design routes to them.
+// audience is which of a rule's recipient groups are told about one event on
+// one request. Both channels (in-app and email) start from it, so they cannot
+// disagree about who an event is for.
+type audience struct {
+	requester bool
+	manager   bool // the request's approver
+	// accounts means the Accounts side: the reservation holder for the events
+	// routesToHolder names, otherwise the whole Accounts group.
+	accounts bool
+	// copyManagement adds the management addresses from the mail settings to
+	// the email's Cc line. It has no in-app counterpart.
+	copyManagement bool
+}
+
+// audienceFor applies a rule's include switches to one event. The only event
+// with extra conditions is the urgent flag, which has two send points: while
+// the request is still pending it is the approver's problem, and once it is
+// past approval it is Accounts' (with management copied on the email) and no
+// longer the approver's.
+func audienceFor(event string, cfg store.NotificationSetting, status string) audience {
+	urgentBeforeApproval := event == EventRequestUrgent && status == "pending"
+	urgentAfterApproval := event == EventRequestUrgent && status != "pending"
+	return audience{
+		requester:      cfg.IncludeRequester,
+		manager:        cfg.IncludeManager && !urgentAfterApproval,
+		accounts:       cfg.IncludeAccounts && !urgentBeforeApproval,
+		copyManagement: event == EventRequestApproved || urgentAfterApproval,
+	}
+}
+
+// resolveInAppUsers lists the user ids that get an in-app notification, in
+// order and without duplicates. For the events routesToHolder names, the
+// Accounts side is the user holding the reservation whenever somebody holds
+// it, even if that user turns out not to be allowed to see the request (they
+// are then skipped, and the group is not told instead).
 func resolveInAppUsers(event string, cfg store.NotificationSetting, req store.Request, accountIDs []int64) []int64 {
+	who := audienceFor(event, cfg, req.Status)
 	var ids []int64
-	if cfg.IncludeRequester && req.RequesterID != 0 {
+	if who.requester && req.RequesterID != 0 {
 		ids = append(ids, req.RequesterID)
 	}
-	if cfg.IncludeManager && req.ManagerID != 0 && !(event == EventRequestUrgent && req.Status != "pending") {
+	if who.manager && req.ManagerID != 0 {
 		ids = append(ids, req.ManagerID)
 	}
-	if cfg.IncludeAccounts && !(event == EventRequestUrgent && req.Status == "pending") {
+	if who.accounts {
 		if routesToHolder(event) && req.ProcessingBy != nil && *req.ProcessingBy != 0 {
 			ids = append(ids, *req.ProcessingBy) // the person who reserved it
 		} else {
@@ -228,14 +276,46 @@ func resolveInAppUsers(event string, cfg store.NotificationSetting, req store.Re
 	return out
 }
 
+// resolveRecipients works out the email To and Cc lists: the rule's extra
+// addresses plus the requester's, approver's and Accounts' addresses its
+// audience calls for, lower-cased and without duplicates (an address on To is
+// not repeated on Cc). For the events routesToHolder names, Accounts means the
+// holder's address when there is one; unlike the in-app side, a request whose
+// holder has no usable address (none held, no email, or not allowed to see
+// the request) falls back to the whole Accounts group.
+func resolveRecipients(event string, cfg store.NotificationSetting, app store.MailSettings, v RequestView, accounts []string) (to, cc []string) {
+	who := audienceFor(event, cfg, v.Status)
+	toList := splitList(cfg.ToRecipients)
+	if who.requester {
+		toList = append(toList, v.RequesterEmail)
+	}
+	if who.manager {
+		toList = append(toList, v.ManagerEmail)
+	}
+	if who.accounts {
+		if routesToHolder(event) && v.HolderEmail != "" {
+			toList = append(toList, v.HolderEmail)
+		} else {
+			toList = append(toList, accounts...)
+		}
+	}
+	ccList := splitList(cfg.CcRecipients)
+	if who.copyManagement {
+		ccList = append(ccList, splitList(app.ManagementRecipients)...)
+	}
+	to = dedupe(nil, toList)
+	cc = dedupe(to, ccList)
+	return to, cc
+}
+
 // routesToHolder reports whether the Accounts half of an event's audience is
 // the accountant holding the reservation rather than the whole group. The
-// in-app and the email resolvers both ask it, so the two channels cannot
-// disagree about who "the assigned accountant" is (notify-1).
+// in-app and the email resolvers both ask it, so the two channels agree about
+// who "the assigned accountant" is.
 func routesToHolder(event string) bool {
 	switch event {
 	// Events about one specific reservation. Addressing the whole Accounts
-	// group would chase four people about work that belongs to one, and for
+	// group would chase several people about work that belongs to one, and for
 	// reservation_reassigned the single right recipient is the *new* holder —
 	// ReassignReservation moves processing_by, so by the time this fires the
 	// column already names them.
@@ -244,7 +324,7 @@ func routesToHolder(event string) bool {
 	// request never left 'processing' before it got there), so the accountant
 	// who recorded the shortfall or froze the payment is the one told. The
 	// fallback to the whole group is what covers a request whose holder let
-	// it go — reservation_released nulls processing_by, and a request that
+	// it go — reservation_released clears processing_by, and a request that
 	// reached partial_review or cancellation_requested some other way has
 	// nobody personally on the hook.
 	case EventCancellationRequested, EventReminderStaleReservation,
@@ -255,6 +335,8 @@ func routesToHolder(event string) bool {
 	return false
 }
 
+// requestHref is the site-relative link to a request's page, or to the
+// request list when the request has no id.
 func requestHref(req store.Request) string {
 	if req.ID == 0 {
 		return "/requests"
@@ -262,6 +344,10 @@ func requestHref(req store.Request) string {
 	return fmt.Sprintf("/requests/%d", req.ID)
 }
 
+// newRequestView loads what the templates need about a request: the names and
+// emails of its requester, approver and reservation holder, its dates, and its
+// linked payment if any. A person or payment that no longer exists leaves its
+// fields empty rather than failing; any other database error is returned.
 func (s *Service) newRequestView(ctx context.Context, req store.Request, app store.MailSettings) (RequestView, error) {
 	requester, err := s.st.UserByID(ctx, req.RequesterID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -308,65 +394,52 @@ func (s *Service) newRequestView(ctx context.Context, req store.Request, app sto
 	return v, nil
 }
 
-func resolveRecipients(event string, cfg store.NotificationSetting, app store.MailSettings, v RequestView, accounts []string) (to, cc []string) {
-	// One urgent row, two send points: before approval it is the approver's
-	// problem; after approval it is Accounts', and only then does management care.
-	urgentPreApproval := event == EventRequestUrgent && v.Status == "pending"
-	toList := splitList(cfg.ToRecipients)
-	if cfg.IncludeRequester {
-		toList = append(toList, v.RequesterEmail)
-	}
-	if cfg.IncludeManager && !(event == EventRequestUrgent && !urgentPreApproval) {
-		toList = append(toList, v.ManagerEmail)
-	}
-	if cfg.IncludeAccounts && !urgentPreApproval {
-		// The same switch resolveInAppUsers applies: an event about one
-		// reservation is mailed to its holder, and to the group only when
-		// nobody holds it (notify-1).
-		if routesToHolder(event) && v.HolderEmail != "" {
-			toList = append(toList, v.HolderEmail)
-		} else {
-			toList = append(toList, accounts...)
-		}
-	}
-	ccList := splitList(cfg.CcRecipients)
-	if event == EventRequestApproved || (event == EventRequestUrgent && !urgentPreApproval) {
-		ccList = append(ccList, splitList(app.ManagementRecipients)...)
-	}
-	to = dedupe(nil, toList)
-	cc = dedupe(to, ccList)
-	return to, cc
-}
-
+// tokenPattern finds {{token}} placeholders in admin-written text.
 var tokenPattern = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
 
-// notifyFields is the single definition of the admin-facing placeholder
-// vocabulary (G20). The admin sheet's .hint lists exactly these keys.
-func notifyFields(v RequestView) map[string]string {
-	return map[string]string{
-		"number":          v.Number,
-		"amount":          money.FormatPaise(v.Amount),
-		"approved_amount": money.FormatPaise(v.ApprovedAmount),
-		"payee":           v.Payee,
-		"requester":       v.RequesterName,
-		"approver":        v.ManagerName,
-		"project":         v.Project,
-		"head":            v.Head,
-		"purpose":         v.Purpose,
-		"status":          v.Status,
-		"needed_by":       v.NeededBy,
-		"submitted_on":    v.SubmittedOn,
-		"processing_on":   v.ProcessingOn,
-		"paid_amount":     money.FormatPaise(v.PaidAmount),
-		"paid_on":         v.PaidOn,
-		"link":            v.Link,
-	}
+// templateFields is the one list of {{tokens}} an admin may use in a
+// notification's subject or body, in the order the admin screen's hint shows
+// them, with how each is filled from a RequestView. Adding a token here makes
+// it both usable and listed.
+var templateFields = []struct {
+	name  string
+	value func(RequestView) string
+}{
+	{"number", func(v RequestView) string { return v.Number }},
+	{"amount", func(v RequestView) string { return money.FormatPaise(v.Amount) }},
+	{"approved_amount", func(v RequestView) string { return money.FormatPaise(v.ApprovedAmount) }},
+	{"payee", func(v RequestView) string { return v.Payee }},
+	{"requester", func(v RequestView) string { return v.RequesterName }},
+	{"approver", func(v RequestView) string { return v.ManagerName }},
+	{"project", func(v RequestView) string { return v.Project }},
+	{"head", func(v RequestView) string { return v.Head }},
+	{"purpose", func(v RequestView) string { return v.Purpose }},
+	{"status", func(v RequestView) string { return v.Status }},
+	{"needed_by", func(v RequestView) string { return v.NeededBy }},
+	{"submitted_on", func(v RequestView) string { return v.SubmittedOn }},
+	{"processing_on", func(v RequestView) string { return v.ProcessingOn }},
+	{"paid_amount", func(v RequestView) string { return money.FormatPaise(v.PaidAmount) }},
+	{"paid_on", func(v RequestView) string { return v.PaidOn }},
+	{"link", func(v RequestView) string { return v.Link }},
 }
 
-// NotifyFieldNames is the vocabulary the admin sheet renders in its .hint.
+// notifyFields fills every template token from v, keyed by token name.
+func notifyFields(v RequestView) map[string]string {
+	fields := make(map[string]string, len(templateFields))
+	for _, f := range templateFields {
+		fields[f.name] = f.value(v)
+	}
+	return fields
+}
+
+// NotifyFieldNames lists the {{tokens}} an admin may use, in the order the
+// notification rules screen shows them in its hint.
 func NotifyFieldNames() []string {
-	return []string{"number", "amount", "approved_amount", "payee", "requester", "approver",
-		"project", "head", "purpose", "status", "needed_by", "submitted_on", "processing_on", "paid_amount", "paid_on", "link"}
+	names := make([]string, len(templateFields))
+	for i, f := range templateFields {
+		names[i] = f.name
+	}
+	return names
 }
 
 // renderTemplate substitutes {{token}} placeholders. It deliberately does NOT
@@ -392,11 +465,11 @@ func renderTemplate(tmpl string, v RequestView) (string, error) {
 	return out, nil
 }
 
-// renderInAppBody renders the body template for the in-app centre, which is
-// not paper: a line whose field came out empty is dropped instead of leaving a
-// bare label ("Needed by:"), and the blank lines that leaves behind collapse
-// to one paragraph break. Line breaks are kept; the centre renders them
-// (notify-2). A line of admin text with no token is always kept.
+// renderInAppBody renders the body template for the in-app notification
+// centre, which is not paper: a line whose field came out empty is dropped
+// instead of leaving a bare label ("Needed by:"), and the blank lines that
+// leaves behind collapse to one paragraph break. Line breaks are kept; the
+// centre shows them. A line of admin text with no token is always kept.
 func renderInAppBody(tmpl string, v RequestView) (string, error) {
 	fields := notifyFields(v)
 	var lines []string
@@ -433,6 +506,8 @@ func ValidateTemplate(tmpl string) error {
 	return err
 }
 
+// splitList splits an admin-typed address list on commas, semicolons or new
+// lines, lower-cases each address and drops empty ones.
 func splitList(raw string) []string {
 	var out []string
 	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == '\n' }) {
@@ -443,6 +518,8 @@ func splitList(raw string) []string {
 	return out
 }
 
+// dedupe returns the non-empty addresses of in, lower-cased, in order, without
+// repeats and without any address already in alreadySeen.
 func dedupe(alreadySeen, in []string) []string {
 	seen := map[string]bool{}
 	for _, e := range alreadySeen {
@@ -460,6 +537,7 @@ func dedupe(alreadySeen, in []string) []string {
 	return out
 }
 
+// emails returns the users' non-empty email addresses.
 func emails(users []store.User) []string {
 	var out []string
 	for _, u := range users {
@@ -470,6 +548,8 @@ func emails(users []store.User) []string {
 	return out
 }
 
+// formatFrom builds the From header, "Name <address>" when both are set in
+// the mail settings, otherwise just the address.
 func formatFrom(app store.MailSettings) string {
 	name := strings.TrimSpace(app.SMTPFromName)
 	addr := strings.TrimSpace(app.SMTPFromAddr)
