@@ -55,7 +55,8 @@ import {
   probePost,
   expectOutcome,
   signIn,
-  type Probe
+  type Probe,
+  toProbe
 } from './audit-support';
 
 /** Every payment is dated today: never before its approval, never in the future. */
@@ -210,10 +211,7 @@ async function postRepeated(page: Page, path: string, pairs: Array<[string, stri
     maxRedirects: 0,
     failOnStatusCode: false
   });
-  const status = response.status();
-  const location = response.headers()['location'] ?? null;
-  const text = status < 300 || status >= 400 ? await response.text().catch(() => '') : '';
-  return { status, location, body: text, outcome: location ? `${status} → ${location}` : String(status) };
+  return toProbe(response);
 }
 
 /**

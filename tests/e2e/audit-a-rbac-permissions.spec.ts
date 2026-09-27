@@ -48,7 +48,7 @@
  * docs/qa/uml/05-route-permission-matrix.md. TC IDs are in
  * docs/qa/test-cases/TC-A-rbac-permissions.md.
  */
-import { test, expect, admin, login, pdfUpload } from './fixtures';
+import { test, expect, admin, login, pdfUpload, ensureVendor } from './fixtures';
 import {
   asRole,
   createUserWithExactRoles,
@@ -61,7 +61,8 @@ import {
   fixturePassword,
   type Probe,
   type RoleName,
-  type Subject
+  type Subject,
+  toProbe
 } from './audit-support';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -2273,7 +2274,7 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   world.headId = await optionValue(r2.page, '#head', 'Operations / Office Rent');
   const m2Id = await optionValue(r2.page, 'select[name="manager_id"]', m2.subject.name);
 
-  world.vendorId = await ensureVendor(adminPage, `Audit Vendor ${runId}`);
+  world.vendorId = await vendorIdFor(adminPage, `Audit Vendor ${runId}`);
   world.systemRoleIds = await readSystemRoleIds(adminPage);
   world.customRoleId = await createCustomRole(adminPage, `matrix-target-${runId}`);
 
@@ -2472,10 +2473,7 @@ async function settleWithAttachment(
     maxRedirects: 0,
     failOnStatusCode: false
   });
-  const status = response.status();
-  const location = response.headers()['location'] ?? null;
-  const body = status >= 300 && status < 400 ? '' : await response.text().catch(() => '');
-  return { status, location, body, outcome: location ? `${status} → ${location}` : String(status) };
+  return toProbe(response);
 }
 
 /** The `payment_attachments` id of a named document, read off the payment screen. */
@@ -2520,12 +2518,9 @@ async function requestAttachmentId(page: Page, requestId: number, filename: stri
   return id;
 }
 
-async function ensureVendor(page: Page, name: string): Promise<string> {
-  await page.goto('/vendors/new');
-  await page.getByLabel('Vendor name').fill(name);
-  await page.getByLabel('Type').selectOption('company');
-  await page.getByRole('button', { name: 'Save vendor' }).click();
-  await page.waitForURL(url => !url.pathname.endsWith('/vendors/new'));
+/** Makes sure the vendor exists (fixtures.ensureVendor) and returns its id. */
+async function vendorIdFor(page: Page, name: string): Promise<string> {
+  await ensureVendor(page, name);
   await page.goto('/vendors');
   const href = await page.locator('a[href^="/vendors/"]', { hasText: name }).first().getAttribute('href');
   const id = /\/vendors\/(\d+)/.exec(href ?? '')?.[1];

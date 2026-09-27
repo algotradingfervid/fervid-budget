@@ -38,7 +38,8 @@ import {
   login,
   settlePayment,
   thisMonth,
-  today
+  today,
+  ensureVendor
 } from './fixtures';
 import {
   asRole,
@@ -219,19 +220,11 @@ interface RaiseOptions {
 
 /** Creates a vendor by name. Idempotent-ish: a duplicate name lands on the
  *  refusal page and the vendor exists either way, which is all a payee needs. */
-async function ensureVendor(page: Page, name: string) {
-  await page.goto('/vendors/new');
-  await page.getByLabel('Vendor name').fill(name);
-  await page.getByLabel('Type').selectOption('company');
-  await page.getByRole('button', { name: 'Save vendor' }).click();
-  await page.waitForURL(url => !url.pathname.endsWith('/vendors/new'));
-}
-
 /**
  * Raises a vendor_invoice request through the real form, choosing the project,
- * head and vendor. `fixtures.createApprovedRequest` hard-wires Operations /
- * Office Rent and approves for the full amount; several cases here need a
- * different head, or an approved amount that differs from the requested one.
+ * head and vendor. `fixtures.createApprovedRequest` always approves the full
+ * amount; several cases here need an approved amount that differs from the
+ * requested one, or a request that is not approved yet.
  */
 async function raiseVendorRequest(page: Page, opts: RaiseOptions): Promise<{ id: number; number: string }> {
   await page.goto('/requests/new?type=vendor_invoice');

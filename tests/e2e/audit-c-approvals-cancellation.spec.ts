@@ -41,7 +41,8 @@ import {
   signIn,
   type Probe,
   type RoleName,
-  type Subject
+  type Subject,
+  toProbe
 } from './audit-support';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
@@ -315,13 +316,7 @@ async function anonymousPost(browser: Browser, path: string, baseURL: string): P
       maxRedirects: 0,
       failOnStatusCode: false
     });
-    const location = response.headers()['location'] ?? null;
-    return {
-      status: response.status(),
-      location,
-      body: '',
-      outcome: location ? `${response.status()} → ${location}` : String(response.status())
-    };
+    return await toProbe(response);
   } finally {
     await context.close();
   }
