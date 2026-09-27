@@ -161,55 +161,67 @@ func (a *App) auditWithinRequestScope(r *http.Request, entries []store.AuditEntr
 	return out
 }
 
-// auditActionInfo is how one audit action is shown on the audit log: its
-// label and the colour class of its pill. InFilter says whether the Action
-// filter offers it.
+// auditActionInfo is how one audit action is shown. On the audit log it has
+// a Label and the colour Class of its pill (an empty Label shows the action
+// itself, an empty Class is "neutral"); InFilter says whether the Action
+// filter offers it. On a history trail it has the colour Tone of its dot, the
+// Glyph inside the dot and the verb Phrase printed after the actor's name
+// ("Priya Nair reserved it for processing"); an empty field there falls back
+// to no tone, the "·" glyph, or the audit-log label. The request conversation
+// uses threadDot/threadGlyph instead, which differ for a few actions.
 type auditActionInfo struct {
 	Value, Label, Class string
 	InFilter            bool
+	Tone, Glyph, Phrase string
 }
 
-// auditActionTable lists every action the store writes to the audit log, in
-// the order the Action filter offers them (the request workflow reads as a
-// workflow, not as an alphabet). The last three are older or rarely written
-// names that still need a label but are not offered as filters.
+// auditActionTable lists every audit action the app knows, in the order the
+// Action filter offers them (the request workflow reads as a workflow, not
+// as an alphabet). After the filter's actions come older or rarely written
+// names that still need a label, then the trail-only actions. The attach
+// glyph is a text symbol rather than an emoji, so the CSS can tint it like
+// the rest.
 var auditActionTable = []auditActionInfo{
-	{"create", "Created", "good", true},
-	{"update", "Updated", "info", true},
-	{"delete", "Deleted", "neutral", true},
-	{"attach", "Attached", "info", true},
-	{"comment", "Commented", "info", true},
-	{"submit", "Submitted", "good", true},
-	{"approve", "Approved", "good", true},
-	{"return", "Returned", "warn", true},
-	{"reject", "Rejected", "bad", true},
-	{"withdraw", "Withdrawn", "warn", true},
-	{"reraise", "Raised again", "info", true},
-	{"cancel_request", "Cancellation asked", "neutral", true},
-	{"cancel", "Cancelled", "bad", true},
-	{"approval_reassign", "Approval reassigned", "info", true},
-	{"process", "Reserved", "info", true},
-	{"release", "Released", "info", true},
-	{"reassign", "Reservation reassigned", "info", true},
-	{"hold", "Put on hold", "warn", true},
-	{"unhold", "Taken off hold", "good", true},
-	{"settle", "Settled", "good", true},
-	{"mark_partial", "Marked partial", "warn", true},
-	{"accept_partial", "Partial accepted", "good", true},
-	{"concern", "Concern raised", "bad", true},
-	{"remind", "Reminder sent", "info", true},
-	{"recovery", "Recovery recorded", "neutral", true},
-	{"void", "Voided", "bad", true},
-	{"lock", "Locked", "warn", true},
-	{"unlock", "Unlocked", "warn", true},
-	{"settings", "Settings saved", "info", true},
-	{"export", "Exported", "neutral", true},
-	{"login", "Logged in", "neutral", true},
-	{"logout", "Logged out", "neutral", true},
-	{"login_failed", "Login failed", "bad", true},
-	{"edit", "Updated", "info", false},
-	{"reserve", "Reserved", "info", false},
-	{"view", "Viewed", "neutral", false},
+	{"create", "Created", "good", true, "", "＋", ""},
+	{"update", "Updated", "info", true, "", "✎", "edited the request"},
+	{"delete", "Deleted", "neutral", true, "", "", ""},
+	{"attach", "Attached", "info", true, "", "⇪", "attached a document"},
+	{"comment", "Commented", "info", true, "", "", "commented"},
+	{"submit", "Submitted", "good", true, "brand", "＋", "submitted the request"},
+	{"approve", "Approved", "good", true, "ok", "✓", "approved the request"},
+	{"return", "Returned", "warn", true, "warn", "↩", "returned the request for correction"},
+	{"reject", "Rejected", "bad", true, "bad", "✕", "rejected the request"},
+	{"withdraw", "Withdrawn", "warn", true, "bad", "✕", "withdrew the request"},
+	{"reraise", "Raised again", "info", true, "brand", "＋", "raised the request again"},
+	{"cancel_request", "Cancellation asked", "neutral", true, "", "", "asked for the request to be cancelled"},
+	{"cancel", "Cancelled", "bad", true, "bad", "✕", "cancelled the request"},
+	{"approval_reassign", "Approval reassigned", "info", true, "brand", "✎", "reassigned the approval"},
+	{"process", "Reserved", "info", true, "brand", "◷", "reserved it for processing"},
+	{"release", "Released", "info", true, "warn", "↩", "released the reservation"},
+	{"reassign", "Reservation reassigned", "info", true, "brand", "◷", "reassigned the reservation"},
+	{"hold", "Put on hold", "warn", true, "warn", "⏸", "put the request on hold"},
+	{"unhold", "Taken off hold", "good", true, "brand", "◷", "took the request off hold"}, // back in the takeable queue
+	{"settle", "Settled", "good", true, "ok", "✓", "settled the request"},
+	{"mark_partial", "Marked partial", "warn", true, "warn", "₹", "marked it a partial payment"},
+	{"accept_partial", "Partial accepted", "good", true, "ok", "✓", "accepted the partial payment"},
+	{"concern", "Concern raised", "bad", true, "warn", "₹", "raised a concern"},
+	{"remind", "Reminder sent", "info", true, "", "", ""},
+	{"recovery", "Recovery recorded", "neutral", true, "", "", ""},
+	{"void", "Voided", "bad", true, "bad", "✕", "voided the payment"},
+	{"lock", "Locked", "warn", true, "", "", ""},
+	{"unlock", "Unlocked", "warn", true, "", "", ""},
+	{"settings", "Settings saved", "info", true, "", "", ""},
+	{"export", "Exported", "neutral", true, "", "", ""},
+	{"login", "Logged in", "neutral", true, "", "", ""},
+	{"logout", "Logged out", "neutral", true, "", "", ""},
+	{"login_failed", "Login failed", "bad", true, "", "", ""},
+	{"edit", "Updated", "info", false, "", "", ""},
+	{"reserve", "Reserved", "info", false, "", "", ""},
+	{"view", "Viewed", "neutral", false, "", "", ""},
+	// Only history trails show these; the audit log shows them as they are.
+	{"record_payment", "", "", false, "ok", "₹", "recorded a payment"},
+	{"amend_payment", "", "", false, "", "✎", "corrected the payment"},
+	{"attach_payment", "", "", false, "", "⇪", "attached proof of payment"},
 }
 
 // auditActionByValue indexes auditActionTable by action.
@@ -223,7 +235,7 @@ var auditActionByValue = func() map[string]auditActionInfo {
 
 // actionText is an audit action's label; an unknown action shows as itself.
 func actionText(action string) string {
-	if info, ok := auditActionByValue[action]; ok {
+	if info := auditActionByValue[action]; info.Label != "" {
 		return info.Label
 	}
 	return action
@@ -232,10 +244,29 @@ func actionText(action string) string {
 // actionClass is the colour class of an audit action's pill ("neutral" for
 // an unknown action).
 func actionClass(action string) string {
-	if info, ok := auditActionByValue[action]; ok {
+	if info := auditActionByValue[action]; info.Class != "" {
 		return info.Class
 	}
 	return "neutral"
+}
+
+// auditTone is the colour class of an audit action's dot ("" for none).
+func auditTone(action string) string { return auditActionByValue[action].Tone }
+
+// auditGlyph is the symbol in an audit action's dot.
+func auditGlyph(action string) string {
+	if glyph := auditActionByValue[action].Glyph; glyph != "" {
+		return glyph
+	}
+	return "·"
+}
+
+// auditPhrase is the verb phrase that follows the actor's name on a trail.
+func auditPhrase(action string) string {
+	if phrase := auditActionByValue[action].Phrase; phrase != "" {
+		return phrase
+	}
+	return actionText(action)
 }
 
 // auditOption is one <option> of the audit screen's Entity or Action filter.
