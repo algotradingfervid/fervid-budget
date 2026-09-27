@@ -187,51 +187,41 @@ func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 	}
 }
 
-// ui-1 (c). Adding a user with no role used to answer with the full-page error
-// screen; Back closed the drawer and lost what was typed. The users page comes
-// back with the drawer open, an inline error, and the typed name, email and
-// roles still in place. The password is deliberately never echoed into HTML.
-func TestAddUserValidationKeepsTheDrawerAndTheInput(t *testing.T) {
+func TestGridPaymentActivityDoesNotDeclareOpenBalancesSettled(t *testing.T) {
 	s := newAppTestServer(t)
+	actor, head := s.seedHead("OutstandingBalances")
+	month := currentMonthForTest()
+	if err := s.st.SetBudget(s.ctx, actor, head, month, 1000000); err != nil {
+		t.Fatal(err)
+	}
 	s.loginAdmin()
-	resp := s.postForm("/users", url.Values{"email": {"nora@example.test"}, "name": {"Nora Test"}, "password": {"NoraPassword123"}, "active": {"on"}})
-	requireStatus(t, resp, http.StatusBadRequest)
-	body := responseBody(t, resp)
-	drawer := cut(body, `id="user-new"`, "</form>")
-	if drawer == "" || strings.HasPrefix(strings.TrimSpace(strings.SplitN(drawer, ">", 2)[0]), `id="user-new" hidden`) || strings.Contains(strings.SplitN(drawer, ">", 2)[0], "hidden") {
-		t.Fatalf("the Add user drawer is not open on the validation answer: %s", strings.SplitN(drawer, ">", 2)[0])
-	}
-	mustContain(t, "the reopened drawer", drawer, "Choose at least one role for the new user.", `value="nora@example.test"`, `value="Nora Test"`)
-	if strings.Contains(body, "NoraPassword123") {
-		t.Fatal("the password was echoed back into the page")
-	}
-	if strings.Contains(body, "error-code") {
-		t.Fatal("the full-page error screen answered a form validation error")
-	}
-
-	// A role that was ticked stays ticked when the password is what is wrong.
-	roleID := s.roleIDByName(t, "Requester")
-	resp = s.postForm("/users", url.Values{"email": {"nora@example.test"}, "name": {"Nora Test"}, "password": {"short"}, "role_ids": {roleID}})
-	requireStatus(t, resp, http.StatusBadRequest)
-	drawer = cut(responseBody(t, resp), `id="user-new"`, "</form>")
-	if !strings.Contains(drawer, fmt.Sprintf(`value="%s" checked`, roleID)) {
-		t.Fatal("the ticked role was lost on a password error")
-	}
-}
-
-// recoverables-6. At 390px every empty spacer cell in a t-cards tfoot became a
-// blank stripe in the total card. The spacers are desktop-only.
-func TestTCardsTotalRowsCarryNoEmptyMobileCells(t *testing.T) {
-	s := newAppTestServer(t)
-	s.loginAdmin()
-	for _, path := range []string{"/recoverables/list", "/vendors"} {
-		body := s.get(path)
-		tfoot := cut(body, "<tfoot>", "</tfoot>")
-		if tfoot == "" {
-			t.Fatalf("%s has no total row", path)
+	installment, _ := s.settleOneRequest(501, head, 1200000, "7000.00", "installment", month+"-01")
+	kept, _ := s.settleOneRequest(502, head, 60000, "100.00", "partial", month+"-01")
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", kept), url.Values{"decision": {"continue"}, "note": {"Pay the remaining 500 on next transfer"}}), http.StatusSeeOther)
+	s.settleOneRequest(503, head, 200000, "2000.00", "settled", month+"-01")
+	for id, wantRemaining := range map[int64]int64{installment: 500000, kept: 50000} {
+		req, err := s.st.Request(s.ctx, id)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if strings.Contains(tfoot, `<td data-label=""></td>`) {
-			t.Fatalf("%s's total row still has empty cells that restack into blank stripes on a phone: %s", path, tfoot)
+		if req.Status != "approved" || approvedOf(req)-req.PaidAmount != wantRemaining {
+			t.Fatalf("request %d status=%s remaining=%d", id, req.Status, approvedOf(req)-req.PaidAmount)
+		}
+	}
+	body := s.get("/grid?month=" + month)
+	row := cut(body, `<tr class="head`, `</tr>`)
+	t.Logf("Grid head row with ₹5,000 + ₹500 still payable: %s", row)
+	for _, want := range []string{"₹10,000.00", "₹9,100.00", "₹900.00", "Under budget", "Payment recorded"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("grid row missing %q", want)
+		}
+	}
+	if strings.Contains(row, ">Settled<") || strings.Contains(row, `duepill settled`) {
+		t.Fatal("payment activity falsely declares open request balances settled")
+	}
+	for _, status := range []string{"under", "on-track", "over", "unbudgeted"} {
+		if dueText("5", month, status) != "Payment recorded" {
+			t.Errorf("%s claims settlement from budget utilization", status)
 		}
 	}
 }

@@ -361,3 +361,55 @@ func TestApprovingARequestNotifiesTheRequester(t *testing.T) {
 		t.Fatalf("in-app title = %q", rows[0].Title)
 	}
 }
+
+// F-G-037 — the centre listed at most 100 rows while the count on the filter
+// strip directly above them had no cap at all, so a user past the cap read a
+// total the list could not account for and nothing said which rows were missing.
+func TestNotificationCentreNeverTruncatesInSilence(t *testing.T) {
+	s := newAppTestServer(t)
+	admin := s.admin()
+	const total = 105
+	for i := 1; i <= total; i++ {
+		seedNotification(t, s, admin.ID, "request_approved", "activity",
+			fmt.Sprintf("Notice %03d", i), fmt.Sprintf("/requests/%d", i))
+	}
+	s.loginAdmin()
+
+	first := s.get("/notifications")
+	if n := strings.Count(first, `<a class="notif`); n != notificationPageSize {
+		t.Fatalf("the first page drew %d rows, want %d", n, notificationPageSize)
+	}
+	for _, want := range []string{
+		"100 of 105 shown",
+		"Showing 1–100 of 105",
+		`href="/notifications?scope=all&amp;offset=100"`,
+		"Older",
+	} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("the centre does not admit its cap: %q missing from %s", want, firstLines(first))
+		}
+	}
+	if strings.Contains(first, "Newer") {
+		t.Fatal("the first page offers a newer page")
+	}
+	// Ordered newest first, so the five oldest are the ones held back.
+	if strings.Contains(first, "Notice 001") || !strings.Contains(first, "Notice 105") {
+		t.Fatal("the first page is not the newest 100")
+	}
+
+	rest := s.get("/notifications?scope=all&offset=100")
+	if n := strings.Count(rest, `<a class="notif`); n != 5 {
+		t.Fatalf("the second page drew %d rows, want 5", n)
+	}
+	mustContain(t, "the second page", rest, "Showing 101–105 of 105", "Notice 001", "Notice 005", "Newer")
+	if strings.Contains(rest, "Older") {
+		t.Fatal("the last page offers an older page")
+	}
+	// The scope rides along, so a page boundary never widens the filter. Every
+	// row seeded here is activity, so mentions has none of them and says so
+	// without a pager at all.
+	mentions := s.get("/notifications?scope=mentions")
+	if strings.Contains(mentions, "Showing ") {
+		t.Fatalf("an uncapped list rendered a pager: %s", firstLines(mentions))
+	}
+}

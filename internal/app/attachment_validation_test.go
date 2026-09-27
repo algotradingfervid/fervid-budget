@@ -177,3 +177,35 @@ func TestAttachmentLimitConfigurationRejectsUnsupportedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// form-6 (T10) — with attachments compulsory, a submit with no document and no
+// reason is refused, and a written reason unblocks it. The cited render-only
+// test proves the form asks; this proves the store enforces it on the real POST.
+func TestCompulsoryAttachmentsAreEnforcedOnSubmit(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Att")
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	if err := s.st.SetAppSetting(s.ctx, admin, "require_attachments", "1"); err != nil {
+		t.Fatal(err)
+	}
+	projectID := projectOf(t, s, headID)
+	_ = requester
+	s.login("rhea@example.test", "RheaPass12345")
+	body := func(reason string) url.Values {
+		return url.Values{
+			"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Team lunch"},
+			"amount": {"500"}, "purpose": {"team lunch"}, "expense_date": {"2026-07-21"},
+			"project_id": {strconvFormat(projectID)}, "head_id": {strconvFormat(headID)}, "manager_id": {strconvFormat(approver)},
+			"attachment_exception_reason": {reason},
+		}
+	}
+	refused := s.postForm("/requests", body(""))
+	requireStatus(t, refused, http.StatusBadRequest)
+	if page := responseBody(t, refused); !strings.Contains(page, "say why you cannot") {
+		t.Fatalf("a fileless, reasonless submit was not refused for the attachment policy: %s", firstLines(page))
+	}
+	accepted := s.postForm("/requests", body("Receipt arrives with the card statement on Monday"))
+	requireStatus(t, accepted, http.StatusSeeOther)
+	_ = responseBody(t, accepted)
+}

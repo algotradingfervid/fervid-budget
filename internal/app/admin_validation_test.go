@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -81,5 +82,37 @@ func TestInvalidNotificationRecipientsKeepDrawerAndInput(t *testing.T) {
 		if after.SubjectTemplate != before.SubjectTemplate || after.ToRecipients != before.ToRecipients || after.CcRecipients != before.CcRecipients {
 			t.Fatal("invalid notification save changed row")
 		}
+	}
+}
+
+// ui-1 (c). Adding a user with no role used to answer with the full-page error
+// screen; Back closed the drawer and lost what was typed. The users page comes
+// back with the drawer open, an inline error, and the typed name, email and
+// roles still in place. The password is deliberately never echoed into HTML.
+func TestAddUserValidationKeepsTheDrawerAndTheInput(t *testing.T) {
+	s := newAppTestServer(t)
+	s.loginAdmin()
+	resp := s.postForm("/users", url.Values{"email": {"nora@example.test"}, "name": {"Nora Test"}, "password": {"NoraPassword123"}, "active": {"on"}})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	drawer := cut(body, `id="user-new"`, "</form>")
+	if drawer == "" || strings.HasPrefix(strings.TrimSpace(strings.SplitN(drawer, ">", 2)[0]), `id="user-new" hidden`) || strings.Contains(strings.SplitN(drawer, ">", 2)[0], "hidden") {
+		t.Fatalf("the Add user drawer is not open on the validation answer: %s", strings.SplitN(drawer, ">", 2)[0])
+	}
+	mustContain(t, "the reopened drawer", drawer, "Choose at least one role for the new user.", `value="nora@example.test"`, `value="Nora Test"`)
+	if strings.Contains(body, "NoraPassword123") {
+		t.Fatal("the password was echoed back into the page")
+	}
+	if strings.Contains(body, "error-code") {
+		t.Fatal("the full-page error screen answered a form validation error")
+	}
+
+	// A role that was ticked stays ticked when the password is what is wrong.
+	roleID := s.roleIDByName(t, "Requester")
+	resp = s.postForm("/users", url.Values{"email": {"nora@example.test"}, "name": {"Nora Test"}, "password": {"short"}, "role_ids": {roleID}})
+	requireStatus(t, resp, http.StatusBadRequest)
+	drawer = cut(responseBody(t, resp), `id="user-new"`, "</form>")
+	if !strings.Contains(drawer, fmt.Sprintf(`value="%s" checked`, roleID)) {
+		t.Fatal("the ticked role was lost on a password error")
 	}
 }

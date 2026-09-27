@@ -1520,3 +1520,43 @@ func TestTheVendorNameSurvivesTheWholeSettlementFlow(t *testing.T) {
 		t.Fatalf("the payment detail h1 does not name the vendor:\n%s", detail)
 	}
 }
+
+// F-D-02 — ReserveRequest refuses for three reasons and the conflict screen
+// reported all three as "Someone else took this request before you", about a
+// request nobody held.
+func TestTheConflictScreenNamesTheRealRefusal(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Conflict causes")
+	requester := s.seedRequester("conflict@example.test", "Conflict Requester", "ConflictPass123")
+
+	s.loginAdmin()
+	held := s.seedApprovedRequest(998, requester.ID, admin.ID, headID, 100000)
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/hold", held),
+		url.Values{"reason": {"Which cost centre is this?"}}), http.StatusSeeOther)
+	resp := s.postForm(fmt.Sprintf("/requests/%d/record-payment", held), url.Values{})
+	requireStatus(t, resp, http.StatusConflict)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "is on hold") {
+		t.Fatalf("an on-hold refusal does not say so: %s", firstLines(body))
+	}
+	for _, lie := range []string{"took this request before you", "Someone else"} {
+		if strings.Contains(body, lie) {
+			t.Fatalf("the screen still claims %q about a request nobody holds", lie)
+		}
+	}
+	if !strings.Contains(body, "Which cost centre is this?") {
+		t.Fatal("the hold reason — the answer the accountant needs — is not on the screen")
+	}
+
+	// A completed request is neither taken nor on hold.
+	done, _ := s.settleOneRequest(999, headID, 100000, "1,000.00", "settled", "2026-05-15")
+	resp = s.postForm(fmt.Sprintf("/requests/%d/record-payment", done), url.Values{})
+	requireStatus(t, resp, http.StatusConflict)
+	body = responseBody(t, resp)
+	if !strings.Contains(body, "not available to process") {
+		t.Fatalf("a completed request is not reported as unavailable: %s", firstLines(body))
+	}
+	if strings.Contains(body, "took this request before you") {
+		t.Fatal("a completed request is still reported as somebody else's reservation")
+	}
+}

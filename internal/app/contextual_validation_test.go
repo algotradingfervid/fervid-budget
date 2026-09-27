@@ -126,3 +126,86 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 		t.Fatal("corrected valid approval did not commit")
 	}
 }
+
+// F-B-08 — every validation banner opened with the internal sentinel
+// "validation failed: ", which is not a sentence for a person.
+func TestValidationMessagesLoseTheSentinelPrefix(t *testing.T) {
+	s := newAppTestServer(t)
+	s.loginAdmin()
+	resp := s.postForm("/heads", url.Values{"project_id": {"0"}, "name": {""}, "due_day": {"5"}})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if strings.Contains(body, "validation failed") {
+		t.Fatalf("the banner still carries the sentinel: %s", firstLines(body))
+	}
+	if !strings.Contains(body, "project and head name are required") {
+		t.Fatalf("the banner lost the rule with the sentinel: %s", firstLines(body))
+	}
+}
+
+// F-E-08 / F-B-02 — a refused `type=recoverable` submission looked up a UI label
+// it has none of and answered "That is not a kind of request this system raises."
+// about a type the store had accepted seconds earlier, throwing the form away.
+func TestARefusedUnlabelledTypeKeepsItsRealReason(t *testing.T) {
+	s := newAppTestServer(t)
+	admin := s.admin()
+	approver := seedSecondApprover(t, s)
+	_ = admin
+	s.loginAdmin()
+	resp := s.postForm("/requests", url.Values{
+		"type": {"recoverable"}, "treatment": {"recoverable"},
+		"recoverable_category": {"pbg"}, "short_title": {"Bank guarantee"},
+		"amount": {"1,00,000.00"}, "purpose": {"guarantee against the tender"},
+		"expected_return_date": {"2027-01-01"}, "repayment_notes": {"Released on completion"},
+		"manager_id": {strconvFormat(approver)},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if strings.Contains(body, "not a kind of request this system raises") {
+		t.Fatalf("the refusal is about the wrong problem: %s", firstLines(body))
+	}
+	if !strings.Contains(body, "belongs to a project") {
+		t.Fatalf("the rule that actually refused it is not reported: %s", firstLines(body))
+	}
+}
+
+// F-D-14 — `/requests/new?type=recoverable` used to answer the chooser with no
+// explanation at all, and then (F-D-14's first reconciliation) a 400 on the
+// premise that "recoverable" was a treatment every card carried. It was not:
+// only the employee advance carried the radio, and that type pays the
+// requester, so the store's fifth type has its own card now (form-1). A ?type=
+// naming nothing is still a 400 on the chooser with the reason above it.
+func TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced(t *testing.T) {
+	s := newAppTestServer(t)
+	s.loginAdmin()
+
+	// No ?type= at all is step 1 of 2, unchanged and not an error.
+	chooser := s.request(http.MethodGet, "/requests/new", nil, "")
+	requireStatus(t, chooser, http.StatusOK)
+	if body := responseBody(t, chooser); strings.Contains(body, "alert error") {
+		t.Fatalf("the plain chooser reports an error: %s", firstLines(body))
+	}
+
+	resp := s.request(http.MethodGet, "/requests/new?type=mystery", nil, "")
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "not a request type this system raises") {
+		t.Fatalf("?type=mystery was bounced without an explanation: %s", firstLines(body))
+	}
+	// It is still the chooser: the reader lands on the cards they can actually
+	// use, with the reason above them.
+	if !strings.Contains(body, `class="type-grid"`) || strings.Count(body, `class="type-card"`) != 5 {
+		t.Fatalf("?type=mystery did not render the five-card chooser: %s", firstLines(body))
+	}
+
+	// Every store type has a card, so the two vocabularies cannot drift apart
+	// again without this failing.
+	if _, offered := requestTypeLabels["recoverable"]; !offered {
+		t.Fatal("the store's recoverable type has no chooser card; a deposit can only be raised as an employee advance again")
+	}
+	form := s.request(http.MethodGet, "/requests/new?type=recoverable", nil, "")
+	requireStatus(t, form, http.StatusOK)
+	if body := responseBody(t, form); !strings.Contains(body, `name="vendor_payee"`) || !strings.Contains(body, `<input type="hidden" name="treatment" value="recoverable">`) {
+		t.Fatalf("the deposit form does not ask who is paid on a fixed recoverable treatment: %s", firstLines(body))
+	}
+}

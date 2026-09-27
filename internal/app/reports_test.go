@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/csv"
-	"fervidbudget/internal/store"
 	"fmt"
 	"html"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"fervidbudget/internal/store"
 )
 
 func reportAnchor(t *testing.T, body, text string) string {
@@ -173,43 +174,4 @@ func TestReportMultiMonthTotalsCSVLabelAndPaymentScopes(t *testing.T) {
 		t.Fatal("empty report offers an inaccessible budget action")
 	}
 
-}
-
-func TestGridPaymentActivityDoesNotDeclareOpenBalancesSettled(t *testing.T) {
-	s := newAppTestServer(t)
-	actor, head := s.seedHead("OutstandingBalances")
-	month := currentMonthForTest()
-	if err := s.st.SetBudget(s.ctx, actor, head, month, 1000000); err != nil {
-		t.Fatal(err)
-	}
-	s.loginAdmin()
-	installment, _ := s.settleOneRequest(501, head, 1200000, "7000.00", "installment", month+"-01")
-	kept, _ := s.settleOneRequest(502, head, 60000, "100.00", "partial", month+"-01")
-	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", kept), url.Values{"decision": {"continue"}, "note": {"Pay the remaining 500 on next transfer"}}), http.StatusSeeOther)
-	s.settleOneRequest(503, head, 200000, "2000.00", "settled", month+"-01")
-	for id, wantRemaining := range map[int64]int64{installment: 500000, kept: 50000} {
-		req, err := s.st.Request(s.ctx, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if req.Status != "approved" || approvedOf(req)-req.PaidAmount != wantRemaining {
-			t.Fatalf("request %d status=%s remaining=%d", id, req.Status, approvedOf(req)-req.PaidAmount)
-		}
-	}
-	body := s.get("/grid?month=" + month)
-	row := cut(body, `<tr class="head`, `</tr>`)
-	t.Logf("Grid head row with ₹5,000 + ₹500 still payable: %s", row)
-	for _, want := range []string{"₹10,000.00", "₹9,100.00", "₹900.00", "Under budget", "Payment recorded"} {
-		if !strings.Contains(row, want) {
-			t.Errorf("grid row missing %q", want)
-		}
-	}
-	if strings.Contains(row, ">Settled<") || strings.Contains(row, `duepill settled`) {
-		t.Fatal("payment activity falsely declares open request balances settled")
-	}
-	for _, status := range []string{"under", "on-track", "over", "unbudgeted"} {
-		if dueText("5", month, status) != "Payment recorded" {
-			t.Errorf("%s claims settlement from budget utilization", status)
-		}
-	}
 }

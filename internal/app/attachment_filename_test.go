@@ -156,3 +156,38 @@ func TestConcurrentSameOriginalAttachmentNameGetsDistinctPrivateFiles(t *testing
 		t.Fatalf("cleanup left files: %v %v", files, err)
 	}
 }
+
+// F-A-05 / F-B-09 — request documents were linked to /attachments/{id}, which
+// reads payment_attachments. The link 404ed, or served an unrelated payment's
+// file under the request document's name.
+func TestRequestDocumentsLinkToTheirOwnRoute(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Doc links")
+	requester := s.seedRequester("docs@example.test", "Doc Requester", "DocPass12345")
+	id := s.seedPendingRequest(1401, requester.ID, admin.ID, headID, 100000)
+	attID, err := s.st.AddRequestAttachment(s.ctx, requester, id, s.seedAttachmentFile("invoice-mine.txt", "mine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("docs@example.test", "DocPass12345")
+	want := fmt.Sprintf(`href="/requests/%d/attachments/%d"`, id, attID)
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
+	if !strings.Contains(detail, want) {
+		t.Fatalf("the request detail does not link a document to its own route: %s", firstLines(detail))
+	}
+	if strings.Contains(detail, fmt.Sprintf(`href="/attachments/%d"`, attID)) {
+		t.Fatal("the request detail still points a request document at the payment attachment route")
+	}
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
+	if !strings.Contains(edit, want) {
+		t.Fatal("the correction screen lists a document with no way to open it")
+	}
+	// And the link works, which is the whole point.
+	resp := s.request(http.MethodGet, fmt.Sprintf("/requests/%d/attachments/%d", id, attID), nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "invoice-mine.txt") {
+		t.Fatalf("Content-Disposition = %q, want the requester's own document", cd)
+	}
+	_ = responseBody(t, resp)
+}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
 )
 
 // assertTCardsLabelled fails when any <td> inside a table.t-cards lacks a
@@ -326,5 +327,66 @@ func TestConfigurationRemindersFieldsetPersistsThresholds(t *testing.T) {
 	}
 	if th.PendingAfterDays != 5 || th.RepeatEveryDays != 2 || th.StaleAfterDays != 4 {
 		t.Fatalf("thresholds after save = %+v, want 5/2/4", th)
+	}
+}
+
+// F-G-016 / F-E-03 — the recoverables register is a second view over
+// payment_requests and applied no data scope at all, so recoverable_report:view
+// handed over every counterparty, amount, requester and repayment note in the
+// company regardless of the caller's request scope.
+func TestRecoverablesRegisterAppliesTheRequestDataScope(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, _ := s.seedHead("Recoverable scope")
+	other := s.seedRequester("other-rec@example.test", "Other Requester", "OtherRecPass123")
+	id := s.seedRecoverableRequest(951, other.ID, admin.ID, "icd", "Kalyani Steels", 500000)
+
+	// A role that pairs the register with a narrower request scope — exactly the
+	// role R1 exists to let an administrator build.
+	s.seedProbeUser("narrow@example.test", "Narrow Reader", "NarrowPass1234", "Register reader",
+		[]store.Grant{
+			{Resource: "recoverable_report", Action: "view"},
+			{Resource: "recoverable_report", Action: "export"},
+			{Resource: "request", Action: "view"},
+		},
+		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
+	s.login("narrow@example.test", "NarrowPass1234")
+
+	// The control: the same caller is refused the request itself.
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""), http.StatusNotFound)
+
+	list := s.get("/recoverables/list")
+	if strings.Contains(list, "Kalyani Steels") {
+		t.Fatal("the register lists a recoverable this caller is refused on /requests/{id}")
+	}
+	csv := s.get("/recoverables/list.csv")
+	for _, leak := range []string{"Kalyani Steels", "Other Requester"} {
+		if strings.Contains(csv, leak) {
+			t.Fatalf("the CSV discloses %q to a caller outside its data scope", leak)
+		}
+	}
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", id), nil, ""), http.StatusNotFound)
+
+	// And an administrator, who holds request=all, still sees everything.
+	s.loginAdmin()
+	if body := s.get("/recoverables/list"); !strings.Contains(body, "Kalyani Steels") {
+		t.Fatal("the scope filter hides a row from a caller who holds request=all")
+	}
+}
+
+// F-E-04 — the CSV carried Status, Requester and Repayment Notes and the screen
+// carried none of them, so nobody who had only ever read the register knew the
+// download said more.
+func TestRecoverablesRegisterShowsEveryColumnItsCSVExports(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, _ := s.seedHead("Column parity")
+	requester := s.seedRequester("columns@example.test", "Column Requester", "ColumnPass1234")
+	s.seedRecoverableRequest(961, requester.ID, admin.ID, "icd", "Parity Counterparty", 400000)
+
+	s.loginAdmin()
+	body := s.get("/recoverables/list")
+	for _, want := range []string{">Status<", ">Requester<", ">Repayment notes<", "Column Requester"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the register does not carry %q, which its own CSV exports", want)
+		}
 	}
 }

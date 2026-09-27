@@ -393,3 +393,82 @@ func TestPartialScreensNameThePayeeAndStopOwingAfterAcceptance(t *testing.T) {
 	mustContain(t, "closed payment", payment, "Balance written off")
 	mustNotContain(t, "closed payment", payment, "Still owed")
 }
+
+// PAY-D03: processing_by is retained as history after payment. It must not
+// offer reservation mutation on either terminal status.
+func TestPaidQueueOffersViewAndOnlyActiveReservationsOfferReassign(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("QueueTerminal")
+	colleague := s.seedRoleUser("queue-owner@example.test", "Queue Owner", "OwnerPass1234", "Accounts")
+	for seq, status := range []string{"completed", "completed_partial"} {
+		id := s.seedApprovedRequest(seq+1, admin.ID, admin.ID, headID, 12345)
+		if _, err := s.st.DB().Exec(`UPDATE payment_requests SET status=?,processing_by=?,processing_at=CURRENT_TIMESTAMP WHERE id=?`, status, colleague.ID, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active := s.seedApprovedRequest(3, admin.ID, admin.ID, headID, 45678)
+	if err := s.st.ReserveRequest(s.ctx, colleague, active); err != nil {
+		t.Fatal(err)
+	}
+	s.loginAdmin()
+	paid := s.get("/accounts-queue?tab=paid")
+	mustContain(t, "paid queue", paid, "PR-2026-000001", "PR-2026-000002", ">View</a>")
+	mustNotContain(t, "paid queue", paid, ">Reassign</a>", ">Resume</a>")
+	processing := s.get("/accounts-queue?tab=processing")
+	mustContain(t, "processing queue", processing, fmt.Sprintf(`href="/requests/%d/reservation">Reassign</a>`, active))
+}
+
+// PAY-D04: recreate a stale confirmation across a real reassignment. The
+// rejected POST must show the current holder, retain the accountant's inputs,
+// remove the mutation affordance, and leave both money and ownership intact.
+func TestStaleSettlementConfirmationShowsCurrentHolderAndCannotResubmit(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("StaleConfirm")
+	next := s.seedRoleUser("new-owner@example.test", "New Accounts Owner", "NextPass1234", "Accounts")
+	id := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 12345)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", id), url.Values{}), http.StatusSeeOther)
+	form := url.Values{"request_id": {strconvFormat(id)}, "head_id": {strconvFormat(headID)}, "amount": {"123.45"}, "paid_on": {"2026-07-23"}, "payment_mode": {"bank_transfer"}, "reference_no": {"STALE-REF-123"}, "remarks": {"Keep this processing note"}, "settlement": {"settled"}}
+	preview := responseBody(t, s.postForm(fmt.Sprintf("/requests/%d/settlement-preview", id), form))
+	mustContain(t, "original confirmation", preview, "Reserved by you", "Confirm and save payment")
+	if err := s.st.ReassignReservation(s.ctx, admin, id, next.ID, "Shift handover", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []bool{false, true} {
+		var body string
+		if fragment {
+			resp := s.postFormHX("/payments", form)
+			requireStatus(t, resp, http.StatusConflict)
+			body = responseBody(t, resp)
+		} else {
+			resp := s.postForm("/payments", form)
+			requireStatus(t, resp, http.StatusConflict)
+			body = responseBody(t, resp)
+			mustContain(t, "retained fields", body, "STALE-REF-123", "Keep this processing note")
+		}
+		mustContain(t, "stale confirmation", body, "Reserved by New Accounts Owner", "Your payment was not saved", "123.45", "View request", "Back to the queue")
+		mustNotContain(t, "stale confirmation", body, "Reserved by you", "Confirm and save payment", "Correct it and confirm again")
+	}
+	var count int
+	if err := s.st.DB().QueryRow(`SELECT count(*) FROM payments WHERE request_id=?`, id).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("stale confirmation wrote %d payments", count)
+	}
+	req, err := s.st.Request(s.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ProcessingBy == nil || *req.ProcessingBy != next.ID || req.Status != "processing" {
+		t.Fatalf("reservation changed: %+v", req)
+	}
+	s.login(next.Email, "NextPass1234")
+	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	if err := s.st.DB().QueryRow(`SELECT count(*) FROM payments WHERE request_id=? AND amount=12345`, id).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("new holder could not settle exactly once: %d", count)
+	}
+}

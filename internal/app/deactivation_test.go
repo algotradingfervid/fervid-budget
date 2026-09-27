@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"fervidbudget/internal/store"
 )
 
 // F-G-024: retiring a head with unfinished requests against it warns, names
@@ -143,5 +145,136 @@ func TestRequestsExportCarriesTheApprovedAmount(t *testing.T) {
 				t.Errorf("undecided row = %q, want an empty approved amount", line)
 			}
 		}
+	}
+}
+
+// F-G-033 — the heads screen listed every head and populated each row's project
+// select from the active projects only, so a head on a retired project had no
+// option of its own and that row's Save moved it.
+func TestHeadRowsOfferTheirOwnRetiredProject(t *testing.T) {
+	s := newAppTestServer(t)
+	admin := s.admin()
+	_ = admin
+	retiredID, err := s.st.UpsertProject(s.ctx, 0, "Retired Programme", true, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headID, err := s.st.UpsertHead(s.ctx, 0, retiredID, "Stranded head", "5", true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.UpsertProject(s.ctx, retiredID, "Retired Programme", false, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	s.loginAdmin()
+	body := s.get("/heads")
+	want := fmt.Sprintf(`<option value="%d" selected>Retired Programme (retired)</option>`, retiredID)
+	if !strings.Contains(body, want) {
+		t.Fatalf("the row offers no option for the head's own retired project: %s", firstLines(body))
+	}
+
+	// Saving the row unchanged leaves the head where it is.
+	requireStatus(t, s.postForm("/heads", url.Values{
+		"id": {strconvFormat(headID)}, "project_id": {strconvFormat(retiredID)},
+		"name": {"Stranded head"}, "due_day": {"5"}, "active": {"on"}, "sort_order": {"1"},
+	}), http.StatusSeeOther)
+	got := projectOf(t, s, headID)
+	if got != retiredID {
+		t.Fatalf("project_id = %d after an unchanged Save, want %d", got, retiredID)
+	}
+}
+
+// form-3 (T12) — a project or head retired after a request was raised is shown
+// on the edit form, marked, with the retirement explained; the historical
+// values are not silently blanked into "Choose a project" and a save is refused
+// for the retirement, not for a missing project.
+func TestEditFormOffersARetiredProjectBackAndSaysWhy(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Legacy")
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	projectID := projectOf(t, s, headID)
+	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{
+		Treatment: "budget", Type: "reimbursement", ShortTitle: "Legacy plant visit",
+		ProjectID: projectID, HeadID: headID, Amount: 120000, Purpose: "Original purpose",
+		ExpenseDate: "2026-07-01", ManagerID: approver,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.st.UpsertProject(s.ctx, projectID, "Operations Legacy", false, 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = admin
+
+	s.login("rhea@example.test", "RheaPass12345")
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
+	projectSelect := between(t, edit, `<select id="project"`, `</select>`)
+	if !strings.Contains(projectSelect, fmt.Sprintf(`<option value="%d" selected>Operations Legacy (retired)</option>`, projectID)) {
+		t.Fatalf("the retired project is not offered back, marked and selected: %s", projectSelect)
+	}
+	headSelect := between(t, edit, `<select id="head"`, `</select>`)
+	if !strings.Contains(headSelect, fmt.Sprintf(`<option value="%d" selected>Operations Legacy / Rent Legacy (retired)</option>`, headID)) {
+		t.Fatalf("the head under the retired project is not offered back, marked and selected: %s", headSelect)
+	}
+	if !strings.Contains(edit, "retired after it was raised") || !strings.Contains(edit, "Operations Legacy") {
+		t.Fatalf("the edit form does not explain the retirement: %s", firstLines(edit))
+	}
+
+	// Saving with the historical ids is refused for the retirement, in words.
+	resp := s.postForm(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Legacy plant visit"},
+		"amount": {"1,200"}, "purpose": {"Corrected purpose"}, "expense_date": {"2026-07-01"},
+		"project_id": {strconvFormat(projectID)}, "head_id": {strconvFormat(headID)}, "manager_id": {strconvFormat(approver)},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if strings.Contains(body, "project and head are required") {
+		t.Fatal("the refusal claims the request has no project and head; it has both, they were retired")
+	}
+	if !strings.Contains(body, "has been retired") {
+		t.Fatalf("the refusal does not name the retirement: %s", firstLines(body))
+	}
+	// And the refused form still shows the historical values, not blanks.
+	if !strings.Contains(body, "Operations Legacy (retired)") {
+		t.Fatalf("the refused form blanked the retired project: %s", firstLines(body))
+	}
+}
+
+// form-6 (T12) — a retired PROJECT (not only a head) disappears from the
+// new-request form, and the request raised against it keeps showing its name.
+func TestRetiredProjectIsHiddenFromNewRequestsAndKeptOnHistory(t *testing.T) {
+	s := newAppTestServer(t)
+	_, headID := s.seedHead("Legacy")
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	projectID := projectOf(t, s, headID)
+	id, err := s.st.CreateRequest(s.ctx, requester, store.RequestInput{
+		Treatment: "budget", Type: "reimbursement", ShortTitle: "Legacy plant visit",
+		ProjectID: projectID, HeadID: headID, Amount: 120000, Purpose: "site visit",
+		ExpenseDate: "2026-07-01", ManagerID: approver,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.login("rhea@example.test", "RheaPass12345")
+	before := s.get("/requests/new?type=vendor_invoice")
+	if !strings.Contains(between(t, before, `<select id="project"`, `</select>`), "Operations Legacy") {
+		t.Fatal("the live project is not offered on the new-request form, so the retirement below proves nothing")
+	}
+	if _, err := s.st.UpsertProject(s.ctx, projectID, "Operations Legacy", false, 1); err != nil {
+		t.Fatal(err)
+	}
+	after := s.get("/requests/new?type=vendor_invoice")
+	if strings.Contains(between(t, after, `<select id="project"`, `</select>`), "Operations Legacy") {
+		t.Fatal("a retired project is still offered for new requests")
+	}
+	if strings.Contains(between(t, after, `<select id="head"`, `</select>`), "Rent Legacy") {
+		t.Fatal("a head under a retired project is still offered for new requests")
+	}
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
+	if !strings.Contains(detail, "<dd>Operations Legacy</dd>") || !strings.Contains(detail, "<dd>Rent Legacy</dd>") {
+		t.Fatalf("the historical request lost its retired project or head name: %s", firstLines(detail))
 	}
 }

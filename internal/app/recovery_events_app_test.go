@@ -1,14 +1,15 @@
 package app
 
 import (
-	"fervidbudget/internal/auth"
-	"fervidbudget/internal/store"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+
+	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
 )
 
 func TestRecoveryHTTPWorkflowAndRefusedInputPreserved(t *testing.T) {
@@ -113,4 +114,22 @@ func TestRecoverableMobileFiltersExposeApplyResetAndSelectedState(t *testing.T) 
 		chunk = chunk[:end]
 	}
 	mustContain(t, "mobile filters", chunk, `name="category"`, `name="ageing"`, `value="overdue" selected`, "Apply filters", `href="/recoverables/list">Reset`)
+}
+
+func TestEditedRecoveryReplayDoesNotShowSuccess(t *testing.T) {
+	s := newAppTestServer(t)
+	_, head := s.seedHead("Recovery replay")
+	id := seedRecoverable(t, s, head, "PR-REPLAY-HTTP", "icd", "Replay Party", "2026-06-30", "2026-02-01", 700000)
+	s.loginAdmin()
+	path := fmt.Sprintf("/recoverables/%d/events", id)
+	form := url.Values{"kind": {"return"}, "amount": {"2000"}, "occurred_on": {"2026-02-02"}, "reference": {"ORIGINAL-RECEIPT"}, "note": {"Bank evidence"}, "token": {"http-recovery-replay-confirmation"}}
+	requireStatus(t, s.postForm(path, form), http.StatusSeeOther)
+	form.Set("amount", "3000")
+	form.Set("reference", "CHANGED-RECEIPT")
+	resp := s.postForm(path, form)
+	requireStatus(t, resp, http.StatusUnprocessableEntity)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "already recorded a different recovery") || !strings.Contains(body, `value="3000"`) {
+		t.Fatal("changed replay lacks clear refusal or loses typed amount")
+	}
 }
