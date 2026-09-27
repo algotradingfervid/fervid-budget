@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"fervidbudget/internal/password"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -61,10 +62,6 @@ func (s *Store) Seed(ctx context.Context, opts SeedOptions) (SeedResult, error) 
 	result.Heads = heads
 	result.Budgets = budgets
 	return result, nil
-}
-
-func (s *Store) SeedSampleData(ctx context.Context, month string) (SeedResult, error) {
-	return s.Seed(ctx, SeedOptions{Month: month})
 }
 
 func normalizeSeedOptions(opts SeedOptions) SeedOptions {

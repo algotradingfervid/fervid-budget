@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,10 +136,5 @@ func nullJSON(b []byte) any {
 	if string(b) == "null" {
 		return nil
 	}
-	return string(b)
-}
-
-func mustJSON(v any) string {
-	b, _ := json.Marshal(v)
 	return string(b)
 }

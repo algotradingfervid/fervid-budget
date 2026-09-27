@@ -116,25 +116,6 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 	return tx.Commit()
 }
 
-func (s *Store) setBudgetLegacy(ctx context.Context, actor User, headID int64, month string, amount int64) error {
-	// Kept as a small, explicit implementation reference for older callers.
-	var before *Budget
-	if b, err := s.Budget(ctx, headID, month); err == nil {
-		before = &b
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO budgets(head_id,month,amount) VALUES(?,?,?)
-		ON CONFLICT(head_id,month) DO UPDATE SET amount=excluded.amount, updated_at=CURRENT_TIMESTAMP`, headID, month, amount)
-	if err != nil {
-		return classify(err)
-	}
-	after, _ := s.Budget(ctx, headID, month)
-	action := "create"
-	if before != nil {
-		action = "update"
-	}
-	return s.RecordAudit(ctx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: action, EntityType: "budget", EntityID: &after.ID, Summary: "Saved budget " + money.FormatPaise(amount), Before: before, After: after})
-}
-
 func (s *Store) Budget(ctx context.Context, headID int64, month string) (Budget, error) {
 	var b Budget
 	err := s.db.QueryRowContext(ctx, `SELECT id,head_id,month,amount,created_at,updated_at FROM budgets WHERE head_id=? AND month=?`, headID, month).

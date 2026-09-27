@@ -8,20 +8,6 @@ import (
 	"time"
 )
 
-// RoleIDsIncludeAdmin reports whether any of these role ids is a system role
-// named Admin. It exists so the superseded users.role column can be kept in step
-// with the roles that actually grant permissions, rather than contradicting them.
-func (s *Store) RoleIDsIncludeAdmin(ctx context.Context, roleIDs []int64) bool {
-	for _, id := range roleIDs {
-		var name string
-		err := s.db.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, id).Scan(&name)
-		if err == nil && strings.EqualFold(name, "Admin") {
-			return true
-		}
-	}
-	return false
-}
-
 // CreateUser creates a user and lets the legacy role string decide their first
 // role, as it always has. Seeding and the tests use this shape.
 func (s *Store) CreateUser(ctx context.Context, email, name, hash, role string, active bool) (int64, error) {
@@ -433,11 +419,6 @@ func (s *Store) RecordFailedLogin(ctx context.Context, email string) (time.Time,
 		return time.Time{}, err
 	}
 	return until, nil
-}
-
-func (s *Store) ResetLoginAttempts(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET attempt_count=0,last_attempt=NULL,locked=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`, userID)
-	return classify(err)
 }
 
 // ResetLoginFailures is the email-oriented companion for login handlers that
