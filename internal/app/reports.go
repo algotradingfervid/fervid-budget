@@ -14,6 +14,12 @@ import (
 	"fervidbudget/internal/store"
 )
 
+// report shows budget against actual for a range of months (from/to, or a
+// single ?month=), grouped by the last path segment: monthly, projects or
+// heads. It can be narrowed to one project or head (by id, since names can
+// repeat or change); choosing a head always groups by head. When one head is
+// chosen and the reader has payment:view, that head's payments in the range
+// are listed below.
 func (a *App) report(w http.ResponseWriter, r *http.Request) {
 	from := validMonthOrCurrent(queryDefault(r, "from", r.URL.Query().Get("month")))
 	to := validMonthOrFallback(r.URL.Query().Get("to"), from)
@@ -22,7 +28,6 @@ func (a *App) report(w http.ResponseWriter, r *http.Request) {
 	}
 	mode := strings.TrimPrefix(r.URL.Path, "/reports/")
 	projectID, headID := parseID(r.URL.Query().Get("project_id")), parseID(r.URL.Query().Get("head_id"))
-	// A drilldown keeps stable IDs: names may overlap or be edited.
 	if headID > 0 {
 		mode = "heads"
 	} else if projectID > 0 && mode == "monthly" {
@@ -114,6 +119,8 @@ func (a *App) report(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "reports", data)
 }
 
+// safeReportBack keeps a "back" link only when it points at one of the three
+// report pages on this site; anything else becomes "".
 func safeReportBack(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.IsAbs() || u.Host != "" {
@@ -126,6 +133,8 @@ func safeReportBack(raw string) string {
 	return ""
 }
 
+// reportDetailURL is the link from a report row to the next level down for
+// that row's month: a project's heads, or one head.
 func reportDetailURL(row store.ReportRow, back string) string {
 	mode := "projects"
 	q := url.Values{"from": {row.Period}, "to": {row.Period}}
@@ -142,6 +151,8 @@ func reportDetailURL(row store.ReportRow, back string) string {
 	return "/reports/" + mode + "?" + q.Encode()
 }
 
+// exportGrid downloads the variance grid for a month (with the grid's
+// status and search filters) as variance-YYYY-MM.csv. The export is audited.
 func (a *App) exportGrid(w http.ResponseWriter, r *http.Request) {
 	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	grid, err := a.st.Grid(r.Context(), month, r.URL.Query().Get("status"), r.URL.Query().Get("q"))
@@ -160,11 +171,12 @@ func (a *App) exportGrid(w http.ResponseWriter, r *http.Request) {
 }
 
 // reportLevels are the three groupings store.Report knows, which are also the
-// three /reports/* paths. The CSV takes the level as a parameter so a download
-// pressed from the Projects or Monthly tab exports that tab (F-G-031); it used to
-// hardcode "heads" whichever tab it was pressed from.
+// three /reports/* paths.
 var reportLevels = map[string]bool{"monthly": true, "projects": true, "heads": true}
 
+// exportYTD downloads a report as CSV for a month range (default: the whole
+// of ?year=, or this year) at the ?level= of the tab it was pressed from
+// (default "heads"). The export is audited.
 func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 	year := queryDefault(r, "year", time.Now().Format("2006"))
 	from := validMonthOrFallback(r.URL.Query().Get("from"), year+"-01")
@@ -191,6 +203,7 @@ func (a *App) exportYTD(w http.ResponseWriter, r *http.Request) {
 		[]string{"Period", "Project", "Head", "Budget", "Actual", "Variance", "Variance %"}, cells)
 }
 
+// nonEmptyReportRows drops rows with neither budget nor spend.
 func nonEmptyReportRows(rows []store.ReportRow) []store.ReportRow {
 	out := rows[:0]
 	for _, row := range rows {
@@ -201,6 +214,7 @@ func nonEmptyReportRows(rows []store.ReportRow) []store.ReportRow {
 	return out
 }
 
+// summarizeReports adds up the report rows into the totals row.
 func summarizeReports(rows []store.ReportRow) ReportSummary {
 	var s ReportSummary
 	s.Rows = len(rows)

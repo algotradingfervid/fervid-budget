@@ -15,10 +15,10 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// paymentForm has two branches and no third. Without ?request= it is the
-// picker: every payment belongs to exactly one approved request, so choosing
-// one is the first step rather than an optional extra. With ?request= it is the
-// entry screen for a reservation the caller holds.
+// paymentForm starts recording a payment. Every payment belongs to an
+// approved request, so without ?request= it shows the picker of requests to
+// pay; with ?request= it shows the entry form for a request the caller has
+// reserved.
 func (a *App) paymentForm(w http.ResponseWriter, r *http.Request) {
 	linkedID := parseID(r.URL.Query().Get("request"))
 	if linkedID == 0 {
@@ -33,14 +33,14 @@ func (a *App) paymentForm(w http.ResponseWriter, r *http.Request) {
 	a.paymentEntry(w, r, linkedID)
 }
 
+// payments shows the payment ledger for a month, filtered by status (default
+// "active") and search text, with the total of the payments that are not
+// voided. The caller's payment scope decides which payments are listed: "own"
+// and "assigned" show only payments they entered.
 func (a *App) payments(w http.ResponseWriter, r *http.Request) {
 	month := validMonthOrCurrent(r.URL.Query().Get("month"))
 	status := queryDefault(r, "status", "active")
 	q := r.URL.Query().Get("q")
-	// The `payment` data scope is one of the two scoped resources, and until the
-	// viewer reached ListPayments a role built with Payments · Own received the
-	// whole ledger (F-A-04/F-G-003). The store mirrors requestWhere: only "own"
-	// and "assigned" narrow.
 	u := auth.CurrentUser(r)
 	payments, err := a.st.ListPayments(r.Context(), store.PaymentListOptions{
 		Month: month, Status: status, Query: q,
@@ -59,9 +59,15 @@ func (a *App) payments(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "payments", PageData{Title: "Payments", Month: month, Status: status, Query: q, Payments: payments, PaymentTotal: total, Locked: a.st.IsLocked(r.Context(), month)})
 }
 
-// paymentCreate is the only user-reachable way a payment is created, and it
-// creates nothing that is not linked to a request the caller holds (X5). The
-// free-standing create survives in the store as a seed/import helper only.
+// paymentCreate records a payment against a request the caller has reserved
+// (this is the only way users create payments). "settlement" is "settled"
+// (the request is paid in full and closes) or "partial" (the approver is asked
+// to accept the shortfall, which also needs payment:mark_partial). An optional
+// proof-of-payment file is saved with it.
+//
+// Pressing confirm twice (back button, double tap) does not fail: when this
+// request already has the payment from the same form, the user goes to it,
+// with a note that nothing new was saved.
 func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	u := auth.CurrentUser(r)
 	linkedID := parseID(r.FormValue("request_id"))
@@ -73,9 +79,6 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settlement := r.FormValue("settlement")
-	// Writing off a shortfall to the approver's queue is its own decision, and
-	// payment:mark_partial is the verb the vocabulary declares for it. It cannot
-	// be a route gate because it applies to one value of one field (F-D-10).
 	if settlement == "partial" && !a.auth.Can(u, "payment", "mark_partial") {
 		a.respondError(w, r, http.StatusForbidden,
 			"You do not have permission to record a partial payment.", nil)
@@ -94,10 +97,6 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		removeStagedAttachment(a.log, r, attachmentPath)
-		// A double-confirm (back button, double tap) must not look like a
-		// failure: the payment this request needed already exists, so go to it —
-		// saying that nothing new was written, because a repeat carrying a
-		// different figure otherwise landed under "Payment saved" (settlement-5).
 		if pay, perr := a.st.PaymentBySubmission(r.Context(), linkedID, u.ID, in.SubmissionKey); perr == nil {
 			a.redirectToPayment(w, r, pay.ID, "duplicate")
 			return
@@ -105,9 +104,8 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 		a.settlementError(w, r, linkedID, in, r.FormValue("amount"), settlement, partialReason, err)
 		return
 	}
-	// A settled payment closes the request; a partial one asks the approver to
-	// accept the shortfall. They are different events because they ask
-	// different people for different things.
+	// A settled payment tells the requester the request is closed; a partial
+	// one asks the approver to accept the shortfall.
 	if settlement == "settled" {
 		a.fire(r, notify.EventPaymentSettled, linkedID)
 	} else if settlement == "partial" {
@@ -116,23 +114,26 @@ func (a *App) paymentCreate(w http.ResponseWriter, r *http.Request) {
 	a.redirectToPayment(w, r, payID, "saved")
 }
 
-// paymentOutcomeCookie carries how the payment screen was reached across the
-// redirect from the write — "saved", "duplicate" or "immutable", bound to one
-// payment id. A cookie rather than a query token, so the landing URL stays
-// /payments/{id} and a refresh, a bookmark or a shared link never replays
-// "Payment saved" (settlement-5). It is read once and cleared.
+// paymentOutcomeCookie carries how the payment page was reached ("saved",
+// "duplicate" or "immutable") across the redirect, tied to one payment id. A
+// cookie rather than a query parameter keeps the URL /payments/{id}, so a
+// refresh, bookmark or shared link never shows "Payment saved" again. It is
+// read once and cleared.
 const paymentOutcomeCookie = "fervid_payment_outcome"
 
+// paymentOutcomes are the outcomes the payment page knows.
 var paymentOutcomes = map[string]bool{"saved": true, "duplicate": true, "immutable": true}
 
+// redirectToPayment sends the user to the payment's page, carrying outcome
+// in a five-minute cookie (see paymentOutcomeCookie).
 func (a *App) redirectToPayment(w http.ResponseWriter, r *http.Request, payID int64, outcome string) {
 	http.SetCookie(w, &http.Cookie{Name: paymentOutcomeCookie, Value: fmt.Sprintf("%s:%d", outcome, payID),
 		Path: "/payments", MaxAge: 300, HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", payID), http.StatusSeeOther)
 }
 
-// takePaymentOutcome reads and clears the one-shot outcome. Anything not
-// issued by redirectToPayment for this very payment is ignored, never echoed.
+// takePaymentOutcome reads and clears the one-time outcome. A cookie for a
+// different payment, or with an unknown outcome, is ignored.
 func (a *App) takePaymentOutcome(w http.ResponseWriter, r *http.Request, payID int64) string {
 	c, err := r.Cookie(paymentOutcomeCookie)
 	if err != nil {
@@ -147,12 +148,15 @@ func (a *App) takePaymentOutcome(w http.ResponseWriter, r *http.Request, payID i
 	return outcome
 }
 
-// paymentDetail is one screen with two readings. A payment linked to a request
-// is the end of that request's story, so it shows what was approved beside what
-// was paid and the whole trail from submission to settlement — and offers
-// nothing that would change it (S12). A historical, request-less payment is
-// still a ledger row and keeps the pre-Phase-3 screen until Phase 6 redraws the
-// ledger (X6).
+// paymentDetail shows one payment. A payment linked to a request shows the
+// request too (what was approved beside what was paid, both documents lists,
+// and one history from submission to settlement) and offers no changes. An
+// older payment without a request shows its own history and whether its month
+// is locked.
+//
+// Whoever may not read the payment gets the same 404 as for a missing one: for
+// a linked payment that is anyone whose request scope does not reach the
+// request, otherwise anyone whose payment scope does not reach the payment.
 func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	p, err := a.st.Payment(r.Context(), id)
@@ -171,31 +175,16 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 			a.respondStoreError(w, r, rerr)
 			return
 		}
-		// Half this screen is the request: its number, its people, its whole
-		// history. Reading it therefore obeys the same row scope /requests/{id}
-		// obeys, or payment:view becomes a way around Q5/R6.
 		if !a.canSeeRequest(r, req) {
-			// 404, not 403, and the same sentence a missing payment gets. This was
-			// the last route where the pair still distinguished "exists but is not
-			// yours" from "does not exist", which is the enumeration oracle F-G-002
-			// closed on /requests/{id} and Wave 3 closed on both attachment routes.
-			// It was never in that finding's scope, so nobody looked at it until two
-			// spec agents arrived at it independently from opposite directions.
 			a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
 				fmt.Errorf("payment %d belongs to request %d, outside the caller's data scope", p.ID, req.ID))
 			return
 		}
-		// The trail the screen shows spans both entities: the request from
-		// submission to approval, then the payment from reservation to
-		// settlement. There is no store read across entity types, so the two
-		// audit listings are merged and ordered oldest-first.
-		trail, terr := a.mergedTrail(r, req.ID, p.ID)
+		trail, terr := a.mergedTrail(r, req.ID)
 		if terr != nil {
 			a.respondStoreError(w, r, terr)
 			return
 		}
-		// The proof list is both halves too: the bank advice Accounts uploaded
-		// and the invoice the request came in with (payment-detail.html).
 		reqAtts, aerr := a.st.RequestAttachments(r.Context(), req.ID)
 		if aerr != nil {
 			a.respondStoreError(w, r, aerr)
@@ -207,9 +196,6 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// An unlinked payment obeys the payment scope the ledger obeys, as its
-	// attachment routes already do through canReadPayment: a row the ledger
-	// hides is not reachable by id either (fixwave rbac-2).
 	u := auth.CurrentUser(r)
 	if !paymentScopeReaches(a.auth.Scope(u, "payment"), u.ID, p) {
 		a.respondError(w, r, http.StatusNotFound, "The requested record was not found.",
@@ -357,11 +343,11 @@ func (a *App) canReadPayment(r *http.Request, p store.Payment) bool {
 	return a.userReadsPayment(r.Context(), auth.CurrentUser(r), p)
 }
 
-// paymentScopeReaches mirrors ListPayments' scope filter exactly, so a caller
-// who cannot see a payment in the ledger cannot see it by id either: "own" and
-// "assigned" narrow to what the caller entered, "all" reaches everything, and
-// anything else — including the empty scope, the role editor's "None" — reaches
-// nothing (fixwave rbac-2).
+// paymentScopeReaches applies the ledger's payment-scope rule to one payment,
+// so a payment hidden from the ledger cannot be opened by id either: "all"
+// reaches every payment, "own" and "assigned" only payments the viewer
+// entered, and anything else (including no scope, "None" in the role
+// editor) reaches nothing.
 func paymentScopeReaches(scope string, viewerID int64, p store.Payment) bool {
 	switch scope {
 	case store.ScopeAll:
@@ -373,6 +359,9 @@ func paymentScopeReaches(scope string, viewerID int64, p store.Payment) bool {
 	}
 }
 
+// paymentInput reads the payment form. It refuses (as a validation error) a
+// malformed balance check value, an amount that does not parse, and, for a
+// payment against a request, a blank transaction reference.
 func paymentInput(r *http.Request) (store.PaymentInput, error) {
 	in := store.PaymentInput{
 		SubmissionKey: r.FormValue("submission_key"),
@@ -399,9 +388,11 @@ func paymentInput(r *http.Request) (store.PaymentInput, error) {
 	if parseID(r.FormValue("request_id")) > 0 && in.ReferenceNo == "" {
 		return in, fmt.Errorf("%w: enter a transaction or payment reference; spaces alone are not a reference", store.ErrValidation)
 	}
-	return in, err
+	return in, nil
 }
 
+// paymentFormValues turns what was typed into the edit form back into a
+// Payment, so a refused edit can show the form again as the user left it.
 func paymentFormValues(in store.PaymentInput) store.Payment {
 	return store.Payment{
 		HeadID:      in.HeadID,
