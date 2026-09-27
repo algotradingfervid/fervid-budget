@@ -1,3 +1,5 @@
+// bootstrap.go creates the very first administrator on an empty database.
+
 package store
 
 import (

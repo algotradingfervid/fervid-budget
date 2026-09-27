@@ -1,3 +1,7 @@
+// seed.go fills a new database for a first run or a demo: the first
+// administrator and, when there are no projects yet, sample projects, heads
+// and budgets.
+
 package store
 
 import (
@@ -7,6 +11,7 @@ import (
 	"strings"
 
 	"fervidbudget/internal/password"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -16,6 +21,9 @@ const (
 	defaultSeedMonth      = "2026-06"
 )
 
+// SeedOptions configures Seed. Empty fields fall back to the defaults above;
+// the administrator's password is given either in clear (then checked against
+// the password rules and hashed) or already hashed.
 type SeedOptions struct {
 	AdminEmail        string
 	AdminName         string
@@ -24,6 +32,7 @@ type SeedOptions struct {
 	Month             string
 }
 
+// SeedResult reports what Seed created.
 type SeedResult struct {
 	AdminCreated  bool
 	SampleCreated bool
@@ -33,6 +42,9 @@ type SeedResult struct {
 	Budgets       int
 }
 
+// Seed creates the administrator if their email is not yet taken and, on a
+// database with no projects, heads or budgets, three sample projects with
+// budgets for opts.Month. Running it again changes nothing.
 func (s *Store) Seed(ctx context.Context, opts SeedOptions) (SeedResult, error) {
 	opts = normalizeSeedOptions(opts)
 	var result SeedResult
@@ -52,21 +64,11 @@ func (s *Store) Seed(ctx context.Context, opts SeedOptions) (SeedResult, error) 
 		return result, nil
 	}
 
-	projects, heads, budgets, err := s.createSampleBudgetData(ctx, admin, opts.Month)
-	if err != nil {
-		return result, err
-	}
-	result.SampleCreated = true
-	result.Projects = projects
-	result.Heads = heads
-	result.Budgets = budgets
-	return result, nil
+	err = s.createSampleBudgetData(ctx, admin, opts.Month, &result)
+	return result, err
 }
 
-func (s *Store) SeedSampleData(ctx context.Context, month string) (SeedResult, error) {
-	return s.Seed(ctx, SeedOptions{Month: month})
-}
-
+// normalizeSeedOptions fills in the default email, name and month.
 func normalizeSeedOptions(opts SeedOptions) SeedOptions {
 	opts.AdminEmail = strings.ToLower(strings.TrimSpace(opts.AdminEmail))
 	if opts.AdminEmail == "" {
@@ -82,6 +84,8 @@ func normalizeSeedOptions(opts SeedOptions) SeedOptions {
 	return opts
 }
 
+// ensureSeedAdmin returns the administrator named in opts, creating them when
+// missing; created reports whether it did.
 func (s *Store) ensureSeedAdmin(ctx context.Context, opts SeedOptions) (User, bool, error) {
 	existing, err := s.UserByEmail(ctx, opts.AdminEmail)
 	if err == nil {
@@ -109,6 +113,7 @@ func (s *Store) ensureSeedAdmin(ctx context.Context, opts SeedOptions) (User, bo
 	return admin, true, err
 }
 
+// sampleDataEmpty reports whether there are no projects, heads or budgets.
 func (s *Store) sampleDataEmpty(ctx context.Context) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT
@@ -121,34 +126,35 @@ func (s *Store) sampleDataEmpty(ctx context.Context) (bool, error) {
 	return count == 0, nil
 }
 
-func (s *Store) createSampleBudgetData(ctx context.Context, actor User, month string) (int, int, int, error) {
+// createSampleBudgetData creates sampleProjects with their heads and budgets for
+// month, counting what it created into result.
+func (s *Store) createSampleBudgetData(ctx context.Context, actor User, month string, result *SeedResult) error {
 	if actor.ID == 0 {
-		return 0, 0, 0, fmt.Errorf("%w: seed actor is required", ErrValidation)
+		return fmt.Errorf("%w: seed actor is required", ErrValidation)
 	}
-	projectCount := 0
-	headCount := 0
-	budgetCount := 0
 	for i, project := range sampleProjects {
 		projectID, err := s.UpsertProject(ctx, 0, project.Name, true, i+1)
 		if err != nil {
-			return projectCount, headCount, budgetCount, err
+			return err
 		}
-		projectCount++
+		result.Projects++
 		for j, head := range project.Heads {
 			headID, err := s.UpsertHead(ctx, 0, projectID, head.Name, head.DueDay, true, j+1)
 			if err != nil {
-				return projectCount, headCount, budgetCount, err
+				return err
 			}
-			headCount++
+			result.Heads++
 			if err := s.SetBudget(ctx, actor, headID, month, head.Budget); err != nil {
-				return projectCount, headCount, budgetCount, err
+				return err
 			}
-			budgetCount++
+			result.Budgets++
 		}
 	}
-	return projectCount, headCount, budgetCount, nil
+	result.SampleCreated = true
+	return nil
 }
 
+// sampleProject and sampleHead describe the demo data.
 type sampleProject struct {
 	Name  string
 	Heads []sampleHead

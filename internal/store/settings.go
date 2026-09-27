@@ -1,8 +1,12 @@
+// settings.go reads and saves the runtime key/value settings shown on the
+// Configuration screen.
+
 package store
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 	"strings"
 )
@@ -11,14 +15,14 @@ import (
 func (s *Store) AppSetting(ctx context.Context, key string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key=?`, key).Scan(&v)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return v, err
 }
 
 // AppSettings returns every runtime setting. The Configuration screen renders
-// from this one map (D6).
+// from this one map.
 func (s *Store) AppSettings(ctx context.Context) (map[string]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT key,value FROM app_settings`)
 	if err != nil {
@@ -42,7 +46,7 @@ func (s *Store) SetAppSetting(ctx context.Context, actor User, key, value string
 }
 
 // SetAppSettings upserts a batch of settings in one transaction with one audit
-// row, so a Configuration save is all-or-nothing (house pattern).
+// row, so a Configuration save is all-or-nothing.
 func (s *Store) SetAppSettings(ctx context.Context, actor User, values map[string]string) error {
 	if len(values) == 0 {
 		return nil
@@ -73,9 +77,8 @@ func (s *Store) SetAppSettings(ctx context.Context, actor User, values map[strin
 			return classify(err)
 		}
 	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "settings",
-		EntityType: "app_setting", Summary: "Updated configuration: " + strings.Join(keys, ", "),
-		Before: before, After: after}); err != nil {
+	if err := recordAuditTx(ctx, tx, auditBy(actor, "settings", "app_setting", nil,
+		"Updated configuration: "+strings.Join(keys, ", ")).withChange(before, after)); err != nil {
 		return err
 	}
 	return tx.Commit()
