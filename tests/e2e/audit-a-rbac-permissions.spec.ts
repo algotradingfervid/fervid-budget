@@ -1685,31 +1685,18 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toBeChecked();
   });
 
-  test('TC-A-119 — seven granted verbs are named by no route gate, four of them by nothing at all', async () => {
-    // Transcribed from the permission gates across internal/app/app.go and
-    // cross-checked against templates. A verb an administrator can grant, and
-    // that nothing consumes, is a promise the product does not keep.
+  test('TC-A-119 — five granted verbs are named by no route gate, two of them by nothing at all', async () => {
+    // Transcribed from the route table's permission gates and the save handlers
+    // that check a verb themselves, cross-checked against templates. A verb an
+    // administrator can grant, and that nothing consumes, is a promise the
+    // product does not keep.
     //
-    // WHY THE PINNED NUMBERS MOVED, 55 → 59 and 9 → 4. Four verbs acquired a
-    // route gate during the repair, and each is a finding closing, not a
-    // transcription being tidied:
-    //   · grid:view              — GET /grid was RequireLogin only (F-A-02),
-    //                              app.go:439.
-    //   · approval:reassign      — A7 had no door at all; POST
-    //                              /requests/{id}/reassign-approver is it
-    //                              (F-A-06/F-C-02), app.go:577.
-    //   · recoverable_category:delete — the category could be created and edited
-    //                              but never removed (F-E-06), app.go:614.
-    //   · user:create            — the ＋ Add user control was gated on it while
-    //                              its POST asked for user:edit (F-A-07). The
-    //                              route now takes BOTH through `requireAnyOf`
-    //                              (app.go:598) and `userSave` demands whichever
-    //                              one the press actually needs, which is why
-    //                              user:create and user:edit both count here even
-    //                              though neither appears in a RequirePermission
-    //                              call any more.
-    // Nothing was removed from the set. If a future change deletes a gate this
-    // list will fail on the size, which is the point of pinning it.
+    // Three saves serve both "create" and "edit" from one route, so each checks
+    // the verb the press needs inside its handler — create when `id` is 0, edit
+    // otherwise — and both verbs count here: `userSave` (behind
+    // `requireAnyOf("user", ["create","edit"])`), `projectSave` and `headSave`.
+    // If a change deletes a gate, this list fails on the size, which is the
+    // point of pinning it.
     const routeGates = new Set([
       'month:view', 'month:create', 'month:lock',
       'payment:view', 'payment:create', 'payment:edit', 'payment:void', 'payment:process',
@@ -1719,7 +1706,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'recoverable_report:view', 'recoverable_report:export',
       'recoverable_category:edit', 'recoverable_category:delete',
       'notification:view', 'notification:edit',
-      'budget:view', 'budget:edit', 'project:view', 'project:edit', 'head:view', 'head:edit',
+      'budget:view', 'budget:edit',
+      'project:view', 'project:create', 'project:edit', 'head:view', 'head:create', 'head:edit',
       'vendor:view', 'vendor:create', 'vendor:edit',
       'request:view', 'request:create', 'request:edit', 'request:withdraw', 'request:reraise',
       'request:comment', 'request:cancel',
@@ -1729,30 +1717,31 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'user:view', 'user:create', 'user:edit', 'role:view', 'role:edit', 'role:create', 'role:delete',
       'config:view', 'config:edit', 'audit:view', 'backup:view', 'backup:create'
     ]);
-    expect(routeGates.size, 'routes() names 59 distinct pairs').toBe(59);
+    expect(routeGates.size, 'routes and save handlers name 61 distinct pairs').toBe(61);
 
     const all = Object.entries(VOCABULARY).flatMap(([r, acts]) => acts.map(a => `${r}:${a}`));
     const unconsumed = all.filter(p => !routeGates.has(p)).sort();
-    expect(unconsumed, 'the pairs no route gate names — F-A-06').toEqual([
-      'head:create',
+    expect(unconsumed, 'the pairs no route gate names').toEqual([
       'payment:mark_partial',
-      'project:create',
       'recoverable_category:create',
       'recoverable_category:view',
       'vendor_bank:edit',
       'vendor_bank:view'
     ]);
-    // Three of the seven are enforced *below* the route, which is the right place
+    // Three of the five are enforced *below* the route, which is the right place
     // for each of them: the store leaves the bank columns out of its SELECT
-    // without vendor_bank:view (store/vendors.go:16,48) and the vendor form
-    // disables them without vendor_bank:edit; and payment:mark_partial cannot be
-    // a route gate at all, because it applies to one value of one field —
-    // `paymentCreate` checks it when settlement=partial (app.go:847, F-D-10).
-    // The remaining four are consulted by nothing: no route, no handler, no
-    // template. They are still a lie the roles screen tells.
+    // without vendor_bank:view and the vendor form disables them without
+    // vendor_bank:edit; and payment:mark_partial cannot be a route gate at all,
+    // because it applies to one value of one field — `paymentCreate` checks it
+    // when settlement=partial. The remaining two are consulted by nothing: no
+    // route, no handler, no template. They are still a promise the roles screen
+    // makes and the product does not keep.
     const enforcedBelowTheRoute = ['payment:mark_partial', 'vendor_bank:view', 'vendor_bank:edit'];
     const enforcedNowhere = unconsumed.filter(p => !enforcedBelowTheRoute.includes(p));
-    expect(enforcedNowhere.length, 'four pairs are enforced by nothing at all — F-A-06').toBe(4);
+    expect(enforcedNowhere, 'two pairs are enforced by nothing at all').toEqual([
+      'recoverable_category:create',
+      'recoverable_category:view'
+    ]);
     // Every gate a route does name has to be inside the vocabulary, or an
     // administrator could never grant it and the route would be dead.
     const outsideVocabulary = [...routeGates].filter(p => !all.includes(p));
