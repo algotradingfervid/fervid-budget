@@ -49,7 +49,10 @@ import {
   createApprovedRequest,
   createApproverUser,
   login,
-  settlePayment
+  settlePayment,
+  thisMonth,
+  today,
+  pdfUpload
 } from './fixtures';
 import {
   asRole,
@@ -63,7 +66,7 @@ import {
 } from './audit-support';
 
 /** Every payment this file records lands in the current seeded month. */
-const PAID_ON = '2026-07-20';
+const PAID_ON = today();
 /** What `.rh-status .pill` reads while a request is reserved. */
 const RESERVED = 'With Accounts';
 
@@ -607,6 +610,9 @@ test.describe('D · reservation entry points and the linkable set', () => {
 
   test('TC-D-014 — the queue search narrows the rows without moving the counts', async ({ browser }) => {
     const c = await corpus(browser);
+    // The corpus leaves only one request takeable, so a second one is raised
+    // here: the search needs more than one row to narrow.
+    await createApprovedRequest(c.admin, `${c.runId}-narrow`, { amount: '1234.00' });
     await c.admin.goto('/accounts-queue?tab=approved');
     const metrics = c.admin.locator('.metric-strip .metric .metric-value');
     await expect(metrics, 'the queue carries four metric tiles').toHaveCount(4);
@@ -1531,7 +1537,7 @@ test.describe('D · the entry screen and its prefill', () => {
       'the payment detail’s h1 is the payee, and it is not blank'
     ).toHaveText(payee);
 
-    await c.admin.goto(`/payments?month=2026-07&q=${encodeURIComponent(payee)}`);
+    await c.admin.goto(`/payments?month=${thisMonth()}&q=${encodeURIComponent(payee)}`);
     const ledgerRow = c.admin.locator('tbody tr').filter({ has: c.admin.locator(`a[href="${payment}"]`) });
     await expect(ledgerRow, 'and the ledger row is findable by the payee it was written with').toHaveCount(1);
     await expect(ledgerRow.locator('td[data-label="Payee"]')).toHaveText(payee);
@@ -1619,7 +1625,7 @@ test.describe('D · the settlement preview writes nothing', () => {
 
     const snapshot = async () => {
       const detail = await probeGet(adminPage, `/requests/${request.id}`);
-      const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-PURE-${runId}`);
+      const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-PURE-${runId}`);
       return {
         status: await statusPill(adminPage, request.id),
         outcome: detail.body.includes('Payment outcome'),
@@ -1799,7 +1805,7 @@ test.describe('D · settlement outcomes', () => {
     expect(probe.body).toContain('more than the approved');
     expect(probe.body).toContain('cancel this request and raise a new one');
     expect(await statusPill(adminPage, request.id), 'and the request is still being processed').toContain(RESERVED);
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-OVER-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-OVER-${runId}`);
     expect(ledger.body, 'with no payment behind it').toContain('No payments match these filters');
   });
 
@@ -2015,9 +2021,9 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     ).toBe(303);
     expect(second.location, 'a double confirm goes to the payment that already exists').toBe(paymentPath);
 
-    await adminPage.goto(`/payments?month=2026-07&q=UTR-ONCE-${runId}`);
+    await adminPage.goto(`/payments?month=${thisMonth()}&q=UTR-ONCE-${runId}`);
     await expect(adminPage.locator('tbody tr'), 'and there is exactly one payment against the request').toHaveCount(1);
-    await adminPage.goto(`/payments?month=2026-07&q=UTR-SECOND-${runId}`);
+    await adminPage.goto(`/payments?month=${thisMonth()}&q=UTR-SECOND-${runId}`);
     await expect(adminPage.locator('td.empty'), 'the second attempt wrote nothing').toHaveCount(1);
   });
 
@@ -2081,22 +2087,20 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     expect(noRequest.status, 'X5: free-standing payment entry is gone').toBe(400);
     expect(noRequest.body).toContain('Payments must be linked to an approved request.');
 
-    // Both of the next two are ErrForbidden, and settlementError renders them as
-    // a 403 confirmation sheet. It used to carry the generic "Something went
-    // wrong" sentence rather than the store's own reason (F-D-02/F-A-09);
-    // friendly now keeps a refusal's reason when it has one
-    // (internal/app/app.go:2173-2184), so the accountant is told what to do next.
+    // When the caller does not hold the request's reservation, settlementError
+    // answers 409 with the confirmation sheet and says the request is not
+    // reserved by them and nothing was saved, so the accountant knows what to do.
     const unreserved = await probePost(adminPage, '/payments', { ...base, request_id: String(request.id) });
-    expect(unreserved.status, 'S15: approved is not enough — the payment needs a reservation').toBe(403);
+    expect(unreserved.status, 'S15: approved is not enough — the payment needs a reservation').toBe(409);
     expect(unreserved.body, 'and the sheet says what is missing, not that something went wrong').toContain(
-      'eserve this request before recording its payment'
+      'reserved by you. Your payment was not saved'
     );
 
     const notMine = await probePost(adminPage, '/payments', { ...base, request_id: String(c.taken.id) });
-    expect(notMine.status, 'and it has to be the caller’s own reservation').toBe(403);
-    expect(notMine.body).toContain('eserve this request before recording its payment');
+    expect(notMine.status, 'and it has to be the caller’s own reservation').toBe(409);
+    expect(notMine.body).toContain('reserved by you. Your payment was not saved');
 
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-NOLINK-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-NOLINK-${runId}`);
     expect(ledger.body, 'none of the three wrote anything').toContain('No payments match these filters');
     expect(await statusPill(adminPage, request.id), 'and the unreserved request is still merely approved').toContain(
       'Approved'
@@ -2131,7 +2135,7 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     const response = await adminPage.request.post(`/payments/${id}/attachments`, {
       multipart: {
         csrf,
-        attachment: { name: 'late-advice.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 audit-d') }
+        attachment: pdfUpload('late-advice.pdf')
       },
       maxRedirects: 0,
       failOnStatusCode: false
@@ -2146,7 +2150,7 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     browser
   }) => {
     const c = await corpus(browser);
-    await c.admin.goto('/payments?month=2026-07&status=all');
+    await c.admin.goto(`/payments?month=${thisMonth()}&status=all`);
     const rows = c.admin.locator('tbody tr');
     const count = await rows.count();
     expect(count, 'the corpus alone put a settled payment in this month').toBeGreaterThan(0);
@@ -2247,7 +2251,7 @@ test.describe('D · tampering with the settlement', () => {
       await statusPill(adminPage, request.id),
       'and after twelve refusals the request is still reserved'
     ).toContain(RESERVED);
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-TAMPER2-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-TAMPER2-${runId}`);
     expect(ledger.body, 'with nothing written').toContain('No payments match these filters');
   });
 
@@ -2331,7 +2335,7 @@ test.describe('D · tampering with the settlement', () => {
         `nor may a ${csrf} token reach the preview`
       ).toBe(403);
     }
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-CSRF-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-CSRF-${runId}`);
     expect(ledger.body).toContain('No payments match these filters');
   });
 });
