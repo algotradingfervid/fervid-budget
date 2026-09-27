@@ -19,17 +19,10 @@ func seedReminderRequest(t *testing.T, s *Store, number, status string) int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO payment_requests(number,status,treatment,type,amount,purpose,requester_id,manager_id,submitted_at)
-		VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
-		number, status, "budget", "vendor_invoice", int64(500000), "Rent", reqUser, mgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
+	return insertRequestRow(t, s, requestRow{
+		"number": number, "status": status, "treatment": "budget", "type": "vendor_invoice", "amount": int64(500000),
+		"purpose": "Rent", "requester_id": reqUser, "manager_id": mgr, "submitted_at": sqlNow,
+	})
 }
 
 // F-F-08: the thresholds are elapsed 24-hour days, not calendar-date

@@ -859,10 +859,7 @@ func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOfHead(t, s, headID)
 	_, err = s.CreateRequest(ctx, actor, RequestInput{
 		Treatment: "budget", Type: "vendor_invoice", ProjectID: projectID, HeadID: headID,
 		VendorID: 999999, ShortTitle: "Forged vendor", Amount: 5000, Purpose: "probe",

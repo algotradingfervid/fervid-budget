@@ -71,17 +71,14 @@ func TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment(t *testing.T) {
 	}
 	// Shaped as the real write path leaves it since v8: the request is linked to
 	// a project but carries no head, and neither does its payment.
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,head_id,amount,approved_amount,
-		 purpose,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,submitted_at)
-		VALUES('PR-2026-000801','completed','recoverable','employee_advance','emd',(SELECT id FROM recoverable_categories WHERE code='emd'),
-		 (SELECT project_id FROM heads WHERE id=?),NULL,250000,250000,'Deposit','Ridge Metro','2027-01-31','Refund on close',?,?,CURRENT_TIMESTAMP)`,
-		headID, actor.ID, actor.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req, _ := res.LastInsertId()
-	res, err = s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(NULL,'2026-09-25',250000,'Ridge Metro',?,?,'settled')`, actor.ID, req)
+	req := insertRequestRow(t, s, requestRow{
+		"number": "PR-2026-000801", "status": "completed", "treatment": "recoverable", "type": "employee_advance",
+		"recoverable_category": "emd", "recoverable_category_id": recoverableCategoryID(t, s, "emd"),
+		"project_id": projectOfHead(t, s, headID), "head_id": nil, "amount": 250000, "approved_amount": 250000,
+		"purpose": "Deposit", "counterparty": "Ridge Metro", "expected_return_date": "2027-01-31", "repayment_notes": "Refund on close",
+		"requester_id": actor.ID, "manager_id": actor.ID, "submitted_at": sqlNow,
+	})
+	res, err := s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(NULL,'2026-09-25',250000,'Ridge Metro',?,?,'settled')`, actor.ID, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,10 +132,7 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, rent := seedActorAndHead(t, s)
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, rent).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOfHead(t, s, rent)
 	power, err := s.UpsertHead(ctx, 0, projectID, "Power", "10", true, 2)
 	if err != nil {
 		t.Fatal(err)

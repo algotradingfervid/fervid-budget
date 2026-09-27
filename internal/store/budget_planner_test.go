@@ -15,10 +15,7 @@ func plannerFixture(t *testing.T) (*Store, User, BudgetPlan) {
 	t.Helper()
 	s := newTestStore(t)
 	actor, hid := seedActorAndHead(t, s)
-	var pid int64
-	if err := s.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, hid).Scan(&pid); err != nil {
-		t.Fatal(err)
-	}
+	pid := projectOfHead(t, s, hid)
 	return s, actor, BudgetPlan{Month: "2026-09", Projects: []PlanProject{{ID: pid, Heads: []PlanHead{{ID: hid, Lines: []PlanLine{{Description: "Base rent", Amount: 12345}, {Description: "Maintenance", Amount: 6789}}}}}}}
 }
 func plannerRead(t *testing.T, s *Store, month string) BudgetPlan {

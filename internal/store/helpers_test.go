@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -56,6 +58,69 @@ func seedHead(t *testing.T, s *Store, project, head string) int64 {
 	return headID
 }
 
+// sqlExpr is a raw SQL expression placed into a requestRow instead of a bound
+// value, for example sqlNow.
+type sqlExpr string
+
+// sqlNow writes the database's CURRENT_TIMESTAMP, the way the store stamps rows.
+const sqlNow = sqlExpr("CURRENT_TIMESTAMP")
+
+// requestRow is a payment_requests row a test writes straight to the table,
+// keyed by column name. Only the listed columns are written, so the schema's
+// defaults fill everything else exactly as they would for the real insert.
+type requestRow map[string]any
+
+// insertRequestRow writes row into payment_requests and returns the new id.
+// Tests that need a request in a state the workflow reaches only after several
+// steps use it to plant the end state directly.
+func insertRequestRow(t *testing.T, s *Store, row requestRow) int64 {
+	t.Helper()
+	cols := make([]string, 0, len(row))
+	for col := range row {
+		cols = append(cols, col)
+	}
+	sort.Strings(cols)
+	marks := make([]string, len(cols))
+	args := make([]any, 0, len(cols))
+	for i, col := range cols {
+		if expr, ok := row[col].(sqlExpr); ok {
+			marks[i] = string(expr)
+			continue
+		}
+		marks[i] = "?"
+		args = append(args, row[col])
+	}
+	res, err := s.DB().ExecContext(t.Context(), `INSERT INTO payment_requests(`+strings.Join(cols, ",")+`) VALUES(`+strings.Join(marks, ",")+`)`, args...)
+	if err != nil {
+		t.Fatalf("insert request %v: %v", row["number"], err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// projectOfHead returns the project a head belongs to.
+func projectOfHead(t *testing.T, s *Store, headID int64) int64 {
+	t.Helper()
+	var projectID int64
+	if err := s.DB().QueryRowContext(t.Context(), `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
+		t.Fatalf("project of head %d: %v", headID, err)
+	}
+	return projectID
+}
+
+// recoverableCategoryID returns the id of a seeded recoverable category.
+func recoverableCategoryID(t *testing.T, s *Store, code string) int64 {
+	t.Helper()
+	var id int64
+	if err := s.DB().QueryRowContext(t.Context(), `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&id); err != nil {
+		t.Fatalf("recoverable category %q: %v", code, err)
+	}
+	return id
+}
+
 // seedActorAndHead creates one admin-legacy user (qa@example.com) and the
 // Operations / Rent head most store tests post against.
 func seedActorAndHead(t *testing.T, s *Store) (User, int64) {
@@ -74,28 +139,17 @@ func seedRequestParty(t *testing.T, s *Store) (accountant User, requester User, 
 	return accountant, requester, manager.ID, seedHead(t, s, "Operations", "Rent")
 }
 
-// seedApprovedRequest inserts an approved payment_requests row directly (its
-// schema is fixed by overview §3) so Phase-3 store tests do not depend on the
-// Phase-2 request methods. seq keeps the request number unique within a test.
+// seedApprovedRequest plants an approved vendor-invoice request directly, so
+// payment tests do not depend on the request workflow. seq keeps the request
+// number unique within a test.
 func seedApprovedRequest(t *testing.T, s *Store, seq int, requesterID, managerID, headID, amount, approved int64) int64 {
 	t.Helper()
-	ctx := t.Context()
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatalf("head project: %v", err)
-	}
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,project_id,head_id,amount,purpose,vendor_payee,requester_id,manager_id,approved_amount,approved_by,approved_at)
-		VALUES(?,'approved','budget','vendor_invoice',?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), projectID, headID, amount, "Office rent", "Acme Landlord", requesterID, managerID, approved, managerID)
-	if err != nil {
-		t.Fatalf("seed approved request: %v", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
+	return insertRequestRow(t, s, requestRow{
+		"number": fmt.Sprintf("PR-2026-%06d", seq), "status": "approved", "treatment": "budget", "type": "vendor_invoice",
+		"project_id": projectOfHead(t, s, headID), "head_id": headID, "amount": amount,
+		"purpose": "Office rent", "vendor_payee": "Acme Landlord", "requester_id": requesterID, "manager_id": managerID,
+		"approved_amount": approved, "approved_by": managerID, "approved_at": sqlNow,
+	})
 }
 
 func requestStatus(t *testing.T, s *Store, id int64) string {
@@ -171,33 +225,18 @@ func vendorActor(t *testing.T, s *Store) User {
 	return seedUser(t, s, "vendor-admin@example.com", "Vendor Admin", "admin")
 }
 
-// seedVendorRequest inserts a payment_requests row shaped the way the request
-// form makes one for a vendor: vendor_id names the payee and vendor_payee is
-// left empty. Reading the snapshot on such a row is the trap PROGRESS.md
-// records, and it is exactly the trap a test about vendor totals must not fall
-// into — a fixture that fills vendor_payee would make the payee-name fallback
-// look like the vendor_id join working.
+// seedVendorRequest plants a request shaped the way the request form makes one
+// for a vendor: vendor_id names the payee and vendor_payee is left empty. A
+// fixture that filled vendor_payee would let a payee-name fallback pass for the
+// vendor_id join that the vendor-totals tests are meant to check.
 func seedVendorRequest(t *testing.T, s *Store, seq int, status string, requesterID, managerID, headID, vendorID, amount int64) int64 {
 	t.Helper()
-	ctx := t.Context()
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatalf("head project: %v", err)
-	}
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,project_id,head_id,vendor_id,amount,purpose,invoice_no,
-		 requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,?,'budget','vendor_invoice',?,?,?,?,'Switchgear','INV-1',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), status, projectID, headID, vendorID, amount,
-		requesterID, managerID, amount, managerID)
-	if err != nil {
-		t.Fatalf("seed vendor request: %v", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
+	return insertRequestRow(t, s, requestRow{
+		"number": fmt.Sprintf("PR-2026-%06d", seq), "status": status, "treatment": "budget", "type": "vendor_invoice",
+		"project_id": projectOfHead(t, s, headID), "head_id": headID, "vendor_id": vendorID, "amount": amount,
+		"purpose": "Switchgear", "invoice_no": "INV-1", "requester_id": requesterID, "manager_id": managerID,
+		"approved_amount": amount, "approved_by": managerID, "approved_at": sqlNow, "submitted_at": sqlNow,
+	})
 }
 
 func seedVendorNamed(t *testing.T, s *Store, name string) int64 {
