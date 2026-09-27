@@ -32,12 +32,13 @@
  * docs/qa/test-cases/TC-C-approvals-cancellation.md, whose verdict column names
  * the finding (F-C-01 … F-C-06) that any failing case belongs to.
  */
-import { test, expect, admin, login, settlePayment } from './fixtures';
+import { test, expect, admin, login, settlePayment, today } from './fixtures';
 import {
   createUserWithExactRoles,
   probeGet,
   probePost,
   probeAnonymous,
+  requestRevision,
   signIn,
   type Probe,
   type RoleName,
@@ -167,24 +168,57 @@ async function raise(
   return { id: Number(probe.location!.split('/')[2]), title };
 }
 
-const approve = (actor: Actor, id: number, amount: string, note = '') =>
-  probePost(actor.page, `/requests/${id}/approve`, { approved_amount: amount, note });
-const sendBack = (actor: Actor, id: number, comment: string) =>
-  probePost(actor.page, `/requests/${id}/return`, { comment });
-const reject = (actor: Actor, id: number, reason: string) =>
-  probePost(actor.page, `/requests/${id}/reject`, { reason });
+/**
+ * The request's current revision. Every decision (approve, return, reject,
+ * outright cancel, cancellation accept/decline) and every save of the edit form
+ * must post it, and the server refuses a missing or stale one with 400, so a
+ * change is always made against the version of the request its author saw.
+ *
+ * The value is the same for every reader, but it is only printed on a screen
+ * that offers the reader something to do with it: the approver's sheets, the
+ * approver's cancellation screen, the requester's edit screen. It is read as the
+ * approver every request here is sent to, then as the requester — which also
+ * covers probes whose own actor may not see the request at all.
+ *
+ * A request in a state that offers nobody a decision (rejected, withdrawn,
+ * cancelled, with Accounts, paid) has no screen carrying it, so the probe posts
+ * an empty revision, exactly as a hand-made POST would. The server checks the
+ * request's state before its revision, so such a probe is still refused for the
+ * state — `refused` checks the refusal is not the stale-revision one.
+ */
+async function rev(id: number): Promise<string> {
+  for (const reader of [mgrA, requester]) {
+    try {
+      return await requestRevision(reader.page, id);
+    } catch {
+      // Not on any screen this reader can open; try the next reader.
+    }
+  }
+  return '';
+}
+
+const approve = async (actor: Actor, id: number, amount: string, note = '') =>
+  probePost(actor.page, `/requests/${id}/approve`, { approved_amount: amount, note, revision: await rev(id) });
+const sendBack = async (actor: Actor, id: number, comment: string) =>
+  probePost(actor.page, `/requests/${id}/return`, { comment, revision: await rev(id) });
+const reject = async (actor: Actor, id: number, reason: string) =>
+  probePost(actor.page, `/requests/${id}/reject`, { reason, revision: await rev(id) });
 const withdraw = (actor: Actor, id: number) => probePost(actor.page, `/requests/${id}/withdraw`, {});
 const reraise = (actor: Actor, id: number) => probePost(actor.page, `/requests/${id}/reraise`, {});
 const askCancel = (actor: Actor, id: number, reason: string) =>
   probePost(actor.page, `/requests/${id}/cancel-request`, { reason });
-const cancelOutright = (actor: Actor, id: number, reason: string) =>
-  probePost(actor.page, `/requests/${id}/cancel`, { reason });
-const decideCancel = (actor: Actor, id: number, decision: 'accept' | 'decline', note: string) =>
-  probePost(actor.page, `/requests/${id}/cancellation`, { decision, note });
+const cancelOutright = async (actor: Actor, id: number, reason: string) =>
+  probePost(actor.page, `/requests/${id}/cancel`, { reason, revision: await rev(id) });
+const decideCancel = async (actor: Actor, id: number, decision: 'accept' | 'decline', note: string) =>
+  probePost(actor.page, `/requests/${id}/cancellation`, { decision, note, revision: await rev(id) });
 const hold = (actor: Actor, id: number, reason: string) =>
   probePost(actor.page, `/requests/${id}/hold`, { reason });
-const resubmit = (actor: Actor, id: number, title: string, managerId: string) =>
-  probePost(actor.page, `/requests/${id}/edit`, { ...requestBody(title, managerId), submit_action: 'resubmit' });
+const resubmit = async (actor: Actor, id: number, title: string, managerId: string) =>
+  probePost(actor.page, `/requests/${id}/edit`, {
+    ...requestBody(title, managerId),
+    submit_action: 'resubmit',
+    revision: await rev(id)
+  });
 /**
  * Saves a correction WITHOUT resubmitting.
  *
@@ -194,8 +228,12 @@ const resubmit = (actor: Actor, id: number, title: string, managerId: string) =>
  * requester rerouting a pending request therefore saves; only the returned
  * screen resubmits.
  */
-const editRequest = (actor: Actor, id: number, title: string, managerId: string) =>
-  probePost(actor.page, `/requests/${id}/edit`, { ...requestBody(title, managerId), submit_action: 'save' });
+const editRequest = async (actor: Actor, id: number, title: string, managerId: string) =>
+  probePost(actor.page, `/requests/${id}/edit`, {
+    ...requestBody(title, managerId),
+    submit_action: 'save',
+    revision: await rev(id)
+  });
 
 /** Asserts a probe succeeded, naming the body when it did not. */
 function succeeded(probe: Probe, what: string) {
@@ -212,6 +250,9 @@ function succeeded(probe: Probe, what: string) {
 function refused(probe: Probe, what: string) {
   expect([400, 403], `${what}: expected a refusal, got ${probe.outcome} ${probe.body.slice(0, 200)}`).toContain(
     probe.status
+  );
+  expect(probe.body, `${what}: refused for the request's state, not for an out-of-date revision`).not.toContain(
+    'this request changed; reload'
   );
 }
 
@@ -540,7 +581,7 @@ test.describe('approving', () => {
     const settleBody = (amount: string) => ({
       request_id: String(req.id),
       amount,
-      paid_on: '2026-06-15',
+      paid_on: today(),
       payment_mode: 'bank_transfer',
       reference_no: `UTR-C014B-${req.id}`,
       settlement: 'settled'
@@ -591,7 +632,11 @@ test.describe('approving', () => {
   for (const bad of badAmounts) {
     test(`${bad.id} — an approved amount that is ${bad.label} is refused`, async () => {
       const req = await pendingRequest(mgrA.id, '18400');
-      const probe = await probePost(mgrA.page, `/requests/${req.id}/approve`, { note: '', ...bad.form });
+      const probe = await probePost(mgrA.page, `/requests/${req.id}/approve`, {
+        note: '',
+        revision: await rev(req.id),
+        ...bad.form
+      });
       expect(probe.status, `a ${bad.label} approved amount must be refused`).toBe(400);
       expect(probe.body, 'and the reader is told what to do about it').toContain('Enter the amount you are approving');
       expect(await statusPill(mgrA, req.id), 'the request is untouched').toBe('Awaiting approval');
@@ -618,11 +663,12 @@ test.describe('approving', () => {
 
   test('TC-C-022 — an approval with a missing or forged CSRF token is refused', async () => {
     const req = await pendingRequest(mgrA.id);
-    const omitted = await probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400' }, {
+    const revision = await rev(req.id);
+    const omitted = await probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400', revision }, {
       csrf: 'omit'
     });
     expect(omitted.status, 'a POST with no csrf field must be refused').toBe(403);
-    const forged = await probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400' }, {
+    const forged = await probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400', revision }, {
       csrf: 'bogus'
     });
     expect(forged.status, 'a POST with a wrong csrf field must be refused').toBe(403);
@@ -660,14 +706,17 @@ test.describe('who may decide', () => {
   test('TC-C-033 — an administrator cannot approve a request assigned to somebody else', async () => {
     const req = await pendingRequest(mgrA.id);
     const probe = await approve(bossActor, req.id, '18400');
-    expect(probe.status, "holding approval:approve is not being this request's approver").toBe(403);
+    // Somebody who is not the request's approver is answered 404, as if the
+    // request did not exist, rather than 403, which would confirm that it does.
+    expect(probe.status, "holding approval:approve is not being this request's approver").toBe(404);
     expect(await statusPill(mgrA, req.id), 'the request is untouched').toBe('Awaiting approval');
   });
 
   test('TC-C-034 — a Manager cannot approve a request assigned to a different manager', async () => {
     const req = await pendingRequest(mgrA.id);
     const probe = await approve(mgrB, req.id, '18400');
-    expect(probe.status, 'manager_id on the row is what decides, not the role').toBe(403);
+    // 404, not 403: only the request's own approver may even address it here.
+    expect(probe.status, 'manager_id on the row is what decides, not the role').toBe(404);
     expect(await statusPill(mgrA, req.id), 'the request is untouched').toBe('Awaiting approval');
   });
 
@@ -1128,7 +1177,9 @@ test.describe('the cancellation flow', () => {
       404
     );
     const ask = await askCancel(outsider, req.id, 'I want this stopped.');
-    expect(ask.status, 'and the POST is refused by the store as well').toBe(403);
+    // 404 like the screen: a request the reader may not see is answered as if it
+    // did not exist, on every route.
+    expect(ask.status, 'and the POST is refused as well').toBe(404);
     expect(await statusPill(mgrA, req.id), 'the request is untouched').toBe('Approved — awaiting payment');
   });
 
@@ -1366,26 +1417,23 @@ test.describe('the cancellation flow', () => {
     succeeded(await decideCancel(mgrA, req.id, 'decline', 'Still needed.'), 'declining');
 
     const number = await requestNumber(requester, req.id);
+    const rowFor = (page: Page) => page.locator('tr', { has: page.locator(`a[href="/requests/${req.id}"]`) });
+
+    // The "Approved, unclaimed" tab lists only work that can be taken now, so a
+    // held request is not on it.
     await accounts.page.goto(`/accounts-queue?tab=approved&q=${encodeURIComponent(number)}`);
-    const row = accounts.page.locator('tr', { has: accounts.page.locator(`a[href="/requests/${req.id}"]`) });
-    await expect(row, 'the request is back in the queue').toHaveCount(1);
-    await expect(row.locator('.pill.hold'), 'and back on hold, which is what the row says').toHaveText('On hold');
+    await expect(rowFor(accounts.page), 'a held request is not offered as unclaimed work').toHaveCount(0);
+
+    // It is on the hold tab: the accountant's outstanding question, not lost.
+    await accounts.page.goto(`/accounts-queue?tab=hold&q=${encodeURIComponent(number)}`);
+    const row = rowFor(accounts.page);
+    await expect(row, 'the restored hold puts it back on the hold tab').toHaveCount(1);
+    await expect(row.locator('.pill.hold'), 'and the row says it is on hold').toHaveText('On hold');
     await expect(
       row.getByRole('button', { name: 'Take for processing' }),
       'so it is not offered as work: the question is still unanswered'
     ).toHaveCount(0);
-    await expect(
-      row.getByRole('link', { name: 'Read reply' }),
-      'the accountant is offered the question instead'
-    ).toBeVisible();
-
-    // It also shows up under the hold tab, which is the queue's own record that a
-    // held request is somebody's outstanding question rather than lost.
-    await accounts.page.goto(`/accounts-queue?tab=hold&q=${encodeURIComponent(number)}`);
-    await expect(
-      accounts.page.locator('tr', { has: accounts.page.locator(`a[href="/requests/${req.id}"]`) }),
-      'the restored hold puts it back on the hold tab'
-    ).toHaveCount(1);
+    await expect(row.getByRole('link', { name: 'Read reply' }), 'the accountant is offered the question instead').toBeVisible();
 
     // Not offered is not the same as not permitted. The route is the proof:
     // ReserveRequest answers ErrRequestOnHold, and requestRecordPayment renders
@@ -1665,7 +1713,7 @@ test.describe('legal transitions', () => {
     await settlePayment(accounts.page, req.id, {
       amount: '10000',
       // A past date, one month of its own — see the note on TC-C-014B's settleBody.
-      paidOn: '2026-04-15',
+      paidOn: today(),
       settlement: 'partial',
       partialReason: 'The vendor accepted a part payment for now.'
     });
@@ -1684,7 +1732,7 @@ test.describe('legal transitions', () => {
     await settlePayment(accounts.page, req.id, {
       amount: '10000',
       // A past date, one month of its own — see the note on TC-C-014B's settleBody.
-      paidOn: '2026-05-15',
+      paidOn: today(),
       settlement: 'partial',
       partialReason: 'Part now, the balance is written off.'
     });
@@ -1710,7 +1758,7 @@ test.describe('legal transitions', () => {
   test('TC-C-117 — a completed request is terminal: nothing in the grid moves it', async () => {
     const req = await approvedRequest('18400', '18400');
     // A past date, one month of its own — see the note on TC-C-014B's settleBody.
-    await settlePayment(accounts.page, req.id, { amount: '18400', paidOn: '2026-03-15' });
+    await settlePayment(accounts.page, req.id, { amount: '18400', paidOn: today() });
     expect(await statusPill(mgrA, req.id), 'a settled payment completes the request').toBe('Completed');
 
     for (const action of transitionActions) {
@@ -1754,7 +1802,9 @@ test.describe('rerouting by edit', () => {
     expect(await queueCards(mgrA, 'to-approve', req.title), 'the old approver loses the row').toBe(0);
     expect(await queueCards(mgrB, 'to-approve', req.title), 'and the new one gains it').toBe(1);
 
-    expect((await approve(mgrA, req.id, '18400')).status, 'the old approver may no longer decide it').toBe(403);
+    // 404: once rerouted, the old approver is no longer the request's approver,
+    // and a non-approver's approve is answered as if the request did not exist.
+    expect((await approve(mgrA, req.id, '18400')).status, 'the old approver may no longer decide it').toBe(404);
     succeeded(await approve(mgrB, req.id, '18400'), 'and the new one may');
     expect(await statusPill(mgrB, req.id), 'so the request is approved by the new approver').toBe(
       'Approved — awaiting payment'
@@ -1839,9 +1889,11 @@ test.describe('concurrency', () => {
     const req = await pendingRequest(mgrA.id);
     const second = await signIn(browser, mgrA.subject);
     try {
+      // Both sessions read the same screen, so both post the same revision.
+      const revision = await rev(req.id);
       const [first, other] = await Promise.all([
-        probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400', note: 'first' }),
-        probePost(second.page, `/requests/${req.id}/approve`, { approved_amount: '12000', note: 'second' })
+        probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400', note: 'first', revision }),
+        probePost(second.page, `/requests/${req.id}/approve`, { approved_amount: '12000', note: 'second', revision })
       ]);
       const wins = [first, other].filter(p => p.status === 303);
       expect(wins.length, `exactly one approval may commit — got ${first.outcome} and ${other.outcome}`).toBe(1);
@@ -1863,9 +1915,10 @@ test.describe('concurrency', () => {
     const req = await pendingRequest(mgrA.id);
     const second = await signIn(browser, mgrA.subject);
     try {
+      const revision = await rev(req.id);
       const [approval, rejection] = await Promise.all([
-        probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400' }),
-        probePost(second.page, `/requests/${req.id}/reject`, { reason: 'Race the approval.' })
+        probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400', revision }),
+        probePost(second.page, `/requests/${req.id}/reject`, { reason: 'Race the approval.', revision })
       ]);
       const wins = [approval, rejection].filter(p => p.status === 303);
       expect(
@@ -1884,12 +1937,14 @@ test.describe('concurrency', () => {
 
   test('TC-C-132 — two different managers racing: authorisation does not depend on timing', async () => {
     const req = await pendingRequest(mgrA.id);
+    const revision = await rev(req.id);
     const [assigned, other] = await Promise.all([
-      probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400' }),
-      probePost(mgrB.page, `/requests/${req.id}/approve`, { approved_amount: '1' })
+      probePost(mgrA.page, `/requests/${req.id}/approve`, { approved_amount: '18400', revision }),
+      probePost(mgrB.page, `/requests/${req.id}/approve`, { approved_amount: '1', revision })
     ]);
     succeeded(assigned, 'the assigned approver wins whatever the timing');
-    expect(other.status, 'and the other manager is refused on authorisation, not on the race').toBe(403);
+    // 404 is the answer a non-approver gets whatever the timing.
+    expect(other.status, 'and the other manager is refused on authorisation, not on the race').toBe(404);
     await requester.page.goto(`/requests/${req.id}`);
     await expect(dlValue(requester.page, 'Approved'), "the approved amount is the assigned approver's").toHaveText(
       '₹18,400.00'
@@ -1900,9 +1955,10 @@ test.describe('concurrency', () => {
     const req = await cancellationRequested();
     const second = await signIn(browser, mgrA.subject);
     try {
+      const revision = await rev(req.id);
       const [accept, decline] = await Promise.all([
-        probePost(mgrA.page, `/requests/${req.id}/cancellation`, { decision: 'accept', note: '' }),
-        probePost(second.page, `/requests/${req.id}/cancellation`, { decision: 'decline', note: 'Keep it live.' })
+        probePost(mgrA.page, `/requests/${req.id}/cancellation`, { decision: 'accept', note: '', revision }),
+        probePost(second.page, `/requests/${req.id}/cancellation`, { decision: 'decline', note: 'Keep it live.', revision })
       ]);
       const wins = [accept, decline].filter(p => p.status === 303);
       expect(wins.length, `one answer, not two — got ${accept.outcome} and ${decline.outcome}`).toBe(1);
@@ -1940,27 +1996,30 @@ test.describe('concurrency', () => {
     const second = await signIn(browser, mgrA.subject);
     try {
       const approveRace = await pendingRequest(mgrA.id);
+      const approveRev = await rev(approveRace.id);
       const [a1, a2] = await Promise.all([
-        probePost(mgrA.page, `/requests/${approveRace.id}/approve`, { approved_amount: '18400' }),
-        probePost(second.page, `/requests/${approveRace.id}/approve`, { approved_amount: '12000' })
+        probePost(mgrA.page, `/requests/${approveRace.id}/approve`, { approved_amount: '18400', revision: approveRev }),
+        probePost(second.page, `/requests/${approveRace.id}/approve`, { approved_amount: '12000', revision: approveRev })
       ]);
       expect
         .soft([a1, a2].find(p => p.status !== 303)!.status, 'approve vs approve: the loser must be told no')
         .toBeLessThan(500);
 
       const mixedRace = await pendingRequest(mgrA.id);
+      const mixedRev = await rev(mixedRace.id);
       const [m1, m2] = await Promise.all([
-        probePost(mgrA.page, `/requests/${mixedRace.id}/approve`, { approved_amount: '18400' }),
-        probePost(second.page, `/requests/${mixedRace.id}/reject`, { reason: 'Race it.' })
+        probePost(mgrA.page, `/requests/${mixedRace.id}/approve`, { approved_amount: '18400', revision: mixedRev }),
+        probePost(second.page, `/requests/${mixedRace.id}/reject`, { reason: 'Race it.', revision: mixedRev })
       ]);
       expect
         .soft([m1, m2].find(p => p.status !== 303)!.status, 'approve vs reject: the loser must be told no')
         .toBeLessThan(500);
 
       const cancelRace = await cancellationRequested();
+      const cancelRev = await rev(cancelRace.id);
       const [c1, c2] = await Promise.all([
-        probePost(mgrA.page, `/requests/${cancelRace.id}/cancellation`, { decision: 'accept', note: '' }),
-        probePost(second.page, `/requests/${cancelRace.id}/cancellation`, { decision: 'decline', note: 'Keep it.' })
+        probePost(mgrA.page, `/requests/${cancelRace.id}/cancellation`, { decision: 'accept', note: '', revision: cancelRev }),
+        probePost(second.page, `/requests/${cancelRace.id}/cancellation`, { decision: 'decline', note: 'Keep it.', revision: cancelRev })
       ]);
       expect
         .soft([c1, c2].find(p => p.status !== 303)!.status, 'accept vs decline: the loser must be told no')
