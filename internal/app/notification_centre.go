@@ -1,5 +1,9 @@
 package app
 
+// The user's own notification centre (/notifications). It needs a signed-in
+// user and no permission: the store only ever returns the signed-in user's
+// own rows, so a guessed URL cannot reach anyone else's.
+
 import (
 	"errors"
 	"html/template"
@@ -11,16 +15,11 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// The user's own notification centre (G19).
-//
-// It needs an authenticated session and no permission verb: every row it can
-// return is scoped to the signed-in user by the store, so there is nothing a
-// permission could add and nothing a guessed URL can reach.
-
+// notificationScopes are the filter tabs the centre accepts; anything else
+// shows "all".
 var notificationScopes = map[string]bool{"all": true, "unread": true, "mentions": true, "reminders": true}
 
-// notifGlyph is the .n-ico mark for a row's kind. Display only — the kind
-// itself is derived once, at write time, in the store.
+// notifGlyph is the icon shown for a notification of the given kind.
 func notifGlyph(kind string) string {
 	switch kind {
 	case "mention":
@@ -32,12 +31,11 @@ func notifGlyph(kind string) string {
 	}
 }
 
-// notifBody renders a row's stored plain-text body for the centre (notify-2).
-// The text is escaped first; then its line breaks become <br>, and a URL that
-// points where the row itself goes — the rendered {{link}}, absolute or
-// relative — is marked as link text. It cannot be its own <a>: the whole row
-// is already the <a> that opens it, and anchors do not nest. A URL pointing
-// anywhere else is left as text, because a click on it would follow the row.
+// notifBody renders a notification's stored plain-text body as HTML. The text
+// is escaped, line breaks become <br>, and a URL equal to the row's own link
+// (relative, or absolute ending in it) is styled as link text. It cannot be a
+// real <a>: the whole row is already the link that opens it, and links cannot
+// nest. Any other URL stays plain text.
 func notifBody(body, href string) template.HTML {
 	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	for i, line := range lines {
@@ -57,40 +55,27 @@ func notifBody(body, href string) template.HTML {
 	return template.HTML(strings.Join(lines, "<br>"))
 }
 
-// notificationPageSize is how many rows the centre draws at once. It is the
-// store's own default limit, so the page boundary and the cap are one number.
+// notificationPageSize is how many rows the centre shows per page (the
+// store's default limit).
 const notificationPageSize = 100
 
-// maxNotificationOffset bounds how deep the pager will walk. The window is
-// fetched as offset+notificationPageSize rows (see below), so an unbounded
-// offset from the query string would be an unbounded read — of the caller's own
-// notifications, so not a disclosure, but a way to make one request expensive.
-// A hundred pages is far past any real inbox.
+// maxNotificationOffset caps the ?offset= the pager accepts. Each page reads
+// offset+notificationPageSize rows, so without a cap one request could be
+// made arbitrarily expensive. A hundred pages is far past any real inbox.
 const maxNotificationOffset = 10000
 
+// notificationCentre lists the user's notifications for the chosen filter,
+// one page at a time, with the counts for each filter tab.
 func (a *App) notificationCentre(w http.ResponseWriter, r *http.Request) {
 	user := auth.CurrentUser(r)
 	scope := r.URL.Query().Get("scope")
 	if !notificationScopes[scope] {
 		scope = "all"
 	}
-	offset := int(parseID(r.URL.Query().Get("offset")))
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > maxNotificationOffset {
-		offset = maxNotificationOffset
-	}
-	// ListNotificationsPage, not ListNotifications: the rows were capped at 100
-	// and the counts on the filter strip were not, so the strip promised more
-	// than the list drew and nothing said so (F-G-037). Total and Truncated are
-	// what let the screen admit it; the window is what makes the rest reachable.
-	//
-	// NotificationFilter carries a Limit and no Offset, so the window is taken by
-	// asking for offset+one page and dropping the rows already shown. The read is
-	// bounded by maxNotificationOffset, and page.Truncated still means exactly
-	// "the fetch did not reach the end", which is exactly the condition for an
-	// older page existing.
+	offset := min(max(int(parseID(r.URL.Query().Get("offset"))), 0), maxNotificationOffset)
+	// The store filter has a limit but no offset, so read offset plus one page
+	// and drop the rows before offset. page.Truncated then means exactly that
+	// older rows exist beyond this page, and Total is the full count.
 	page, err := a.st.ListNotificationsPage(r.Context(), store.NotificationFilter{
 		UserID: user.ID, Scope: scope, Limit: offset + notificationPageSize,
 	})
@@ -119,6 +104,8 @@ func (a *App) notificationCentre(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// notificationsMarkAllRead marks all of the user's notifications read and
+// returns to the centre.
 func (a *App) notificationsMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	user := auth.CurrentUser(r)
 	if err := a.st.MarkAllNotificationsRead(r.Context(), user.ID, time.Now().UTC()); err != nil {
@@ -128,23 +115,18 @@ func (a *App) notificationsMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/notifications", http.StatusSeeOther)
 }
 
-// notificationOpen is what a .notif links to: it marks the row read and then
-// forwards to wherever the row points.
-//
-// It is a GET because the approved design makes each row a plain anchor, and an
-// anchor cannot POST. The side effect is a per-user read receipt on the reader's
-// own row — the same thing every mail client does when you open a message — not
-// a destructive action, so nothing here is worth a CSRF token.
-//
-// The destination comes from the stored row, never from the query string, so
-// there is no redirect for an attacker to aim.
+// notificationOpen is where each notification row links: it marks the row
+// read and redirects to the page the row points at (or the centre when that
+// is not a local path). It is a GET because each row is a plain link; marking
+// your own row read is harmless, so it needs no CSRF token. The destination
+// comes from the stored row, never the query string, so it cannot be used as
+// an open redirect. Someone else's row, or a missing one, answers 404.
 func (a *App) notificationOpen(w http.ResponseWriter, r *http.Request) {
 	user := auth.CurrentUser(r)
 	id := parseID(r.PathValue("id"))
 	n, err := a.st.Notification(r.Context(), user.ID, id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			// Not yours, or gone. Either way there is nothing to show.
 			a.respondError(w, r, http.StatusNotFound, "That notification is not available.", nil)
 			return
 		}

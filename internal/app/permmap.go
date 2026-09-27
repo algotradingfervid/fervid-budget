@@ -1,35 +1,32 @@
 package app
 
+// The permission matrix on the Roles screen. The screen draws 9 rows (areas
+// of the product) by 7 columns (view, create, edit, approve, process, cancel,
+// export); underneath are 21 resources with their own action lists. This file
+// is the only place the two are mapped onto each other. Enforcement never
+// uses it: permissions are stored and checked one (resource, action) pair at
+// a time.
+//
+// A cell stands for a set of those pairs, and ticking it grants or revokes
+// all of them. Each row also has an Advanced list of its individual actions
+// for finer control. A cell with no action for its column shows a dash
+// instead of a checkbox.
+//
+// Three resources are placed by where their controls appear
+// (permmap_test.go checks every resource and action has exactly one place):
+//
+//	attachment      -> Payment requests. The uploader appears on the request
+//	                   form and on payment entry; one grant governs both.
+//	project, head   -> Budgets & variance grid. Projects and heads are the two
+//	                   axes of the grid and of every budget row.
+
 import (
 	"strings"
 
 	"fervidbudget/internal/store"
 )
 
-// The roles screen draws 9 page rows × 7 action columns; the vocabulary
-// underneath is 21 resources with ragged action lists (66 canonical
-// (resource, action) pairs). This file is the only place the two meet
-// (adoption-spec D2).
-//
-// Enforcement never consults it: role_permissions stays one row per
-// (resource, action) and internal/store and internal/auth do not import this
-// package. A cell is a SET of canonical grants — toggling it grants or revokes
-// all of them — and every row carries an Advanced disclosure enumerating its
-// individual canonical actions, which is what keeps R2's fine-grained control.
-// A cell with no canonical action for its column is unavailable and renders an
-// em dash rather than a checkbox.
-//
-// Three canonical resources are not named in the D2 row table, because the
-// approved screen draws only nine rows. They are placed where the approved
-// screens put their controls, and permmap_test.go asserts the placement is
-// total and unambiguous:
-//
-//	attachment      -> Payment requests. The uploader appears on the request
-//	                   form and on payment entry; one grant governs both.
-//	project, head   -> Budgets & variance grid. Projects and heads are the two
-//	                   axes of the grid and of every budget row — they are
-//	                   masters of the budget, not of administration.
-
+// permColumn is one column of the matrix.
 type permColumn struct {
 	Key   string
 	Label string
@@ -46,6 +43,8 @@ var permColumns = []permColumn{
 	{Key: "export", Label: "Export"},
 }
 
+// permGroupDef is one row of the matrix: the resources it owns and, per
+// column key, the grants behind that cell.
 type permGroupDef struct {
 	Key       string
 	Label     string
@@ -190,6 +189,7 @@ type permAdvanced struct {
 	Granted  bool
 }
 
+// permCell is one drawn cell of a role's matrix.
 type permCell struct {
 	Column    string
 	Label     string
@@ -199,6 +199,8 @@ type permCell struct {
 	Partial   bool   // some, but not all, are held
 }
 
+// permRow is one drawn row of a role's matrix, with its cells, its Advanced
+// list and its data-scope control when it has one.
 type permRow struct {
 	Key           string
 	Label         string
@@ -211,6 +213,7 @@ type permRow struct {
 	Scope         string // "", "own", "assigned" or "all"
 }
 
+// permGroup finds a matrix row by its key.
 func permGroup(key string) (permGroupDef, bool) {
 	for _, group := range permGroups {
 		if group.Key == key {
