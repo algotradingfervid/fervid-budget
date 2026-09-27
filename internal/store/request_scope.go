@@ -1,3 +1,6 @@
+// request_scope.go defines who may see a payment request (the request data
+// scope), once in Go and once in SQL, plus the in-transaction check that
+// write paths use.
 package store
 
 import (

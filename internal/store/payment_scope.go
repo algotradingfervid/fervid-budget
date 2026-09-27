@@ -1,3 +1,5 @@
+// payment_scope.go holds the visibility re-check that Accounts' write paths
+// run inside their transaction before they touch a request.
 package store
 
 import (

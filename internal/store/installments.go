@@ -1,3 +1,7 @@
+// installments.go supports paying one approved request in several payments:
+// the migration that allows many payments per request, reading a request's
+// payment history, and finding a payment by its form submission key so a
+// double-submitted form does not pay twice.
 package store
 
 import (
@@ -5,8 +9,10 @@ import (
 	"database/sql"
 )
 
-// upInstallments preserves every historical payment and settlement. Only the
-// one-payment index is relaxed; existing writeoffs are never reopened.
+// upInstallments is the migration that allows several payments per request:
+// it adds payments.submission_key (unique when set) and turns the
+// one-payment-per-request index into a plain index. Existing payments and
+// settlements are kept as they are.
 func upInstallments(tx *sql.Tx) error {
 	has, err := columnExists(tx, "payments", "submission_key")
 	if err != nil {
@@ -23,7 +29,9 @@ func upInstallments(tx *sql.Tx) error {
 	return err
 }
 
-// RequestPayments returns the complete append-only payment history, oldest first.
+// RequestPayments returns every payment recorded against a request, voided
+// ones included, oldest first. It reads the ids and closes that cursor before
+// loading each payment through Payment, so only one query is open at a time.
 func (s *Store) RequestPayments(ctx context.Context, requestID int64) ([]Payment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM payments WHERE request_id=? ORDER BY id`, requestID)
 	if err != nil {
@@ -54,6 +62,10 @@ func (s *Store) RequestPayments(ctx context.Context, requestID int64) ([]Payment
 	return out, nil
 }
 
+// PaymentBySubmission returns the payment this actor already recorded on the
+// request with this submission key, or ErrNotFound (also for a blank key). A
+// resubmitted payment form uses it to show the first result instead of paying
+// twice.
 func (s *Store) PaymentBySubmission(ctx context.Context, requestID, actorID int64, key string) (Payment, error) {
 	if key == "" {
 		return Payment{}, ErrNotFound
