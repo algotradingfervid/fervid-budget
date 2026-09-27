@@ -421,7 +421,7 @@ func backdateApproval(ctx context.Context, db *sql.DB, requestID any, paidOn str
 // historicalSettlement records a payment for a request on a fixed past date,
 // back-dating the approval first so the date is allowed. Tests of the
 // payment-date rule itself call RecordPaymentForRequest directly instead.
-func historicalSettlement(s *store.Store, ctx context.Context, actor store.User, id int64, in store.PaymentInput, settlement, reason string, attachment *store.AttachmentInput) (int64, error) {
+func historicalSettlement(ctx context.Context, s *store.Store, actor store.User, id int64, in store.PaymentInput, settlement, reason string, attachment *store.AttachmentInput) (int64, error) {
 	if len(in.PaidOn) == 10 {
 		if err := backdateApproval(ctx, s.DB(), id, in.PaidOn); err != nil {
 			return 0, err

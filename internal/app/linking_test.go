@@ -263,7 +263,7 @@ func TestPaymentPickerListsOnlyYourOwnRecentPayments(t *testing.T) {
 	if err := s.st.ReserveRequest(s.ctx, deepak, theirs); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s.st, s.ctx, deepak, theirs,
+	if _, err := historicalSettlement(s.ctx, s.st, deepak, theirs,
 		store.PaymentInput{HeadID: headID, PaidOn: "2026-07-24", Amount: 500000, VendorPayee: "Nova Print Works"},
 		"settled", "", nil); err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestPaymentPickerListsOnlyYourOwnRecentPayments(t *testing.T) {
 	if err := s.st.ReserveRequest(s.ctx, admin, mine); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s.st, s.ctx, admin, mine,
+	if _, err := historicalSettlement(s.ctx, s.st, admin, mine,
 		store.PaymentInput{HeadID: headID, PaidOn: "2026-07-25", Amount: 300000, VendorPayee: "Acme Landlord"},
 		"partial", "balance later", nil); err != nil {
 		t.Fatal(err)
