@@ -1,34 +1,29 @@
 package app
 
+// The admin notification rules screen (/admin/notifications, behind the
+// notification permission): the SMTP sender settings, one email rule per
+// workflow event, and a test send. It is separate from the user's own
+// notification centre (/notifications, notification_centre.go). In-app
+// notifications always go out, so email is the only per-event switch here.
+
 import (
-	"fervidbudget/internal/auth"
-	"fervidbudget/internal/notify"
-	"fervidbudget/internal/store"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"fervidbudget/internal/auth"
+	"fervidbudget/internal/notify"
+	"fervidbudget/internal/store"
 )
 
-// The admin notification rules screen (D7).
-//
-// /admin/notifications is the rule editor; /notifications is the user's own
-// centre. They are two different screens with two different audiences, which is
-// why the rule editor is the one behind a permission verb.
-//
-// In-app delivery is not configurable here: it always fires, so the screen
-// shows a static "On" pill rather than a control that would imply otherwise.
-// Email is the only per-event switch.
-
+// adminNotifications shows the rules screen.
 func (a *App) adminNotifications(w http.ResponseWriter, r *http.Request) {
-	a.renderAdminNotifications(w, r, http.StatusOK, "", "")
+	a.renderAdminNotificationsPage(w, r, http.StatusOK, PageData{})
 }
 
-// renderAdminNotifications draws the rules screen. errMsg and notice reach the
-// layout's one flash; the page has no second callout repeating them (ux-2).
-func (a *App) renderAdminNotifications(w http.ResponseWriter, r *http.Request, status int, errMsg, notice string) {
-	a.renderAdminNotificationsPage(w, r, status, PageData{Error: errMsg, Notice: notice})
-}
-
+// renderAdminNotificationsPage loads the event rules and mail settings and
+// renders the rules screen with status. pd carries any message (Error or
+// Notice, shown in the layout's flash) or a rejected rule draft to reopen.
 func (a *App) renderAdminNotificationsPage(w http.ResponseWriter, r *http.Request, status int, pd PageData) {
 	settings, err := a.st.AllNotificationSettings(r.Context())
 	if err != nil {
@@ -45,6 +40,9 @@ func (a *App) renderAdminNotificationsPage(w http.ResponseWriter, r *http.Reques
 	a.renderStatus(w, r, status, "admin_notifications", pd)
 }
 
+// adminNotificationsSMTP saves the mail settings (sender, management
+// recipients, base URL for links). The SMTP host must be one the server
+// operator allowed in FERVID_SMTP_ALLOWED_HOSTS.
 func (a *App) adminNotificationsSMTP(w http.ResponseWriter, r *http.Request) {
 	port, _ := strconv.Atoi(r.FormValue("smtp_port"))
 	in := store.MailSettings{
@@ -67,9 +65,10 @@ func (a *App) adminNotificationsSMTP(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/notifications", http.StatusSeeOther)
 }
 
-// adminNotificationEventSave writes one event rule. Templates are validated
-// before they are stored, so a typo fails here rather than silently emitting an
-// empty string into an email nobody can debug later.
+// adminNotificationEventSave saves the email rule for one event. The subject
+// and body templates are checked first, so a typo is reported here instead of
+// producing a broken email later. A rejected rule reopens its edit sheet with
+// the error (400).
 func (a *App) adminNotificationEventSave(w http.ResponseWriter, r *http.Request) {
 	event := r.PathValue("event")
 	in := store.NotificationSetting{
@@ -85,10 +84,8 @@ func (a *App) adminNotificationEventSave(w http.ResponseWriter, r *http.Request)
 	}
 	for _, tmpl := range []string{in.SubjectTemplate, in.BodyTemplate} {
 		if err := notify.ValidateTemplate(tmpl); err != nil {
-			// The sheet comes back open with what the admin typed and the
-			// reason beside it. Re-rendering from the stored rule closed it and
-			// threw their edit away, and the flash behind the scrim said so
-			// where they could not see it (ux-2).
+			// Reopen the edit sheet with what the admin typed and the reason
+			// beside it, rather than the stored rule.
 			a.renderAdminNotificationsPage(w, r, http.StatusBadRequest, PageData{NotifDraft: &in, NotifDraftError: err.Error()})
 			return
 		}
@@ -104,9 +101,10 @@ func (a *App) adminNotificationEventSave(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/admin/notifications", http.StatusSeeOther)
 }
 
-// adminNotificationsTest proves the SMTP settings work without waiting for a
-// real event. It reports the transport error rather than swallowing it — a test
-// send that silently "succeeds" is worse than no test at all.
+// adminNotificationsTest sends a test email (to test_to, or the admin's own
+// address) so the SMTP settings can be checked without waiting for a real
+// event. A failed send answers 502 with a message; the details go to the
+// server log only.
 func (a *App) adminNotificationsTest(w http.ResponseWriter, r *http.Request) {
 	user := auth.CurrentUser(r)
 	to := strings.TrimSpace(r.FormValue("test_to"))
@@ -118,6 +116,7 @@ func (a *App) adminNotificationsTest(w http.ResponseWriter, r *http.Request) {
 		a.respondStoreError(w, r, err)
 		return
 	}
+	// "Name <address>" when a sender name is set, as workflow emails use.
 	from := strings.TrimSpace(mail.SMTPFromAddr)
 	if name := strings.TrimSpace(mail.SMTPFromName); name != "" && from != "" {
 		from = name + " <" + from + ">"
@@ -128,8 +127,8 @@ func (a *App) adminNotificationsTest(w http.ResponseWriter, r *http.Request) {
 		Body:    "This is a test from the notification rules screen. If you are reading it, SMTP is configured correctly.",
 	})
 	if err != nil {
-		a.renderAdminNotifications(w, r, http.StatusBadGateway, "The test email could not be sent. Check the operator SMTP configuration and server logs.", "")
+		a.renderAdminNotificationsPage(w, r, http.StatusBadGateway, PageData{Error: "The test email could not be sent. Check the operator SMTP configuration and server logs."})
 		return
 	}
-	a.renderAdminNotifications(w, r, http.StatusOK, "", "Test email sent to "+to+".")
+	a.renderAdminNotificationsPage(w, r, http.StatusOK, PageData{Notice: "Test email sent to " + to + "."})
 }

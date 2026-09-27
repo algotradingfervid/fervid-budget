@@ -1,16 +1,20 @@
 package app
 
+// The hook workflow handlers call after a request changes, to send the
+// matching in-app and email notifications.
+
 import (
-	"fervidbudget/internal/notify"
 	"net/http"
+
+	"fervidbudget/internal/notify"
 )
 
-// fire delivers one event for a request that has already been written.
-//
-// It logs and swallows failures on purpose: the workflow action succeeded, and
-// an SMTP outage or a broken admin template must not make the approver believe
-// their approval failed. The in-app row is written before any email is
-// attempted (see notify.Service.Notify), so the record survives a mail failure.
+// fire sends the notifications for event on a request that has already been
+// saved. Failures are logged, never returned: the workflow action itself
+// succeeded, and a mail outage must not make it look as if it failed. The
+// in-app row is written before any email is tried (see notify.Service.Notify),
+// so it survives a mail failure. An urgent request also raises the urgent
+// event when it is submitted or approved.
 func (a *App) fire(r *http.Request, event string, reqID int64) {
 	if a.notify == nil || reqID == 0 {
 		return
