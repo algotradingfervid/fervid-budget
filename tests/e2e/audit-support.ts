@@ -143,6 +143,29 @@ export async function csrfToken(context: BrowserContext): Promise<string> {
   return cookie.value;
 }
 
+/**
+ * The request's current revision, as the decision forms carry it.
+ *
+ * Approve, return, reject, cancel and the cancellation decision are all bound
+ * to the request as the decider saw it: the form posts a hidden `revision`
+ * field and the server refuses a missing or out-of-date one. The value does not
+ * depend on who reads it, but only some screens render it, so this looks on
+ * the request page (the approver's decision sheets), the cancellation screen
+ * and the edit form, in that order, as `page` sees them.
+ *
+ * Read it immediately before the POST: any change to the request, including
+ * one made by somebody else, gives it a new revision.
+ */
+export async function requestRevision(page: Page, requestId: number): Promise<string> {
+  for (const path of [`/requests/${requestId}`, `/requests/${requestId}/cancellation`, `/requests/${requestId}/edit`]) {
+    const response = await page.request.get(path, { maxRedirects: 0, failOnStatusCode: false });
+    if (response.status() !== 200) continue;
+    const match = /name="revision" value="([^"]+)"/.exec(await response.text());
+    if (match) return match[1];
+  }
+  throw new Error(`request ${requestId}: no screen this user can open shows its revision`);
+}
+
 export interface Probe {
   status: number;
   location: string | null;

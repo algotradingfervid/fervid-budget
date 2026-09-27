@@ -64,6 +64,44 @@ export function lastMonth(): string {
   return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// The smallest PDF the upload validator accepts: one empty page, with the
+// cross-reference offsets exactly right. Uploads are parsed as real PDFs now
+// rather than sniffed for a "%PDF" prefix, so a stand-in made of a header and
+// a trailer is refused as a corrupt file. The trailing spaces in the xref
+// entries are part of the format (each entry is exactly twenty bytes).
+export const validProofPdf = [
+  '%PDF-1.4',
+  '1 0 obj',
+  '<< /Type /Catalog /Pages 2 0 R >>',
+  'endobj',
+  '2 0 obj',
+  '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+  'endobj',
+  '3 0 obj',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>',
+  'endobj',
+  'xref',
+  '0 4',
+  '0000000000 65535 f ',
+  '0000000009 00000 n ',
+  '0000000058 00000 n ',
+  '0000000115 00000 n ',
+  'trailer',
+  '<< /Size 4 /Root 1 0 R >>',
+  'startxref',
+  '203',
+  '%%EOF',
+  ''
+].join('\n');
+
+/**
+ * validProofPdf as an in-memory upload, for setInputFiles or a multipart POST.
+ * `name` is the file name the server stores and shows.
+ */
+export function pdfUpload(name: string) {
+  return { name, mimeType: 'application/pdf', buffer: Buffer.from(validProofPdf) };
+}
+
 export async function login(page: Page, email: string, password: string) {
   await page.goto('/login');
   await page.getByLabel('Email').fill(email);

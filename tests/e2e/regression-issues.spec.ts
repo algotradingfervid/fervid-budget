@@ -11,7 +11,8 @@ import {
   settlePayment,
   lastMonth,
   thisMonth,
-  today
+  today,
+  validProofPdf
 } from './fixtures';
 
 test.beforeEach(async ({}, testInfo) => {
@@ -73,36 +74,6 @@ function proofFile(testInfo: TestInfo, name: string, body: string) {
   writeFileSync(path, body);
   return path;
 }
-
-// The smallest PDF the upload validator accepts: one empty page, with the
-// cross-reference offsets exactly right. Uploads are parsed as real PDFs now
-// rather than sniffed for a "%PDF" prefix, so a stand-in made of a header and
-// a trailer is refused as a corrupt file. The trailing spaces in the xref
-// entries are part of the format (each entry is exactly twenty bytes).
-const validProofPdf = [
-  '%PDF-1.4',
-  '1 0 obj',
-  '<< /Type /Catalog /Pages 2 0 R >>',
-  'endobj',
-  '2 0 obj',
-  '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
-  'endobj',
-  '3 0 obj',
-  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>',
-  'endobj',
-  'xref',
-  '0 4',
-  '0000000000 65535 f ',
-  '0000000009 00000 n ',
-  '0000000058 00000 n ',
-  '0000000115 00000 n ',
-  'trailer',
-  '<< /Size 4 /Root 1 0 R >>',
-  'startxref',
-  '203',
-  '%%EOF',
-  ''
-].join('\n');
 
 async function addProject(page: import('@playwright/test').Page, name: string, active = true) {
   await page.goto('/projects');
