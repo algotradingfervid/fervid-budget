@@ -606,6 +606,10 @@ export const SHOTS: Shot[] = [
       await page.fill('input[name="amount"]', '5000');
       const mode = page.locator('select[name="payment_mode"]');
       if ((await mode.count()) > 0) await mode.selectOption({ index: 1 }).catch(() => undefined);
+      // The transaction reference is required, so the form refuses to open the
+      // confirmation panel without one.
+      const reference = page.locator('input[name="reference_no"]');
+      if ((await reference.count()) > 0) await reference.fill('UTR000123456');
       await page.locator('button[hx-post*="settlement-preview"]').first().click();
     },
   },

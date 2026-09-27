@@ -157,6 +157,12 @@
 <p>You land on a confirmation screen. It leads with <strong>Submitted.</strong>, followed by your approver's name and <strong>has been notified.</strong> It shows the request's new number and amount, and lays out <strong>What happens next</strong> in three steps: your approver reviews it, Accounts picks it up once approved, and it settles. The buttons at the foot are <strong>Raise another</strong>, <strong>My requests</strong> and <strong>View this request</strong>.</p>
 <aside class="callout callout-warning"><p class="callout-title">Nothing is saved until you submit</p><p>There is no draft. Nothing you type is stored until you press <strong>Submit request</strong>, so do not leave the form half-filled and expect to come back to it. If you close the tab, you start again.</p></aside>
 <h2 id="when-the-form-comes-back">When the form comes back</h2>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/form-validation.png" aria-label="Enlarge: A refused reimbursement. The red band at the top reads enter the amount you are requesting; beneath it, Check the highlighted fields lists every problem, and each field repeats its own message.">
+    <img src="../assets/shots/requester/form-validation.png" alt="The refusal shown when a request is submitted without the details it requires." loading="lazy" width="1440">
+  </button>
+  <figcaption>A refused reimbursement. The red band at the top reads enter the amount you are requesting; beneath it, Check the highlighted fields lists every problem, and each field repeats its own message. </figcaption>
+</figure>
 <p>If something is missing or contradictory, the form returns with a red band across the top carrying one sentence — the first problem it found. Everything you had already typed is still there; you are never made to fill the page in twice.</p>
 <div class="table-wrap"><table><caption>The wording is the product’s own, taken from the running system.</caption><thead><tr><th scope="col">What the band says</th><th scope="col">What to do</th></tr></thead><tbody>
 <tr><td><code>a short title is required — it is what your approver sees in their list</code></td><td>Type a <strong>Short title</strong>.</td></tr>
@@ -176,7 +182,9 @@
 <tr><td><code>say why this is urgent</code></td><td>You ticked <strong>Mark this urgent</strong> and left the reason empty.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-note"><p>Every one of these rules is enforced on the server, not only in the browser. Hiding a field or switching one off in the page does not get a request past them.</p></aside>
-<h2 id="the-duplicate-warning">The duplicate warning</h2><p>A vendor invoice matching the same vendor, normalised invoice number and invoice year requires review before it can be submitted again. The warning links to matching requests your access permits. For a legitimate separate request, provide an override explanation of at least 10 characters; that reason is retained in the audit history. A different invoice year is not treated as the same invoice.</p><p>For a remaining balance on an already approved invoice, ask Accounts to use the existing request's installment workflow instead of raising the invoice again. Similar-payment advisory warnings may also help identify repeats; always compare the source invoice and current request.</p>
+<h2 id="the-duplicate-warning">The duplicate warning</h2>
+<p>A vendor invoice matching the same vendor, normalised invoice number and invoice year requires review before it can be submitted again. The warning links to matching requests your access permits. For a legitimate separate request, provide an override explanation of at least 10 characters; that reason is retained in the audit history. A different invoice year is not treated as the same invoice.</p>
+<p>For a remaining balance on an already approved invoice, ask Accounts to use the existing request's installment workflow instead of raising the invoice again. Similar-payment advisory warnings may also help identify repeats; always compare the source invoice and current request.</p>
 <h2 id="the-request-number">The request number</h2>
 <p>The number is issued at submission and never changes afterwards. In this organisation it is shaped <code>PR-2026-000426</code>: a prefix, the year, and a running count. Editing a request keeps its number; withdrawing it keeps it; only raising a brand-new request produces a new one.</p>
 <dl class="faq"><dt>Can I save this and finish it tomorrow?</dt><dd><p>No — there are no drafts. Either submit it, or raise it again tomorrow from scratch. A submitted request can still be edited while it is awaiting approval, so submitting early is usually the safer choice.</p></dd>
