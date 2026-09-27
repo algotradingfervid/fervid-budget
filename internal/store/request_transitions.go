@@ -106,14 +106,46 @@ func refuseIfPaid(r Request) error {
 }
 
 // checkDecisionRevision binds an approver's decision to the request as their
-// screen showed it. HTTP handlers always pass the form's revision, and a blank
-// or out-of-date one is refused. Trusted internal callers pass none, which
-// skips the check.
+// screen showed it. When a revision is passed, a blank or out-of-date one is
+// refused. Passing none skips the check; only trusted callers (seed data and
+// tests) do that. HTTP handlers use the ...AtRevision methods below, whose
+// revision argument cannot be left out.
 func checkDecisionRevision(ctx context.Context, tx *sql.Tx, req Request, revisions []string) error {
 	if len(revisions) == 0 {
 		return nil
 	}
 	return requireRevision(ctx, tx, req, revisions[0], "this request changed; reload and review it before deciding")
+}
+
+// The approver's decisions as the HTTP handlers make them. Each one takes the
+// revision the approver's screen showed as a required argument and always
+// checks it, so a handler cannot drop it by accident: a blank or out-of-date
+// revision is refused with ErrValidation.
+
+// ApproveRequestAtRevision is ApproveRequest bound to the reviewed revision.
+func (s *Store) ApproveRequestAtRevision(ctx context.Context, actor User, id, approvedAmount int64, note, revision string) error {
+	return s.ApproveRequest(ctx, actor, id, approvedAmount, note, revision)
+}
+
+// ReturnRequestAtRevision is ReturnRequest bound to the reviewed revision.
+func (s *Store) ReturnRequestAtRevision(ctx context.Context, actor User, id int64, comment, revision string) error {
+	return s.ReturnRequest(ctx, actor, id, comment, revision)
+}
+
+// RejectRequestAtRevision is RejectRequest bound to the reviewed revision.
+func (s *Store) RejectRequestAtRevision(ctx context.Context, actor User, id int64, reason, revision string) error {
+	return s.RejectRequest(ctx, actor, id, reason, revision)
+}
+
+// DecideCancellationAtRevision is DecideCancellation bound to the reviewed
+// revision.
+func (s *Store) DecideCancellationAtRevision(ctx context.Context, actor User, id int64, accept bool, note, revision string) error {
+	return s.DecideCancellation(ctx, actor, id, accept, note, revision)
+}
+
+// CancelRequestAtRevision is CancelRequest bound to the reviewed revision.
+func (s *Store) CancelRequestAtRevision(ctx context.Context, actor User, id int64, reason, revision string) error {
+	return s.CancelRequest(ctx, actor, id, reason, revision)
 }
 
 // SubmitRequest resubmits a request the approver returned for correction. It
