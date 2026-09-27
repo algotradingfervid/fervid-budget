@@ -1,3 +1,6 @@
+// users.go creates, reads and saves user accounts, keeps the older users.role
+// column in step with the assigned roles, and tracks failed logins.
+
 package store
 
 import (
@@ -16,29 +19,25 @@ func (s *Store) CreateUser(ctx context.Context, email, name, hash, role string, 
 }
 
 // CreateUserWithRoles creates a user and gives them exactly the roles named.
-//
-// The people screen used to offer a two-value "Data entry or Admin" dropdown
-// taken from the superseded users.role column, and assignDefaultRoleTx turned
-// anything that was not "admin" into the *Accounts* role — which carries
-// payment:settle and payment:void. So an administrator adding a colleague could
-// not create a requester or an approver at all, and the innocuous-sounding
-// option silently granted the ability to move money. The screen now asks for
-// real roles and passes them here.
-//
-// With no roles named the legacy derivation still applies, because seeding and
-// the tests create users that way and their first role has to come from
-// somewhere.
+// With no roles named, the role string decides the first role
+// (assignDefaultRoleTx), which is how seeding and tests create users.
 func (s *Store) CreateUserWithRoles(ctx context.Context, email, name, hash, role string, active bool, roleIDs []int64) (int64, error) {
 	return s.createUserWithRoles(ctx, 0, email, name, hash, role, active, roleIDs)
 }
 
-// CreateManagedUser enforces the actor's delegation ceiling in the insert transaction.
+// CreateManagedUser creates a user from the Users screen. At least one role is
+// required, and actor may only grant roles within their own permissions (the
+// delegation ceiling), checked in the same transaction as the insert.
 func (s *Store) CreateManagedUser(ctx context.Context, actor User, email, name, hash string, active bool, roleIDs []int64) (int64, error) {
 	if len(roleIDs) == 0 {
 		return 0, ErrValidation
 	}
 	return s.createUserWithRoles(ctx, actor.ID, email, name, hash, "data_entry", active, roleIDs)
 }
+
+// createUserWithRoles inserts the user and their roles in one transaction.
+// actorID 0 means an internal caller (seeding, tests): no delegation check, and
+// role decides users.role. Otherwise users.role follows the granted roles.
 func (s *Store) createUserWithRoles(ctx context.Context, actorID int64, email, name, hash, role string, active bool, roleIDs []int64) (int64, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	name = strings.TrimSpace(name)
@@ -92,6 +91,7 @@ func (s *Store) createUserWithRoles(ctx context.Context, actorID int64, email, n
 	return id, nil
 }
 
+// EnsureUser creates the user unless one with this email already exists.
 func (s *Store) EnsureUser(ctx context.Context, email, name, hash, role string) error {
 	var id int64
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM users WHERE email=?`, strings.ToLower(email)).Scan(&id)
@@ -105,16 +105,19 @@ func (s *Store) EnsureUser(ctx context.Context, email, name, hash, role string) 
 	return err
 }
 
+// UserByEmail looks a user up by email (case-insensitive), or ErrNotFound.
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id,session_version FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email)))
 	return scanUser(row)
 }
 
+// UserByID looks a user up by id, or ErrNotFound.
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id,session_version FROM users WHERE id=?`, id)
 	return scanUser(row)
 }
 
+// ListUsers returns every user, active or not, ordered by name.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,email,name,password_hash,role,active,created_at,updated_at,default_approver_id,session_version FROM users ORDER BY name`)
 	if err != nil {
@@ -132,29 +135,11 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
-// UpdateUser rewrites a user's profile — name, legacy role, active flag and
-// optionally the password — and touches nothing else.
-//
-// It is NOT the Users screen's path and must not become one again. F-G-034
-// replaced that with SaveUser, which applies the profile, the role assignment
-// and the default approver in a single transaction, because a save refused by
-// the second of three separate calls used to leave the first one's rename
-// committed. Any new writer that saves the edit sheet uses SaveUser.
-//
-// It is kept, rather than deleted with its callers rewritten, because SaveUser
-// is not a drop-in replacement for a narrow write: UserSaveInput.RoleIDs is
-// "the user's roles now", so a nil slice CLEARS the assignment. A caller that
-// only wants to deactivate somebody would have to read their roles back and
-// echo them, and getting that wrong is a silent permission change. That is what
-// this function is for, and the callers that want exactly it today are the
-// fixtures in internal/auth's session tests (deactivating a signed-in user) and
-// store_test.go's field-validation pin.
-//
-// Its one weakness, recorded rather than hidden: the last-active-administrator
-// guard reads on s.db and then writes on s.db, with no transaction around the
-// pair. SaveUser re-asks the same question inside its own transaction for
-// exactly that reason. This is not reachable from any route today; it becomes a
-// real race the moment one calls it.
+// UpdateUser rewrites a user's name, users.role, active flag and (when
+// passwordHash is not empty) password, and leaves their roles alone. Only tests
+// call it, for example to deactivate a signed-in user. Screens save users with
+// SaveUser: UpdateUser checks the last-active-administrator rule outside its
+// transaction, so two concurrent calls could both pass it.
 func (s *Store) UpdateUser(ctx context.Context, id int64, name, role string, active bool, passwordHash string) error {
 	name = strings.TrimSpace(name)
 	if err := validateUserFields("placeholder@example.invalid", name, role); err != nil {
@@ -201,18 +186,13 @@ type UserSaveInput struct {
 	DefaultApproverID int64
 }
 
-// SaveUser applies a whole user save in one transaction.
-//
-// It exists because the three writes behind one submit used to be three store
-// calls with three transactions, so a save refused by the second left the first
-// one's rename committed — and the audit row, written last of all by the
-// handler, described neither state (F-G-034). R4 makes role assignment the thing
-// that governs access, so a half-applied user save is a half-applied access
-// change.
-//
-// Every rule the three old calls enforced is enforced here, before any write:
-// the profile fields, the last-active-administrator guard, that every role id
-// exists, and that nobody is their own default approver.
+// SaveUser saves the Users screen's edit sheet — profile, roles and default
+// approver — and its audit row in one transaction, so a refused save changes
+// nothing. Before any write it checks the profile fields, that actor may grant
+// these roles (the role ceiling), that every role exists, that the last active
+// administrator is not removed, and that nobody is their own default approver.
+// A new password or a deactivation also ends the user's sessions and cancels
+// their password-reset links.
 func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) error {
 	name := strings.TrimSpace(in.Name)
 	if err := validateUserFields("placeholder@example.invalid", name, in.Role); err != nil {
@@ -236,10 +216,7 @@ func (s *Store) SaveUser(ctx context.Context, actor User, in UserSaveInput) erro
 		return err
 	}
 
-	// The last-active-administrator guard, re-asked inside the transaction. The
-	// exported RequireAnotherActiveAdmin reads through s.db, and a read on a
-	// second connection while this transaction holds the write lock is exactly
-	// the shape that deadlocks under SQLite.
+	// The current profile, read inside the transaction, is the audit "before".
 	var currentRole, currentName string
 	var currentActive int
 	if err := tx.QueryRowContext(ctx, `SELECT role,active,name FROM users WHERE id=?`, in.ID).
@@ -374,7 +351,9 @@ func (s *Store) ResetLoginFailures(ctx context.Context, email string) error {
 	return classify(err)
 }
 
-func scanUser(scanner interface{ Scan(...any) error }) (User, error) {
+// scanUser reads one users row selected as id,email,name,password_hash,role,
+// active,created_at,updated_at,default_approver_id,session_version.
+func scanUser(scanner rowScanner) (User, error) {
 	var u User
 	var active int
 	var approver sql.NullInt64
@@ -387,6 +366,8 @@ func scanUser(scanner interface{ Scan(...any) error }) (User, error) {
 	return u, err
 }
 
+// validateUserFields checks the email, name and users.role value ("" means
+// the default).
 func validateUserFields(email, name, role string) error {
 	if strings.TrimSpace(email) == "" || !strings.Contains(email, "@") || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("%w: email and name are required", ErrValidation)

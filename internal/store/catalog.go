@@ -1,3 +1,6 @@
+// catalog.go maintains projects and their budget heads, and lists the open
+// requests that deactivating a head or an approver would strand.
+
 package store
 
 import (
@@ -8,6 +11,9 @@ import (
 	"strings"
 )
 
+// UpsertProject creates a project (id 0) or updates one, with an audit row.
+// actors is optional: seeding passes none and the audit row then has no actor.
+// It returns the project id.
 func (s *Store) UpsertProject(ctx context.Context, id int64, name string, active bool, sortOrder int, actors ...User) (int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -60,6 +66,7 @@ func (s *Store) UpsertProject(ctx context.Context, id int64, name string, active
 	return id, tx.Commit()
 }
 
+// ListProjects returns projects in display order, optionally only active ones.
 func (s *Store) ListProjects(ctx context.Context, activeOnly bool) ([]Project, error) {
 	q := `SELECT id,name,active,sort_order,created_at FROM projects`
 	if activeOnly {
@@ -84,6 +91,9 @@ func (s *Store) ListProjects(ctx context.Context, activeOnly bool) ([]Project, e
 	return out, rows.Err()
 }
 
+// UpsertHead creates a head (id 0) or updates one, with an audit row. A head
+// that already has budgets, payments or requests cannot move to another
+// project. actors is optional, as for UpsertProject. It returns the head id.
 func (s *Store) UpsertHead(ctx context.Context, id, projectID int64, name, dueDay string, active bool, sortOrder int, actors ...User) (int64, error) {
 	name = strings.TrimSpace(name)
 	dueDay = strings.TrimSpace(dueDay)
@@ -166,11 +176,11 @@ type OpenRequest struct {
 }
 
 // headOpenStatuses are the states in which a request still needs its head to be
-// active: every state that can still end in a payment (F-G-024).
+// active: every state that can still end in a payment.
 const headOpenStatuses = `'pending','returned','approved','cancellation_requested','processing','partial_review'`
 
 // approverOpenStatuses are the states in which a request waits on its approver,
-// or will again once its requester resubmits it (F-G-025).
+// or will again once its requester resubmits it.
 const approverOpenStatuses = `'pending','returned','cancellation_requested','partial_review'`
 
 // HeadIsActive reports whether a head is currently active.
@@ -192,6 +202,7 @@ func (s *Store) RequestsAwaitingApprover(ctx context.Context, userID int64) ([]O
 	return s.openRequests(ctx, `manager_id=? AND status IN (`+approverOpenStatuses+`)`, userID)
 }
 
+// openRequests lists requests matching where (one ? for arg), oldest first.
 func (s *Store) openRequests(ctx context.Context, where string, arg int64) ([]OpenRequest, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, number, COALESCE(NULLIF(short_title,''), purpose), status, COALESCE(approved_amount, amount)
 		FROM payment_requests WHERE `+where+` ORDER BY id`, arg)
@@ -210,6 +221,8 @@ func (s *Store) openRequests(ctx context.Context, where string, arg int64) ([]Op
 	return out, rows.Err()
 }
 
+// ListHeads returns heads with their project names in display order;
+// activeOnly keeps heads that are active in an active project.
 func (s *Store) ListHeads(ctx context.Context, activeOnly bool) ([]Head, error) {
 	q := `SELECT h.id,h.project_id,p.name,h.name,COALESCE(h.due_day,''),h.active,h.sort_order,h.created_at
 	      FROM heads h JOIN projects p ON p.id=h.project_id`
@@ -235,6 +248,7 @@ func (s *Store) ListHeads(ctx context.Context, activeOnly bool) ([]Head, error) 
 	return out, rows.Err()
 }
 
+// validDueDay reports whether s is empty or a day of the month from 1 to 31.
 func validDueDay(s string) bool {
 	if s == "" {
 		return true

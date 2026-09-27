@@ -1,3 +1,8 @@
+// accounts_queue.go is the Accounts side of a request: taking an approved
+// request for processing (a reservation), releasing or reassigning it,
+// recording its payment, accepting or questioning a partial settlement, holds,
+// and the queue that lists all of this.
+
 package store
 
 import (
@@ -12,7 +17,7 @@ import (
 
 // ReserveRequest's three refusal causes, distinguished so the conflict screen
 // can tell the accountant what actually happened instead of "Someone else took
-// this request" for all three (F-D-02). Each wraps ErrForbidden, so every
+// this request" for all three. Each wraps ErrForbidden, so every
 // existing errors.Is(err, ErrForbidden) branch — including the handler that
 // routes reservation refusals to the conflict screen — keeps working; a caller
 // that wants the real cause branches with errors.Is on the specific sentinel.
@@ -30,8 +35,8 @@ var (
 // ReserveRequest atomically moves an approved, unclaimed, not-on-hold request to
 // 'processing' reserved by actor. The single conditional UPDATE is the
 // concurrency guarantee: only the first committer matches, so a losing caller
-// sees RowsAffected()==0 (S2, S5, L8). Only then — the race is already lost —
-// is the row re-read to name which of the three causes refused it (F-D-02).
+// sees RowsAffected()==0. Only then — the race is already lost — is the row
+// re-read to name which of the three causes refused it.
 func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -75,7 +80,7 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 	// Every payment_request summary written on this side starts with the actor,
 	// as the request-module ones do: the detail thread shows the summary as the
 	// line's whole title, so a summary that leaves the name out is a line that
-	// says what happened and not who did it (L7–L10).
+	// says what happened and not who did it.
 	if err := recordAuditTx(ctx, tx, auditBy(actor, "process", "payment_request", &id, actor.Name+" reserved the request for processing").withChange(nil, map[string]any{"processing_by": actor.ID})); err != nil {
 		return err
 	}
@@ -83,11 +88,12 @@ func (s *Store) ReserveRequest(ctx context.Context, actor User, id int64) error 
 }
 
 // ReleaseRequest returns a 'processing' request to 'approved'. confirmed must be
-// true ("no payment initiated" — S7) and reason is required (G12): the release is
-// visible to the requester and the approver, and the reservation .thread renders
-// it. Only the assignee, or an authorized caller (handler resolved
-// reservation:release beyond their own reservations), may release (S6). There is
-// no auto-release; this is the only path back to approved.
+// true (the accountant confirms no payment was initiated) and a reason is
+// required: the release is visible to the requester and the approver in the
+// request's history. Only the holder of the reservation, or a caller the
+// handler has authorized to release other people's reservations, may release.
+// Nothing releases a reservation automatically; this is the only path back to
+// approved.
 func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason string, confirmed, authorized bool) error {
 	if !confirmed {
 		return fmt.Errorf("%w: confirm that no payment was initiated before releasing", ErrValidation)
@@ -125,10 +131,10 @@ func (s *Store) ReleaseRequest(ctx context.Context, actor User, id int64, reason
 }
 
 // ReassignReservation hands a reservation to another user without ever returning
-// the request to the open queue (G11): status stays 'processing' and only
+// the request to the open queue: status stays 'processing' and only
 // processing_by moves, so no third party can slip in between. authorized is the
 // handler-resolved reservation:reassign grant; the store fails closed without it.
-// reason is required and is what the reservation .thread renders.
+// reason is required and is shown in the request's history.
 func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserID int64, reason string, authorized bool) error {
 	if !authorized {
 		return fmt.Errorf("%w: reassigning someone else's reservation needs the reassign permission", ErrForbidden)
@@ -194,16 +200,16 @@ func (s *Store) ReassignReservation(ctx context.Context, actor User, id, toUserI
 // snapshots reject replays and stale forms, including after a fresh reservation.
 // Payments and their attachments commit together and remain immutable.
 //
-// F-D-01: the head, the payee and the invoice number are facts of the request —
-// a manager approved an amount against a project and head, and the entry screen
-// never offers a control to change any of them — so all three are derived from
-// the request row this transaction already holds open, and whatever the form
-// sent in those fields is ignored. A recoverable request has no head (F-D-11):
-// its payment is written with head_id NULL, which the grid and the monthly
+// The head, the payee and the invoice number are facts of the request — a
+// manager approved an amount against a project and head, and the entry screen
+// offers no control to change them — so all three come from the request row
+// and whatever the form sent in those fields is ignored. A recoverable request
+// has no head: its payment is written with head_id NULL, which the grid and the
 // report never match because they join payments on head_id.
 func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, requestID int64, in PaymentInput, settlement, partialReason string, attachment *AttachmentInput) (int64, error) {
-	// Electronic and instrument payments need a usable bank/payment reference.
-	// Untyped historical store callers retain their compatibility behavior; the HTTP boundary requires a reference for every linked submission.
+	// Every payment mode except "other" (and an unset mode from older callers)
+	// needs a transaction or cheque reference. The HTTP handler also requires a
+	// reference for every payment against a request.
 	switch strings.ToLower(strings.TrimSpace(in.PaymentMode)) {
 	case "neft", "rtgs", "upi", "cheque", "card", "dd", "bank_transfer", "cash":
 		if strings.TrimSpace(in.ReferenceNo) == "" {
@@ -229,22 +235,21 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 		return 0, err
 	}
 	defer tx.Rollback()
-	var status, treatment, displayPayee, invoiceNo string
+	var status, treatment, displayPayee, invoiceNo, approvedDate string
 	var processingBy, headID, vendorID sql.NullInt64
 	var requested int64
 	var approved sql.NullInt64
 	// The display payee, exactly as Request() resolves it: a vendor_invoice
 	// names its payee with vendor_id and leaves the snapshot empty.
 	//
-	// F-G-009: r.vendor_id is read for the same reason head_id is — it is a fact
-	// of the request, not of the form — and is written onto the payment so the
-	// vendor master can total spend by identity instead of by matching the payee
-	// snapshot's text. Migration v10 back-filled the payments that already
-	// existed; this is what keeps every payment made from now on linked.
+	// r.vendor_id is also a fact of the request, and is written onto the
+	// payment so the vendor master totals spend by vendor rather than by
+	// matching the payee text.
 	if err := tx.QueryRowContext(ctx, `SELECT r.status, r.processing_by, r.amount, r.approved_amount,
-		r.treatment, r.head_id, r.vendor_id, COALESCE(NULLIF(v.name,''), r.vendor_payee, ''), COALESCE(r.invoice_no,'')
+		r.treatment, r.head_id, r.vendor_id, COALESCE(NULLIF(v.name,''), r.vendor_payee, ''), COALESCE(r.invoice_no,''),
+		COALESCE(substr(r.approved_at,1,10),'')
 		FROM payment_requests r LEFT JOIN vendors v ON v.id=r.vendor_id
-		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &vendorID, &displayPayee, &invoiceNo); err != nil {
+		WHERE r.id=?`, requestID).Scan(&status, &processingBy, &requested, &approved, &treatment, &headID, &vendorID, &displayPayee, &invoiceNo, &approvedDate); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotFound
 		}
@@ -266,25 +271,19 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if status != "processing" || !processingBy.Valid || processingBy.Int64 != actor.ID {
 		return 0, fmt.Errorf("%w: reserve this request before recording its payment", ErrForbidden)
 	}
-	// F-D-01: overwrite, never compare — the form's copies of these fields are
-	// display baggage from the entry screen, not input.
+	// Overwrite, never compare: the form's copies of these fields are display
+	// values from the entry screen, not input.
 	in.HeadID = headID.Int64 // 0 when the request has no head
 	in.VendorPayee = displayPayee
 	in.InvoiceNo = invoiceNo
-	// Validated on this transaction: reading the month lock and the head on a
-	// second pooled connection while this one holds the write lock is how a
-	// single settlement came to stack four separate five-second busy waits.
+	// Validated on this transaction, not the pool (see rowQuerier).
 	if err := validatePaymentTx(ctx, tx, in, treatment == "recoverable"); err != nil {
-		return 0, err
-	}
-	var approvedDate string
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(substr(approved_at,1,10),'') FROM payment_requests WHERE id=?`, requestID).Scan(&approvedDate); err != nil {
 		return 0, err
 	}
 	if approvedDate == "" || in.PaidOn < approvedDate {
 		return 0, fmt.Errorf("%w: payment date cannot precede approval", ErrValidation)
 	}
-	// G13: the approved amount is a hard ceiling. Paying more is not a settlement
+	// The approved amount is a hard ceiling. Paying more is not a settlement
 	// decision, it is a different obligation — cancel and raise a new request.
 	ceiling := requested
 	if approved.Valid {
@@ -311,8 +310,8 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 	if in.Amount == remaining && settlement == "partial" {
 		return 0, fmt.Errorf("%w: this payment clears the remaining balance; choose fully settled instead of shortfall review", ErrValidation)
 	}
-	// A zero head is stored as NULL, never 0 — heads(id) has no row 0, and the
-	// v8 schema keeps the foreign key.
+	// A zero head is stored as NULL, never 0: heads(id) has no row 0 and the
+	// foreign key would refuse it.
 	var headArg any
 	if in.HeadID != 0 {
 		headArg = in.HeadID
@@ -382,7 +381,7 @@ func (s *Store) RecordPaymentForRequest(ctx context.Context, actor User, request
 }
 
 // AcceptPartial closes a 'partial_review' request as 'completed_partial' — a
-// terminal state distinct from a clean 'completed' (S11, G14). The difference is
+// terminal state distinct from a clean 'completed'. The difference is
 // permanent and visible: the ledger renders .pill.completed-partial, and anyone
 // reading the request later can see that a balance was written off rather than
 // paid. note is optional and joins the trail the requester reads.
@@ -426,13 +425,13 @@ func (s *Store) AcceptPartial(ctx context.Context, actor User, id int64, note st
 }
 
 // RaiseConcern keeps a 'partial_review' request in review and appends a
-// conversation comment (S11). comment is required.
+// conversation comment. comment is required, and only the request's approver
+// may raise one.
 func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment string) error {
 	comment = strings.TrimSpace(comment)
 	if comment == "" {
 		return fmt.Errorf("%w: a concern comment is required", ErrValidation)
 	}
-	// Reads the request, then writes a comment — same shape, same fix.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
@@ -466,7 +465,8 @@ func (s *Store) RaiseConcern(ctx context.Context, actor User, id int64, comment 
 	return tx.Commit()
 }
 
-// HoldRequest pauses an approved, not-already-held request (L7). reason required.
+// HoldRequest pauses an approved, not-already-held request so it cannot be
+// taken for processing. reason is required.
 func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason string) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -492,8 +492,8 @@ func (s *Store) HoldRequest(ctx context.Context, actor User, id int64, reason st
 	return tx.Commit()
 }
 
-// UnholdRequest lifts a hold. The route gate (payment.hold) restricts this to
-// Accounts (L7).
+// UnholdRequest lifts a hold. The route's permission (payment.hold) limits this
+// to Accounts.
 func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -516,10 +516,10 @@ func (s *Store) UnholdRequest(ctx context.Context, actor User, id int64) error {
 }
 
 // LinkablePaymentRequests powers the Accounts queue and the request picker.
-// Available is the S3 set — approved · unclaimed · not on hold — the only rows
+// Available holds the approved, unclaimed, not-on-hold requests — the only rows
 // that may be reserved. Unavailable is everything else the tab asked for that
-// the caller may see but not take. Both are searchable by number / requester /
-// payee / project / head / amount (S4). Counts always span the caller's scope.
+// the caller may see but not take. Both are searchable by number, requester,
+// payee, project, head and amount. Counts always span the caller's whole scope.
 func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOptions) (LinkableSet, error) {
 	now := opts.Now
 	if now.IsZero() {
@@ -596,15 +596,9 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 		// The payee is searched as it is displayed: typing a vendor's name must
 		// find the row that shows that name.
 		//
-		// F-D-04: so is the amount. r.amount is int64 paise, so matching the
-		// search text against CAST(r.amount AS TEXT) meant `7,431.00` — the only
-		// form of the figure that appears on any screen, since every rendering
-		// goes through money.FormatPaise — never found ₹7,431.00, while 743100
-		// did. The text match is kept, because a substring of the paise integer
-		// is still a useful needle and TC-D-013 pins that 743100 works; what is
-		// added is an exact paise comparison whenever the needle parses as money.
-		// money.ParsePaise already strips ₹, commas and whitespace, so it is the
-		// right normaliser and the two cannot drift.
+		// The amount is searched as it is displayed too: "7,431.00" or "₹7,431"
+		// matches the exact amount (money.ParsePaise normalises it), and a
+		// substring of the stored paise integer (743100) still matches as text.
 		amountClause := ` OR CAST(r.amount AS TEXT) LIKE ? ESCAPE '\'`
 		needle := "%" + escapeLike(search) + "%"
 		extra := []any{needle, needle, needle, needle, needle, needle}
@@ -618,11 +612,10 @@ func (s *Store) LinkablePaymentRequests(ctx context.Context, opts LinkableOption
 	// CURRENT_TIMESTAMP is second-resolution, so a burst of approvals shares one
 	// timestamp; id breaks the tie and keeps the order stable.
 	//
-	// Urgent first, as every other request list sorts: the design's approved
-	// stage reads "In the Accounts queue. Urgent requests surface here", and
-	// the dashboard's Accounts area shows only the first few of these rows, so
-	// an urgent request behind older ordinary ones did not surface at all
-	// (urgent-1). The Paid tab is history, not work, and keeps approval order.
+	// Urgent first, as every other request list sorts: the dashboard's
+	// Accounts area shows only the first few of these rows, and an urgent
+	// request must not hide behind older ordinary ones. The Paid tab is
+	// history, not work, and keeps approval order.
 	if opts.Status == "paid" {
 		q += ` ORDER BY r.approved_at, r.id`
 	} else {

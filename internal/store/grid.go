@@ -1,3 +1,6 @@
+// grid.go builds the budget-versus-actual grid for a month and the budget
+// report over a range of months.
+
 package store
 
 import (
@@ -8,13 +11,18 @@ import (
 	"time"
 )
 
+// Grid builds the budget-versus-actual table for one month ("YYYY-MM"; an
+// invalid month means this month): one row per head, grouped by project, with
+// totals. Inactive heads appear only when they have a budget or spend that
+// month. status and q (a project/head name search) filter the rows and the
+// totals. Payments that settle recoverable requests never count as spend.
 func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, error) {
 	if !validMonth(month) {
 		month = time.Now().Format("2006-01")
 	}
 	// A recoverable payment is a deposit, not an expense: it never counts as
-	// budget actuals (V2). The COALESCE keeps historical payments — the ones
-	// with no linked request at all — counting exactly as they always have.
+	// budget actuals. The COALESCE keeps payments with no linked request
+	// counting as spend.
 	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,h.id,h.name,h.active,p.active,COALESCE(h.due_day,''),COALESCE(b.amount,0),
 		COALESCE(SUM(CASE WHEN py.voided_at IS NULL AND COALESCE(pr.treatment,'') <> 'recoverable' THEN py.amount ELSE 0 END),0)
 		FROM heads h JOIN projects p ON p.id=h.project_id
@@ -93,6 +101,9 @@ func (s *Store) Grid(ctx context.Context, month, status, q string) (GridData, er
 	return g, rows.Err()
 }
 
+// Report returns the budget report from fromMonth to toMonth (at most 120
+// months). mode "projects" gives one row per project per month, "monthly" one
+// row per month, and anything else one row per head per month.
 func (s *Store) Report(ctx context.Context, fromMonth, toMonth, mode string) ([]ReportRow, error) {
 	if !validMonth(fromMonth) {
 		fromMonth = time.Now().Format("2006-01")
@@ -126,6 +137,8 @@ func (s *Store) Report(ctx context.Context, fromMonth, toMonth, mode string) ([]
 	return out, nil
 }
 
+// monthRange lists the months from one "YYYY-MM" to another, inclusive, in
+// either order.
 func monthRange(from, to string) ([]string, error) {
 	start, err := time.Parse("2006-01", from)
 	if err != nil {
@@ -157,6 +170,7 @@ func (t *ProjectTotal) add(budget, actual int64) {
 	t.VariancePercent = money.Percent(t.Variance, t.Budget)
 }
 
+// statusFor names a grid row's state from its budget and actual.
 func statusFor(budget, actual int64) string {
 	switch {
 	case budget == 0 && actual == 0:

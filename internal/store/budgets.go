@@ -1,3 +1,6 @@
+// budgets.go saves monthly budgets, creates and lists month plans, and locks
+// and unlocks months. A locked month refuses every budget and payment change.
+
 package store
 
 import (
@@ -9,12 +12,16 @@ import (
 	"strings"
 )
 
+// SetBudget saves one head's budget for a month; see SetBudgets.
 func (s *Store) SetBudget(ctx context.Context, actor User, headID int64, month string, amount int64) error {
 	return s.SetBudgets(ctx, actor, month, []BudgetInput{{HeadID: headID, Amount: amount}})
 }
 
-// SetBudgets writes an entire budget form atomically. Validation occurs before
-// any write, so a malformed row cannot leave a partially saved monthly plan.
+// SetBudgets saves a whole budget form in one transaction: every row is checked
+// before anything is written, so a bad row saves nothing. The month must not be
+// locked, and a head whose budget has detailed lines is changed through the
+// budget planner, not here. Each changed head gets an audit row; unchanged
+// ones are skipped.
 func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs []BudgetInput) error {
 	if !validMonth(month) || len(inputs) == 0 {
 		return fmt.Errorf("%w: valid month and at least one budget are required", ErrValidation)
@@ -103,6 +110,7 @@ func (s *Store) SetBudgets(ctx context.Context, actor User, month string, inputs
 	return tx.Commit()
 }
 
+// Budget returns a head's budget for a month, or ErrNotFound.
 func (s *Store) Budget(ctx context.Context, headID int64, month string) (Budget, error) {
 	var b Budget
 	err := s.db.QueryRowContext(ctx, `SELECT id,head_id,month,amount,created_at,updated_at FROM budgets WHERE head_id=? AND month=?`, headID, month).
@@ -113,6 +121,10 @@ func (s *Store) Budget(ctx context.Context, headID int64, month string) (Budget,
 	return b, err
 }
 
+// CreateMonthPlan opens targetMonth for planning. With a sourceMonth it also
+// copies that month's non-zero budgets (and their budget lines) for heads that
+// are still active; heads that already have a budget in targetMonth keep it.
+// The month must not be locked.
 func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, sourceMonth string) error {
 	targetMonth = strings.TrimSpace(targetMonth)
 	sourceMonth = strings.TrimSpace(sourceMonth)
@@ -198,6 +210,8 @@ func (s *Store) CreateMonthPlan(ctx context.Context, actor User, targetMonth, so
 	return tx.Commit()
 }
 
+// ListMonthPlans lists every month that has a plan, a budget, a payment or a
+// lock, newest first, with its budget-versus-actual totals from Grid.
 func (s *Store) ListMonthPlans(ctx context.Context) ([]MonthPlan, error) {
 	rows, err := s.db.QueryContext(ctx, `WITH months(month) AS (
 			SELECT month FROM budget_months
@@ -256,6 +270,8 @@ func (s *Store) ListMonthPlans(ctx context.Context) ([]MonthPlan, error) {
 	return out, rows.Err()
 }
 
+// LockMonth locks a month so no budget or payment in it can change. A reason
+// is required.
 func (s *Store) LockMonth(ctx context.Context, actor User, month, reason string) error {
 	if !validMonth(month) || strings.TrimSpace(reason) == "" {
 		return fmt.Errorf("%w: month and reason are required", ErrValidation)
@@ -283,6 +299,7 @@ func (s *Store) LockMonth(ctx context.Context, actor User, month, reason string)
 	return tx.Commit()
 }
 
+// UnlockMonth reopens a locked month. A reason is required.
 func (s *Store) UnlockMonth(ctx context.Context, actor User, month, reason string) error {
 	if !validMonth(month) || strings.TrimSpace(reason) == "" {
 		return fmt.Errorf("%w: month and reason are required", ErrValidation)
@@ -308,10 +325,9 @@ func (s *Store) UnlockMonth(ctx context.Context, actor User, month, reason strin
 	return tx.Commit()
 }
 
-// isLocked answers the month-lock question and reports why it could not. Every
-// write path must use this rather than IsLocked: a lock that fails to read is
-// not an unlocked month, and treating it as one lets a write into a closed
-// month.
+// isLocked reports whether month is locked, or why it could not tell. Every
+// write path uses this rather than IsLocked: a lock that fails to read is not
+// an unlocked month.
 func isLocked(ctx context.Context, q rowQuerier, month string) (bool, error) {
 	var n int
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM month_locks WHERE month=?`, month).Scan(&n); err != nil {
@@ -337,6 +353,7 @@ func (s *Store) MonthIsLocked(ctx context.Context, month string) (bool, error) {
 	return isLocked(ctx, s.db, month)
 }
 
+// MonthLock returns who locked month and why, or ErrNotFound when it is open.
 func (s *Store) MonthLock(ctx context.Context, month string) (MonthLock, error) {
 	var lock MonthLock
 	err := s.db.QueryRowContext(ctx, `SELECT ml.month,ml.locked_by,COALESCE(u.name,''),ml.locked_at,COALESCE(ml.reason,'')

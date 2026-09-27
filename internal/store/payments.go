@@ -1,3 +1,8 @@
+// payments.go is the payment ledger: payments entered directly (not through a
+// request), their edits and voids, their attachments, the payment-mode list and
+// the checks every payment passes. Payments that settle a request are written
+// by RecordPaymentForRequest in accounts_queue.go.
+
 package store
 
 import (
@@ -10,17 +15,22 @@ import (
 	"time"
 )
 
+// CreatePayment records a ledger payment with no attachment; see
+// CreatePaymentWithAttachment.
 func (s *Store) CreatePayment(ctx context.Context, actor User, in PaymentInput) (int64, error) {
 	return s.createPayment(ctx, actor, in, nil)
 }
 
-// CreatePaymentWithAttachment makes the database payment and attachment rows
-// one transaction. The caller remains responsible for removing an uploaded
-// file if this method returns an error.
+// CreatePaymentWithAttachment records a ledger payment and, when given, its
+// attachment in one transaction. The payment needs an active head, a date that
+// is not in the future, a positive amount and an unlocked month. The caller
+// removes the uploaded file if this returns an error.
 func (s *Store) CreatePaymentWithAttachment(ctx context.Context, actor User, in PaymentInput, attachment *AttachmentInput) (int64, error) {
 	return s.createPayment(ctx, actor, in, attachment)
 }
 
+// createPayment validates and inserts the payment, its audit row and the
+// optional attachment together.
 func (s *Store) createPayment(ctx context.Context, actor User, in PaymentInput, attachment *AttachmentInput) (int64, error) {
 	if err := s.validatePayment(ctx, in, false); err != nil {
 		return 0, err
@@ -58,12 +68,15 @@ func (s *Store) createPayment(ctx context.Context, actor User, in PaymentInput, 
 	return id, nil
 }
 
+// UpdatePayment edits a ledger payment; see UpdatePaymentWithAttachment.
 func (s *Store) UpdatePayment(ctx context.Context, actor User, id int64, in PaymentInput) error {
 	return s.UpdatePaymentWithAttachment(ctx, actor, id, in, nil)
 }
 
 // UpdatePaymentWithAttachment updates payment fields, optionally adds a file,
-// and records both audit events in one transaction.
+// and records both audit events in one transaction. actor must be allowed to
+// write this payment, and it must not be voided, linked to a request, or in a
+// locked month.
 func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id int64, in PaymentInput, attachment *AttachmentInput) error {
 	if attachment != nil {
 		if err := validateAttachment(*attachment); err != nil {
@@ -85,7 +98,7 @@ func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id 
 	if err := paymentWriteAccess(ctx, tx, actor.ID, before); err != nil {
 		return err
 	}
-	// S12: a payment that settles a request is the request's outcome. Editing it
+	// A payment that settles a request is the request's outcome. Editing it
 	// would silently rewrite what the requester and approver were told was paid.
 	if before.RequestID != nil {
 		return fmt.Errorf("%w: a payment linked to a request cannot be edited", ErrValidation)
@@ -93,8 +106,7 @@ func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id 
 	if before.VoidedAt != nil {
 		return fmt.Errorf("%w: cannot edit voided payment", ErrValidation)
 	}
-	// Read the lock on this transaction, not the pool: a second connection asking
-	// while this one holds the write lock is the shape that stacked busy waits.
+	// Read the lock on this transaction, not the pool (see rowQuerier).
 	locked, err := isLocked(ctx, tx, before.PaidOn[:7])
 	if err != nil {
 		return err
@@ -121,6 +133,9 @@ func (s *Store) UpdatePaymentWithAttachment(ctx context.Context, actor User, id 
 	return tx.Commit()
 }
 
+// VoidPayment marks a ledger payment void with a required reason, so it no
+// longer counts anywhere. Voiding an already-voided payment does nothing. A
+// payment linked to a request, or in a locked month, cannot be voided.
 func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason string) error {
 	reason = strings.TrimSpace(reason)
 	tx, err := s.beginWriteTx(ctx)
@@ -135,7 +150,7 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 	if err := paymentWriteAccess(ctx, tx, actor.ID, before); err != nil {
 		return err
 	}
-	// S12: voiding would leave the request 'completed' with nothing paid.
+	// Voiding would leave the request 'completed' with nothing paid.
 	if before.RequestID != nil {
 		return fmt.Errorf("%w: a payment linked to a request cannot be voided", ErrValidation)
 	}
@@ -216,10 +231,14 @@ func paymentInTx(ctx context.Context, tx *sql.Tx, id int64) (Payment, error) {
 	return p, err
 }
 
+// paymentFromInput builds the audit snapshot of a payment from its input.
 func paymentFromInput(id int64, actor User, in PaymentInput) Payment {
 	return Payment{ID: id, HeadID: in.HeadID, PaidOn: in.PaidOn, Amount: in.Amount, VendorPayee: in.VendorPayee, PaymentMode: in.PaymentMode, InvoiceNo: in.InvoiceNo, ReferenceNo: in.ReferenceNo, Remarks: in.Remarks, EnteredBy: actor.ID, EnteredByName: actor.Name}
 }
 
+// ListPayments returns ledger payments matching opts, newest payment date
+// first (300 at most when opts.Limit is 0), limited to the viewer's payment
+// data scope.
 func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Payment, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = 300
@@ -227,12 +246,10 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	q := paymentSelect
 	var where []string
 	var args []any
-	// F-A-04 / F-G-003: the payment data scope. "own" narrows the ledger to
-	// rows the viewer entered; "assigned" has no routed-to meaning on payments
-	// and narrows the same way rather than silently widening to everything —
-	// an administrator who chose either narrowing gets a narrowing. Only "all"
-	// is unrestricted: "" (the role editor's "None") and anything else read no
-	// rows, exactly as requestWhere treats the request scope (fixwave rbac-2).
+	// The payment data scope. "own" narrows the ledger to rows the viewer
+	// entered; "assigned" has no routed-to meaning on payments and narrows the
+	// same way rather than widening to everything. Only "all" is unrestricted:
+	// "" (the role editor's "None") and anything else read no rows.
 	switch opts.Scope {
 	case ScopeAll:
 	case "own", "assigned":
@@ -257,8 +274,8 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 		where = append(where, `py.head_id=?`)
 		args = append(args, opts.HeadID)
 	}
-	// The same COALESCE Grid uses, so a historical payment (no request at all)
-	// stays in, exactly as it still counts as an actual there.
+	// The same COALESCE Grid uses, so a payment with no request stays in, as it
+	// counts as spend there.
 	if opts.ExcludeRecoverable {
 		where = append(where, `COALESCE(pr.treatment,'') <> 'recoverable'`)
 	}
@@ -291,7 +308,7 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	var out []Payment
 	for rows.Next() {
 		// request_id travels with the row because the ledger has to tell a
-		// linked payment from a historical one: a linked payment cannot be
+		// linked payment from a direct one: a linked payment cannot be
 		// edited, and a screen that cannot see the difference would offer an
 		// Edit button the store refuses.
 		p, err := scanPayment(rows)
@@ -303,6 +320,8 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	return out, rows.Err()
 }
 
+// AddAttachment adds a file to a ledger payment. The payment must be writable
+// by actor, not voided, not linked to a request and not in a locked month.
 func (s *Store) AddAttachment(ctx context.Context, actor User, paymentID int64, original, stored, mime string, size int64) error {
 	attachment := AttachmentInput{OriginalName: original, StoredPath: stored, MimeType: mime, SizeBytes: size}
 	if err := validateAttachment(attachment); err != nil {
@@ -320,11 +339,9 @@ func (s *Store) AddAttachment(ctx context.Context, actor User, paymentID int64, 
 	if err := paymentWriteAccess(ctx, tx, actor.ID, p); err != nil {
 		return err
 	}
-	// S12 / F-D-08: a payment that settles a request is the request's outcome
-	// and the screen calls it read-only. Edit and void already refuse a linked
-	// row; a new document is the same mutation of that record and gets the
-	// same answer. (The settlement's own proof travels inside
-	// RecordPaymentForRequest's transaction, which never passes through here.)
+	// A payment that settles a request is read-only, like edit and void. (The
+	// settlement's own proof is attached inside RecordPaymentForRequest's
+	// transaction, which never passes through here.)
 	if p.RequestID != nil {
 		return fmt.Errorf("%w: a payment linked to a request cannot receive a new attachment", ErrValidation)
 	}
@@ -344,6 +361,8 @@ func (s *Store) AddAttachment(ctx context.Context, actor User, paymentID int64, 
 	return tx.Commit()
 }
 
+// addAttachmentTx inserts an attachment row and its audit row inside tx and
+// returns the attachment id.
 func addAttachmentTx(ctx context.Context, tx *sql.Tx, actor User, paymentID int64, attachment AttachmentInput) (int64, error) {
 	res, err := tx.ExecContext(ctx, `INSERT INTO payment_attachments(payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`, paymentID, attachment.OriginalName, attachment.StoredPath, attachment.MimeType, attachment.SizeBytes, actor.ID)
 	if err != nil {
@@ -374,7 +393,7 @@ func (s *Store) AttachmentByID(ctx context.Context, id int64) (Attachment, error
 // AttachmentWithPayment resolves a payment attachment to the payment it
 // belongs to, in one call, so a download or upload handler can walk from the
 // attachment to its payment and — through Payment.RequestID — to the request
-// whose data scope governs it (F-A-01/F-A-03). Authorization stays with the
+// whose data scope governs it. Authorization stays with the
 // app layer; this only supplies the ownership chain it needs.
 func (s *Store) AttachmentWithPayment(ctx context.Context, id int64) (Attachment, Payment, error) {
 	a, err := s.AttachmentByID(ctx, id)
@@ -390,7 +409,7 @@ func (s *Store) AttachmentWithPayment(ctx context.Context, id int64) (Attachment
 
 // RequestAttachmentByID resolves a request document from its own table.
 // Request documents live in request_attachments, not payment_attachments —
-// the two id spaces are unrelated (F-A-05) — so the request-document route
+// the two id spaces are unrelated — so the request-document route
 // must resolve here and scope by the owning RequestID, never through
 // AttachmentByID. Authorization is intentionally left to the app layer.
 func (s *Store) RequestAttachmentByID(ctx context.Context, id int64) (RequestAttachment, error) {
@@ -403,6 +422,7 @@ func (s *Store) RequestAttachmentByID(ctx context.Context, id int64) (RequestAtt
 	return a, err
 }
 
+// Attachments lists a payment's files, oldest first.
 func (s *Store) Attachments(ctx context.Context, paymentID int64) ([]Attachment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,payment_id,original_name,stored_path,COALESCE(mime_type,''),size_bytes,uploaded_by,created_at FROM payment_attachments WHERE payment_id=? ORDER BY created_at`, paymentID)
 	if err != nil {
@@ -470,11 +490,12 @@ func (s *Store) validatePayment(ctx context.Context, in PaymentInput, headOption
 // that a caller already holding a write transaction validates inside it rather
 // than from a second pooled connection.
 //
-// headOptional is true only when the payment settles a recoverable request
-// (F-D-11/F-E-01): a deposit or advance belongs to no budget head — the
-// recoverable fieldset never collects one — and the grid and monthly report
-// already exclude recoverables by treatment, so its head was never meaningful.
-// Every other payment, including one with no request at all, still needs a head.
+// headOptional is true only when the payment settles a recoverable request: a
+// deposit or advance belongs to no budget head, and the grid and report exclude
+// recoverables anyway. Every other payment needs an active head.
+//
+// It also refuses a mode outside the list, a date after today and a locked
+// month.
 func validatePaymentTx(ctx context.Context, q rowQuerier, in PaymentInput, headOptional bool) error {
 	if in.Amount <= 0 || in.Amount > money.MaxAmount || !validDate(in.PaidOn) || (in.HeadID == 0 && !headOptional) {
 		return fmt.Errorf("%w: valid head, date, and positive amount are required", ErrValidation)
@@ -485,24 +506,13 @@ func validatePaymentTx(ctx context.Context, q rowQuerier, in PaymentInput, headO
 	if strings.TrimSpace(in.PaymentMode) != "" && !IsPaymentMode(in.PaymentMode) {
 		return fmt.Errorf("%w: choose a payment mode from the list", ErrValidation)
 	}
-	// F-D-06: paid_on records when money left the bank, so a date after today
-	// records something that has not happened.
+	// paid_on records when money left the bank, so a date after today records
+	// something that has not happened. "Today" is in.Now when a test injects a
+	// clock, otherwise the server clock; a missing clock always means "check".
 	//
-	// "Today" is in.Now when a caller injects a clock, and the server's own clock
-	// when it does not. That default is the fix, not a detail: the check was
-	// written to skip on a zero Now, no production caller ever set the field,
-	// and so the rule shipped inert — present in the code, pinned by a store
-	// test, and enforced against nobody. Forgetting to inject a clock must mean
-	// "enforce", never "skip"; injection stays so a test can pin the day.
-	//
-	// It is deliberately LOCAL time rather than UTC, because it has to agree with
-	// the clock the rest of the product calls "now": validMonthOrCurrent defaults
-	// the ledger and the grid to time.Now().Format("2006-01") in the server's own
-	// zone (app.go:2051). While this read UTC the two disagreed for every zone
-	// ahead of Greenwich — between local midnight and the offset the ledger had
-	// rolled to the new day and this guard had not, so an accountant recording a
-	// payment dated the day the screen was showing them was told "paid on cannot
-	// be a future date". In IST that was every day from 00:00 to 05:30.
+	// It is the server's LOCAL day, not UTC, because the ledger and the grid
+	// call "this month" in local time too. With UTC, a payment dated today in
+	// IST was refused as "future" between 00:00 and 05:30.
 	//
 	// paid_on and the formatted clock share the YYYY-MM-DD shape, so a plain
 	// string comparison is a correct date comparison.
@@ -533,6 +543,7 @@ func validatePaymentTx(ctx context.Context, q rowQuerier, in PaymentInput, headO
 	return nil
 }
 
+// validateAttachment checks an attachment's metadata before it is stored.
 func validateAttachment(in AttachmentInput) error {
 	if strings.TrimSpace(in.OriginalName) == "" || strings.TrimSpace(in.StoredPath) == "" || in.SizeBytes < 0 {
 		return fmt.Errorf("%w: valid attachment metadata is required", ErrValidation)

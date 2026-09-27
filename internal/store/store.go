@@ -1,3 +1,12 @@
+// Package store is the only code that talks to the SQLite database. Every read
+// and write of budgets, payments, requests, users and settings goes through a
+// *Store method, and every change is written together with its audit row.
+//
+// store.go opens the database and holds the small helpers every other file
+// shares. The other files each cover one area: users.go, catalog.go (projects
+// and heads), budgets.go (budgets, month plans, month locks), grid.go, payments.go,
+// accounts_queue.go (the Accounts reservation queue), audit.go, requests*.go and
+// so on. schema.go plus migrations.go define the tables.
 package store
 
 import (
@@ -13,11 +22,15 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Store is an open database. It is safe for concurrent use.
 type Store struct {
 	db            *sql.DB
 	badgeRevision atomic.Uint64
 }
 
+// Open opens (or creates) the SQLite database at path with owner-only file
+// permissions, creates the baseline tables, runs the migrations and installs the
+// financial-limit triggers. ":memory:" opens a private in-memory database.
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -82,8 +95,11 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
-func (s *Store) DB() *sql.DB  { return s.db }
+
+// DB returns the underlying handle, for backups and tests.
+func (s *Store) DB() *sql.DB { return s.db }
 
 // rowScanner is what *sql.Row and *sql.Rows have in common, so one scan
 // function can read a single-row lookup and a list alike.
@@ -92,24 +108,26 @@ type rowScanner interface {
 }
 
 // rowQuerier is the read surface *sql.DB and *sql.Tx have in common, so a
-// validation helper can run inside its caller's transaction instead of going out
-// to a second pooled connection. Reading on a second connection while the first
-// holds a write transaction is what turned one slow payment into four stacked
-// five-second busy waits.
+// validation helper can run inside its caller's transaction. A writer must not
+// read on a second pooled connection while it holds the write lock: that read
+// can wait out the busy timeout behind the writer's own lock.
 type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// validDate reports whether s is a "YYYY-MM-DD" date.
 func validDate(s string) bool {
 	_, err := time.Parse("2006-01-02", s)
 	return err == nil
 }
 
+// validMonth reports whether s is a "YYYY-MM" month.
 func validMonth(s string) bool {
 	_, err := time.Parse("2006-01", s)
 	return err == nil
 }
 
+// boolInt stores a bool as SQLite's 0/1.
 func boolInt(v bool) int {
 	if v {
 		return 1
@@ -117,6 +135,10 @@ func boolInt(v bool) int {
 	return 0
 }
 
+// classify turns SQLite constraint failures into the store's sentinel errors so
+// handlers answer 400 (with the user's form kept) instead of 500: a tripped
+// financial-limit trigger and a foreign-key failure become ErrValidation, a
+// UNIQUE failure ErrDuplicate. Other errors pass through unchanged.
 func classify(err error) error {
 	if err == nil {
 		return nil
@@ -127,17 +149,16 @@ func classify(err error) error {
 	if strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("%w: %v", ErrDuplicate, err)
 	}
-	// F-B-06 / F-G-027: a FOREIGN KEY violation means a submitted id names a
-	// row that does not exist — a client error, not a server fault, so it must
-	// reach the user as a 400 that keeps their typed form, never a 500. The
-	// driver text is deliberately not echoed. SQLite's message is stable:
-	// "constraint failed: FOREIGN KEY constraint failed (787)".
+	// A FOREIGN KEY failure means a submitted id names a row that does not
+	// exist: a client error. The driver text is not echoed. SQLite's message is
+	// stable: "constraint failed: FOREIGN KEY constraint failed (787)".
 	if strings.Contains(err.Error(), "FOREIGN KEY") {
 		return fmt.Errorf("%w: a referenced record does not exist", ErrValidation)
 	}
 	return err
 }
 
+// nullJSON stores marshalled JSON, turning the JSON "null" into SQL NULL.
 func nullJSON(b []byte) any {
 	if string(b) == "null" {
 		return nil

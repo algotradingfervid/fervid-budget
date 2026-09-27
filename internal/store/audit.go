@@ -1,3 +1,6 @@
+// audit.go writes and reads the audit log: one row per change, with who made
+// it, a one-line summary and JSON snapshots of the row before and after.
+
 package store
 
 import (
@@ -50,6 +53,8 @@ func (in AuditInput) withChange(before, after any) AuditInput {
 	return in
 }
 
+// Audit returns the newest limit audit rows, optionally only for one entity
+// type (and, with entityID > 0, one row of it).
 func (s *Store) Audit(ctx context.Context, entityType string, entityID int64, limit int) ([]AuditEntry, error) {
 	q := `SELECT id,actor_id,COALESCE(actor_name,''),action,COALESCE(entity_type,''),entity_id,COALESCE(summary,''),COALESCE(before_json,''),COALESCE(after_json,''),COALESCE(ip,''),created_at FROM audit_log`
 	var args []any
@@ -104,8 +109,9 @@ type AuditPage struct {
 	Truncated bool
 }
 
-// AuditPage replaces reading the newest N rows and filtering them in Go: that
-// window hid every older row from the action and actor filters (audit-1).
+// AuditPage returns one page of the audit rows matching q, newest first, with
+// the total the filters match. Every filter is applied in SQL over the whole
+// log, so older rows are never hidden from a filter.
 func (s *Store) AuditPage(ctx context.Context, q AuditQuery) (AuditPage, error) {
 	where := []string{"1=1"}
 	var args []any

@@ -1,3 +1,6 @@
+// settings.go reads and saves the runtime key/value settings shown on the
+// Configuration screen.
+
 package store
 
 import (
@@ -19,7 +22,7 @@ func (s *Store) AppSetting(ctx context.Context, key string) (string, error) {
 }
 
 // AppSettings returns every runtime setting. The Configuration screen renders
-// from this one map (D6).
+// from this one map.
 func (s *Store) AppSettings(ctx context.Context) (map[string]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT key,value FROM app_settings`)
 	if err != nil {
@@ -43,7 +46,7 @@ func (s *Store) SetAppSetting(ctx context.Context, actor User, key, value string
 }
 
 // SetAppSettings upserts a batch of settings in one transaction with one audit
-// row, so a Configuration save is all-or-nothing (house pattern).
+// row, so a Configuration save is all-or-nothing.
 func (s *Store) SetAppSettings(ctx context.Context, actor User, values map[string]string) error {
 	if len(values) == 0 {
 		return nil

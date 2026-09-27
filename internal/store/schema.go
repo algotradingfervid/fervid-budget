@@ -1,5 +1,12 @@
+// schema.go holds the original tables, created on every start.
+
 package store
 
+// schemaSQL creates the original tables and indexes on a new database; every
+// statement is IF NOT EXISTS, so it is harmless on an existing one. It is not
+// the current schema: migrations.go adds columns and tables on top of it (for
+// example payments.request_id and users.default_approver_id), so read both —
+// or run `sqlite3 data.db .schema` — to see a table's real shape.
 const schemaSQL = `
 PRAGMA foreign_keys=ON;
 

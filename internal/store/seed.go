@@ -1,3 +1,7 @@
+// seed.go fills a new database for a first run or a demo: the first
+// administrator and, when there are no projects yet, sample projects, heads
+// and budgets.
+
 package store
 
 import (
@@ -17,6 +21,9 @@ const (
 	defaultSeedMonth      = "2026-06"
 )
 
+// SeedOptions configures Seed. Empty fields fall back to the defaults above;
+// the administrator's password is given either in clear (then checked against
+// the password rules and hashed) or already hashed.
 type SeedOptions struct {
 	AdminEmail        string
 	AdminName         string
@@ -25,6 +32,7 @@ type SeedOptions struct {
 	Month             string
 }
 
+// SeedResult reports what Seed created.
 type SeedResult struct {
 	AdminCreated  bool
 	SampleCreated bool
@@ -34,6 +42,9 @@ type SeedResult struct {
 	Budgets       int
 }
 
+// Seed creates the administrator if their email is not yet taken and, on a
+// database with no projects, heads or budgets, three sample projects with
+// budgets for opts.Month. Running it again changes nothing.
 func (s *Store) Seed(ctx context.Context, opts SeedOptions) (SeedResult, error) {
 	opts = normalizeSeedOptions(opts)
 	var result SeedResult
@@ -57,6 +68,7 @@ func (s *Store) Seed(ctx context.Context, opts SeedOptions) (SeedResult, error) 
 	return result, err
 }
 
+// normalizeSeedOptions fills in the default email, name and month.
 func normalizeSeedOptions(opts SeedOptions) SeedOptions {
 	opts.AdminEmail = strings.ToLower(strings.TrimSpace(opts.AdminEmail))
 	if opts.AdminEmail == "" {
@@ -72,6 +84,8 @@ func normalizeSeedOptions(opts SeedOptions) SeedOptions {
 	return opts
 }
 
+// ensureSeedAdmin returns the administrator named in opts, creating them when
+// missing; created reports whether it did.
 func (s *Store) ensureSeedAdmin(ctx context.Context, opts SeedOptions) (User, bool, error) {
 	existing, err := s.UserByEmail(ctx, opts.AdminEmail)
 	if err == nil {
@@ -99,6 +113,7 @@ func (s *Store) ensureSeedAdmin(ctx context.Context, opts SeedOptions) (User, bo
 	return admin, true, err
 }
 
+// sampleDataEmpty reports whether there are no projects, heads or budgets.
 func (s *Store) sampleDataEmpty(ctx context.Context) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT
@@ -111,6 +126,8 @@ func (s *Store) sampleDataEmpty(ctx context.Context) (bool, error) {
 	return count == 0, nil
 }
 
+// createSampleBudgetData creates sampleProjects with their heads and budgets for
+// month, counting what it created into result.
 func (s *Store) createSampleBudgetData(ctx context.Context, actor User, month string, result *SeedResult) error {
 	if actor.ID == 0 {
 		return fmt.Errorf("%w: seed actor is required", ErrValidation)
@@ -137,6 +154,7 @@ func (s *Store) createSampleBudgetData(ctx context.Context, actor User, month st
 	return nil
 }
 
+// sampleProject and sampleHead describe the demo data.
 type sampleProject struct {
 	Name  string
 	Heads []sampleHead
