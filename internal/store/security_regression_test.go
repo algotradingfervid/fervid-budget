@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// A user who administers users and roles through a delegated role cannot give
+// anyone — themselves included — more than their own role holds, and cannot
+// touch an administrator's account. An administrator cannot demote themselves
+// through the role list either.
 func TestSecurityDelegationCannotEscalateOrResetAdministrator(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -29,26 +33,41 @@ func TestSecurityDelegationCannotEscalateOrResetAdministrator(t *testing.T) {
 	actor, _ := s.UserByID(ctx, id)
 	adminRoles, _ := s.UserRoles(ctx, admin.ID)
 	adminRole := adminRoles[0].ID
-	if err = s.UpdateRolePermissions(ctx, actor, role, append(grants, Grant{"backup", "create"}), nil); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("grant escalation: %v", err)
-	}
-	if err = s.UpdateRolePermissions(ctx, actor, role, grants, []ScopeGrant{{"payment", "all"}}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("scope escalation: %v", err)
-	}
-	if _, err = s.CreateManagedUser(ctx, actor, "escalated@test", "Escalated", "hash", true, []int64{adminRole}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("create admin: %v", err)
-	}
-	if err = s.SetUserRoles(ctx, actor, actor.ID, []int64{adminRole}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("assign admin: %v", err)
-	}
-	if err = s.SaveUser(ctx, actor, UserSaveInput{ID: admin.ID, Name: admin.Name, Role: "data_entry", Active: true, PasswordHash: "changed", RoleIDs: []int64{adminRole}}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("reset higher account: %v", err)
-	}
-	if err = s.SaveUser(ctx, admin, UserSaveInput{ID: admin.ID, Name: admin.Name, Role: "admin", Active: true, RoleIDs: []int64{role}}); !errors.Is(err, ErrValidation) {
-		t.Fatalf("self-demotion via role ids: %v", err)
-	}
+	t.Run("cannot add a grant it does not hold", func(t *testing.T) {
+		if err = s.UpdateRolePermissions(ctx, actor, role, append(grants, Grant{"backup", "create"}), nil); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("grant escalation: %v", err)
+		}
+	})
+	t.Run("cannot widen a data scope", func(t *testing.T) {
+		if err = s.UpdateRolePermissions(ctx, actor, role, grants, []ScopeGrant{{"payment", "all"}}); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("scope escalation: %v", err)
+		}
+	})
+	t.Run("cannot create an administrator", func(t *testing.T) {
+		if _, err = s.CreateManagedUser(ctx, actor, "escalated@test", "Escalated", "hash", true, []int64{adminRole}); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("create admin: %v", err)
+		}
+	})
+	t.Run("cannot assign itself the administrator role", func(t *testing.T) {
+		if err = s.SetUserRoles(ctx, actor, actor.ID, []int64{adminRole}); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("assign admin: %v", err)
+		}
+	})
+	t.Run("cannot reset an administrator's password", func(t *testing.T) {
+		if err = s.SaveUser(ctx, actor, UserSaveInput{ID: admin.ID, Name: admin.Name, Role: "data_entry", Active: true, PasswordHash: "changed", RoleIDs: []int64{adminRole}}); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("reset higher account: %v", err)
+		}
+	})
+	t.Run("an administrator cannot demote themselves through role ids", func(t *testing.T) {
+		if err = s.SaveUser(ctx, admin, UserSaveInput{ID: admin.ID, Name: admin.Name, Role: "admin", Active: true, RoleIDs: []int64{role}}); !errors.Is(err, ErrValidation) {
+			t.Fatalf("self-demotion via role ids: %v", err)
+		}
+	})
 }
 
+// Unlinked (direct) payments respect the payment data scope, amounts are capped
+// in the store and in the schema, reports refuse an unbounded range, and a head
+// with history cannot be moved to another project.
 func TestSecurityLegacyPaymentScopeAndMoneyCeiling(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -67,28 +86,39 @@ func TestSecurityLegacyPaymentScopeAndMoneyCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.VoidPayment(ctx, actor, id, "unauthorized"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("void out of scope: %v", err)
-	}
-	if err = s.UpdatePayment(ctx, actor, id, in); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("edit out of scope: %v", err)
-	}
-	in.Amount = money.MaxAmount + 1
-	if _, err = s.CreatePayment(ctx, admin, in); !errors.Is(err, ErrValidation) {
-		t.Fatalf("amount limit: %v", err)
-	}
-	if _, err = s.DB().Exec(`UPDATE payments SET amount=9223372036854775807 WHERE id=?`, id); err == nil {
-		t.Fatal("database allowed overflow payload")
-	}
-	if _, err = s.Report(ctx, "0001-01", "9999-12", "monthly"); !errors.Is(err, ErrValidation) {
-		t.Fatalf("unbounded report: %v", err)
-	}
-	pid, _ := s.UpsertProject(ctx, 0, "Other", true, 0)
-	if _, err = s.UpsertHead(ctx, head, pid, "Rent", "5", true, 0, admin); !errors.Is(err, ErrValidation) {
-		t.Fatalf("reparent historical head: %v", err)
-	}
+	t.Run("own scope cannot void or edit another user's payment", func(t *testing.T) {
+		if err = s.VoidPayment(ctx, actor, id, "unauthorized"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("void out of scope: %v", err)
+		}
+		if err = s.UpdatePayment(ctx, actor, id, in); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("edit out of scope: %v", err)
+		}
+	})
+	t.Run("amount above the maximum is refused by the store and the schema", func(t *testing.T) {
+		in.Amount = money.MaxAmount + 1
+		if _, err = s.CreatePayment(ctx, admin, in); !errors.Is(err, ErrValidation) {
+			t.Fatalf("amount limit: %v", err)
+		}
+		if _, err = s.DB().Exec(`UPDATE payments SET amount=9223372036854775807 WHERE id=?`, id); err == nil {
+			t.Fatal("database allowed overflow payload")
+		}
+	})
+	t.Run("report refuses an unbounded month range", func(t *testing.T) {
+		if _, err = s.Report(ctx, "0001-01", "9999-12", "monthly"); !errors.Is(err, ErrValidation) {
+			t.Fatalf("unbounded report: %v", err)
+		}
+	})
+	t.Run("a head with history cannot move to another project", func(t *testing.T) {
+		pid, _ := s.UpsertProject(ctx, 0, "Other", true, 0)
+		if _, err = s.UpsertHead(ctx, head, pid, "Rent", "5", true, 0, admin); !errors.Is(err, ErrValidation) {
+			t.Fatalf("reparent historical head: %v", err)
+		}
+	})
 }
 
+// A decision taken on a stale view of the request (its revision changed since
+// the approver opened it) is refused, and a payment cannot be dated before the
+// approval.
 func TestSecurityDecisionRevisionAndPreApprovalPayment(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -124,33 +154,42 @@ func TestSecurityDecisionRevisionAndPreApprovalPayment(t *testing.T) {
 	}
 }
 
+// A recovery cannot be recorded in a locked month, and a user who has lost all
+// roles can no longer open or count their earlier notifications.
 func TestSecurityRecoveryLockedMonthAndRevokedNotification(t *testing.T) {
 	s, actor, _, id := recoveryFixture(t)
 	ctx := context.Background()
-	if err := s.LockMonth(ctx, actor, "2026-02", "closed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.RecordRecovery(ctx, actor, id, recoveryInput("locked-security-recovery", 100)); !errors.Is(err, ErrLockedMonth) {
-		t.Fatalf("locked recovery: %v", err)
-	}
-	nid, err := s.AddNotification(ctx, Notification{UserID: actor.ID, RequestID: &id, Title: "Sensitive amount"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.Notification(ctx, actor.ID, nid); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.DB().Exec(`DELETE FROM user_roles WHERE user_id=?`, actor.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.Notification(ctx, actor.ID, nid); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("revoked notification: %v", err)
-	}
-	if count, err := s.UnreadNotificationCount(ctx, actor.ID); err != nil || count != 0 {
-		t.Fatalf("revoked badge: %d %v", count, err)
-	}
+	t.Run("recovery in a locked month is refused", func(t *testing.T) {
+		if err := s.LockMonth(ctx, actor, "2026-02", "closed"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.RecordRecovery(ctx, actor, id, recoveryInput("locked-security-recovery", 100)); !errors.Is(err, ErrLockedMonth) {
+			t.Fatalf("locked recovery: %v", err)
+		}
+	})
+	t.Run("notifications close when every role is removed", func(t *testing.T) {
+		nid, err := s.AddNotification(ctx, Notification{UserID: actor.ID, RequestID: &id, Title: "Sensitive amount"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.Notification(ctx, actor.ID, nid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.DB().Exec(`DELETE FROM user_roles WHERE user_id=?`, actor.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.Notification(ctx, actor.ID, nid); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("revoked notification: %v", err)
+		}
+		if count, err := s.UnreadNotificationCount(ctx, actor.ID); err != nil || count != 0 {
+			t.Fatalf("revoked badge: %d %v", count, err)
+		}
+	})
 }
 
+// The database file is private to its owner (0600), a backup refuses to follow
+// a symlink out of the attachment folder, and seeding refuses to run without an
+// explicit admin password.
 func TestSecurityPrivateDatabaseBackupAndSymlinkRejection(t *testing.T) {
 	root := t.TempDir()
 	dbpath := filepath.Join(root, "private.db")

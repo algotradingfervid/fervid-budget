@@ -151,24 +151,30 @@ func TestBuildRFC822EncodesNonASCIIHeaders(t *testing.T) {
 // names, an explicit port or a header-injected host), and a cancelled send
 // returns at once instead of blocking.
 func TestSecuritySMTPDestinationAndCancellation(t *testing.T) {
-	for _, host := range []string{"localhost", "127.0.0.1", "metadata.internal", "smtp.example.test:25", "smtp.example.test\r\n"} {
-		if AllowedSMTPHost(host, []string{"smtp.example.test"}) {
-			t.Fatalf("unauthorized host %q", host)
+	t.Run("only the allow-listed relay is accepted", func(t *testing.T) {
+		for _, host := range []string{"localhost", "127.0.0.1", "metadata.internal", "smtp.example.test:25", "smtp.example.test\r\n"} {
+			if AllowedSMTPHost(host, []string{"smtp.example.test"}) {
+				t.Fatalf("unauthorized host %q", host)
+			}
 		}
-	}
-	if !AllowedSMTPHost("smtp.example.test", []string{"smtp.example.test"}) {
-		t.Fatal("operator relay refused")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	start := time.Now()
-	if err := sendTLSMail(ctx, "smtp.example.test", 587, nil, "from@test", []string{"to@test"}, nil); err == nil {
-		t.Fatal("cancelled send succeeded")
-	}
-	if time.Since(start) > time.Second {
-		t.Fatal("cancelled SMTP blocked")
-	}
-	if err := sendTLSMail(context.Background(), "127.0.0.1", 587, nil, "from@test", []string{"to@test"}, nil); err == nil {
-		t.Fatal("loopback relay accepted")
-	}
+		if !AllowedSMTPHost("smtp.example.test", []string{"smtp.example.test"}) {
+			t.Fatal("operator relay refused")
+		}
+	})
+	t.Run("a cancelled send returns at once", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := time.Now()
+		if err := sendTLSMail(ctx, "smtp.example.test", 587, nil, "from@test", []string{"to@test"}, nil); err == nil {
+			t.Fatal("cancelled send succeeded")
+		}
+		if time.Since(start) > time.Second {
+			t.Fatal("cancelled SMTP blocked")
+		}
+	})
+	t.Run("a loopback relay is refused", func(t *testing.T) {
+		if err := sendTLSMail(context.Background(), "127.0.0.1", 587, nil, "from@test", []string{"to@test"}, nil); err == nil {
+			t.Fatal("loopback relay accepted")
+		}
+	})
 }
