@@ -1,23 +1,14 @@
 package app
 
 import (
-	"fervidbudget/internal/store"
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
-)
 
-func requestRevisionFromPage(t *testing.T, page string) string {
-	t.Helper()
-	m := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)
-	if len(m) != 2 {
-		t.Fatal("edit form lacks revision")
-	}
-	return m[1]
-}
+	"fervidbudget/internal/store"
+)
 
 func TestRequestEditRejectsStaleAndMissingRevisionAndKeepsOriginalOnRetry(t *testing.T) {
 	s := newAppTestServer(t)
@@ -31,7 +22,7 @@ func TestRequestEditRejectsStaleAndMissingRevisionAndKeepsOriginalOnRetry(t *tes
 	}
 	s.login(requester.Email, "RequesterPass123")
 	path := fmt.Sprintf("/requests/%d/edit", id)
-	original := requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, "")))
+	original := requestRevisionFromPage(t, s.get(path))
 	fields := url.Values{"csrf": {s.csrf()}, "revision": {original}, "type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Winning correction"}, "project_id": {"1"}, "head_id": {strconvFormat(head)}, "amount": {"123.45"}, "purpose": {"Corrected purpose"}, "expense_date": {"2026-09-26"}, "manager_id": {strconvFormat(manager)}}
 	post := func() *http.Response {
 		return s.request(http.MethodPost, path, strings.NewReader(fields.Encode()), "application/x-www-form-urlencoded")
@@ -59,7 +50,7 @@ func TestRequestEditRejectsStaleAndMissingRevisionAndKeepsOriginalOnRetry(t *tes
 	if current.ShortTitle != "Winning correction" {
 		t.Fatalf("stale overwrite: %s", current.ShortTitle)
 	}
-	fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, ""))))
+	fields.Set("revision", requestRevisionFromPage(t, s.get(path)))
 	fields.Set("short_title", "Reviewed current correction")
 	requireStatus(t, post(), http.StatusSeeOther)
 }
@@ -68,7 +59,7 @@ func TestRecoveryPrecisionRejectedWithoutLosingInput(t *testing.T) {
 	s := newAppTestServer(t)
 	_, head := s.seedHead("Recovery precision")
 	id := seedRecoverable(t, s, head, "PR-PRECISION", "icd", "Precision Counterparty", "2026-06-30", "2026-02-01", 700000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	path := fmt.Sprintf("/recoverables/%d/events", id)
 	fields := url.Values{"kind": {"return"}, "amount": {"1.001"}, "occurred_on": {"2026-02-02"}, "reference": {"PRECISION-REF"}, "note": {"Retain this evidence"}, "token": {"recovery-precision-retained-token"}}
 	resp := s.postForm(path, fields)
@@ -90,5 +81,48 @@ func TestRecoveryPrecisionRejectedWithoutLosingInput(t *testing.T) {
 	s.st.DB().QueryRow("SELECT amount FROM recovery_events WHERE request_id=?", id).Scan(&amount)
 	if amount != 101 {
 		t.Fatalf("corrected amount=%d", amount)
+	}
+}
+
+// A refused resubmit writes nothing: every precondition SubmitRequest checks is
+// checked before UpdateRequest writes, so the correction is neither saved nor
+// audited when the requester is shown a 400.
+func TestARefusedResubmitLeavesNothingWritten(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Atomic edit")
+	requester := s.seedRequester("atomic@example.test", "Atomic Requester", "AtomicPass1234")
+	// Pending, not returned: legalTransitions has no pending→pending edge, so
+	// SubmitRequest refuses.
+	id := s.seedPendingRequest(931, requester.ID, admin.ID, headID, 200000)
+
+	s.login("atomic@example.test", "AtomicPass1234")
+	resp := s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), url.Values{
+		"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Site visit"},
+		"project_id": {strconvFormat(projectOf(t, s, headID))}, "head_id": {strconvFormat(headID)},
+		"amount": {"31,000.00"}, "purpose": {"flights and cabs"},
+		"expense_date": {"2026-07-01"}, "manager_id": {strconvFormat(admin.ID)},
+		"submit_action": {"resubmit"},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "cannot be submitted") {
+		t.Fatalf("the refusal does not name the rule: %s", body)
+	}
+
+	req, err := s.st.Request(s.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Amount != 200000 {
+		t.Fatalf("amount = %d after a refused resubmit, want the original 200000", req.Amount)
+	}
+	trail, err := s.st.Audit(s.ctx, "payment_request", id, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range trail {
+		if entry.Action == "update" {
+			t.Fatal("the audit records an edit the caller was told had failed")
+		}
 	}
 }

@@ -8,7 +8,7 @@ import (
 func TestAppSettingRoundTripAndDefault(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _, _ := seedRequestActors(t, s, ctx)
+	actor, _, _ := seedRequestActors(t, s)
 
 	// Migration v3 seeds require_attachments='0'.
 	v, err := s.AppSetting(ctx, "require_attachments")
@@ -31,11 +31,11 @@ func TestAppSettingRoundTripAndDefault(t *testing.T) {
 	}
 }
 
-// D6: the Configuration screen saves a whole form atomically.
+// The Configuration screen saves a whole form atomically.
 func TestSetAppSettingsIsAtomicAndAudited(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _, _ := seedRequestActors(t, s, ctx)
+	actor, _, _ := seedRequestActors(t, s)
 
 	if err := s.SetAppSettings(ctx, actor, map[string]string{
 		"number_prefix": "REQ", "urgency_mode": "free", "require_attachments": "1",

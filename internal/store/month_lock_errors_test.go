@@ -8,18 +8,16 @@ import (
 
 // A month lock that cannot be read is not an unlocked month.
 //
-// IsLocked used to discard its query error and return false, so every write path
-// that asked it — budgets, month plans, payment edit, void, attachment, and the
-// approval gate in the app layer — read a failure as "open" and let the write
-// through. Under the write contention that this package's own concurrency test
-// reproduces, that failure was not hypothetical.
+// Every write path that asks IsLocked — budgets, month plans, payment edit,
+// void, attachment, and the approval gate in the app layer — must see a failed
+// read as an error, never as "open", or it would let the write through.
 //
 // The closed database below is the cheapest way to make the read fail for
 // certain. The point is the shape of the answer: an error, not a confident false.
 func TestMonthIsLockedReportsFailureInsteadOfAnsweringOpen(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 
 	if err := s.LockMonth(ctx, actor, "2026-07", "audit in progress"); err != nil {
 		t.Fatalf("LockMonth: %v", err)
@@ -56,7 +54,7 @@ func TestMonthIsLockedReportsFailureInsteadOfAnsweringOpen(t *testing.T) {
 func TestValidatePaymentSurfacesAnUnreadableMonthLock(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	_, headID := seedActorAndHead(t, s, ctx)
+	_, headID := seedActorAndHead(t, s)
 
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-07-21", Amount: 1000}
 	if err := s.validatePayment(ctx, in, false); err != nil {

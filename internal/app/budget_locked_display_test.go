@@ -9,17 +9,14 @@ import (
 
 func TestLockedPlannerConflictDisplaysStoredPlan(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	p := plannerFixture("2026-04")
 	requireStatus(t, s.postForm("/budgets/plan", plannerForm(t, p, "create")), http.StatusSeeOther)
 	stored, err := s.st.BudgetPlan(s.ctx, p.Month)
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if err = s.st.LockMonth(s.ctx, admin, p.Month, "Final review"); err != nil {
 		t.Fatal(err)
 	}

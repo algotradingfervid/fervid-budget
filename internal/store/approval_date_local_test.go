@@ -17,8 +17,8 @@ func TestPaymentOnApprovalDayAcceptedInLocalTime(t *testing.T) {
 
 	s := newTestStore(t)
 	ctx := context.Background()
-	account, requester, managerID, head := seedRequestParty(t, s, ctx)
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, managerID, head, 10000, 10000)
+	account, requester, managerID, head := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, requester.ID, managerID, head, 10000, 10000)
 	// Approved at 20:00 on 26 September local time, which is 04:00 on
 	// 27 September in UTC.
 	if _, err := s.DB().Exec(`UPDATE payment_requests SET approved_at='2026-09-27 04:00:00' WHERE id=?`, id); err != nil {

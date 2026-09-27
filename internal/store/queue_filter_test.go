@@ -8,10 +8,10 @@ import (
 func TestApprovedQueueExcludesHeldAndReservedButPickerKeepsThem(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	accounts, requester, managerID, headID := seedRequestParty(t, s, ctx)
-	open := seedApprovedRequest(t, s, ctx, 1, requester.ID, managerID, headID, 10000, 10000)
-	held := seedApprovedRequest(t, s, ctx, 2, requester.ID, managerID, headID, 20000, 20000)
-	reserved := seedApprovedRequest(t, s, ctx, 3, requester.ID, managerID, headID, 30000, 30000)
+	accounts, requester, managerID, headID := seedRequestParty(t, s)
+	open := seedApprovedRequest(t, s, 1, requester.ID, managerID, headID, 10000, 10000)
+	held := seedApprovedRequest(t, s, 2, requester.ID, managerID, headID, 20000, 20000)
+	reserved := seedApprovedRequest(t, s, 3, requester.ID, managerID, headID, 30000, 30000)
 	if err := s.HoldRequest(ctx, accounts, held, "Waiting for documents"); err != nil {
 		t.Fatal(err)
 	}

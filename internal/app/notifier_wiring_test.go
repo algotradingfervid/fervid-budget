@@ -10,8 +10,8 @@ import (
 )
 
 // The service handed to the reminder scheduler is the one the handlers use,
-// and its mailer honours the operator's SMTP host allowlist. A second mailer
-// built without the allowlist used to refuse every reminder email.
+// and its mailer honours the operator's SMTP host allowlist, so reminder
+// emails go through the same checks as every other email.
 func TestNewWithNotifierSharesTheAppMailerAndAllowlist(t *testing.T) {
 	s := newAppTestServer(t)
 	a, _, err := build(s.cfg, s.st)
@@ -26,10 +26,7 @@ func TestNewWithNotifierSharesTheAppMailerAndAllowlist(t *testing.T) {
 		t.Fatal("NewWithNotifier returned no notification service")
 	}
 
-	actor, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actor := s.admin()
 	// Port 2525 is refused by the transport before any network access, after
 	// the allowlist check has passed, so the error tells us which check ran.
 	if err := s.st.SetMailSettings(s.ctx, actor, store.MailSettings{SMTPHost: "smtp.example.test", SMTPPort: 2525, SMTPFromAddr: "noreply@example.test"}); err != nil {

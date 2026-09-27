@@ -11,16 +11,13 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// Fixwave 2026-09-25, cluster A — roles and RBAC.
-
-// rbac-1: an Advanced box unticked under a cell that is still ticked used to
-// be silently re-granted, because the save expanded every ticked cell and only
-// ever added the Advanced values. The Advanced boxes are the grant set; a
-// ticked cell counts only when none of the boxes behind it is ticked (the
-// JavaScript-less path, where ticking a cell cannot tick its boxes).
+// Saving a role grants exactly the ticked Advanced boxes: unticking a box under
+// a still-ticked cell removes that permission. A ticked cell counts only when
+// none of the boxes behind it is ticked (the no-JavaScript path, where ticking
+// a cell cannot tick its boxes).
 func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm("/roles/new", url.Values{"name": {"Field Staff"}}), http.StatusSeeOther)
 	roleID := s.roleIDByName(t, "Field Staff")
 
@@ -58,11 +55,11 @@ func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 		t.Fatalf("grants after ticking the bare View cell = %v, want request:view + attachment:view", got)
 	}
 
-	// The screen then draws the partial state (rbac-5): the cell is marked
+	// The screen then draws the partial state: the cell is marked
 	// partial, and the mobile badge counts the row's grants, not its cells.
 	save = url.Values{"role_id": {roleID}, "name": {"Field Staff"}, "cell": {"requests:view"}, "perm": {"request:view", "approval:approve"}}
 	requireStatus(t, s.postForm("/roles", save), http.StatusSeeOther)
-	body := responseBody(t, s.request(http.MethodGet, "/roles?role="+roleID, nil, ""))
+	body := s.get("/roles?role=" + roleID)
 	viewCell := regexp.MustCompile(`<input type="checkbox" name="cell" value="requests:view"[^>]*>`).FindString(body)
 	if viewCell == "" || !strings.Contains(viewCell, `data-partial`) || strings.Contains(viewCell, "checked") {
 		t.Fatalf("the half-held View cell renders as %q, want unchecked and marked data-partial", viewCell)
@@ -77,62 +74,9 @@ func TestRolesSaveHonoursAnUntickedAdvancedBoxUnderATickedCell(t *testing.T) {
 	}
 }
 
-// rbac-2: a request scope of None (no role_data_scope row) must mean no rows,
-// on the list and the CSV alike, which is what the detail page already says
-// with its 404. The same rule applies to the payment ledger and its detail page.
-func TestRequestScopeNoneShowsNoRowsAnywhere(t *testing.T) {
-	s := newAppTestServer(t)
-	admin, headID := s.seedHead("Scope")
-	reqID := s.seedPendingRequest(1, admin.ID, admin.ID, headID, 1200)
-	s.seedProbeUser("carl@example.test", "Carl", "CarlPass12345", "Viewer",
-		[]store.Grant{{Resource: "request", Action: "view"}, {Resource: "grid", Action: "view"}}, nil)
-
-	s.login("carl@example.test", "CarlPass12345")
-	body := responseBody(t, s.request(http.MethodGet, "/requests?bucket=all", nil, ""))
-	if strings.Contains(body, "PR-2026-000001") {
-		t.Fatalf("a viewer with no request scope sees the list: %s", body)
-	}
-	csv := responseBody(t, s.request(http.MethodGet, "/requests/export.csv?bucket=all", nil, ""))
-	if strings.Contains(csv, "PR-2026-000001") {
-		t.Fatalf("a viewer with no request scope gets rows in the export: %s", csv)
-	}
-	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", reqID), nil, ""), http.StatusNotFound)
-	// The dashboard's own count of the scope agrees.
-	requireStatus(t, s.request(http.MethodGet, "/", nil, ""), http.StatusOK)
-}
-
-func TestPaymentScopeNoneShowsNoLedgerRows(t *testing.T) {
-	s := newAppTestServer(t)
-	admin, headID := s.seedHead("Ledger")
-	payID, err := s.st.CreatePayment(s.ctx, admin, store.PaymentInput{HeadID: headID, PaidOn: "2026-06-03", Amount: 4200, VendorPayee: "Scope Probe Payee"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.seedProbeUser("dana@example.test", "Dana", "DanaPass12345", "Ledger Viewer",
-		[]store.Grant{{Resource: "payment", Action: "view"}}, nil)
-
-	s.login("dana@example.test", "DanaPass12345")
-	body := responseBody(t, s.request(http.MethodGet, "/payments?month=2026-06&status=all", nil, ""))
-	if strings.Contains(body, "Scope Probe Payee") {
-		t.Fatalf("a viewer with no payment scope sees the ledger: %s", body)
-	}
-	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", payID), nil, ""), http.StatusNotFound)
-
-	// And a scope of All still shows the row, so the ledger was not locked shut.
-	s.seedProbeUser("erin@example.test", "Erin", "ErinPass12345", "Ledger Reader",
-		[]store.Grant{{Resource: "payment", Action: "view"}},
-		[]store.ScopeGrant{{Resource: "payment", Scope: store.ScopeAll}})
-	s.login("erin@example.test", "ErinPass12345")
-	body = responseBody(t, s.request(http.MethodGet, "/payments?month=2026-06&status=all", nil, ""))
-	if !strings.Contains(body, "Scope Probe Payee") {
-		t.Fatalf("a viewer with scope All lost the ledger: %s", body)
-	}
-	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", payID), nil, ""), http.StatusOK)
-}
-
-// rbac-6: the delete sheet for a role people still hold used to invite the
-// deletion and then land on the store's 403. It now says why the role cannot
-// be deleted, points at the Users screen and offers no Delete button.
+// The delete sheet for a role people still hold says why the role cannot be
+// deleted, points at the Users screen and offers no Delete button, rather than
+// inviting a deletion the server would refuse.
 func TestRoleDeleteSheetExplainsAHeldRole(t *testing.T) {
 	s := newAppTestServer(t)
 	holder := s.seedProbeUser("holder@example.test", "Holder", "HolderPass123", "Viewer",
@@ -159,8 +103,8 @@ func TestRoleDeleteSheetExplainsAHeldRole(t *testing.T) {
 		return rest[:end]
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/roles?role="+roleID, nil, ""))
+	s.loginAdmin()
+	body := s.get("/roles?role=" + roleID)
 	sheet := deleteSheet(body)
 	if !strings.Contains(sheet, "1 user holds this role") || strings.Contains(sheet, "1 users") {
 		t.Fatalf("the sheet miscounts or mis-pluralises the holders: %s", sheet[:600])
@@ -176,14 +120,11 @@ func TestRoleDeleteSheetExplainsAHeldRole(t *testing.T) {
 	}
 
 	// Once nobody holds it, the sheet offers the deletion again.
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if err := s.st.SetUserRoles(s.ctx, admin, holder.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	body = responseBody(t, s.request(http.MethodGet, "/roles?role="+roleID, nil, ""))
+	body = s.get("/roles?role=" + roleID)
 	sheet = deleteSheet(body)
 	if !strings.Contains(sheet, `type="submit"`) || !strings.Contains(sheet, "Nobody holds this role") {
 		t.Fatalf("an unheld role no longer offers Delete: %s", sheet[:600])

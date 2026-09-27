@@ -11,84 +11,6 @@ import (
 	"time"
 )
 
-// seedRequestParty creates the users, project, and head that request fixtures
-// share, returning an Accounts actor, a requester, a manager id, and a head id.
-func seedRequestParty(t *testing.T, s *Store, ctx context.Context) (accountant User, requester User, managerID, headID int64) {
-	t.Helper()
-	accID, err := s.CreateUser(ctx, "accounts@example.com", "Accounts", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("create accountant: %v", err)
-	}
-	reqID, err := s.CreateUser(ctx, "requester@example.com", "Requester", "hash", "data_entry", true)
-	if err != nil {
-		t.Fatalf("create requester: %v", err)
-	}
-	mgrID, err := s.CreateUser(ctx, "manager@example.com", "Manager", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("create manager: %v", err)
-	}
-	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
-	if err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	hid, err := s.UpsertHead(ctx, 0, projectID, "Rent", "5", true, 1)
-	if err != nil {
-		t.Fatalf("create head: %v", err)
-	}
-	if accountant, err = s.UserByID(ctx, accID); err != nil {
-		t.Fatal(err)
-	}
-	if requester, err = s.UserByID(ctx, reqID); err != nil {
-		t.Fatal(err)
-	}
-	return accountant, requester, mgrID, hid
-}
-
-// seedApprovedRequest inserts an approved payment_requests row directly (its
-// schema is fixed by overview §3) so Phase-3 store tests do not depend on the
-// Phase-2 request methods. seq keeps the request number unique within a test.
-func seedApprovedRequest(t *testing.T, s *Store, ctx context.Context, seq int, requesterID, managerID, headID, amount, approved int64) int64 {
-	t.Helper()
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatalf("head project: %v", err)
-	}
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,project_id,head_id,amount,purpose,vendor_payee,requester_id,manager_id,approved_amount,approved_by,approved_at)
-		VALUES(?,'approved','budget','vendor_invoice',?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), projectID, headID, amount, "Office rent", "Acme Landlord", requesterID, managerID, approved, managerID)
-	if err != nil {
-		t.Fatalf("seed approved request: %v", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
-func requestStatus(t *testing.T, s *Store, ctx context.Context, id int64) string {
-	t.Helper()
-	var status string
-	if err := s.DB().QueryRowContext(ctx, `SELECT status FROM payment_requests WHERE id=?`, id).Scan(&status); err != nil {
-		t.Fatalf("request status: %v", err)
-	}
-	return status
-}
-
-func requestProcessingBy(t *testing.T, s *Store, ctx context.Context, id int64) *int64 {
-	t.Helper()
-	var pb sql.NullInt64
-	if err := s.DB().QueryRowContext(ctx, `SELECT processing_by FROM payment_requests WHERE id=?`, id).Scan(&pb); err != nil {
-		t.Fatalf("processing_by: %v", err)
-	}
-	if pb.Valid {
-		v := pb.Int64
-		return &v
-	}
-	return nil
-}
-
 func TestMigrationV4AddsLinkingColumnsAndIndex(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -114,8 +36,8 @@ func TestMigrationV4AddsLinkingColumnsAndIndex(t *testing.T) {
 func TestPaymentRequestIndexAllowsInstallmentsAndNullHistoricals(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	linked := func(paidOn string) error {
 		_, err := s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,entered_by,request_id,settlement) VALUES(?,?,?,?,?,'settled')`, headID, paidOn, 1000, acc.ID, reqID)
 		return err
@@ -141,7 +63,7 @@ func TestMigrationV4IsIdempotentAndLeavesHistoricalPaymentsUntouched(t *testing.
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	payID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-10", Amount: 7777})
 	if err != nil {
 		t.Fatalf("historical payment: %v", err)
@@ -169,7 +91,7 @@ func TestMigrationV4IsIdempotentAndLeavesHistoricalPaymentsUntouched(t *testing.
 func TestPaymentForRequestAndHistoricalFields(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	payID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-11", Amount: 3210})
 	if err != nil {
 		t.Fatal(err)
@@ -189,18 +111,18 @@ func TestPaymentForRequestAndHistoricalFields(t *testing.T) {
 func TestReserveRequestMovesApprovedToProcessing(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+	if got := requestStatus(t, s, reqID); got != "processing" {
 		t.Fatalf("status = %q, want processing", got)
 	}
-	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != acc.ID {
+	if pb := requestProcessingBy(t, s, reqID); pb == nil || *pb != acc.ID {
 		t.Fatalf("processing_by = %v, want %d", pb, acc.ID)
 	}
-	// Illegal source states are rejected (L11): a second reserve, and reserving a
+	// Illegal source states are rejected: a second reserve, and reserving a
 	// non-approved (e.g. still-pending) request, both fail.
 	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("double reserve = %v, want ErrForbidden", err)
@@ -216,8 +138,8 @@ func TestReserveRequestMovesApprovedToProcessing(t *testing.T) {
 func TestReserveRequestSkipsOnHoldRequests(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET on_hold=1 WHERE id=?`, reqID); err != nil {
 		t.Fatal(err)
 	}
@@ -226,13 +148,13 @@ func TestReserveRequestSkipsOnHoldRequests(t *testing.T) {
 	}
 }
 
-// TestReserveRequestIsAtomicUnderConcurrency is the S5 proof: many accountants
-// race to reserve one request; exactly one wins and the rest get ErrForbidden.
+// Many accountants race to reserve one request; exactly one wins and the rest
+// get ErrForbidden.
 func TestReserveRequestIsAtomicUnderConcurrency(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	_, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	_, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 
 	const racers = 8
 	accts := make([]User, racers)
@@ -276,10 +198,10 @@ func TestReserveRequestIsAtomicUnderConcurrency(t *testing.T) {
 	if winner == -1 {
 		t.Fatal("no racer won the reservation")
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+	if got := requestStatus(t, s, reqID); got != "processing" {
 		t.Fatalf("final status = %q, want processing", got)
 	}
-	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != accts[winner].ID {
+	if pb := requestProcessingBy(t, s, reqID); pb == nil || *pb != accts[winner].ID {
 		t.Fatalf("processing_by = %v, want winner %d", pb, accts[winner].ID)
 	}
 }
@@ -287,29 +209,29 @@ func TestReserveRequestIsAtomicUnderConcurrency(t *testing.T) {
 func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	otherID, err := s.CreateUser(ctx, "other@example.com", "Other", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other, _ := s.UserByID(ctx, otherID)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
 	const reason = "Vendor bank details need confirming before I can transfer."
-	// No confirm → validation, still processing (S7).
+	// No confirm → validation, still processing.
 	if err := s.ReleaseRequest(ctx, acc, reqID, reason, false, false); !errors.Is(err, ErrValidation) {
 		t.Fatalf("release without confirm = %v, want ErrValidation", err)
 	}
-	// G12: no reason → validation, still processing, nothing recorded.
+	// A release needs a reason: none → validation, still processing, nothing recorded.
 	if err := s.ReleaseRequest(ctx, acc, reqID, "   ", true, false); !errors.Is(err, ErrValidation) {
 		t.Fatalf("release without reason = %v, want ErrValidation", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+	if got := requestStatus(t, s, reqID); got != "processing" {
 		t.Fatalf("status after refused release = %q, want processing", got)
 	}
-	// Non-assignee, non-authorized → forbidden (S6).
+	// Non-assignee, non-authorized → forbidden.
 	if err := s.ReleaseRequest(ctx, other, reqID, reason, true, false); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-assignee release = %v, want ErrForbidden", err)
 	}
@@ -317,13 +239,13 @@ func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 	if err := s.ReleaseRequest(ctx, acc, reqID, reason, true, false); err != nil {
 		t.Fatalf("assignee release: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "approved" {
+	if got := requestStatus(t, s, reqID); got != "approved" {
 		t.Fatalf("status after release = %q, want approved", got)
 	}
-	if pb := requestProcessingBy(t, s, ctx, reqID); pb != nil {
+	if pb := requestProcessingBy(t, s, reqID); pb != nil {
 		t.Fatalf("processing_by not cleared: %v", pb)
 	}
-	// G12: the reason is in the audit trail, which is what the release .thread renders.
+	// The reason is in the audit trail, which is what the request thread shows for the release.
 	var trail int
 	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE entity_type='payment_request' AND entity_id=? AND action='release' AND summary LIKE ?`, reqID, "%"+reason+"%").Scan(&trail); err != nil {
 		t.Fatal(err)
@@ -338,7 +260,7 @@ func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 	if err := s.ReleaseRequest(ctx, other, reqID, "Reserved over a day, freeing it for the queue.", true, true); err != nil {
 		t.Fatalf("authorized release: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "approved" {
+	if got := requestStatus(t, s, reqID); got != "approved" {
 		t.Fatalf("status after authorized release = %q, want approved", got)
 	}
 }
@@ -346,12 +268,12 @@ func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	deepakID, err := s.CreateUser(ctx, "deepak@example.com", "Deepak Menon", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +282,7 @@ func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T
 	if err := s.ReassignReservation(ctx, acc, reqID, deepakID, reason, false); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("unauthorized reassign = %v, want ErrForbidden", err)
 	}
-	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != acc.ID {
+	if pb := requestProcessingBy(t, s, reqID); pb == nil || *pb != acc.ID {
 		t.Fatalf("processing_by moved without permission: %v", pb)
 	}
 	// Reason is required (same rule as release).
@@ -379,10 +301,10 @@ func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T
 	if err := s.ReassignReservation(ctx, acc, reqID, deepakID, reason, true); err != nil {
 		t.Fatalf("reassign: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+	if got := requestStatus(t, s, reqID); got != "processing" {
 		t.Fatalf("status after reassign = %q, want processing (it never returns to the open queue)", got)
 	}
-	if pb := requestProcessingBy(t, s, ctx, reqID); pb == nil || *pb != deepakID {
+	if pb := requestProcessingBy(t, s, reqID); pb == nil || *pb != deepakID {
 		t.Fatalf("processing_by = %v, want %d", pb, deepakID)
 	}
 	var trail int
@@ -393,7 +315,7 @@ func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T
 		t.Fatalf("reassign reason not in the audit trail: %d matching entries", trail)
 	}
 	// An approved (unreserved) request cannot be reassigned — there is nothing to move.
-	other := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 100000, 100000)
+	other := seedApprovedRequest(t, s, 2, req.ID, mgrID, headID, 100000, 100000)
 	if err := s.ReassignReservation(ctx, acc, other, deepakID, reason, true); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("reassign of an unreserved request = %v, want ErrForbidden", err)
 	}
@@ -402,24 +324,24 @@ func TestReassignReservationRequiresPermissionReasonAndActiveTarget(t *testing.T
 func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 400000, VendorPayee: "Acme Landlord"}, "settled", "Agreed deduction documented", nil)
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 400000, VendorPayee: "Acme Landlord"}, "settled", "Agreed deduction documented", nil)
 	if err != nil {
 		t.Fatalf("record settled: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "completed" {
+	if got := requestStatus(t, s, reqID); got != "completed" {
 		t.Fatalf("status = %q, want completed (S10)", got)
 	}
 	p, err := s.PaymentForRequest(ctx, reqID)
 	if err != nil || p.ID != payID || p.RequestID == nil || *p.RequestID != reqID || p.Settlement != "settled" {
 		t.Fatalf("linked payment = %+v, err=%v", p, err)
 	}
-	// One payment per request: a second settlement is refused (S9).
-	if _, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-16", Amount: 100000, VendorPayee: "Acme"}, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+	// One payment per request: a second settlement is refused.
+	if _, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-16", Amount: 100000, VendorPayee: "Acme"}, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("second settlement = %v, want ErrForbidden", err)
 	}
 }
@@ -427,27 +349,27 @@ func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
 func TestRecordPaymentPartialNeedsReasonAndRoutesToReview(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme Landlord"}
-	// Partial without reason → validation; nothing written; still processing (S13).
-	if _, err := historicalSettlement(s, ctx, acc, reqID, in, "partial", "", nil); !errors.Is(err, ErrValidation) {
+	// Partial without reason → validation; nothing written; still processing.
+	if _, err := historicalSettlement(ctx, s, acc, reqID, in, "partial", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("partial without reason = %v, want ErrValidation", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+	if got := requestStatus(t, s, reqID); got != "processing" {
 		t.Fatalf("status after rejected partial = %q, want processing", got)
 	}
 	if _, err := s.PaymentForRequest(ctx, reqID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("payment written despite rejected settlement: %v", err)
 	}
-	// Partial with reason → partial_review (L9).
-	if _, err := historicalSettlement(s, ctx, acc, reqID, in, "partial", "Balance pending vendor confirmation", nil); err != nil {
+	// Partial with reason → partial_review.
+	if _, err := historicalSettlement(ctx, s, acc, reqID, in, "partial", "Balance pending vendor confirmation", nil); err != nil {
 		t.Fatalf("record partial: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "partial_review" {
+	if got := requestStatus(t, s, reqID); got != "partial_review" {
 		t.Fatalf("status = %q, want partial_review", got)
 	}
 	p, err := s.PaymentForRequest(ctx, reqID)
@@ -459,16 +381,16 @@ func TestRecordPaymentPartialNeedsReasonAndRoutesToReview(t *testing.T) {
 func TestRecordPaymentRequiresActorReservation(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	otherID, err := s.CreateUser(ctx, "other@example.com", "Other", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other, _ := s.UserByID(ctx, otherID)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}
-	// Not reserved at all → forbidden, no payment (store-level X5).
-	if _, err := historicalSettlement(s, ctx, acc, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+	// Not reserved at all → forbidden, no payment.
+	if _, err := historicalSettlement(ctx, s, acc, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("record without reservation = %v, want ErrForbidden", err)
 	}
 	if got := paymentCount(t, s); got != 0 {
@@ -478,26 +400,25 @@ func TestRecordPaymentRequiresActorReservation(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, other, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
+	if _, err := historicalSettlement(ctx, s, other, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("record by non-assignee = %v, want ErrForbidden", err)
 	}
 }
 
-// TestRecordPaymentRejectsOverpayment is the G13 proof: the mockup's read-only
-// approved field and .banner.bad both promise that paid can never exceed
-// approved. Rejection must leave the request reserved and no payment written, so
-// the accountant can correct the figure without re-reserving.
+// The amount paid can never exceed the amount approved. A refusal leaves the
+// request reserved and no payment written, so the accountant can correct the
+// figure without re-reserving.
 func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 480000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 480000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
 	over := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 480001, VendorPayee: "Acme Landlord"}
 	for _, settlement := range []string{"settled", "partial"} {
-		_, err := historicalSettlement(s, ctx, acc, reqID, over, settlement, "reason", nil)
+		_, err := historicalSettlement(ctx, s, acc, reqID, over, settlement, "reason", nil)
 		if !errors.Is(err, ErrValidation) {
 			t.Fatalf("overpayment (%s) = %v, want ErrValidation", settlement, err)
 		}
@@ -508,15 +429,15 @@ func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 	if got := paymentCount(t, s); got != 0 {
 		t.Fatalf("overpayment wrote %d payment rows (G13 broken)", got)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "processing" {
+	if got := requestStatus(t, s, reqID); got != "processing" {
 		t.Fatalf("status after refused overpayment = %q, want processing (reservation must survive)", got)
 	}
 	// The approved amount itself is allowed; it is > that is refused.
 	exact := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 480000, VendorPayee: "Acme Landlord"}
-	if _, err := historicalSettlement(s, ctx, acc, reqID, exact, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, reqID, exact, "settled", "", nil); err != nil {
 		t.Fatalf("payment of exactly the approved amount: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, reqID); got != "completed" {
+	if got := requestStatus(t, s, reqID); got != "completed" {
 		t.Fatalf("status = %q, want completed", got)
 	}
 }
@@ -524,12 +445,12 @@ func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 func TestLinkedPaymentIsImmutable(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}, "settled", "", nil)
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}, "settled", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,14 +469,14 @@ func TestLinkedPaymentIsImmutable(t *testing.T) {
 func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	// Two requests, both taken to partial_review.
 	settleToReview := func(seq int) int64 {
-		id := seedApprovedRequest(t, s, ctx, seq, req.ID, mgrID, headID, 500000, 500000)
+		id := seedApprovedRequest(t, s, seq, req.ID, mgrID, headID, 500000, 500000)
 		if err := s.ReserveRequest(ctx, acc, id); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
+		if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -565,12 +486,12 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 	if err := s.AcceptPartial(ctx, mgr, accepted, "Balance will be invoiced separately."); err != nil {
 		t.Fatalf("accept partial: %v", err)
 	}
-	// G14: a distinguishable terminal state, not plain 'completed'. The ledger and
-	// the .pill.completed-partial both depend on being able to tell them apart.
-	if got := requestStatus(t, s, ctx, accepted); got != "completed_partial" {
+	// An accepted short payment ends in its own state, not plain 'completed': the
+	// ledger and the "completed (partial)" pill both need to tell them apart.
+	if got := requestStatus(t, s, accepted); got != "completed_partial" {
 		t.Fatalf("accepted status = %q, want completed_partial (G14)", got)
 	}
-	// Accepting a non-partial_review request is rejected (L11).
+	// Accepting a non-partial_review request is rejected.
 	if err := s.AcceptPartial(ctx, mgr, accepted, ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("accept completed_partial = %v, want ErrForbidden", err)
 	}
@@ -583,14 +504,14 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 		t.Fatalf("accept note not in the audit trail: %d matching entries", noted)
 	}
 	// A clean settlement stays plain 'completed' — the two states never merge.
-	clean := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 500000, 500000)
+	clean := seedApprovedRequest(t, s, 3, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, clean); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, clean, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme"}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, clean, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme"}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := requestStatus(t, s, ctx, clean); got != "completed" {
+	if got := requestStatus(t, s, clean); got != "completed" {
 		t.Fatalf("clean settlement status = %q, want completed", got)
 	}
 
@@ -601,7 +522,7 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 	if err := s.RaiseConcern(ctx, mgr, concerned, "Please confirm the balance timeline"); err != nil {
 		t.Fatalf("raise concern: %v", err)
 	}
-	if got := requestStatus(t, s, ctx, concerned); got != "partial_review" {
+	if got := requestStatus(t, s, concerned); got != "partial_review" {
 		t.Fatalf("concerned status = %q, want partial_review", got)
 	}
 	var comments int
@@ -637,7 +558,7 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 	if err := s.RaiseConcern(ctx, acc, notMine, "Not mine to judge"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("concern by someone who is not the manager = %v, want ErrForbidden", err)
 	}
-	if got := requestStatus(t, s, ctx, notMine); got != "partial_review" {
+	if got := requestStatus(t, s, notMine); got != "partial_review" {
 		t.Fatalf("status after an outsider's decision = %q, want partial_review", got)
 	}
 	var strayed int
@@ -652,8 +573,8 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 480000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 480000)
 
 	if err := s.HoldRequest(ctx, acc, reqID, ""); !errors.Is(err, ErrValidation) {
 		t.Fatalf("hold without reason = %v, want ErrValidation", err)
@@ -670,8 +591,7 @@ func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 	if onHold != 1 || holdReason != "await vendor GST" || amount != 500000 || approved != 480000 {
 		t.Fatalf("hold changed approved fields: on_hold=%d reason=%q amount=%d approved=%d", onHold, holdReason, amount, approved)
 	}
-	// Q6: while on hold the requester may still add a comment; no field changes.
-	// (Phase 2's AddRequestComment returns the new comment id alongside its error.)
+	// While on hold the requester may still add a comment; no field changes.
 	if _, err := s.AddRequestComment(ctx, req, reqID, "Attaching the corrected invoice"); err != nil {
 		t.Fatalf("comment while on hold: %v", err)
 	}
@@ -681,7 +601,7 @@ func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 	if amount != 500000 || approved != 480000 {
 		t.Fatalf("comment changed approved fields: amount=%d approved=%d", amount, approved)
 	}
-	// A held request cannot be reserved (L7).
+	// A held request cannot be reserved.
 	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("reserve held = %v, want ErrForbidden", err)
 	}
@@ -697,11 +617,11 @@ func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 func TestLinkablePaymentRequestsFilterAndSearch(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	linkable := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000) // approved, unclaimed, not held
-	held := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 600000, 600000)     // on hold → not takeable
-	reserved := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 700000, 700000) // reserved → not takeable
-	pending := seedApprovedRequest(t, s, ctx, 4, req.ID, mgrID, headID, 800000, 800000)  // not approved → invisible here
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	linkable := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000) // approved, unclaimed, not held
+	held := seedApprovedRequest(t, s, 2, req.ID, mgrID, headID, 600000, 600000)     // on hold → not takeable
+	reserved := seedApprovedRequest(t, s, 3, req.ID, mgrID, headID, 700000, 700000) // reserved → not takeable
+	pending := seedApprovedRequest(t, s, 4, req.ID, mgrID, headID, 800000, 800000)  // not approved → invisible here
 	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET on_hold=1 WHERE id=?`, held); err != nil {
 		t.Fatal(err)
 	}
@@ -730,7 +650,7 @@ func TestLinkablePaymentRequestsFilterAndSearch(t *testing.T) {
 		}
 	}
 
-	// Search narrows both sets, by number, payee and amount (S4).
+	// Search narrows both sets, by number, payee and amount.
 	byNumber, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Query: "PR-2026-000001"})
 	if err != nil || len(byNumber.Available) != 1 || byNumber.Available[0].ID != linkable {
 		t.Fatalf("search by number = %+v, err=%v", byNumber.Available, err)
@@ -756,7 +676,7 @@ func TestLinkablePaymentRequestsFilterAndSearch(t *testing.T) {
 func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	deepakID, err := s.CreateUser(ctx, "deepak@example.com", "Deepak Menon", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -764,16 +684,16 @@ func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 	deepak, _ := s.UserByID(ctx, deepakID)
 	mgr, _ := s.UserByID(ctx, mgrID)
 
-	open1 := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
-	open2 := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 300000, 300000)
-	mine := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 100000, 100000)
-	stale := seedApprovedRequest(t, s, ctx, 4, req.ID, mgrID, headID, 78000, 78000)
-	theirs := seedApprovedRequest(t, s, ctx, 5, req.ID, mgrID, headID, 33500, 33500)
-	onHold := seedApprovedRequest(t, s, ctx, 6, req.ID, mgrID, headID, 25000, 25000)
-	inReview := seedApprovedRequest(t, s, ctx, 7, req.ID, mgrID, headID, 95000, 95000)
-	paidClean := seedApprovedRequest(t, s, ctx, 8, req.ID, mgrID, headID, 41300, 41300)
+	open1 := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
+	open2 := seedApprovedRequest(t, s, 2, req.ID, mgrID, headID, 300000, 300000)
+	mine := seedApprovedRequest(t, s, 3, req.ID, mgrID, headID, 100000, 100000)
+	stale := seedApprovedRequest(t, s, 4, req.ID, mgrID, headID, 78000, 78000)
+	theirs := seedApprovedRequest(t, s, 5, req.ID, mgrID, headID, 33500, 33500)
+	onHold := seedApprovedRequest(t, s, 6, req.ID, mgrID, headID, 25000, 25000)
+	inReview := seedApprovedRequest(t, s, 7, req.ID, mgrID, headID, 95000, 95000)
+	paidClean := seedApprovedRequest(t, s, 8, req.ID, mgrID, headID, 41300, 41300)
 	// An accepted shortfall needs a real unpaid balance.
-	paidPartial := seedApprovedRequest(t, s, ctx, 9, req.ID, mgrID, headID, 70000, 70000)
+	paidPartial := seedApprovedRequest(t, s, 9, req.ID, mgrID, headID, 70000, 70000)
 
 	for _, id := range []int64{mine, stale, inReview, paidClean, paidPartial} {
 		if err := s.ReserveRequest(ctx, acc, id); err != nil {
@@ -791,13 +711,13 @@ func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 		time.Date(2026, 7, 24, 12, 40, 0, 0, time.UTC).Format("2006-01-02 15:04:05"), stale); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, inReview, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "700 of 1000 copies delivered", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, inReview, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "700 of 1000 copies delivered", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, paidClean, PaymentInput{HeadID: headID, PaidOn: "2026-07-24", Amount: 41300, VendorPayee: "Nova"}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, paidClean, PaymentInput{HeadID: headID, PaidOn: "2026-07-24", Amount: 41300, VendorPayee: "Nova"}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, paidPartial, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "balance later", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, paidPartial, PaymentInput{HeadID: headID, PaidOn: "2026-07-23", Amount: 60000, VendorPayee: "Nova"}, "partial", "balance later", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AcceptPartial(ctx, mgr, paidPartial, ""); err != nil {
@@ -829,7 +749,7 @@ func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 	if c.PartialReview != 1 {
 		t.Fatalf("Partial review tab = %d, want 1", c.PartialReview)
 	}
-	if c.Paid != 2 { // completed + completed_partial both count as paid (G14)
+	if c.Paid != 2 { // completed + completed_partial both count as paid
 		t.Fatalf("Paid tab = %d, want 2 (completed and completed_partial)", c.Paid)
 	}
 	// .metric-strip metrics.

@@ -90,9 +90,8 @@ func TestRunRemindersNotifiesTheAssignedAccountant(t *testing.T) {
 	if len(rows) != 0 {
 		t.Fatalf("an unrelated accountant got %d rows", len(rows))
 	}
-	// The email goes to the same one person the in-app row does. It used to go
-	// to everyone holding payment:process, so the unrelated accountant was
-	// emailed about a reservation they had no in-app row for (notify-1).
+	// The email goes to the same one person the in-app row does, not to
+	// everyone holding payment:process: the unrelated accountant gets nothing.
 	msgs := mailer.messages()
 	if len(msgs) != 1 {
 		t.Fatalf("stale-reservation emails = %d, want 1", len(msgs))
@@ -178,11 +177,11 @@ func TestSchedulerRunsOnStartAndStopsOnCancel(t *testing.T) {
 	}
 }
 
-// F-F-02: the stale-reservation screen tells an accountant "a reminder went
+// The stale-reservation screen tells an accountant "a reminder went
 // out", and the "Who has been told" thread printed under it is built from the
 // audit log. So every reminder the scheduler sends has to leave a row there,
 // naming which reminder it was and who it actually reached.
-func TestRunRemindersLeavesAnAuditRowNamingWhoWasTold(t *testing.T) { // F-F-02
+func TestRunRemindersLeavesAnAuditRowNamingWhoWasTold(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
 	actor := testActor(t, st)

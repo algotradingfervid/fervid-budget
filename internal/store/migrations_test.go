@@ -130,11 +130,10 @@ func TestMigrationBackfillsExistingUsers(t *testing.T) {
 	}
 }
 
-// The reservation verbs entered the vocabulary with Phase 3, long after v1 had
-// seeded the starter roles on every installed database — and seedSystemRoles
-// runs only inside v1. Without the v5 back-fill, an upgraded system has an
-// Accounts role that cannot take a request out of the queue, which is the first
-// step of every payment this phase records.
+// The reservation verbs arrived after v1 had seeded the starter roles, and
+// seedSystemRoles runs only inside v1. The v5 back-fill gives an upgraded
+// system's Accounts role those grants, so it can take a request out of the
+// queue — the first step of every linked payment.
 func TestMigrationBackfillsAccountsReservationGrants(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -199,10 +198,9 @@ func hasGrant(grants []Grant, want Grant) bool {
 // leans on PRAGMA defer_foreign_keys — this test fails if that mechanism ever
 // stops carrying the child rows across the DROP/RENAME.
 func TestMigrationV8RebuildsPaymentsPreservingRowsIndexesAndForeignKeys(t *testing.T) {
-	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 
 	// Reconstruct the exact pre-v8 shape: schemaSQL's table plus the three v4
 	// columns and all four indexes. payment_attachments is empty at this
@@ -305,7 +303,7 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 			t.Fatalf("index %s missing after rebuild", idx)
 		}
 	}
-	// S9 still holds: a second payment on the same request is refused by the
+	// One payment per request still holds: a second one is refused by the
 	// partial unique index …
 	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by,request_id,settlement) VALUES(?,?,?,?,?, 'settled')`,
 		headID, "2026-06-16", 1000, acc.ID, reqID); err != nil {
@@ -342,9 +340,9 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 	}
 }
 
-func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) { // G19, G20
+func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) {
 	s := newTestStore(t)
-	// v7 creates notification_settings and notifications; app_settings is Phase 2's (v3).
+	// v7 creates notification_settings and notifications; app_settings comes from v3.
 	for _, table := range []string{"notification_settings", "notifications"} {
 		var name string
 		if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
@@ -352,7 +350,7 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 		}
 	}
 	// Scoped to v7's own sort_order block, because notification_settings is
-	// append-only across migrations: v9 seeds nine more events (F-F-06) at
+	// append-only across migrations: v9 seeds nine more events at
 	// sort_order 13-21, and a count of the whole table would make this test about
 	// the size of the catalogue rather than about what v7 does.
 	// TestMigrationV9SeedsTheNineMissingEvents owns the total.
@@ -377,7 +375,7 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 		if subject == "" || body == "" {
 			t.Fatalf("event %q seeded with an empty template", event)
 		}
-		// G20: the admin-facing vocabulary is {{token}}, never Go template syntax.
+		// The admin-facing vocabulary is {{token}}, never Go template syntax.
 		if strings.Contains(subject+body, "{{.") || strings.Contains(subject+body, "{{money") {
 			t.Fatalf("event %q still uses Go template syntax: %q / %q", event, subject, body)
 		}
@@ -409,11 +407,10 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 // none of v8's stash-and-restore machinery is needed. The assertions at the end
 // are what prove the shortcut is sound rather than merely quiet.
 func TestMigrationV10AddsAndBackfillsPaymentsVendorID(t *testing.T) {
-	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
 	vendorID := seedVendorNamed(t, s, "Sundaram Electricals Pvt Ltd")
-	reqID := seedVendorRequest(t, s, ctx, 7, "approved", requester.ID, mgrID, headID, vendorID, 500000)
+	reqID := seedVendorRequest(t, s, 7, "approved", requester.ID, mgrID, headID, vendorID, 500000)
 
 	// Reconstruct the pre-v10 shape: v8's rebuilt table, minus vendor_id.
 	// payment_attachments is empty on a fresh store, so the DROP is legal with
@@ -513,5 +510,82 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 	}
 	if !historical.Valid || historical.Int64 != vendorID {
 		t.Fatalf("re-running v10 discarded a deliberate vendor_id: %v", historical)
+	}
+}
+
+// Upgrading a database from schema version 15 keeps an accepted short payment
+// (a write-off) and its payment exactly as they were.
+func TestUpgradeFromVersion15PreservesHistoricalWriteoffAndPayment(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, requester, managerID, headID := seedRequestParty(t, s)
+	manager, err := s.UserByID(ctx, managerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := seedApprovedRequest(t, s, 1, requester.ID, managerID, headID, 1200000, 1200000)
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatal(err)
+	}
+	payID, err := historicalSettlement(ctx, s, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Legacy accepted shortfall", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AcceptPartial(ctx, manager, id, "Legacy decision"); err != nil {
+		t.Fatal(err)
+	}
+	// Reconstruct the exact pre-upgrade tables/index shape in this disposable DB.
+	// It contains a real completed_partial request and its immutable payment.
+	for _, sql := range []string{
+		`DROP TABLE recovery_events`,
+		`DROP TABLE password_resets`,
+		`DROP TABLE password_reset_throttle`,
+		`DROP INDEX idx_payment_submission`,
+		`DROP INDEX idx_payments_request`,
+		`ALTER TABLE payments DROP COLUMN submission_key`,
+		`CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_id IS NOT NULL`,
+		`PRAGMA user_version=15`,
+	} {
+		if _, err := s.DB().Exec(sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("version15 upgrade: %v", err)
+	}
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("second upgrade: %v", err)
+	}
+	req, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Status != "completed_partial" || req.PaidAmount != 700000 {
+		t.Fatalf("historical writeoff reopened/changed: %s paid=%d", req.Status, req.PaidAmount)
+	}
+	pay, err := s.Payment(ctx, payID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pay.Amount != 700000 || pay.PartialReason != "Legacy accepted shortfall" || pay.Settlement != "partial" {
+		t.Fatalf("historical payment changed: %+v", pay)
+	}
+	if err := s.ContinuePartial(ctx, manager, id, "Accidentally reopen"); err == nil {
+		t.Fatal("terminal historical writeoff reopened")
+	}
+	var recoveryCount int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM recovery_events`).Scan(&recoveryCount); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryCount != 0 {
+		t.Fatal("upgrade invented recoveries")
+	}
+	rows, err := s.DB().Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		t.Fatal("upgrade damaged foreign keys")
 	}
 }

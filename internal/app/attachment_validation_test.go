@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,30 +16,6 @@ import (
 
 	"fervidbudget/internal/store"
 )
-
-func attachmentMultipart(t *testing.T, fields url.Values, name string, contents []byte) (*bytes.Buffer, string) {
-	t.Helper()
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
-	for key, values := range fields {
-		for _, value := range values {
-			if err := mw.WriteField(key, value); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	part, err := mw.CreateFormFile("attachment", name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = part.Write(contents); err != nil {
-		t.Fatal(err)
-	}
-	if err = mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return &body, mw.FormDataContentType()
-}
 
 func TestAttachmentValidationMatchesContentAndConfiguredLimit(t *testing.T) {
 	s := newAppTestServer(t)
@@ -135,17 +110,13 @@ func TestRejectedRequestAttachmentRetainsInputWithoutSavingChanges(t *testing.T)
 	} {
 		for _, path := range []string{fmt.Sprintf("/requests/%d/edit", id), "/requests"} {
 			if strings.HasSuffix(path, "/edit") {
-				fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, ""))))
+				fields.Set("revision", requestRevisionFromPage(t, s.get(path)))
 			}
 			body, ct := attachmentMultipart(t, fields, tc.name, tc.data)
 			resp := s.request(http.MethodPost, path, body, ct)
 			requireStatus(t, resp, http.StatusBadRequest)
 			page := responseBody(t, resp)
-			for _, want := range []string{"Retained attachment correction", "Keep this typed purpose", `value="234.56"`, "Choose the attachment again"} {
-				if !strings.Contains(page, want) {
-					t.Fatalf("rejection lost %q", want)
-				}
-			}
+			mustContain(t, "rejection", page, "Retained attachment correction", "Keep this typed purpose", `value="234.56"`, "Choose the attachment again")
 			current, err := s.st.Request(s.ctx, id)
 			if err != nil {
 				t.Fatal(err)
@@ -166,7 +137,7 @@ func TestRejectedRequestAttachmentRetainsInputWithoutSavingChanges(t *testing.T)
 			}
 		}
 	}
-	page := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))
+	page := s.get(fmt.Sprintf("/requests/%d/edit", id))
 	if !strings.Contains(page, "up to 10 MiB") || !strings.Contains(page, `accept=".pdf,.jpg,.jpeg,.png"`) {
 		t.Fatal("upload control does not advertise the enforced policy")
 	}
@@ -174,7 +145,7 @@ func TestRejectedRequestAttachmentRetainsInputWithoutSavingChanges(t *testing.T)
 
 func TestAttachmentLimitConfigurationRejectsUnsupportedValues(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, raw := range []string{"0", "-1", "21", "1.5", "invalid", ""} {
 		resp := s.postForm("/configuration", url.Values{"attachment_max_mb": {raw}, "number_prefix": {"Must not save"}})
 		requireStatus(t, resp, http.StatusBadRequest)
@@ -205,4 +176,36 @@ func TestAttachmentLimitConfigurationRejectsUnsupportedValues(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// With attachments compulsory, a submit with no document and no reason is
+// refused, and a written reason unblocks it. This proves the rule is enforced on
+// the real POST, not only that the form asks.
+func TestCompulsoryAttachmentsAreEnforcedOnSubmit(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Att")
+	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
+	approver := seedSecondApprover(t, s)
+	if err := s.st.SetAppSetting(s.ctx, admin, "require_attachments", "1"); err != nil {
+		t.Fatal(err)
+	}
+	projectID := projectOf(t, s, headID)
+	_ = requester
+	s.login("rhea@example.test", "RheaPass12345")
+	body := func(reason string) url.Values {
+		return url.Values{
+			"type": {"reimbursement"}, "treatment": {"budget"}, "short_title": {"Team lunch"},
+			"amount": {"500"}, "purpose": {"team lunch"}, "expense_date": {"2026-07-21"},
+			"project_id": {strconvFormat(projectID)}, "head_id": {strconvFormat(headID)}, "manager_id": {strconvFormat(approver)},
+			"attachment_exception_reason": {reason},
+		}
+	}
+	refused := s.postForm("/requests", body(""))
+	requireStatus(t, refused, http.StatusBadRequest)
+	if page := responseBody(t, refused); !strings.Contains(page, "say why you cannot") {
+		t.Fatalf("a fileless, reasonless submit was not refused for the attachment policy: %s", firstLines(page))
+	}
+	accepted := s.postForm("/requests", body("Receipt arrives with the card statement on Monday"))
+	requireStatus(t, accepted, http.StatusSeeOther)
+	_ = responseBody(t, accepted)
 }

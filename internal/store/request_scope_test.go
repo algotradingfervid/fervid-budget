@@ -18,19 +18,14 @@ type scopeFixture struct {
 
 func newScopeFixture(t *testing.T) scopeFixture {
 	t.Helper()
-	ctx := context.Background()
 	s := newTestStore(t)
-	requester, viewer, headID := seedRequestActors(t, s, ctx)
-	otherID, err := s.CreateUser(ctx, "other-approver@example.com", "Other Approver", "hash", "admin", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, _ := s.UserByID(ctx, otherID)
+	requester, viewer, headID := seedRequestActors(t, s)
+	other := seedUser(t, s, "other-approver@example.com", "Other Approver", "admin")
 	return scopeFixture{
 		s: s, viewer: viewer, requester: requester, other: other, headID: headID,
-		raised:   seedApprovedRequest(t, s, ctx, 1, viewer.ID, other.ID, headID, 1000, 1000),
-		routed:   seedApprovedRequest(t, s, ctx, 2, requester.ID, viewer.ID, headID, 2000, 2000),
-		stranger: seedApprovedRequest(t, s, ctx, 3, requester.ID, other.ID, headID, 3000, 3000),
+		raised:   seedApprovedRequest(t, s, 1, viewer.ID, other.ID, headID, 1000, 1000),
+		routed:   seedApprovedRequest(t, s, 2, requester.ID, viewer.ID, headID, 2000, 2000),
+		stranger: seedApprovedRequest(t, s, 3, requester.ID, other.ID, headID, 3000, 3000),
 	}
 }
 
@@ -134,8 +129,8 @@ func TestRoutedToViewerAndHeldByViewerFilterInsideTheScope(t *testing.T) {
 func TestHiddenRequestIsNotFoundInWriteTimeChecks(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, mgrID, headID, 500000, 500000)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, requester.ID, mgrID, headID, 500000, 500000)
 	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET treatment='recoverable', type='employee_advance' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
@@ -184,5 +179,52 @@ func TestHiddenRequestIsNotFoundInWriteTimeChecks(t *testing.T) {
 	}
 	if _, err := s.RecoveryEvents(ctx, outsider, id); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("RecoveryEvents without the grant = %v, want ErrForbidden", err)
+	}
+}
+
+// An empty data scope — the role editor's "None", stored as no role_data_scope
+// row — reads nothing: the request list, the request export, the payment queue
+// and the payment ledger all fail closed on anything other than own, assigned
+// or all, as the detail pages do.
+func TestEmptyScopeReadsNoRequestsOrPayments(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
+	if _, err := s.CreatePayment(ctx, acc, PaymentInput{HeadID: headID, PaidOn: "2026-05-05", Amount: 1100, VendorPayee: "Mine"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, scope := range []string{"", "nonsense"} {
+		list, err := s.ListRequests(ctx, RequestListOptions{Scope: scope, ViewerID: acc.ID, Bucket: "all"})
+		if err != nil || len(list) != 0 {
+			t.Fatalf("ListRequests(scope %q) = %d rows, %v; want none", scope, len(list), err)
+		}
+		n, err := s.CountRequests(ctx, RequestListOptions{Scope: scope, ViewerID: acc.ID, Bucket: "all"})
+		if err != nil || n != 0 {
+			t.Fatalf("CountRequests(scope %q) = %d, %v; want 0", scope, n, err)
+		}
+		page, err := s.ListRequestsPage(ctx, RequestPageOptions{RequestListOptions: RequestListOptions{Scope: scope, ViewerID: acc.ID, Bucket: "all"}})
+		if err != nil || len(page.Requests) != 0 {
+			t.Fatalf("ListRequestsPage(scope %q) = %d rows, %v; want none", scope, len(page.Requests), err)
+		}
+		set, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: scope, ViewerID: acc.ID})
+		if err != nil || len(set.Available) != 0 || set.Counts.Approved != 0 {
+			t.Fatalf("LinkablePaymentRequests(scope %q) = %d rows / %d approved, %v; want none", scope, len(set.Available), set.Counts.Approved, err)
+		}
+		payments, err := s.ListPayments(ctx, PaymentListOptions{Scope: scope, ViewerID: acc.ID, Month: "2026-05"})
+		if err != nil || len(payments) != 0 {
+			t.Fatalf("ListPayments(scope %q) = %d rows, %v; want none", scope, len(payments), err)
+		}
+	}
+
+	// And "all" is still everything, so nothing was locked shut.
+	list, err := s.ListRequests(ctx, RequestListOptions{Scope: ScopeAll, ViewerID: acc.ID, Bucket: "all"})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListRequests(all) = %d rows, %v; want 1", len(list), err)
+	}
+	payments, err := s.ListPayments(ctx, PaymentListOptions{Scope: ScopeAll, ViewerID: acc.ID, Month: "2026-05"})
+	if err != nil || len(payments) != 1 {
+		t.Fatalf("ListPayments(all) = %d rows, %v; want 1", len(payments), err)
 	}
 }

@@ -40,7 +40,7 @@ func bankBlind() PermissionSet {
 	return NewPermissionSet([]Grant{{"vendor", "view"}, {"vendor", "edit"}, {"payment", "view"}, {"request", "view"}}, []ScopeGrant{{"payment", "all"}, {"request", "all"}})
 }
 
-// The whole point of Phase 1V: the gate is on the data. A caller without
+// Bank details are gated on the data itself. A caller without
 // vendor_bank:view must not receive the bank block from the store at all, so a
 // handler bug or a template mistake still cannot leak it.
 func TestVendorBankDetailsAreGatedByThePermissionSet(t *testing.T) {
@@ -143,19 +143,6 @@ func TestVendorNotFound(t *testing.T) {
 	}
 }
 
-func vendorActor(t *testing.T, s *Store, ctx context.Context) User {
-	t.Helper()
-	id, err := s.CreateUser(ctx, "vendor-admin@example.com", "Vendor Admin", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, id)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
-}
-
 func validVendorInput() VendorInput {
 	return VendorInput{
 		Name:          "Sundaram Electricals Pvt Ltd",
@@ -173,7 +160,7 @@ func validVendorInput() VendorInput {
 func TestCreateVendorStoresTheRecordAndWritesAudit(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	id, err := s.CreateVendor(ctx, actor, validVendorInput())
 	if err != nil {
@@ -201,7 +188,7 @@ func TestCreateVendorStoresTheRecordAndWritesAudit(t *testing.T) {
 func TestCreateVendorDefaultsTypeAndStatus(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	in := validVendorInput()
 	in.VendorType = ""
@@ -219,7 +206,7 @@ func TestCreateVendorDefaultsTypeAndStatus(t *testing.T) {
 func TestCreateVendorRejectsBadInput(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	blank := validVendorInput()
 	blank.Name = "   "
@@ -253,7 +240,7 @@ func TestCreateVendorRejectsBadInput(t *testing.T) {
 func TestCreateVendorRejectsDuplicateNameCaseInsensitively(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	if _, err := s.CreateVendor(ctx, actor, validVendorInput()); err != nil {
 		t.Fatal(err)
@@ -270,7 +257,7 @@ func TestCreateVendorRejectsDuplicateNameCaseInsensitively(t *testing.T) {
 func TestUpdateVendorIgnoresBankFieldsWithoutPermission(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 	id := seedVendorWithBank(t, s, "Sundaram Electricals Pvt Ltd")
 
 	in := validVendorInput()
@@ -295,7 +282,7 @@ func TestUpdateVendorIgnoresBankFieldsWithoutPermission(t *testing.T) {
 func TestUpdateVendorAppliesBankFieldsWithPermission(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 	id := seedVendorWithBank(t, s, "Sundaram Electricals Pvt Ltd")
 
 	editor := NewPermissionSet([]Grant{{"vendor", "edit"}, {"vendor_bank", "view"}, {"vendor_bank", "edit"}}, nil)
@@ -325,7 +312,7 @@ func TestUpdateVendorAppliesBankFieldsWithPermission(t *testing.T) {
 func TestVendorAuditNeverRecordsBankValues(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 	id := seedVendorWithBank(t, s, "Sundaram Electricals Pvt Ltd")
 
 	editor := NewPermissionSet([]Grant{{"vendor", "edit"}, {"vendor_bank", "view"}, {"vendor_bank", "edit"}}, nil)
@@ -351,7 +338,7 @@ func TestVendorAuditNeverRecordsBankValues(t *testing.T) {
 func TestUpdateVendorRejectsMissingRowAndDuplicateName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor := vendorActor(t, s, ctx)
+	actor := vendorActor(t, s)
 
 	first, err := s.CreateVendor(ctx, actor, validVendorInput())
 	if err != nil {
@@ -413,14 +400,13 @@ func TestVendorStatsAndCategories(t *testing.T) {
 	}
 }
 
-// The list screen's "Paid this year" column. Until Phase 3 links payments to
-// vendor_id, the only link is the payee snapshot, so the match is exact: it
-// may under-count a payment whose payee was typed differently, but it can
-// never attribute one to the wrong vendor.
+// The list screen's "Paid this year" column counts a payment with no vendor id
+// by its payee snapshot, matched exactly: it may under-count a payment whose
+// payee was typed differently, but it never attributes one to the wrong vendor.
 func TestListVendorsTotalsPaymentsRecordedAgainstTheVendorName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	if _, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status) VALUES
 		('Sundaram Electricals Pvt Ltd','company','active'),
@@ -439,8 +425,8 @@ func TestListVendorsTotalsPaymentsRecordedAgainstTheVendorName(t *testing.T) {
 		return id
 	}
 	// Every in-year payment is dated today. A literal month would make this test
-	// depend on when in the year it is run: F-D-06 refuses a future paid_on, so
-	// `year+"-04-15"` is a payment the store rejects outright every January.
+	// depend on when in the year it is run: the store refuses a future paid_on, so
+	// `year+"-04-15"` would be rejected outright every January.
 	today := time.Now().Format("2006-01-02")
 	pay("Sundaram Electricals Pvt Ltd", today, 500000)
 	pay("sundaram electricals pvt ltd", today, 250000)        // case-insensitive
@@ -579,47 +565,6 @@ func TestListVendorsFiltersAndOrders(t *testing.T) {
 	}
 }
 
-// seedVendorRequest inserts a payment_requests row shaped the way the request
-// form makes one for a vendor: vendor_id names the payee and vendor_payee is
-// left empty. Reading the snapshot on such a row is the trap PROGRESS.md
-// records, and it is exactly the trap a test about vendor totals must not fall
-// into — a fixture that fills vendor_payee would make the payee-name fallback
-// look like the vendor_id join working.
-func seedVendorRequest(t *testing.T, s *Store, ctx context.Context, seq int, status string, requesterID, managerID, headID, vendorID, amount int64) int64 {
-	t.Helper()
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatalf("head project: %v", err)
-	}
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,project_id,head_id,vendor_id,amount,purpose,invoice_no,
-		 requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,?,'budget','vendor_invoice',?,?,?,?,'Switchgear','INV-1',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), status, projectID, headID, vendorID, amount,
-		requesterID, managerID, amount, managerID)
-	if err != nil {
-		t.Fatalf("seed vendor request: %v", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
-func seedVendorNamed(t *testing.T, s *Store, name string) int64 {
-	t.Helper()
-	res, err := s.DB().Exec(`INSERT INTO vendors(name,vendor_type,status) VALUES(?,'company','active')`, name)
-	if err != nil {
-		t.Fatalf("seed vendor %q: %v", name, err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
 func vendorByName(t *testing.T, rows []Vendor, name string) Vendor {
 	t.Helper()
 	for _, v := range rows {
@@ -631,29 +576,23 @@ func vendorByName(t *testing.T, rows []Vendor, name string) Vendor {
 	return Vendor{}
 }
 
-// TestVendorPaidThisYearSurvivesARename is F-G-009, and the rename is the whole
-// point.
-//
-// The figure used to be string equality between payments.vendor_payee — a
-// denormalised snapshot of the payee's name at the moment of settlement — and
-// vendors.name. So correcting a vendor's legal name, with the payment untouched
-// and still sitting in the ledger, silently zeroed its entire spend history.
-// Migration v10 gives a payment the vendor id it was made to, and this asserts
-// the figure is now a fact about the vendor rather than about their spelling.
+// A vendor's "Paid this year" survives renaming the vendor: payments carry the
+// vendor id they were made to (migration v10), so the figure is a fact about the
+// vendor rather than about the spelling of its name.
 func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
 	today := time.Now().UTC().Format("2006-01-02")
 
 	vendorID := seedVendorNamed(t, s, "Sundaram Electricals Pvt Ltd")
 	seedVendorNamed(t, s, "Meridian Facility Services")
 
-	settled := seedVendorRequest(t, s, ctx, 1, "approved", requester.ID, mgrID, headID, vendorID, 910000)
+	settled := seedVendorRequest(t, s, 1, "approved", requester.ID, mgrID, headID, vendorID, 910000)
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, settled,
+	if _, err := historicalSettlement(ctx, s, acc, settled,
 		PaymentInput{PaidOn: today, Amount: 910000}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}
@@ -692,14 +631,11 @@ func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 	}
 }
 
-// TestVendorOpenRequestsCountsLiveWork is F-G-010. The column was declared on
-// the struct, scanned by nothing and therefore printed Go's zero value beside
-// every vendor, live work or not — which is worse than an absent column,
-// because it asserts that there is none.
+// The vendor list's open-requests column counts the vendor's live requests.
 func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	acc, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, mgrID, headID := seedRequestParty(t, s)
 	today := time.Now().UTC().Format("2006-01-02")
 
 	vendorID := seedVendorNamed(t, s, "Sundaram Electricals Pvt Ltd")
@@ -707,14 +643,14 @@ func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 
 	// Two open, one rejected, and one carried all the way to settled — so the
 	// count is a filter and not a row count.
-	seedVendorRequest(t, s, ctx, 2, "pending", requester.ID, mgrID, headID, vendorID, 40000)
-	seedVendorRequest(t, s, ctx, 3, "approved", requester.ID, mgrID, headID, vendorID, 50000)
-	seedVendorRequest(t, s, ctx, 4, "rejected", requester.ID, mgrID, headID, vendorID, 60000)
-	settled := seedVendorRequest(t, s, ctx, 5, "approved", requester.ID, mgrID, headID, vendorID, 910000)
+	seedVendorRequest(t, s, 2, "pending", requester.ID, mgrID, headID, vendorID, 40000)
+	seedVendorRequest(t, s, 3, "approved", requester.ID, mgrID, headID, vendorID, 50000)
+	seedVendorRequest(t, s, 4, "rejected", requester.ID, mgrID, headID, vendorID, 60000)
+	settled := seedVendorRequest(t, s, 5, "approved", requester.ID, mgrID, headID, vendorID, 910000)
 	if err := s.ReserveRequest(ctx, acc, settled); err != nil {
 		t.Fatalf("ReserveRequest: %v", err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, settled,
+	if _, err := historicalSettlement(ctx, s, acc, settled,
 		PaymentInput{PaidOn: today, Amount: 910000}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}
@@ -733,24 +669,23 @@ func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 
 // TestVendorOpenRequestsUsesTheProductsOwnOpenBucket pins the definition rather
 // than the number: "open" here is requestBuckets["open"], the set behind
-// /requests?bucket=open, so this count and that list cannot drift apart the way
-// F-G-006's dashboard tile drifted from the bucket its own link pointed at.
+// /requests?bucket=open, so this count and that list cannot drift apart.
 func TestVendorOpenRequestsUsesTheProductsOwnOpenBucket(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	_, requester, mgrID, headID := seedRequestParty(t, s, ctx)
+	_, requester, mgrID, headID := seedRequestParty(t, s)
 	vendorID := seedVendorNamed(t, s, "Harith Infra")
 
 	seq := 100
 	for _, status := range requestBuckets["open"] {
 		seq++
-		seedVendorRequest(t, s, ctx, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
+		seedVendorRequest(t, s, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
 	}
 	// Every status that is not in the open bucket, so the count is a filter and
 	// not just a row count.
 	for _, status := range []string{"rejected", "withdrawn", "cancelled", "completed", "completed_partial"} {
 		seq++
-		seedVendorRequest(t, s, ctx, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
+		seedVendorRequest(t, s, seq, status, requester.ID, mgrID, headID, vendorID, 1000)
 	}
 
 	rows, err := s.ListVendors(ctx, VendorListOptions{}, bankBlind())
@@ -762,20 +697,19 @@ func TestVendorOpenRequestsUsesTheProductsOwnOpenBucket(t *testing.T) {
 	}
 }
 
-// TestVendorPaidThisYearPrefersTheIdAndFallsBackExactly covers the two halves of
-// the F-G-009 fix that the rename test cannot reach:
+// How "Paid this year" matches payments to a vendor, beyond the rename case:
 //
 //   - the id wins over the text, so a payment carrying somebody else's name in
 //     its snapshot is still counted against the vendor it was actually made to;
 //   - the payee match survives ONLY for rows with no vendor_id — the pre-v10
 //     direct payments, which settle no request and so have nothing to inherit —
 //     and is still EXACT, so a near-miss name is never credited to the wrong
-//     vendor. That property is older than the fix and must outlive it: on a
-//     financial screen a missing row is recoverable, a misattributed one is not.
+//     vendor. On a financial screen a missing row is recoverable, a
+//     misattributed one is not.
 func TestVendorPaidThisYearPrefersTheIdAndFallsBackExactly(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	today := time.Now().UTC().Format("2006-01-02")
 
 	linked := seedVendorNamed(t, s, "Coastal Power Systems")

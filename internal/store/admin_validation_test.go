@@ -9,7 +9,7 @@ import (
 func TestDefaultApproverRequiresLiveApprovalGrantInBothWriters(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	admin := newRoleActor(t, s, ctx)
+	admin := newRoleActor(t, s)
 	subject, _ := s.CreateUser(ctx, "subject@qa.test", "Subject", "hash", "data_entry", true)
 	candidate, _ := s.CreateUser(ctx, "candidate@qa.test", "Candidate", "hash", "data_entry", true)
 	role, err := s.CreateRole(ctx, admin, "Custom Decider", "")
@@ -49,7 +49,7 @@ func TestDefaultApproverRequiresLiveApprovalGrantInBothWriters(t *testing.T) {
 func TestNotificationRecipientValidationIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	admin := newRoleActor(t, s, ctx)
+	admin := newRoleActor(t, s)
 	before, err := s.NotificationSetting(ctx, "request_submitted")
 	if err != nil {
 		t.Fatal(err)

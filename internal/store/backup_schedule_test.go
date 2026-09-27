@@ -48,7 +48,7 @@ func backupNames(t *testing.T, dir string) []string {
 	return names
 }
 
-// backup-2: §10 promises an automated daily backup. The job makes one backup
+// Backups run automatically once a day. The job makes one backup
 // per day once the configured hour has passed, and a second check the same day
 // — another tick, or a restart — does nothing.
 func TestDailyBackupRunsOncePerDayAfterTheConfiguredHour(t *testing.T) {

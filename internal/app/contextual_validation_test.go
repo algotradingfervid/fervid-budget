@@ -11,7 +11,7 @@ import (
 
 func TestRoleCreateValidationPreservesDialogAndDoesNotCreateDuplicate(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	before, err := s.st.AllRoles(s.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 	endpoint := "/requests/" + strconvFormat(id) + "/approve"
 	note := "Retain <approval> & explanation"
 	for _, amount := range []string{"8403.98", "0", "-1.00", "not money", ""} {
-		resp := s.postForm(endpoint, url.Values{"approved_amount": {amount}, "note": {note}})
+		resp := s.submitScreen(endpoint, url.Values{"approved_amount": {amount}, "note": {note}})
 		requireStatus(t, resp, http.StatusBadRequest)
 		body := responseBody(t, resp)
 		for _, want := range []string{
@@ -107,15 +107,15 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 		}
 	}
 	// An unassigned approver cannot use validation to expose an actionable dialog.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	resp := s.postForm(endpoint, url.Values{"approved_amount": {"not money"}, "note": {note}})
+	s.loginAdmin()
+	resp := s.submitScreen(endpoint, url.Values{"approved_amount": {"not money"}, "note": {note}})
 	requireStatus(t, resp, http.StatusNotFound)
 	if strings.Contains(responseBody(t, resp), `id="approve-sheet"`) {
 		t.Fatal("unassigned approver received approval editor")
 	}
 
 	s.login("kavita@example.test", "ApproverPass123")
-	resp = s.postForm(endpoint, url.Values{"approved_amount": {"8403.97"}, "note": {note}})
+	resp = s.submitScreen(endpoint, url.Values{"approved_amount": {"8403.97"}, "note": {note}})
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
 	got, err := s.st.Request(s.ctx, id)
@@ -124,5 +124,85 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 	}
 	if got.Status != "approved" || got.ApprovedAmount == nil || *got.ApprovedAmount != 840397 {
 		t.Fatal("corrected valid approval did not commit")
+	}
+}
+
+// Validation banners do not show the internal sentinel "validation failed: ",
+// which is not a sentence for a person.
+func TestValidationMessagesLoseTheSentinelPrefix(t *testing.T) {
+	s := newAppTestServer(t)
+	s.loginAdmin()
+	resp := s.postForm("/heads", url.Values{"project_id": {"0"}, "name": {""}, "due_day": {"5"}})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if strings.Contains(body, "validation failed") {
+		t.Fatalf("the banner still carries the sentinel: %s", firstLines(body))
+	}
+	if !strings.Contains(body, "project and head name are required") {
+		t.Fatalf("the banner lost the rule with the sentinel: %s", firstLines(body))
+	}
+}
+
+// A refused submission for a type with no UI label (such as `type=recoverable`)
+// keeps the store's real reason and the form, rather than claiming the type is
+// "not a kind of request this system raises".
+func TestARefusedUnlabelledTypeKeepsItsRealReason(t *testing.T) {
+	s := newAppTestServer(t)
+	admin := s.admin()
+	approver := seedSecondApprover(t, s)
+	_ = admin
+	s.loginAdmin()
+	resp := s.postForm("/requests", url.Values{
+		"type": {"recoverable"}, "treatment": {"recoverable"},
+		"recoverable_category": {"pbg"}, "short_title": {"Bank guarantee"},
+		"amount": {"1,00,000.00"}, "purpose": {"guarantee against the tender"},
+		"expected_return_date": {"2027-01-01"}, "repayment_notes": {"Released on completion"},
+		"manager_id": {strconvFormat(approver)},
+	})
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if strings.Contains(body, "not a kind of request this system raises") {
+		t.Fatalf("the refusal is about the wrong problem: %s", firstLines(body))
+	}
+	if !strings.Contains(body, "belongs to a project") {
+		t.Fatalf("the rule that actually refused it is not reported: %s", firstLines(body))
+	}
+}
+
+// A ?type= that names no card (such as `/requests/new?type=recoverable`) is a
+// 400 on the chooser with the reason above it, not a silent bounce back to the
+// chooser. Every store type, the deposit included, has its own card.
+func TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced(t *testing.T) {
+	s := newAppTestServer(t)
+	s.loginAdmin()
+
+	// No ?type= at all is step 1 of 2, unchanged and not an error.
+	chooser := s.request(http.MethodGet, "/requests/new", nil, "")
+	requireStatus(t, chooser, http.StatusOK)
+	if body := responseBody(t, chooser); strings.Contains(body, "alert error") {
+		t.Fatalf("the plain chooser reports an error: %s", firstLines(body))
+	}
+
+	resp := s.request(http.MethodGet, "/requests/new?type=mystery", nil, "")
+	requireStatus(t, resp, http.StatusBadRequest)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "not a request type this system raises") {
+		t.Fatalf("?type=mystery was bounced without an explanation: %s", firstLines(body))
+	}
+	// It is still the chooser: the reader lands on the cards they can actually
+	// use, with the reason above them.
+	if !strings.Contains(body, `class="type-grid"`) || strings.Count(body, `class="type-card"`) != 5 {
+		t.Fatalf("?type=mystery did not render the five-card chooser: %s", firstLines(body))
+	}
+
+	// Every store type has a card, so the two vocabularies cannot drift apart
+	// again without this failing.
+	if _, offered := requestTypeLabels["recoverable"]; !offered {
+		t.Fatal("the store's recoverable type has no chooser card; a deposit can only be raised as an employee advance again")
+	}
+	form := s.request(http.MethodGet, "/requests/new?type=recoverable", nil, "")
+	requireStatus(t, form, http.StatusOK)
+	if body := responseBody(t, form); !strings.Contains(body, `name="vendor_payee"`) || !strings.Contains(body, `<input type="hidden" name="treatment" value="recoverable">`) {
+		t.Fatalf("the deposit form does not ask who is paid on a fixed recoverable treatment: %s", firstLines(body))
 	}
 }

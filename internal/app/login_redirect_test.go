@@ -18,7 +18,7 @@ func TestLoginNextOpensVisibleRecordOnFreshSignIn(t *testing.T) {
 	admin, headID := s.seedHead("login-next")
 	reqID := s.seedPendingRequest(1, admin.ID, admin.ID, headID, 1000)
 	recID := s.seedRecoverableRequest(2, admin.ID, admin.ID, "icd", "Counterparty", 1000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	_, payID := s.settleOneRequest(3, headID, 500000, "5000.00", "settled", time.Now().Format("2006-01-02"))
 	for _, next := range []string{
 		fmt.Sprintf("/requests/%d", reqID),

@@ -41,7 +41,7 @@ func TestCancellationDecisionsAreBoundToTheReviewedRevision(t *testing.T) {
 	}
 	s.login("kavita@example.test", "ApproverPass123")
 	screenRevision := func(id int64) string {
-		return requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/cancellation", id), nil, "")))
+		return requestRevisionFromPage(t, s.get(fmt.Sprintf("/requests/%d/cancellation", id)))
 	}
 	// changeUnderneath is somebody else acting on the request after the
 	// approver's screen was drawn.
@@ -109,7 +109,7 @@ func TestCancellationDecisionsAreBoundToTheReviewedRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []int64{pending, approved("Forms outright")} {
-		body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/cancellation", id), nil, ""))
+		body := s.get(fmt.Sprintf("/requests/%d/cancellation", id))
 		forms := strings.Count(body, `<form class="sheet" method="post" action="/requests/`)
 		if forms == 0 || strings.Count(body, `name="revision" value="`) < forms {
 			t.Fatalf("request %d: %d decision forms but not all carry the revision", id, forms)

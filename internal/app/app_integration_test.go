@@ -2,7 +2,6 @@ package app
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"html/template"
@@ -11,207 +10,23 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"fervidbudget/internal/auth"
-	"fervidbudget/internal/config"
 	"fervidbudget/internal/store"
 )
 
-const testAdminPassword = "AdminPass1234"
-
-type appTestServer struct {
-	t      *testing.T
-	ctx    context.Context
-	cfg    config.Config
-	st     *store.Store
-	http   *http.Server
-	server *httptest.Server
-	client *http.Client
-}
-
-func newAppTestServer(t *testing.T) *appTestServer {
-	t.Helper()
-	dir := t.TempDir()
-	cfg := config.Config{
-		DBPath:           filepath.Join(dir, "fervid.db"),
-		AttachmentDir:    filepath.Join(dir, "attachments"),
-		BackupDir:        filepath.Join(dir, "backups"),
-		SessionKey:       "test-session-key-that-is-long-enough",
-		AdminEmail:       "admin@example.test",
-		AdminName:        "Test Admin",
-		AdminPassword:    testAdminPassword,
-		BackupKeepDays:   1,
-		SMTPAllowedHosts: []string{"smtp.example.test"},
-	}
-	if err := cfg.EnsureDirs(); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Open(cfg.DBPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpServer, err := New(cfg, st)
-	if err != nil {
-		_ = st.Close()
-		t.Fatal(err)
-	}
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(httpServer.Handler)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	t.Cleanup(func() {
-		server.Close()
-		_ = st.Close()
-	})
-	return &appTestServer{t: t, ctx: context.Background(), cfg: cfg, st: st, http: httpServer, server: server, client: client}
-}
-
-func (s *appTestServer) request(method, path string, body io.Reader, contentType string) *http.Response {
-	s.t.Helper()
-	req, err := http.NewRequest(method, s.server.URL+path, body)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return resp
-}
-
-func responseBody(t *testing.T, resp *http.Response) string {
-	t.Helper()
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(body)
-}
-
-func requireStatus(t *testing.T, resp *http.Response, want int) {
-	t.Helper()
-	if resp.StatusCode != want {
-		body := responseBody(t, resp)
-		t.Fatalf("status = %d, want %d; body: %s", resp.StatusCode, want, body)
-	}
-}
-
-func (s *appTestServer) login(email, password string) {
-	s.t.Helper()
-	form := url.Values{"email": {email}, "password": {password}}
-	resp := s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		body, _ := io.ReadAll(resp.Body)
-		s.t.Fatalf("login status = %d, want 303; body: %s", resp.StatusCode, body)
-	}
-}
-
-func (s *appTestServer) csrf() string {
-	s.t.Helper()
-	u, _ := url.Parse(s.server.URL)
-	for _, c := range s.client.Jar.Cookies(u) {
-		if c.Name == "fervid_csrf" {
-			return c.Value
-		}
-	}
-	s.t.Fatal("CSRF cookie was not set")
-	return ""
-}
-
-func (s *appTestServer) postForm(path string, form url.Values) *http.Response {
-	s.t.Helper()
-	if form == nil {
-		form = url.Values{}
-	}
-	// Existing form helpers represent a freshly opened correction screen. Clone
-	// first so repeated calls do not accidentally retain a prior screen revision.
-	copyForm := url.Values{}
-	for key, values := range form {
-		copyForm[key] = append([]string(nil), values...)
-	}
-	form = copyForm
-	if path == "/payments" && form.Get("request_id") != "" && len(form.Get("paid_on")) == 10 {
-		date := form.Get("paid_on") + " 00:00:00"
-		if _, err := s.st.DB().Exec(`UPDATE payment_requests SET approved_at=? WHERE id=? AND approved_at>?`, date, form.Get("request_id"), date); err != nil {
-			s.t.Fatal(err)
-		}
-	}
-
-	if strings.HasPrefix(path, "/requests/") && (strings.HasSuffix(path, "/edit") || strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/return") || strings.HasSuffix(path, "/reject") || strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation")) && !form.Has("revision") {
-		pagePath := path
-		if !strings.HasSuffix(path, "/edit") {
-			pagePath = path[:strings.LastIndex(path, "/")]
-		}
-		// Both cancellation decisions are posted from the approver's
-		// cancellation screen.
-		if strings.HasSuffix(path, "/cancel") || strings.HasSuffix(path, "/cancellation") {
-			pagePath += "/cancellation"
-		}
-		page := responseBody(s.t, s.request(http.MethodGet, pagePath, nil, ""))
-		matches := regexp.MustCompile(`name="revision" value="([^"]+)"`).FindStringSubmatch(page)
-		if len(matches) == 2 {
-			form.Set("revision", matches[1])
-		}
-	}
-	form.Set("csrf", s.csrf())
-	return s.request(http.MethodPost, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
-}
-
-// roleIDByName resolves a seeded role to the id the people form posts, so a test
-// can ask for "Requester" rather than hard-coding a number the seed decides.
-func (s *appTestServer) roleIDByName(t *testing.T, name string) string {
-	t.Helper()
-	roles, err := s.st.AllRoles(s.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, role := range roles {
-		if strings.EqualFold(role.Name, name) {
-			return strconv.FormatInt(role.ID, 10)
-		}
-	}
-	t.Fatalf("no seeded role named %q", name)
-	return ""
-}
-
-func (s *appTestServer) seedHead(name string) (store.User, int64) {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	projectID, err := s.st.UpsertProject(s.ctx, 0, "Operations "+name, true, 1)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	headID, err := s.st.UpsertHead(s.ctx, 0, projectID, "Rent "+name, "5", true, 1)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return admin, headID
-}
-
 func TestLoginPageIsSafeAndErrorsAreAnnounced(t *testing.T) {
 	s := newAppTestServer(t)
-	body := responseBody(t, s.request(http.MethodGet, "/login", nil, ""))
+	body := s.get("/login")
 	if strings.Contains(body, testAdminPassword) || strings.Contains(body, s.cfg.AdminEmail) {
 		t.Fatal("login page exposes bootstrap credentials")
 	}
@@ -242,10 +57,7 @@ func TestLoginLockoutAndFailedAttemptsAreAudited(t *testing.T) {
 	if err != nil || locked {
 		t.Fatalf("successful login must clear failed attempts: %v, %v", locked, err)
 	}
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	audit, err := s.st.Audit(s.ctx, "user", admin.ID, 20)
 	if err != nil {
 		t.Fatal(err)
@@ -271,19 +83,14 @@ func TestDataEntryHasRestrictedNavigationAndRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.login("entry@example.test", "EntryPassword123")
-	body := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	body := s.get("/")
 	for _, hidden := range []string{"Monthly plans", "href=\"/projects\"", "href=\"/users\"", "href=\"/audit\"", "href=\"/roles\""} {
 		if strings.Contains(body, hidden) {
 			t.Fatalf("data-entry navigation exposes %q", hidden)
 		}
 	}
-	// …and still offers everything the Accounts role does allow. The labels are
-	// the Phase 0 shell's, which this task does not change.
-	for _, shown := range []string{"Payments ledger", "Variance grid", "Reports"} {
-		if !strings.Contains(body, shown) {
-			t.Fatalf("data entry navigation is missing %q", shown)
-		}
-	}
+	// …and still offers everything the Accounts role does allow.
+	mustContain(t, "data entry navigation", body, "Payments ledger", "Variance grid", "Reports")
 	for _, path := range []string{"/projects", "/heads", "/users", "/audit", "/budgets", "/months", "/roles"} {
 		resp := s.request(http.MethodGet, path, nil, "")
 		requireStatus(t, resp, http.StatusForbidden)
@@ -293,13 +100,13 @@ func TestDataEntryHasRestrictedNavigationAndRoutes(t *testing.T) {
 
 func TestMonthNormalizationAndReportRangeExport(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/grid?month=not-a-month", nil, ""))
+	s.loginAdmin()
+	body := s.get("/grid?month=not-a-month")
 	current := time.Now().Format("2006-01")
 	if !strings.Contains(body, `name="month" value="`+current+`"`) {
 		t.Fatalf("invalid grid month was not normalized to %s", current)
 	}
-	body = responseBody(t, s.request(http.MethodGet, "/reports/heads?from=2026-05&to=2026-03", nil, ""))
+	body = s.get("/reports/heads?from=2026-05&to=2026-03")
 	if !strings.Contains(body, "2026-03 to 2026-05") || !strings.Contains(body, "ytd.csv?from=2026-03&to=2026-05") {
 		t.Fatalf("reversed report range was not reflected in controls/export: %s", body)
 	}
@@ -311,16 +118,15 @@ func TestMonthNormalizationAndReportRangeExport(t *testing.T) {
 	}
 }
 
-// Retargeted for Phase 3: free-standing payment entry is retired, so the same
-// retention behaviour is now exercised on the linked path — reserve a request,
-// post a malformed amount, and get every typed value back. The behaviour is
-// unchanged; only the linkage is added.
+// A payment refused for a malformed amount writes nothing, keeps the
+// reservation, and gives every typed value back, with the payment mode shown
+// in words a person reads.
 func TestPaymentErrorRetainsInputAndUsesHumanModes(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Retention")
 	reqID := s.seedApprovedRequest(1, admin.ID, admin.ID, headID, 500000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	requireStatus(t, s.postForm(strconvPath("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
+	s.loginAdmin()
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/record-payment", reqID), url.Values{}), http.StatusSeeOther)
 	form := url.Values{
 		"request_id":   {strconvFormat(reqID)},
 		"head_id":      {strconvFormat(headID)},
@@ -333,7 +139,7 @@ func TestPaymentErrorRetainsInputAndUsesHumanModes(t *testing.T) {
 		"remarks":      {"retain this note"},
 		"settlement":   {"settled"},
 	}
-	resp := s.postForm("/payments", form)
+	resp := s.postPayment(form)
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
 	if !strings.Contains(body, "invalid amount") {
@@ -351,11 +157,9 @@ func TestPaymentErrorRetainsInputAndUsesHumanModes(t *testing.T) {
 	if got := requestStatusApp(t, s, reqID); got != "processing" {
 		t.Fatalf("status after a rejected settlement = %q, want processing", got)
 	}
-	// Task 15 re-renders the confirmation sheet rather than an error page, so
+	// The confirmation sheet is re-rendered rather than an error page, so
 	// every typed value comes back. The mode is spelled for a person in the
-	// summary and kept verbatim in the field that reposts it — the old
-	// `value="bank_transfer" selected` assertion belonged to the free-entry
-	// <select>, which this phase retired.
+	// summary and kept verbatim in the field that reposts it.
 	for _, expected := range []string{
 		"not-money", "Aster Stores", "INV-42", "REF-42", "retain this note",
 		`value="bank_transfer"`, ">Bank transfer<",
@@ -377,12 +181,12 @@ func TestLockedPaymentsAreReadOnlyAndRejectAttachmentUpload(t *testing.T) {
 	if err := s.st.LockMonth(s.ctx, admin, "2026-04", "test lock"); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/payments/"+strconvFormat(paymentID)+"/edit", nil, ""))
+	s.loginAdmin()
+	body := s.get("/payments/" + strconvFormat(paymentID) + "/edit")
 	if !strings.Contains(body, "read-only") || !strings.Contains(body, "fieldset class=\"payment-section payment-core\" disabled") {
 		t.Fatalf("locked payment edit form remains editable: %s", body)
 	}
-	body = responseBody(t, s.request(http.MethodGet, "/payments/"+strconvFormat(paymentID), nil, ""))
+	body = s.get("/payments/" + strconvFormat(paymentID))
 	if strings.Contains(body, "name=\"attachment\" required") {
 		t.Fatal("locked payment detail exposes attachment upload")
 	}
@@ -415,16 +219,9 @@ func TestLockedPaymentsAreReadOnlyAndRejectAttachmentUpload(t *testing.T) {
 	}
 }
 
-// TestBudgetSaveAppliesReadableFieldsAndNamesTheRest replaces
-// TestBudgetBatchValidationDoesNotPartiallySave, whose expectation F-G-028
-// reversed. That test asserted a batch is abandoned whole when any one field
-// fails — which is precisely the defect: the budgets screen renders ₹0.00 for
-// every unbudgeted head, money.ParsePaise refuses zero, so a month that had
-// never been budgeted could not be budgeted at all, one head at a time or
-// otherwise. Every field that reads is now applied and the ones that do not are
-// named back, so the "did not partially save" assertion is no longer the
-// contract. Nothing was weakened: the same POST is made and the same status is
-// demanded, and the row that used to be discarded is now asserted to be written.
+// Saving the budgets screen applies every field that reads as money and hands
+// back the ones that do not, naming them. One bad field must not block the
+// rest, or a month could never be budgeted one head at a time.
 func TestBudgetSaveAppliesReadableFieldsAndNamesTheRest(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headA := s.seedHead("BudgetA")
@@ -432,7 +229,7 @@ func TestBudgetSaveAppliesReadableFieldsAndNamesTheRest(t *testing.T) {
 	if err := s.st.SetBudget(s.ctx, admin, headA, "2026-04", 10000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	form := url.Values{
 		"month":                          {"2026-04"},
 		"budget_" + strconvFormat(headA): {"250.00"},
@@ -459,14 +256,13 @@ func TestBudgetSaveAppliesReadableFieldsAndNamesTheRest(t *testing.T) {
 	}
 }
 
-// F-G-028's three reproductions, in one test: the values the screen renders can
-// be saved, a single head can be filled in on a month with no budgets at all,
+// The values the budgets screen renders can be saved as they are, a single head can be filled in on a month with no budgets at all,
 // and an existing budget can be reduced to zero.
 func TestUnbudgetedMonthCanBeSavedAndABudgetCanBeZeroed(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headA := s.seedHead("ZeroA")
 	_, headB := s.seedHead("ZeroB")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	// 1. Exactly what the form sends for a month nobody has budgeted: ₹0.00 in
 	// every field, the way `value="{{money .Budget}}"` renders it.
@@ -519,9 +315,8 @@ func TestUnbudgetedMonthCanBeSavedAndABudgetCanBeZeroed(t *testing.T) {
 	}
 }
 
-// F-G-026: one condition, one status code. A locked month is a 409 through
-// respondStoreError and used to be a 400 on the two screens that render their
-// own error instead.
+// One condition, one status code: a locked month is refused with 409 Conflict,
+// including on the screens that render their own error.
 func TestLockedMonthRefusalIsAlwaysAConflict(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("LockStatus")
@@ -531,7 +326,7 @@ func TestLockedMonthRefusalIsAlwaysAConflict(t *testing.T) {
 	if err := s.st.LockMonth(s.ctx, admin, "2026-09", "Closed for audit"); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm("/budgets", url.Values{
 		"month":                           {"2026-09"},
 		"budget_" + strconvFormat(headID): {"200000.00"},
@@ -550,11 +345,9 @@ func TestLockedMonthRefusalIsAlwaysAConflict(t *testing.T) {
 
 func TestUserCreationEnforcesPasswordAndInactiveFlagWithCreateAudit(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	// The create form sends the same role checkboxes the edit form does. It used
-	// to send a two-value legacy string that could not express "requester" or
-	// "approver", and whose harmless-looking option was mapped to the role that
-	// can settle and void payments.
+	s.loginAdmin()
+	// The create form sends the same role checkboxes the edit form does, so
+	// any role can be chosen explicitly.
 	requester := s.roleIDByName(t, "Requester")
 
 	weak := url.Values{"email": {"weak@example.test"}, "name": {"Weak"}, "role_ids": {requester}, "password": {"short"}, "active": {"on"}}
@@ -581,8 +374,7 @@ func TestUserCreationEnforcesPasswordAndInactiveFlagWithCreateAudit(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The role asked for is the role granted — not whatever the legacy column
-	// would have derived, which for anything but "admin" was Accounts.
+	// The role asked for is exactly the role granted.
 	roles, err := s.st.UserRoles(s.ctx, u.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -620,7 +412,7 @@ func TestAttachmentDownloadAuditFilterAndResponsiveTables(t *testing.T) {
 	if err != nil || len(atts) != 1 {
 		t.Fatalf("attachments = %#v, %v", atts, err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.request(http.MethodGet, "/attachments/"+strconvFormat(atts[0].ID), nil, "")
 	requireStatus(t, resp, http.StatusOK)
 	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, "attachment") || !strings.Contains(got, "receipt.txt") {
@@ -629,12 +421,12 @@ func TestAttachmentDownloadAuditFilterAndResponsiveTables(t *testing.T) {
 	if body := responseBody(t, resp); body != "downloaded receipt" {
 		t.Fatalf("attachment content = %q", body)
 	}
-	body := responseBody(t, s.request(http.MethodGet, "/audit?entity=payment&action=attach", nil, ""))
+	body := s.get("/audit?entity=payment&action=attach")
 	if !strings.Contains(body, "Uploaded attachment receipt.txt") || !strings.Contains(body, "Attached") {
 		t.Fatalf("attachment audit filter did not render expected entry: %s", body)
 	}
 	for _, path := range []string{"/payments", "/projects", "/reports/heads"} {
-		body = responseBody(t, s.request(http.MethodGet, path, nil, ""))
+		body = s.get(path)
 		if !strings.Contains(body, "table-wrap") {
 			t.Fatalf("%s is missing responsive table wrapper", path)
 		}
@@ -642,8 +434,8 @@ func TestAttachmentDownloadAuditFilterAndResponsiveTables(t *testing.T) {
 }
 
 // shellProbe renders PageData.Shell instead of the real templates so the shell
-// contract can be asserted at its choke point, renderStatus, without depending
-// on the markup rewrite that Task 17 owns.
+// contract can be asserted at its choke point, renderStatus, independently of
+// the page markup.
 const shellProbe = `chrome={{.Shell.Chrome}} active={{.Shell.Active}} fab={{.Shell.Tabs.Fab.Label}} groups={{len .Shell.Groups}} badges={{len .Shell.Badges}} title={{.Shell.Title}}` +
 	`{{range .Shell.Groups}}{{range .Items}} item={{.Label}}{{end}}{{end}}`
 
@@ -688,10 +480,7 @@ func renderAs(t *testing.T, handler http.Handler, manager *auth.Manager, user st
 
 func TestShellIsBuiltFromPermissionsAndSkippedForHTMXFragments(t *testing.T) {
 	s := newAppTestServer(t)
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	hash, err := auth.HashPassword("EntryPassword123")
 	if err != nil {
 		t.Fatal(err)
@@ -707,24 +496,14 @@ func TestShellIsBuiltFromPermissionsAndSkippedForHTMXFragments(t *testing.T) {
 	handler, manager := s.shellProbeHandler(t)
 
 	// The admin's centre action is Approve, not Pay: approval:approve is the
-	// first candidate in centreActions and Phase 2 built /approvals, so the
-	// fall-through that used to land on Pay no longer happens.
+	// first candidate in centreActions.
 	adminShell := renderAs(t, handler, manager, admin, "/payments", nil)
-	// Six badges, not three: the store's three badgeSpecs plus the unread bell
-	// count and the two work-queue counts navSpec has always declared and nothing
-	// populated (F-G-013).
-	for _, want := range []string{"chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=6", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log", "item=Notifications"} {
-		if !strings.Contains(adminShell, want) {
-			t.Fatalf("admin shell missing %q: %s", want, adminShell)
-		}
-	}
+	// Six badges: the store's three badgeSpecs plus the unread bell count and
+	// the two work-queue counts (approvals and the accounts queue).
+	mustContain(t, "admin shell", adminShell, "chrome=app", "active=payments", "fab=Approve", "groups=8", "badges=6", "title=Payments", "item=Payments ledger", "item=Users", "item=Audit log", "item=Notifications")
 
 	entryShell := renderAs(t, handler, manager, entry, "/payments", nil)
-	for _, want := range []string{"chrome=app", "active=payments", "fab=Pay", "item=Payments ledger", "item=Variance grid"} {
-		if !strings.Contains(entryShell, want) {
-			t.Fatalf("data_entry shell missing %q: %s", want, entryShell)
-		}
-	}
+	mustContain(t, "data_entry shell", entryShell, "chrome=app", "active=payments", "fab=Pay", "item=Payments ledger", "item=Variance grid")
 	for _, forbidden := range []string{"item=Users", "item=Audit log", "item=Budgets", "item=Monthly plans"} {
 		if strings.Contains(entryShell, forbidden) {
 			t.Fatalf("data_entry shell leaks %q: %s", forbidden, entryShell)
@@ -763,8 +542,8 @@ func TestShellActiveKeyTracksTheRequestPath(t *testing.T) {
 	}
 }
 
-// appScreens is every route the product renders today. The shell rewrite must
-// leave all of them serving a complete page.
+// appScreens are core routes that must each serve a complete page inside the
+// app shell.
 var appScreens = []string{
 	"/", "/payments", "/payments/new", "/budgets", "/months",
 	"/reports/monthly", "/projects", "/heads", "/users", "/audit", "/backups",
@@ -772,7 +551,7 @@ var appScreens = []string{
 
 func TestEveryScreenRendersTheAppShell(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, screen := range appScreens {
 		resp := s.request(http.MethodGet, screen, nil, "")
 		requireStatus(t, resp, http.StatusOK)
@@ -802,8 +581,8 @@ func TestEveryScreenRendersTheAppShell(t *testing.T) {
 
 func TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/payments", nil, ""))
+	s.loginAdmin()
+	body := s.get("/payments")
 	if !strings.Contains(body, `<a class="active" href="/payments" aria-current="page">`) {
 		t.Fatalf("payments ledger is not marked active: %s", body)
 	}
@@ -813,12 +592,9 @@ func TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach(t *testing.T
 	if !strings.Contains(body, `<span class="n">Soon</span>`) {
 		t.Fatal("coming-soon nav entries are missing their pill")
 	}
-	// The screens later phases add are announced, not linked: their nav entries
-	// are present so the structure is stable, but they render without an href
-	// so nobody can click through to a route that does not exist yet.
-	// Every navigable screen is built, so the Soon treatment is exercised only
-	// by the four "Coming soon" product announcements above, which carry no
-	// href. A built screen is a link:
+	// Every navigable screen is built, so the Soon treatment (no href) is used
+	// only by the "Coming soon" product announcements above. A built screen is
+	// a real link:
 	for _, href := range []string{`href="/requests"`, `href="/approvals"`, `href="/configuration"`, `href="/accounts-queue"`, `href="/recoverables"`, `href="/admin/notifications"`} {
 		if !strings.Contains(body, href) {
 			t.Fatalf("%s is built but the nav still announces it as Soon", href)
@@ -834,7 +610,7 @@ func TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach(t *testing.T
 	}
 	entry := newAppTestClient(t, s)
 	entry.login("shell-nav@example.test", "EntryPassword123")
-	body = responseBody(t, entry.request(http.MethodGet, "/", nil, ""))
+	body = entry.get("/")
 	if !strings.Contains(body, `<aside class="sidebar">`) {
 		t.Fatal("data-entry user lost the app shell")
 	}
@@ -847,12 +623,12 @@ func TestShellMarksTheActiveNavItemAndSkipsRoutesTheUserCannotReach(t *testing.T
 
 func TestChromeNoneRendersWithoutTheAppShell(t *testing.T) {
 	s := newAppTestServer(t)
-	login := responseBody(t, s.request(http.MethodGet, "/login", nil, ""))
+	login := s.get("/login")
 	if strings.Contains(login, "<aside") || strings.Contains(login, "tabbar") {
 		t.Fatalf("login page rendered app chrome: %s", login)
 	}
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	req, err := http.NewRequest(http.MethodGet, s.server.URL+"/payments", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -899,8 +675,8 @@ func TestTemplatesNeverCompareRoleNames(t *testing.T) {
 	}
 }
 
-// Decision D5: the design system standardises on .pill. .badge survives in the
-// stylesheet as a safety net for one release, but no template may emit it.
+// The design system standardises on .pill; the .badge class is retired and no
+// template may emit it.
 func TestNoTemplateUsesLegacyBadgeClass(t *testing.T) {
 	source := templateSource(t)
 	if count := strings.Count(string(source), `class="badge`); count != 0 {
@@ -919,7 +695,7 @@ func TestNoTemplateUsesLegacyBadgeClass(t *testing.T) {
 func TestInlineRowEditorsNameTheirFieldAndRow(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedHead("Alpha")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	for _, tc := range []struct {
 		path string
@@ -949,7 +725,7 @@ func TestInlineRowEditorsNameTheirFieldAndRow(t *testing.T) {
 			`class="table-wrap payments-table" tabindex="0" role="region" aria-label="Payments table, scrollable"`,
 		}},
 	} {
-		body := responseBody(t, s.request(http.MethodGet, tc.path, nil, ""))
+		body := s.get(tc.path)
 		for _, want := range tc.want {
 			if !strings.Contains(body, want) {
 				t.Errorf("GET %s does not render %s", tc.path, want)
@@ -958,15 +734,15 @@ func TestInlineRowEditorsNameTheirFieldAndRow(t *testing.T) {
 	}
 
 	for _, path := range []string{"/heads", "/projects"} {
-		if body := responseBody(t, s.request(http.MethodGet, path, nil, "")); strings.Contains(body, `aria-label="Active`) {
+		if body := s.get(path); strings.Contains(body, `aria-label="Active`) {
 			t.Errorf("GET %s overrides the visible Active label with an aria-label", path)
 		}
 	}
 }
 
 // The page body and the nav must gate on one permission set resolved once per
-// request, not on two independently built policies. If the body ever grows its
-// own policy again, a control can appear on a screen the nav hides.
+// request, not on two independently built policies; otherwise a control can
+// appear on a screen the nav hides.
 func TestPageBodyGatesOnTheRequestPermissionSet(t *testing.T) {
 	source := templateSource(t)
 	for _, banned := range []string{"internal/auth", "internal/config"} {
@@ -986,86 +762,52 @@ func TestPageBodyGatesOnTheRequestPermissionSet(t *testing.T) {
 
 	// Month Close renders from the variance grid, gated on month_lock:write —
 	// the same permission /months/{m}/lock is guarded by. It needs no rows, so
-	// it isolates the gate from the data. (Home is the dashboard; the grid
-	// moved to /grid when the dashboard shipped.)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	admin := responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
+	// it isolates the gate from the data.
+	s.loginAdmin()
+	admin := s.get("/grid")
 	if !strings.Contains(admin, "Month Close") {
 		t.Fatal("admin cannot see Month Close despite holding month_lock:write")
 	}
 
 	entry := newAppTestClient(t, s)
 	entry.login("entry@example.test", "EntryPassword123")
-	restricted := responseBody(t, entry.request(http.MethodGet, "/grid", nil, ""))
+	restricted := entry.get("/grid")
 	if strings.Contains(restricted, "Month Close") {
 		t.Fatal("data-entry user sees Month Close despite lacking month_lock:write")
 	}
 }
 
-// newAppTestClient gives a second, independently authenticated client against
-// the same server so one test can compare what two roles are shown.
-func newAppTestClient(t *testing.T, s *appTestServer) *appTestServer {
-	t.Helper()
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clone := *s
-	clone.client = &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &clone
-}
-
-func strconvFormat(id int64) string {
-	return strconv.FormatInt(id, 10)
-}
-
 func TestRolesAdminScreenRendersApprovedMatrix(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/roles", nil, ""))
+	body := s.get("/roles")
 
 	// The approved chrome: segmented switcher, role card, both matrices, the
 	// scope pill group and the sticky action bar.
-	for _, want := range []string{
+	mustContain(t, "/roles approved markup", body,
 		`class="segmented"`, `class="card"`, `class="card-head"`, `class="pill good"`,
 		`class="form-grid"`, `class="field span-4 m-half"`,
 		`class="table-wrap d-only"`, `class="perm-table"`,
 		`class="perm-acc m-only"`, `class="pa-head"`, `class="chev"`, `class="pa-body"`,
 		`class="perm-scope"`, `class="action-bar"`, `class="ab-note d-only"`,
 		`class="btn primary"`, `class="btn outline"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles is missing the approved markup %q", want)
-		}
-	}
+	)
 	// Every seeded role is a segment; custom roles are badged.
-	for _, want := range []string{"Requester", "Manager", "Accounts", "Admin"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles page missing role %q", want)
-		}
-	}
+	mustContain(t, "/roles page role", body, "Requester", "Manager", "Accounts", "Admin")
 	// All nine rows, by their design labels.
-	for _, want := range []string{
+	mustContain(t, "/roles matrix row", body,
 		"Payment requests", "Payments", "Reservations", "Recoverables", "Vendors",
 		"Vendor bank details", "Budgets &amp; variance grid", "Reports", "Administration",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles matrix missing row %q", want)
-		}
-	}
+	)
 	// Cells, the Advanced disclosure, and an em dash where a row has no
 	// canonical action for a column (Reservations has no View).
-	for _, want := range []string{`name="cell"`, `name="perm"`, "Advanced", "—"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/roles matrix missing %q", want)
-		}
-	}
+	mustContain(t, "/roles matrix", body, `name="cell"`, `name="perm"`, "Advanced", "—")
 	// Only one of the two renderings may post: the mobile inputs ship disabled.
 	if !strings.Contains(body, `name="cell" disabled`) {
 		t.Fatal("mobile accordion inputs must be rendered disabled so only one matrix submits")
 	}
-	// D5: .badge is retired.
+	// The .badge class is retired; the design system uses .pill.
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("/roles still renders the retired .badge class")
 	}
@@ -1073,7 +815,7 @@ func TestRolesAdminScreenRendersApprovedMatrix(t *testing.T) {
 
 func TestRolesAdminCreateEditCopyDelete(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	// Create a custom role.
 	resp := s.postForm("/roles/new", url.Values{"name": {"Reviewer"}, "description": {"read only"}})
@@ -1104,99 +846,109 @@ func TestRolesAdminCreateEditCopyDelete(t *testing.T) {
 		"perm":          {"request:view"},
 		"scope_request": {"all"},
 	}
-	resp = s.postForm("/roles", save)
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
+	t.Run("saving the matrix expands cells and keeps the card", func(t *testing.T) {
+		s := s.withT(t)
+		resp := s.postForm("/roles", save)
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
 
-	grants, scopes, err := s.st.RolePermissions(s.ctx, reviewerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	held := map[string]bool{}
-	for _, g := range grants {
-		held[g.Resource+":"+g.Action] = true
-	}
-	for _, want := range []string{
-		"approval:approve", "approval:reject", "approval:return", "approval:reassign",
-		"approval:accept_partial", "report:view", "request:view",
-	} {
-		if !held[want] {
-			t.Fatalf("cell expansion did not grant %s (got %v)", want, grants)
+		grants, scopes, err := s.st.RolePermissions(s.ctx, reviewerID)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if len(grants) != 7 {
-		t.Fatalf("saved %d grants, want exactly the 7 the cells and refinement cover: %v", len(grants), grants)
-	}
-	if len(scopes) != 1 || scopes[0].Resource != "request" || scopes[0].Scope != "all" {
-		t.Fatalf("saved scopes = %v, want request=all", scopes)
-	}
-	role, err := s.st.Role(s.ctx, reviewerID)
-	if err != nil || role.Description != "Reviews and approves" {
-		t.Fatalf("role card did not save: %+v, %v", role, err)
-	}
-
-	// Clearing a cell revokes everything behind it: the same POST without
-	// requests:approve leaves only what is still submitted.
-	save.Del("cell")
-	save.Add("cell", "reports:view")
-	resp = s.postForm("/roles", save)
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
-	grants, _, err = s.st.RolePermissions(s.ctx, reviewerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, g := range grants {
-		if g.Resource == "approval" {
-			t.Fatalf("clearing the Approve cell left %s:%s behind", g.Resource, g.Action)
+		held := map[string]bool{}
+		for _, g := range grants {
+			held[g.Resource+":"+g.Action] = true
 		}
-	}
-	if len(grants) != 2 {
-		t.Fatalf("after clearing the cell: %v, want report:view + request:view", grants)
-	}
-
-	// A hand-crafted POST cannot invent a grant outside the vocabulary.
-	resp = s.postForm("/roles", url.Values{
-		"role_id": {strconvFormat(reviewerID)},
-		"name":    {"Reviewer"},
-		"perm":    {"payment:read"},
+		for _, want := range []string{
+			"approval:approve", "approval:reject", "approval:return", "approval:reassign",
+			"approval:accept_partial", "report:view", "request:view",
+		} {
+			if !held[want] {
+				t.Fatalf("cell expansion did not grant %s (got %v)", want, grants)
+			}
+		}
+		if len(grants) != 7 {
+			t.Fatalf("saved %d grants, want exactly the 7 the cells and refinement cover: %v", len(grants), grants)
+		}
+		if len(scopes) != 1 || scopes[0].Resource != "request" || scopes[0].Scope != "all" {
+			t.Fatalf("saved scopes = %v, want request=all", scopes)
+		}
+		role, err := s.st.Role(s.ctx, reviewerID)
+		if err != nil || role.Description != "Reviews and approves" {
+			t.Fatalf("role card did not save: %+v, %v", role, err)
+		}
 	})
-	requireStatus(t, resp, http.StatusBadRequest)
-	_ = responseBody(t, resp)
 
-	// Copy the role.
-	resp = s.postForm("/roles/"+strconvFormat(reviewerID)+"/copy", url.Values{"name": {"Reviewer Copy"}})
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
-
-	// Delete the custom role; deleting a system role is rejected.
-	resp = s.postForm("/roles/"+strconvFormat(reviewerID)+"/delete", nil)
-	requireStatus(t, resp, http.StatusSeeOther)
-	_ = responseBody(t, resp)
-	if _, err := s.st.Role(s.ctx, reviewerID); !errorsIsNotFound(err) {
-		t.Fatalf("Reviewer still present after delete: %v", err)
-	}
-	var adminID int64
-	for _, r := range roles {
-		if r.Name == "Admin" {
-			adminID = r.ID
+	t.Run("clearing a cell revokes everything behind it", func(t *testing.T) {
+		s := s.withT(t)
+		// Clearing a cell revokes everything behind it: the same POST without
+		// requests:approve leaves only what is still submitted.
+		save.Del("cell")
+		save.Add("cell", "reports:view")
+		resp := s.postForm("/roles", save)
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
+		grants, _, err := s.st.RolePermissions(s.ctx, reviewerID)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	resp = s.postForm("/roles/"+strconvFormat(adminID)+"/delete", nil)
-	requireStatus(t, resp, http.StatusForbidden)
-	_ = responseBody(t, resp)
-}
+		for _, g := range grants {
+			if g.Resource == "approval" {
+				t.Fatalf("clearing the Approve cell left %s:%s behind", g.Resource, g.Action)
+			}
+		}
+		if len(grants) != 2 {
+			t.Fatalf("after clearing the cell: %v, want report:view + request:view", grants)
+		}
+	})
 
-func errorsIsNotFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
+	t.Run("a forged grant outside the vocabulary is refused", func(t *testing.T) {
+		s := s.withT(t)
+		// A hand-crafted POST cannot invent a grant outside the vocabulary.
+		resp := s.postForm("/roles", url.Values{
+			"role_id": {strconvFormat(reviewerID)},
+			"name":    {"Reviewer"},
+			"perm":    {"payment:read"},
+		})
+		requireStatus(t, resp, http.StatusBadRequest)
+		_ = responseBody(t, resp)
+	})
+
+	t.Run("copying a role", func(t *testing.T) {
+		s := s.withT(t)
+		// Copy the role.
+		resp := s.postForm("/roles/"+strconvFormat(reviewerID)+"/copy", url.Values{"name": {"Reviewer Copy"}})
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
+	})
+
+	t.Run("a custom role can be deleted and a system role cannot", func(t *testing.T) {
+		s := s.withT(t)
+		// Delete the custom role; deleting a system role is rejected.
+		resp := s.postForm("/roles/"+strconvFormat(reviewerID)+"/delete", nil)
+		requireStatus(t, resp, http.StatusSeeOther)
+		_ = responseBody(t, resp)
+		if _, err := s.st.Role(s.ctx, reviewerID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("Reviewer still present after delete: %v", err)
+		}
+		var adminID int64
+		for _, r := range roles {
+			if r.Name == "Admin" {
+				adminID = r.ID
+			}
+		}
+		resp = s.postForm("/roles/"+strconvFormat(adminID)+"/delete", nil)
+		requireStatus(t, resp, http.StatusForbidden)
+		_ = responseBody(t, resp)
+	})
+}
 
 func TestUsersScreenAssignsMultipleRoles(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	adminID := admin.ID
 
 	hash, err := auth.HashPassword("MemberPassword123")
@@ -1223,18 +975,14 @@ func TestUsersScreenAssignsMultipleRoles(t *testing.T) {
 
 	// The users page is the approved t-cards table with a role chip per role and
 	// an editing sheet holding the role checklines.
-	body := responseBody(t, s.request(http.MethodGet, "/users", nil, ""))
-	for _, want := range []string{
+	body := s.get("/users")
+	mustContain(t, "users page approved markup", body,
 		`class="t-cards"`, `class="t-lead" data-label="Name"`, `data-label="Email"`,
 		`data-label="Roles"`, `data-label="Default approver"`, `data-label="Status"`,
 		`class="pill neutral no-dot"`, `class="overlay"`, `class="sheet"`,
 		`class="sh-head"`, `class="sh-body`, `class="sh-foot"`, `class="checkline"`,
 		"role_ids", "default_approver_id", "Requester", "Manager",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("users page missing the approved markup %q", want)
-		}
-	}
+	)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("/users still renders the retired .badge class")
 	}
@@ -1282,17 +1030,14 @@ func TestUsersScreenAssignsMultipleRoles(t *testing.T) {
 	}
 }
 
-// R6: permissions govern the data server-side. A least-privilege session is
+// Permissions are enforced server-side. A least-privilege session is
 // blocked by URL, not by menu-hiding — the menu is only the second assertion.
 func TestRequesterOnlySessionForbiddenFromAdminRoutesByURL(t *testing.T) {
 	s := newAppTestServer(t)
 
 	// Create a user and give them ONLY the Requester role (override the default
 	// Accounts assignment) so we test a least-privilege session.
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	hash, err := auth.HashPassword("RequesterPass123")
 	if err != nil {
 		t.Fatal(err)
@@ -1334,54 +1079,12 @@ func TestRequesterOnlySessionForbiddenFromAdminRoutesByURL(t *testing.T) {
 	_ = responseBody(t, resp)
 
 	// The nav for a Requester exposes none of the admin destinations.
-	body := responseBody(t, s.request(http.MethodGet, "/", nil, ""))
+	body := s.get("/")
 	for _, hidden := range []string{"href=\"/roles\"", "href=\"/users\"", "href=\"/audit\"", "href=\"/projects\"", "href=\"/budgets\"", "Monthly plans"} {
 		if strings.Contains(body, hidden) {
 			t.Fatalf("Requester nav exposes %q", hidden)
 		}
 	}
-}
-
-// seedUserWithGrants creates a signed-in-able user holding exactly the grants
-// named — the seeded system roles cannot express "vendor:view but not
-// vendor_bank:view", which is the distinction Phase 1V exists to enforce.
-func (s *appTestServer) seedUserWithGrants(email, password, roleName string, grants []store.Grant) {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	uid, err := s.st.CreateUser(s.ctx, email, roleName+" User", hash, "data_entry", true)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	roleID, err := s.st.CreateRole(s.ctx, admin, roleName, "")
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.UpdateRolePermissions(s.ctx, admin, roleID, grants, nil); err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.st.SetUserRoles(s.ctx, admin, uid, []int64{roleID}); err != nil {
-		s.t.Fatal(err)
-	}
-}
-
-func (s *appTestServer) seedVendor(in store.VendorInput) int64 {
-	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, err := s.st.CreateVendor(s.ctx, admin, in)
-	if err != nil {
-		s.t.Fatalf("CreateVendor(%s): %v", in.Name, err)
-	}
-	return id
 }
 
 func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
@@ -1395,13 +1098,13 @@ func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
 		Name: "Nova Print Works", VendorType: "company", Status: "active",
 		Categories: "Printing", City: "Chennai",
 	})
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	resp := s.request(http.MethodGet, "/vendors", nil, "")
 	requireStatus(t, resp, http.StatusOK)
 	body := responseBody(t, resp)
 
-	for _, want := range []string{
+	mustContain(t, "/vendors approved markup", body,
 		`class="page-banner"`, `class="pb-actions"`,
 		`class="banner warn"`, `class="b-ico"`, `class="b-actions"`,
 		`class="toolbar vendor-filters"`, `name="type"`, `name="category"`, `name="status"`,
@@ -1415,11 +1118,7 @@ func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
 		"Materials · Switchgear",
 		// A vendor with no GSTIN says so rather than rendering an empty cell.
 		`class="pill warn no-dot"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("/vendors is missing the approved markup %q", want)
-		}
-	}
+	)
 	// One vendor has no GSTIN, so the warning banner counts exactly one.
 	if !strings.Contains(body, "1 vendor has no GSTIN") {
 		t.Fatalf("/vendors did not report the missing-GSTIN gap: %s", body)
@@ -1428,18 +1127,18 @@ func TestVendorsListRendersTheApprovedScreenAndIsPermissionGated(t *testing.T) {
 		t.Fatal("/vendors renders the retired .badge class")
 	}
 
-	// The nav link that has pointed at a 404 since Phase 1 now resolves.
+	// The Vendors nav link resolves and is marked active.
 	if !strings.Contains(body, `<a class="active" href="/vendors" aria-current="page">`) {
 		t.Fatal("/vendors does not mark its own nav item active")
 	}
 
 	// Filters narrow the list rather than being decorative.
-	filtered := responseBody(t, s.request(http.MethodGet, "/vendors?q=chennai", nil, ""))
+	filtered := s.get("/vendors?q=chennai")
 	if strings.Contains(filtered, "Sundaram Electricals Pvt Ltd") || !strings.Contains(filtered, "Nova Print Works") {
 		t.Fatal("/vendors?q= did not filter the list")
 	}
 
-	// R6: the route is gated server-side, not by hiding the menu entry.
+	// The route is gated server-side, not just by hiding the menu entry.
 	s.seedUserWithGrants("no-vendor@example.test", "NoVendorPass123", "No Vendors", []store.Grant{{Resource: "request", Action: "view"}})
 	blocked := newAppTestClient(t, s)
 	blocked.login("no-vendor@example.test", "NoVendorPass123")
@@ -1461,10 +1160,7 @@ const testVendorAccount = "50200041294471"
 
 func (s *appTestServer) seedVendorWithBank(name string) int64 {
 	s.t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	admin := s.admin()
 	id, err := s.st.CreateVendor(s.ctx, admin, store.VendorInput{
 		Name: name, DisplayName: "Sundaram Elec", VendorType: "company", Status: "active",
 		Categories: "Materials, Switchgear", GSTIN: "29AABCS1429B1ZQ", PAN: "AABCS1429B",
@@ -1481,15 +1177,14 @@ func (s *appTestServer) seedVendorWithBank(name string) int64 {
 	return id
 }
 
-// The requirement Phase 1V exists for: a caller without vendor_bank:view must
-// not receive the bank block, and the proof is that the stored IFSC appears
-// nowhere in the response — not that a template hid it.
+// A caller without vendor_bank:view must not receive the bank block: the
+// stored IFSC appears nowhere in the response, not merely hidden by a template.
 func TestVendorDetailGatesBankDetailsOnTheDataNotTheMarkup(t *testing.T) {
 	s := newAppTestServer(t)
 	id := s.seedVendorWithBank("Sundaram Electricals Pvt Ltd")
 	path := "/vendors/" + strconvFormat(id)
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.request(http.MethodGet, path, nil, "")
 	requireStatus(t, resp, http.StatusOK)
 	body := responseBody(t, resp)
@@ -1511,7 +1206,7 @@ func TestVendorDetailGatesBankDetailsOnTheDataNotTheMarkup(t *testing.T) {
 		[]store.Grant{{Resource: "vendor", Action: "view"}})
 	viewer := newAppTestClient(t, s)
 	viewer.login("vendor-viewer@example.test", "ViewerPass1234")
-	viewerBody := responseBody(t, viewer.request(http.MethodGet, path, nil, ""))
+	viewerBody := viewer.get(path)
 	for _, forbidden := range []string{"bank_ifsc", testVendorIFSC, testVendorAccount,
 		"bank_account_number", "HDFC Bank"} {
 		if strings.Contains(viewerBody, forbidden) {
@@ -1540,7 +1235,7 @@ func TestVendorDetailGatesBankDetailsOnTheDataNotTheMarkup(t *testing.T) {
 		[]store.Grant{{Resource: "vendor", Action: "view"}, {Resource: "vendor_bank", Action: "view"}})
 	reader := newAppTestClient(t, s)
 	reader.login("bank-reader@example.test", "ReaderPass1234")
-	readerBody := responseBody(t, reader.request(http.MethodGet, path, nil, ""))
+	readerBody := reader.get(path)
 	if !strings.Contains(readerBody, testVendorIFSC) {
 		t.Fatal("a caller holding vendor_bank:view could not see the IFSC")
 	}
@@ -1551,14 +1246,10 @@ func TestVendorDetailGatesBankDetailsOnTheDataNotTheMarkup(t *testing.T) {
 
 func TestVendorCreateAndUpdateThroughTheScreens(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	blank := responseBody(t, s.request(http.MethodGet, "/vendors/new", nil, ""))
-	for _, want := range []string{`class="form-grid"`, `name="name"`, `name="vendor_type"`, "Save vendor"} {
-		if !strings.Contains(blank, want) {
-			t.Fatalf("/vendors/new is missing %q", want)
-		}
-	}
+	blank := s.get("/vendors/new")
+	mustContain(t, "/vendors/new", blank, `class="form-grid"`, `name="name"`, `name="vendor_type"`, "Save vendor")
 
 	form := url.Values{
 		"name": {"Meridian Facility Services"}, "display_name": {"Meridian"},
@@ -1610,7 +1301,7 @@ func TestVendorUpdateIgnoresBankFieldsFromACallerWithoutBankEdit(t *testing.T) {
 	editor := newAppTestClient(t, s)
 	editor.login("vendor-editor@example.test", "EditorPass1234")
 	// Prime the CSRF cookie by loading the screen first.
-	_ = responseBody(t, editor.request(http.MethodGet, "/vendors/"+strconvFormat(id), nil, ""))
+	_ = editor.get("/vendors/" + strconvFormat(id))
 
 	resp := editor.postForm("/vendors/"+strconvFormat(id), url.Values{
 		"name": {"Sundaram Electricals Pvt Ltd"}, "vendor_type": {"company"}, "status": {"active"},
@@ -1633,20 +1324,6 @@ func TestVendorUpdateIgnoresBankFieldsFromACallerWithoutBankEdit(t *testing.T) {
 	}
 }
 
-func (s *appTestServer) htmxGet(path string) *http.Response {
-	s.t.Helper()
-	req, err := http.NewRequest(http.MethodGet, s.server.URL+path, nil)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	req.Header.Set("HX-Request", "true")
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return resp
-}
-
 func TestVendorSearchFragmentFeedsTheCombobox(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedVendor(store.VendorInput{Name: "Sundaram Electricals Pvt Ltd", VendorType: "company",
@@ -1655,22 +1332,18 @@ func TestVendorSearchFragmentFeedsTheCombobox(t *testing.T) {
 		Status: "active", City: "Hosur"})
 	s.seedVendor(store.VendorInput{Name: "Meridian Facility Services", VendorType: "company",
 		Status: "active", City: "Bengaluru"})
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	resp := s.htmxGet("/vendors/search?q=sund")
 	requireStatus(t, resp, http.StatusOK)
 	body := responseBody(t, resp)
-	for _, want := range []string{
+	mustContain(t, "the combobox fragment", body,
 		`class="combo-list"`, `class="co"`, `class="co-main"`,
 		"Sundaram Electricals Pvt Ltd", "Sundaram Switchgear LLP",
 		"29AABCS1429B1ZQ", "Bengaluru",
 		// vendor:create is held by the admin, so the add row is offered.
 		`class="co co-add"`, "Add a new vendor",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("the combobox fragment is missing %q: %s", want, body)
-		}
-	}
+	)
 	if strings.Contains(body, "Meridian Facility Services") {
 		t.Fatal("the combobox fragment ignored the query")
 	}
@@ -1718,13 +1391,13 @@ func TestVendorSearchFragmentFeedsTheCombobox(t *testing.T) {
 
 func TestNoRefundRoute(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	// X3: money leaves only through reserve → record-payment, and a recorded
-	// payment is immutable (S12). There is deliberately no refund / return-of-money
+	s.loginAdmin()
+	// Money leaves only through reserve → record-payment, and a recorded
+	// payment is immutable. There is deliberately no refund / return-of-money
 	// endpoint, so both plausible refund routes must be unrouted.
 	//
 	// 404 *or* 405 is the correct expectation, exactly as in the sibling guard
-	// TestNoBulkApproveOrCopyEndpointExists (A6/D5): routes() registers a
+	// TestNoBulkApproveOrCopyEndpointExists: routes() registers a
 	// catch-all "GET /" for the not-found page, so an unrouted POST matches that
 	// pattern on path but not on method, and net/http's ServeMux answers 405
 	// rather than 404. Both mean "no such endpoint"; if a refund route were ever
@@ -1749,54 +1422,24 @@ func TestNoRefundRoute(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The 2026-07-27 QA audit's area-A and area-G repairs. Every test below pins one
-// finding, and each is named with the id so a regression points straight at the
-// record.
+// Access scope, gating and error-handling rules for attachments, the grid,
+// settlement, users, roles, the audit log and reassignment.
 // ---------------------------------------------------------------------------
 
-// seedAttachmentFile writes a real file into AttachmentDir and returns the
-// AttachmentInput naming it, so a download test exercises the streaming path and
-// not a missing-file 404.
 // paymentDetailLink is a link to a payment *record*, which only the Recent
 // Payments panel emits. `href="/payments/` alone also matches the grid's own
 // "+ Add payment" button (/payments/new).
 var paymentDetailLink = regexp.MustCompile(`href="/payments/\d+"`)
 
-func (s *appTestServer) seedAttachmentFile(name, content string) store.AttachmentInput {
-	s.t.Helper()
-	stored := filepath.Join(s.cfg.AttachmentDir, name)
-	if err := os.WriteFile(stored, []byte(content), 0600); err != nil {
-		s.t.Fatal(err)
-	}
-	return store.AttachmentInput{OriginalName: name, StoredPath: stored, MimeType: "text/plain", SizeBytes: int64(len(content))}
-}
-
-// seedPaymentAttachment inserts a payment_attachments row directly. It has to:
-// AddAttachment now refuses a payment that settles a request (F-D-08), which is
-// exactly the payment whose bank advice these tests are about.
-func (s *appTestServer) seedPaymentAttachment(payID, uploader int64, in store.AttachmentInput) int64 {
-	s.t.Helper()
-	res, err := s.st.DB().Exec(`INSERT INTO payment_attachments(payment_id,original_name,stored_path,mime_type,size_bytes,uploaded_by) VALUES(?,?,?,?,?,?)`,
-		payID, in.OriginalName, in.StoredPath, in.MimeType, in.SizeBytes, uploader)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	return id
-}
-
-// F-A-01 / F-B-11 — attachment:view is a seeded Requester grant, and the route
-// used to ask nothing else. A signed-in user could read every bank advice in the
-// product by walking ids from 1.
+// Downloading a payment attachment needs attachment:view and a scope that
+// covers its request; attachment:view alone (a Requester grant) must not let a
+// user read every bank advice by walking ids.
 func TestAttachmentDownloadObeysTheRequestScopeAndAnswers404(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("AttachScope")
 	s.seedRequester("outsider@example.test", "Outsider", "OutsiderPass123")
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	reqID, payID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
 	advice := s.seedAttachmentFile("bank-advice.txt", "UTR N221260725004417 · A/C 000123456789")
 	attID := s.seedPaymentAttachment(payID, admin.ID, advice)
@@ -1832,9 +1475,9 @@ func TestAttachmentDownloadObeysTheRequestScopeAndAnswers404(t *testing.T) {
 	_ = responseBody(t, missing)
 }
 
-// F-A-05 / F-B-09 — one download route served two tables with independent id
-// sequences, so the Download button on a requester's own invoice returned a
-// stranger's bank advice.
+// Request documents and payment attachments live in two tables with separate id
+// sequences, so each has its own scoped download route; one id must never fetch
+// a file from the other table.
 func TestRequestDocumentsHaveTheirOwnScopedRoute(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("TwoTables")
@@ -1842,7 +1485,7 @@ func TestRequestDocumentsHaveTheirOwnScopedRoute(t *testing.T) {
 	other := s.seedRequester("theirs@example.test", "Theirs", "TheirsPass123")
 
 	// payment_attachments row 1 …
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	_, payID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
 	advice := s.seedAttachmentFile("bank-advice.txt", "PAYMENT-ATTACHMENT-ROW-ONE")
 	payAttID := s.seedPaymentAttachment(payID, admin.ID, advice)
@@ -1896,12 +1539,12 @@ func TestRequestDocumentsHaveTheirOwnScopedRoute(t *testing.T) {
 	}
 }
 
-// F-A-03 — the write path needs the same ownership check as the read path.
+// Uploading an attachment needs the same request scope as downloading one.
 func TestAttachmentUploadObeysTheRequestScope(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("PlantProof")
 	s.seedRequester("planter@example.test", "Planter", "PlanterPass123")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	_, payID := s.settleOneRequest(1, headID, 500000, "5000.00", "settled", "2026-07-25")
 
 	s.login("planter@example.test", "PlanterPass123")
@@ -1932,15 +1575,15 @@ func TestAttachmentUploadObeysTheRequestScope(t *testing.T) {
 	}
 }
 
-// F-A-02 / F-G-032 — /grid was RequireLogin only, and its Recent Payments panel
-// carries amounts, payees and live payment links.
+// /grid needs grid:view, and its Recent Payments panel (amounts, payees and
+// payment links) additionally needs payment:view.
 func TestGridIsGatedOnGridViewAndItsPaymentPanelOnPaymentView(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("GridGate")
 	if err := s.st.SetBudget(s.ctx, admin, headID, time.Now().Format("2006-01"), 85000000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	paidOn := time.Now().Format("2006-01") + "-01"
 	s.settleOneRequest(1, headID, 6600000, "66000.00", "settled", paidOn)
 
@@ -1971,23 +1614,23 @@ func TestGridIsGatedOnGridViewAndItsPaymentPanelOnPaymentView(t *testing.T) {
 	if paymentDetailLink.MatchString(body) {
 		t.Fatalf("the Recent Payments panel served payment links to a caller with no payment:view: %v", paymentDetailLink.FindString(body))
 	}
-	// Nor the panel itself: an empty one told this caller "No payments in this
-	// month." beside actuals the page showed as paid (grid-1; PE-03 expects the
-	// grid "without `Recent Payments for`").
+	// Nor the panel itself: an empty one would say "No payments in this month."
+	// beside actuals the page shows as paid.
 	if strings.Contains(body, "Recent Payments for") || strings.Contains(body, "No payments in this month.") {
 		t.Fatalf("a caller without payment:view was shown the Recent Payments panel: %s", body)
 	}
 
 	// And with both verbs the panel is back, so the gate narrows nothing it
 	// should not.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body = responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
+	s.loginAdmin()
+	body = s.get("/grid")
 	if !paymentDetailLink.MatchString(body) || strings.Contains(body, "No payments in this month.") {
 		t.Fatalf("a caller holding payment:view lost the Recent Payments panel: %s", body)
 	}
 }
 
-// F-D-10 — the settlement write was gated more weakly than its pure preview.
+// Recording a settlement needs payment:settle, and a partial settlement also
+// needs payment:mark_partial; the write is gated at least as strictly as its preview.
 func TestSettlementWriteNeedsSettleAndPartialNeedsMarkPartial(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("SettleGate")
@@ -2008,7 +1651,7 @@ func TestSettlementWriteNeedsSettleAndPartialNeedsMarkPartial(t *testing.T) {
 		"paid_on": {"2026-07-25"}, "amount": {"5000.00"}, "vendor_payee": {"Acme Landlord"},
 		"settlement": {"settled"}, "reference_no": {"SETTLE-GATE-REF"},
 	}
-	resp := s.postForm("/payments", form)
+	resp := s.postPayment(form)
 	requireStatus(t, resp, http.StatusForbidden)
 	_ = responseBody(t, resp)
 	var payments int
@@ -2029,23 +1672,20 @@ func TestSettlementWriteNeedsSettleAndPartialNeedsMarkPartial(t *testing.T) {
 	partial.Set("settlement", "partial")
 	partial.Set("amount", "3000.00")
 	partial.Set("partial_reason", "balance next month")
-	resp = s.postForm("/payments", partial)
+	resp = s.postPayment(partial)
 	requireStatus(t, resp, http.StatusForbidden)
 	if body := responseBody(t, resp); !strings.Contains(body, "partial payment") {
 		t.Fatalf("the refusal does not name the decision it refused: %s", body)
 	}
-	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(t, s.postPayment(form), http.StatusSeeOther)
 }
 
-// F-G-033 — the heads screen lists every head and must offer every project, or a
+// The heads screen lists every head and must offer every project, or a
 // row whose project was retired has no option of its own and its Save moves it.
 func TestHeadsScreenIsSuppliedEveryProjectIncludingRetiredOnes(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Retired")
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	if _, err := s.st.UpsertProject(s.ctx, projectID, "Operations Retired", false, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -2069,8 +1709,8 @@ func TestHeadsScreenIsSuppliedEveryProjectIncludingRetiredOnes(t *testing.T) {
 	if !found {
 		t.Fatalf("AllProjects has no option for the retired project %d: %+v", projectID, data.AllProjects)
 	}
-	// Every head the screen lists must have an option in AllProjects, which is
-	// the property whose absence let the browser pick a stranger's project.
+	// Every head the screen lists must have an option in AllProjects, or the
+	// browser silently selects a different project for it.
 	options := map[int64]bool{}
 	for _, p := range data.AllProjects {
 		options[p.ID] = true
@@ -2082,11 +1722,12 @@ func TestHeadsScreenIsSuppliedEveryProjectIncludingRetiredOnes(t *testing.T) {
 	}
 }
 
-// F-G-034 — one form, one submit, one transaction.
+// Saving a user is one transaction: name, roles and default approver are all
+// applied together, or none of them is.
 func TestUserSaveIsOneTransaction(t *testing.T) {
 	s := newAppTestServer(t)
 	subject := s.seedRequester("subject@example.test", "Original Name", "SubjectPass123")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	resp := s.postForm("/users", url.Values{
 		"id": {strconvFormat(subject.ID)}, "email": {"subject@example.test"},
@@ -2123,10 +1764,7 @@ func TestUserSaveIsOneTransaction(t *testing.T) {
 			managerID = r.ID
 		}
 	}
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	requireStatus(t, s.postForm("/users", url.Values{
 		"id": {strconvFormat(subject.ID)}, "email": {"subject@example.test"},
 		"name": {"Renamed On Purpose"}, "role": {"data_entry"}, "active": {"on"},
@@ -2151,8 +1789,8 @@ func TestUserSaveIsOneTransaction(t *testing.T) {
 	}
 }
 
-// F-G-022 / F-G-023 — deleting a role checks its holders first, and a refusal
-// says what is actually true.
+// Deleting a role checks its holders first, and a refusal states the real
+// reason.
 func TestRoleDeleteChecksHoldersAndExplainsItself(t *testing.T) {
 	s := newAppTestServer(t)
 	holder := s.seedProbeUser("holder@example.test", "Holder", "HolderPass123", "payments-reader",
@@ -2164,7 +1802,7 @@ func TestRoleDeleteChecksHoldersAndExplainsItself(t *testing.T) {
 	}
 	custom := roles[0].ID
 
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm(fmt.Sprintf("/roles/%d/delete", custom), url.Values{})
 	requireStatus(t, resp, http.StatusForbidden)
 	body := responseBody(t, resp)
@@ -2195,7 +1833,7 @@ func TestRoleDeleteChecksHoldersAndExplainsItself(t *testing.T) {
 			requesterRole = r.ID
 		}
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp = s.postForm(fmt.Sprintf("/roles/%d/delete", requesterRole), url.Values{})
 	requireStatus(t, resp, http.StatusForbidden)
 	body = responseBody(t, resp)
@@ -2204,10 +1842,7 @@ func TestRoleDeleteChecksHoldersAndExplainsItself(t *testing.T) {
 	}
 
 	// And an unheld custom role still deletes, so nothing was locked shut.
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := s.admin()
 	if err := s.st.SetUserRoles(s.ctx, admin, holder.ID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -2217,8 +1852,9 @@ func TestRoleDeleteChecksHoldersAndExplainsItself(t *testing.T) {
 	}
 }
 
-// F-G-017 — the audit log serialises whole Request structs into
-// before_json/after_json, so audit:view was a way around the request row scope.
+// Audit rows about a request carry the whole request in before_json/after_json,
+// so the audit log applies the reader's request scope; audit:view must not be a
+// way around it.
 func TestAuditLogAppliesTheRequestRowScope(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("AuditScope")
@@ -2255,30 +1891,28 @@ func TestAuditLogAppliesTheRequestRowScope(t *testing.T) {
 	}
 
 	// An administrator, who holds request=all, sees exactly what they saw before.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body = responseBody(t, s.request(http.MethodGet, "/audit?entity=payment_request", nil, ""))
+	s.loginAdmin()
+	body = s.get("/audit?entity=payment_request")
 	if !strings.Contains(body, "SECRET-PURPOSE-STRING") {
 		t.Fatalf("scoping the audit log hid a row from request=all: %s", body)
 	}
 	// Rows that are not about a request are untouched for everybody.
 	s.login("reviewer@example.test", "ReviewerPass1")
-	body = responseBody(t, s.request(http.MethodGet, "/audit?entity=user", nil, ""))
+	body = s.get("/audit?entity=user")
 	if !strings.Contains(strings.ToLower(body), "login") {
 		t.Fatalf("a non-request entity lost its rows: %s", body)
 	}
 }
 
-// F-A-06 / F-C-02 — coverage A7. store.ReassignRequest was complete, tested and
-// reachable by no URL, and approval:reassign gated nothing.
+// Reassigning a request's approver has its own route, gated on
+// approval:reassign, requiring a reason and a target who can approve, and
+// recorded in the audit trail as its own event.
 func TestApproverReassignmentRoute(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Reassign")
 	raiser := s.seedRequester("askfor@example.test", "Ask For", "AskForPass123")
 	firstApprover := seedSecondApprover(t, s)
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	reqID, err := s.st.CreateRequest(s.ctx, raiser, store.RequestInput{
 		Treatment: "budget", Type: "reimbursement", ProjectID: projectID, HeadID: headID, Amount: 250000,
 		Purpose: "Taxi fares for the site visit", ShortTitle: "Taxi fares",
@@ -2297,7 +1931,7 @@ func TestApproverReassignmentRoute(t *testing.T) {
 	_ = responseBody(t, resp)
 
 	// The administrator holds it. A reason is mandatory and a target is mandatory.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp = s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{"reason": {"no target"}})
 	requireStatus(t, resp, http.StatusBadRequest)
 	_ = responseBody(t, resp)
@@ -2306,8 +1940,8 @@ func TestApproverReassignmentRoute(t *testing.T) {
 	if body := responseBody(t, resp); !strings.Contains(body, "reason") {
 		t.Fatalf("the refusal does not ask for a reason: %s", body)
 	}
-	// The new approver must be able to approve — the route must not be a way back
-	// into F-A-08's stranded state.
+	// The new approver must be able to approve, or the request would be
+	// stranded with nobody able to decide it.
 	resp = s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{
 		"manager_id": {strconvFormat(raiser.ID)}, "reason": {"send it to somebody who cannot decide"},
 	})
@@ -2318,8 +1952,7 @@ func TestApproverReassignmentRoute(t *testing.T) {
 
 	// And the real thing: the approver changes, and the trail records it as its
 	// own event rather than as an anonymous update. The target is a third
-	// approver, not the administrator: nobody may hand a request to themselves
-	// (rbac-8), and this test used to do exactly that.
+	// approver, not the administrator: nobody may hand a request to themselves.
 	coverApprover := seedThirdApprover(t, s)
 	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/reassign-approver", reqID), url.Values{
 		"manager_id": {strconvFormat(coverApprover)}, "reason": {"Kavita is on leave this week"},
@@ -2344,7 +1977,7 @@ func TestApproverReassignmentRoute(t *testing.T) {
 	if !reassigned {
 		t.Fatalf("no approval_reassign row carries the reason: %+v", trail)
 	}
-	// A request outside the caller's scope answers 404, not 403 (F-G-002), so the
+	// A request outside the caller's scope answers 404, not 403, so the
 	// route is not an existence oracle either.
 	resp = s.postForm("/requests/999999/reassign-approver", url.Values{
 		"manager_id": {strconvFormat(admin.ID)}, "reason": {"nothing here"},
@@ -2353,11 +1986,12 @@ func TestApproverReassignmentRoute(t *testing.T) {
 	_ = responseBody(t, resp)
 }
 
-// F-A-11 / F-G-036 — a 12-character letters-only password answered 500.
+// Password rules live in one function, and every password refusal is a 400
+// that names the rule broken, never a 500.
 func TestPasswordRulesAreOneFunctionAndEveryRefusalIsA400(t *testing.T) {
 	s := newAppTestServer(t)
 	subject := s.seedRequester("victim@example.test", "Victim", "VictimPass123")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
 	cases := []struct {
 		name     string
@@ -2388,7 +2022,7 @@ func TestPasswordRulesAreOneFunctionAndEveryRefusalIsA400(t *testing.T) {
 	}
 	// The victim's own credentials are untouched, and a compliant password works.
 	s.login("victim@example.test", "VictimPass123")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	requireStatus(t, s.postForm("/users", url.Values{
 		"id": {strconvFormat(subject.ID)}, "email": {"victim@example.test"}, "name": {"Victim"},
 		"role": {"data_entry"}, "active": {"on"}, "password": {"NewVictimPass1"},
@@ -2396,8 +2030,8 @@ func TestPasswordRulesAreOneFunctionAndEveryRefusalIsA400(t *testing.T) {
 	s.login("victim@example.test", "NewVictimPass1")
 }
 
-// F-A-07 — the ＋ Add user button is gated on user:create and the route demanded
-// user:edit, so a legitimately configured role got a control that 403s.
+// Creating a user needs user:create and editing one needs user:edit, matching
+// the controls each permission shows, so no rendered button leads to a 403.
 func TestUserSaveDemandsCreateToCreateAndEditToEdit(t *testing.T) {
 	s := newAppTestServer(t)
 	subject := s.seedRequester("edited@example.test", "Edited", "EditedPass123")
@@ -2420,9 +2054,9 @@ func TestUserSaveDemandsCreateToCreateAndEditToEdit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// user:create renders the button and now also carries its submit.
+	// user:create renders the button and also allows its submit.
 	s.login("creator@example.test", "CreatorPass12")
-	body := responseBody(t, s.request(http.MethodGet, "/users", nil, ""))
+	body := s.get("/users")
 	if !strings.Contains(body, `data-open="user-new"`) {
 		t.Fatalf("the create control is not rendered for user:create: %s", body)
 	}
@@ -2455,8 +2089,8 @@ func TestUserSaveDemandsCreateToCreateAndEditToEdit(t *testing.T) {
 	}
 }
 
-// F-A-09 / F-D-02 — friendly() had no ErrForbidden branch, so a state conflict
-// read "Something went wrong".
+// friendly() turns a forbidden or state-conflict refusal into a sentence naming
+// the real cause, not a generic "Something went wrong".
 func TestFriendlyNamesAForbiddenRefusal(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2480,17 +2114,17 @@ func TestFriendlyNamesAForbiddenRefusal(t *testing.T) {
 	if friendly(store.ErrAlreadyReserved) == friendly(store.ErrRequestOnHold) {
 		t.Fatal("two different reserve refusals read the same")
 	}
-	// And nothing else changed: a validation failure still carries its own text.
+	// A validation failure carries its own text.
 	if got := friendly(fmt.Errorf("%w: say why", store.ErrValidation)); !strings.Contains(got, "say why") {
 		t.Fatalf("friendly(ErrValidation) = %q", got)
 	}
 }
 
-// F-A-10 — POST /login is the one state-changing POST outside withCSRF, and was
-// therefore outside the body cap as well.
+// POST /login is the one state-changing POST outside withCSRF, but it is still
+// subject to the request body size cap.
 func TestLoginPostIsCappedEvenThoughItIsCSRFExempt(t *testing.T) {
 	s := newAppTestServer(t)
-	// The exemption itself is deliberate and still holds: no token, no refusal.
+	// The CSRF exemption is deliberate: no token, no refusal.
 	form := url.Values{"email": {s.cfg.AdminEmail}, "password": {testAdminPassword}}
 	resp := s.request(http.MethodPost, "/login", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
 	requireStatus(t, resp, http.StatusSeeOther)
@@ -2505,8 +2139,8 @@ func TestLoginPostIsCappedEvenThoughItIsCSRFExempt(t *testing.T) {
 	_ = responseBody(t, resp)
 }
 
-// F-G-004 / F-C-06 — the audit screen's filters could not reach the request
-// workflow at all, and `settings` rendered as a lower-case pill.
+// The audit screen's Entity and Action filters offer every entity and action
+// the store writes, each with a readable label rather than its raw identifier.
 func TestAuditFilterVocabulariesCoverWhatTheStoreWrites(t *testing.T) {
 	entities := map[string]bool{}
 	for _, opt := range auditEntities() {
@@ -2527,7 +2161,7 @@ func TestAuditFilterVocabulariesCoverWhatTheStoreWrites(t *testing.T) {
 			t.Errorf("action %q renders as its raw identifier", opt.Value)
 		}
 	}
-	// The whole Phase-2/Phase-3 vocabulary, plus migration v9's reminder row.
+	// The whole request and payment workflow vocabulary, plus the reminder row.
 	for _, want := range []string{
 		"submit", "approve", "return", "reject", "withdraw", "reraise", "cancel",
 		"cancel_request", "approval_reassign", "process", "release", "reassign",

@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// docs-1 / test-1: the design's as-built notes described a JSON importer of
-// 11 projects and 83 heads that never shipped. This pins what --seed actually
-// creates, so the notes and the code cannot drift apart unnoticed again.
+// --seed creates the admin and three sample projects (9 heads, 9 budgets), so
+// the documentation of what seeding creates can be checked against the code.
 func TestSeedCreatesTheAdminAndThreeSampleProjects(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

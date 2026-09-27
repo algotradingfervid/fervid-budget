@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// REQ-DEF-01: later decisions replace the live note, but each historical event
+// Later decisions replace the live note, but each historical event
 // must retain the note its actor actually entered, in decision order.
 func TestRequestThreadRetainsDecisionNotesAfterCancellation(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	id, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
 		ShortTitle: "Historical notes", ProjectID: 1, HeadID: headID, Amount: 12345,
 		Purpose: "Verify notes", ManagerID: mgr.ID, ExpenseDate: "2026-09-26"})

@@ -16,49 +16,19 @@ import (
 // sides of the separator.
 var danglingSlash = regexp.MustCompile(`(>\s*/\s*[^\s<])|(>\s*/\s*<)|([^\s>]\s/\s*(<|·))`)
 
-// slice returns the text from the first `from` to the next `to` after it.
-func cut(body, from, to string) string {
-	i := strings.Index(body, from)
-	if i < 0 {
-		return ""
-	}
-	rest := body[i:]
-	if j := strings.Index(rest[len(from):], to); j >= 0 {
-		return rest[:len(from)+j+len(to)]
-	}
-	return rest
-}
-
-// seedHeadlessRecoverable is an approved recoverable shaped the way the request
-// form leaves one since v8: linked to a project, with no head.
-func (s *appTestServer) seedHeadlessRecoverable(seq int, requesterID, managerID, projectID, amount int64) int64 {
-	s.t.Helper()
-	res, err := s.st.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,amount,purpose,short_title,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?,'approved','recoverable','employee_advance','emd',(SELECT id FROM recoverable_categories WHERE code='emd'),?,?,'Tender deposit','EMD','Ridge Metro','2027-03-31','Refundable on award',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		fmt.Sprintf("PR-2026-%06d", seq), projectID, amount, requesterID, managerID, amount, managerID)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
-}
-
-// recoverables-2 / grid-2. A recoverable is a deposit, not budget spend: the
-// grid's totals already left it out, but its Recent Payments panel listed it,
-// and every payment screen printed its missing project and head as a bare "/".
+// A recoverable is a deposit, not budget spend: it stays out of the grid's
+// totals and its Recent Payments panel, and payment screens name it rather than
+// printing its missing project and head as a bare "/".
 func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("RecGrid")
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	projectID := projectOf(t, s, headID)
+	s.loginAdmin()
 	month := currentMonthForTest()
 	_, budgetPay := s.settleOneRequest(1, headID, 400000, "4000.00", "settled", month+"-02")
 
 	reqID := s.seedHeadlessRecoverable(2, admin.ID, admin.ID, projectID, 25000000)
-	picker := responseBody(t, s.request(http.MethodGet, "/payments/new", nil, ""))
+	picker := s.get("/payments/new")
 	row := cut(cut(picker, "PR-2026-000002", "</small>"), "<small>", "</small>")
 	if row == "" || danglingSlash.MatchString(row) || !strings.Contains(row, "Recoverable") {
 		t.Fatalf("the payment picker row for a recoverable reads %q", row)
@@ -67,7 +37,7 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 
 	// The reservation screen, before the payment exists: a recoverable is not
 	// charged to any budget, so "Charge to" must not read "Operations /".
-	entry := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/new?request=%d", reqID), nil, ""))
+	entry := s.get(fmt.Sprintf("/payments/new?request=%d", reqID))
 	if cut(entry, "<dt>Charge to</dt>", "</dd>") == "" {
 		t.Fatal("the payment entry screen has no Charge to line")
 	}
@@ -84,13 +54,13 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 		"request_id": {strconvFormat(reqID)}, "paid_on": {month + "-03"}, "amount": {"250000.00"},
 		"vendor_payee": {"Ridge Metro"}, "settlement": {"settled"}, "reference_no": {"UTR123"},
 	}
-	requireStatus(t, s.postForm("/payments", form), http.StatusSeeOther)
+	requireStatus(t, s.postPayment(form), http.StatusSeeOther)
 	var recPay int64
 	if err := s.st.DB().QueryRow(`SELECT id FROM payments WHERE request_id=?`, reqID).Scan(&recPay); err != nil {
 		t.Fatal(err)
 	}
 
-	grid := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
+	grid := s.get("/grid?month=" + month)
 	panel := cut(grid, "Recent Payments for", "</table>")
 	if strings.Contains(panel, fmt.Sprintf(`href="/payments/%d"`, recPay)) || strings.Contains(panel, "2,50,000.00") {
 		t.Fatalf("the grid's Recent Payments lists the recoverable payment: %s", panel)
@@ -99,34 +69,33 @@ func TestRecoverablePaymentStaysOffTheGridAndIsNamedNotSlashed(t *testing.T) {
 		t.Fatalf("the budget payment fell out of Recent Payments too: %s", panel)
 	}
 
-	ledger := responseBody(t, s.request(http.MethodGet, "/payments?month="+month, nil, ""))
+	ledger := s.get("/payments?month=" + month)
 	cell := cut(ledger, fmt.Sprintf(`<a href="/payments/%d">`, recPay), "</a>")
 	if cell == "" || danglingSlash.MatchString(cell) || !strings.Contains(cell, "Recoverable") {
 		t.Fatalf("the ledger's Project / Head cell for a recoverable = %q, want it named Recoverable", cell)
 	}
 
-	detail := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/payments/%d", recPay), nil, ""))
+	detail := s.get(fmt.Sprintf("/payments/%d", recPay))
 	meta := cut(detail, `<p class="rh-meta">`, "</p>")
 	if meta == "" || danglingSlash.MatchString(meta) || !strings.Contains(meta, "Recoverable") {
 		t.Fatalf("the payment detail head reads %q, want it named Recoverable", meta)
 	}
 }
 
-// grid-1 (F-G-032 wording). A grid:view caller without payment:view was told
-// "No payments in this month." beside a head the same page showed as paid. The
-// panel is not theirs, so it is not rendered at all (PE-03: "expect 200 without
-// `Recent Payments for`").
+// A grid:view caller without payment:view does not see the Recent Payments panel
+// at all, rather than being told "No payments in this month." beside a head the
+// same page shows as paid.
 func TestGridHidesThePaymentsPanelRatherThanClaimingItIsEmpty(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("GridPanel")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	month := currentMonthForTest()
 	s.settleOneRequest(1, headID, 400000, "4000.00", "settled", month+"-02")
 
 	s.seedProbeUser("gridonly@example.test", "Grid Only", "GridOnlyPass1", "grid-only",
 		[]store.Grant{{Resource: "grid", Action: "view"}}, nil)
 	s.login("gridonly@example.test", "GridOnlyPass1")
-	body := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
+	body := s.get("/grid?month=" + month)
 	if !strings.Contains(body, "4,000.00") {
 		t.Fatal("the grid lost the head's actual")
 	}
@@ -135,7 +104,7 @@ func TestGridHidesThePaymentsPanelRatherThanClaimingItIsEmpty(t *testing.T) {
 	}
 }
 
-// grid-htmx-1 (BV20, §6). The grid's filters swap the grid in over htmx and
+// The grid's filters swap the grid in over htmx and
 // push the filtered URL; the same form still submits as a plain GET without
 // JavaScript. An htmx request is answered without the app shell, so the swap
 // carries the grid and not a second sidebar.
@@ -145,9 +114,9 @@ func TestGridFiltersSwapOverHTMXAndStillWorkWithoutIt(t *testing.T) {
 	if err := s.st.SetBudget(s.ctx, actor, swapHead, currentMonthForTest(), 10000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	page := responseBody(t, s.request(http.MethodGet, "/grid", nil, ""))
+	page := s.get("/grid")
 	form := cut(page, `<form class="toolbar"`, ">")
 	for _, want := range []string{`method="get"`, `action="/grid"`, `hx-get="/grid"`, `hx-push-url="true"`, `hx-target="#grid-body"`, `hx-select="#grid-body"`} {
 		if !strings.Contains(form, want) {
@@ -190,7 +159,7 @@ func TestGridFiltersSwapOverHTMXAndStillWorkWithoutIt(t *testing.T) {
 	}
 }
 
-// ui-1 (a). Counts next to nouns are pluralised, so a one-head project reads
+// Counts next to nouns are pluralised, so a one-head project reads
 // "1 head" and a one-head month close reads "1 head is unpaid".
 func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 	s := newAppTestServer(t)
@@ -198,9 +167,9 @@ func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 	if err := s.st.SetBudget(s.ctx, actor, soloHead, currentMonthForTest(), 10000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	month := currentMonthForTest()
-	grid := responseBody(t, s.request(http.MethodGet, "/grid?month="+month, nil, ""))
+	grid := s.get("/grid?month=" + month)
 	if !strings.Contains(grid, `<span class="project-count">1 head</span>`) {
 		t.Fatalf("a one-head project is not counted as \"1 head\": %s", cut(grid, `class="project-count"`, "</span>"))
 	}
@@ -211,61 +180,47 @@ func TestGridAndMonthsPluraliseHeadCounts(t *testing.T) {
 		t.Fatalf("the month close sentence is not pluralised: %s", cut(grid, "<h2>Month Close</h2>", "</p>"))
 	}
 	requireStatus(t, s.postForm("/months", url.Values{"target_month": {month}}), http.StatusSeeOther)
-	months := responseBody(t, s.request(http.MethodGet, "/months", nil, ""))
+	months := s.get("/months")
 	if !strings.Contains(months, "<small>1 head</small>") {
 		t.Fatalf("/months does not say \"1 head\": %s", cut(months, `data-label="Month"`, "</td>"))
 	}
 }
 
-// ui-1 (c). Adding a user with no role used to answer with the full-page error
-// screen; Back closed the drawer and lost what was typed. The users page comes
-// back with the drawer open, an inline error, and the typed name, email and
-// roles still in place. The password is deliberately never echoed into HTML.
-func TestAddUserValidationKeepsTheDrawerAndTheInput(t *testing.T) {
+func TestGridPaymentActivityDoesNotDeclareOpenBalancesSettled(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	resp := s.postForm("/users", url.Values{"email": {"nora@example.test"}, "name": {"Nora Test"}, "password": {"NoraPassword123"}, "active": {"on"}})
-	requireStatus(t, resp, http.StatusBadRequest)
-	body := responseBody(t, resp)
-	drawer := cut(body, `id="user-new"`, "</form>")
-	if drawer == "" || strings.HasPrefix(strings.TrimSpace(strings.SplitN(drawer, ">", 2)[0]), `id="user-new" hidden`) || strings.Contains(strings.SplitN(drawer, ">", 2)[0], "hidden") {
-		t.Fatalf("the Add user drawer is not open on the validation answer: %s", strings.SplitN(drawer, ">", 2)[0])
+	actor, head := s.seedHead("OutstandingBalances")
+	month := currentMonthForTest()
+	if err := s.st.SetBudget(s.ctx, actor, head, month, 1000000); err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"Choose at least one role for the new user.", `value="nora@example.test"`, `value="Nora Test"`} {
-		if !strings.Contains(drawer, want) {
-			t.Fatalf("the reopened drawer lacks %q", want)
+	s.loginAdmin()
+	installment, _ := s.settleOneRequest(501, head, 1200000, "7000.00", "installment", month+"-01")
+	kept, _ := s.settleOneRequest(502, head, 60000, "100.00", "partial", month+"-01")
+	requireStatus(t, s.postForm(fmt.Sprintf("/requests/%d/accept-partial", kept), url.Values{"decision": {"continue"}, "note": {"Pay the remaining 500 on next transfer"}}), http.StatusSeeOther)
+	s.settleOneRequest(503, head, 200000, "2000.00", "settled", month+"-01")
+	for id, wantRemaining := range map[int64]int64{installment: 500000, kept: 50000} {
+		req, err := s.st.Request(s.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Status != "approved" || approvedOf(req)-req.PaidAmount != wantRemaining {
+			t.Fatalf("request %d status=%s remaining=%d", id, req.Status, approvedOf(req)-req.PaidAmount)
 		}
 	}
-	if strings.Contains(body, "NoraPassword123") {
-		t.Fatal("the password was echoed back into the page")
-	}
-	if strings.Contains(body, "error-code") {
-		t.Fatal("the full-page error screen answered a form validation error")
-	}
-
-	// A role that was ticked stays ticked when the password is what is wrong.
-	roleID := s.roleIDByName(t, "Requester")
-	resp = s.postForm("/users", url.Values{"email": {"nora@example.test"}, "name": {"Nora Test"}, "password": {"short"}, "role_ids": {roleID}})
-	requireStatus(t, resp, http.StatusBadRequest)
-	drawer = cut(responseBody(t, resp), `id="user-new"`, "</form>")
-	if !strings.Contains(drawer, fmt.Sprintf(`value="%s" checked`, roleID)) {
-		t.Fatal("the ticked role was lost on a password error")
-	}
-}
-
-// recoverables-6. At 390px every empty spacer cell in a t-cards tfoot became a
-// blank stripe in the total card. The spacers are desktop-only.
-func TestTCardsTotalRowsCarryNoEmptyMobileCells(t *testing.T) {
-	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	for _, path := range []string{"/recoverables/list", "/vendors"} {
-		body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
-		tfoot := cut(body, "<tfoot>", "</tfoot>")
-		if tfoot == "" {
-			t.Fatalf("%s has no total row", path)
+	body := s.get("/grid?month=" + month)
+	row := cut(body, `<tr class="head`, `</tr>`)
+	t.Logf("Grid head row with ₹5,000 + ₹500 still payable: %s", row)
+	for _, want := range []string{"₹10,000.00", "₹9,100.00", "₹900.00", "Under budget", "Payment recorded"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("grid row missing %q", want)
 		}
-		if strings.Contains(tfoot, `<td data-label=""></td>`) {
-			t.Fatalf("%s's total row still has empty cells that restack into blank stripes on a phone: %s", path, tfoot)
+	}
+	if strings.Contains(row, ">Settled<") || strings.Contains(row, `duepill settled`) {
+		t.Fatal("payment activity falsely declares open request balances settled")
+	}
+	for _, status := range []string{"under", "on-track", "over", "unbudgeted"} {
+		if dueText("5", month, status) != "Payment recorded" {
+			t.Errorf("%s claims settlement from budget utilization", status)
 		}
 	}
 }

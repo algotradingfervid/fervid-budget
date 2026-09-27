@@ -100,7 +100,7 @@ func TestPermMapCoversCanonicalVocabularyExactlyOnce(t *testing.T) {
 	}
 
 	// 3. Nothing orphaned: every canonical pair sits in exactly one row's
-	//    Advanced list, which is the disclosure that preserves R2.
+	//    Advanced list, so every permission can still be granted on its own.
 	advanced := map[store.Grant]int{}
 	for _, row := range buildPermMatrix(nil, nil) {
 		for _, entry := range row.Advanced {
@@ -159,8 +159,7 @@ func TestExpandCellsGrantsEveryCanonicalActionBehindTheCell(t *testing.T) {
 		t.Fatalf("expandCells on empty/unknown cells = %v, want none", got)
 	}
 	// Both cancellation verbs live behind the Payment requests Cancel cell, next
-	// to request:withdraw — the vocabulary carries them (amendment A10) and the
-	// matrix has to be able to grant them.
+	// to request:withdraw, so the matrix can grant them.
 	cancel := map[store.Grant]bool{}
 	for _, g := range expandCells([]string{"requests:cancel"}) {
 		cancel[g] = true
@@ -211,7 +210,7 @@ func TestBuildPermMatrixMarksGrantedPartialAndUnavailableCells(t *testing.T) {
 		t.Fatalf("create cell = %+v, want untouched", cells["create"])
 	}
 	// The badge counts grants, not fully granted cells: three of the row's
-	// fifteen canonical actions are held (rbac-5 — it used to read "1 of 7").
+	// fifteen canonical actions are held.
 	if requests.Held != 3 || requests.Total != 15 {
 		t.Fatalf("row badge = %d of %d, want 3 of 15", requests.Held, requests.Total)
 	}

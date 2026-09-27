@@ -13,9 +13,8 @@ import (
 
 const urgencyAlert = `<div class="alert error" role="alert" aria-live="assertive" data-server-error-for="urgency_reason">say why this is urgent</div>`
 
-// The shell ties the missing-urgency-reason alert to its field. It used to do
-// that by comparing the message text with the store's wording; it now follows
-// the store's sentinel error, and the rendered alert is unchanged.
+// The missing-urgency-reason alert is tied to its field by the store's sentinel
+// error, not by matching the message text, so rewording cannot break the link.
 func TestUrgencyReasonAlertIsTiedToItsFieldBySentinel(t *testing.T) {
 	if !errors.Is(store.ErrUrgencyReasonRequired, store.ErrValidation) || friendly(store.ErrUrgencyReasonRequired) != "say why this is urgent" {
 		t.Fatalf("sentinel must stay a validation error with the same sentence, got %q", friendly(store.ErrUrgencyReasonRequired))
@@ -52,7 +51,7 @@ func TestUrgencyReasonAlertIsTiedToItsFieldBySentinel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp = s.postForm(fmt.Sprintf("/requests/%d/edit", id), fields)
+	resp = s.submitScreen(fmt.Sprintf("/requests/%d/edit", id), fields)
 	requireStatus(t, resp, http.StatusBadRequest)
 	if body := responseBody(t, resp); !strings.Contains(body, urgencyAlert) {
 		t.Fatalf("edit refusal lost the field-bound alert:\n%s", body)

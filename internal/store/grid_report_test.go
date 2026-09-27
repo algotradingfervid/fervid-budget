@@ -4,84 +4,30 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
 
-// recoverables-1 (F-E-05, second half). The dashboard tile learned that money
-// which never left cannot be overdue; the By-category/By-counterparty rollup and
-// the register's ageing=overdue filter did not, so an approved-but-unpaid row
-// with a past return date showed red in its category row while the Total row
-// and the tile beneath it read ₹0.00.
-func TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
-	asOf := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
-
-	paid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000701", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
-	payRecoverable(t, s, ctx, actor, headID, paid, "2026-02-12", 200000)
-	unpaid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000702", "approved", "emd", "Ridge Metro", "2026-01-15", 250000, false)
-
-	m, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, by := range []string{"category", "counterparty"} {
-		rolls, err := s.RecoverableRollups(ctx, by, asOf, RecoverableViewerAll())
-		if err != nil {
-			t.Fatal(err)
-		}
-		var overdue int64
-		for _, r := range rolls {
-			overdue += r.Overdue
-			if r.Label == "Ridge Metro" && r.Overdue != 0 {
-				t.Fatalf("the unpaid counterparty row is overdue by %d; money that never left cannot be overdue", r.Overdue)
-			}
-		}
-		if overdue != m.OverdueAmount {
-			t.Fatalf("%s rollup rows add up to %d overdue while the tile and Total row say %d", by, overdue, m.OverdueAmount)
-		}
-	}
-
-	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "overdue", AsOf: asOf, Viewer: RecoverableViewerAll()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range rows {
-		if r.RequestID == unpaid {
-			t.Fatalf("ageing=overdue lists the unpaid row, labelled %q", r.AgeingLabel)
-		}
-	}
-	if len(rows) != m.OverdueCount {
-		t.Fatalf("ageing=overdue lists %d rows and the tile it is linked from counts %d", len(rows), m.OverdueCount)
-	}
-}
-
-// recoverables-2 / grid-2. A recoverable payment is a deposit, not budget
+// A recoverable payment is a deposit, not budget
 // spend, so the variance grid's Recent Payments panel must not list it; and
 // every payment row carries its request's treatment so a screen can name a
 // head-less recoverable instead of printing an empty "Project / Head".
 func TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	budgetPay, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-09-10", Amount: 12345, VendorPayee: "Landlord", PaymentMode: "cash"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Shaped as the real write path leaves it since v8: the request is linked to
 	// a project but carries no head, and neither does its payment.
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,head_id,amount,approved_amount,
-		 purpose,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,submitted_at)
-		VALUES('PR-2026-000801','completed','recoverable','employee_advance','emd',(SELECT id FROM recoverable_categories WHERE code='emd'),
-		 (SELECT project_id FROM heads WHERE id=?),NULL,250000,250000,'Deposit','Ridge Metro','2027-01-31','Refund on close',?,?,CURRENT_TIMESTAMP)`,
-		headID, actor.ID, actor.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req, _ := res.LastInsertId()
-	res, err = s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(NULL,'2026-09-25',250000,'Ridge Metro',?,?,'settled')`, actor.ID, req)
+	req := insertRequestRow(t, s, requestRow{
+		"number": "PR-2026-000801", "status": "completed", "treatment": "recoverable", "type": "employee_advance",
+		"recoverable_category": "emd", "recoverable_category_id": recoverableCategoryID(t, s, "emd"),
+		"project_id": projectOfHead(t, s, headID), "head_id": nil, "amount": 250000, "approved_amount": 250000,
+		"purpose": "Deposit", "counterparty": "Ridge Metro", "expected_return_date": "2027-01-31", "repayment_notes": "Refund on close",
+		"requester_id": actor.ID, "manager_id": actor.ID, "submitted_at": sqlNow,
+	})
+	res, err := s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(NULL,'2026-09-25',250000,'Ridge Metro',?,?,'settled')`, actor.ID, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,17 +74,13 @@ func TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment(t *testing.T) {
 	}
 }
 
-// audit-2 (BV36). Saving the budget form used to write an "update" audit row for
-// every head on the form, including the ones whose amount did not move, and the
-// summary named neither the head nor the month.
+// Saving the budget form audits only the heads whose amount changed, and each
+// summary names the head and the month.
 func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, rent := seedActorAndHead(t, s, ctx)
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, rent).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	actor, rent := seedActorAndHead(t, s)
+	projectID := projectOfHead(t, s, rent)
 	power, err := s.UpsertHead(ctx, 0, projectID, "Power", "10", true, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -157,8 +99,8 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	}
 	// Power was submitted at ₹0 with no budget behind it. A head with no budget
 	// already reads as ₹0 everywhere, so nothing changed: no row is written and
-	// nothing is audited. Only Rent, which the user set, is recorded (audit-2,
-	// review: the first save of a month used to log every head on the form).
+	// nothing is audited. Only Rent, which the user set, is recorded, even on the
+	// first save of a month.
 	if got := count(); got != 1 {
 		t.Fatalf("the first save wrote %d budget audit rows, want 1 (only Rent was set)", got)
 	}
@@ -227,7 +169,7 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 func TestSetBudgetsRefusesAnUnknownHeadEvenAtZero(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, rent := seedActorAndHead(t, s, ctx)
+	actor, rent := seedActorAndHead(t, s)
 	err := s.SetBudgets(ctx, actor, "2026-07", []BudgetInput{{HeadID: rent, Amount: 4500000}, {HeadID: 999999, Amount: 0}})
 	if err == nil || !errors.Is(err, ErrValidation) {
 		t.Fatalf("SetBudgets with an unknown head at ₹0 = %v, want a validation error", err)
@@ -241,5 +183,67 @@ func TestSetBudgetsRefusesAnUnknownHeadEvenAtZero(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("a failed batch wrote %d budget audit rows", n)
+	}
+}
+
+// A head with no budget and no payments reads "no activity", not "not paid",
+// and a filtered grid labels its total as a filtered subtotal.
+func TestGridNeutralStatusAndFilteredTotalScope(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, head := seedActorAndHead(t, s)
+	zero, err := s.Grid(ctx, "2026-04", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zero.NoActivity != 1 || zero.NotPaid != 0 || zero.Rows[0].Status != "no-activity" {
+		t.Fatalf("zero activity=%+v", zero)
+	}
+	if err = s.SetBudget(ctx, actor, head, "2026-04", 10000); err != nil {
+		t.Fatal(err)
+	}
+	planned, err := s.Grid(ctx, "2026-04", "not-paid", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.NotPaid != 1 || planned.NoActivity != 0 || planned.Total.Budget != 10000 || !planned.Filtered || planned.ScopeLabel != "Filtered subtotal" {
+		t.Fatalf("planned=%+v", planned)
+	}
+	none, err := s.Grid(ctx, "2026-04", "", "missing-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none.Rows) != 0 || none.Total.Budget != 0 || !none.Filtered {
+		t.Fatalf("filter=%+v", none)
+	}
+}
+
+// Report rows carry the head and project ids, and the payment list filtered by
+// them returns that head's payments.
+func TestReportStableIDsAndPaymentHeadScope(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, head := seedActorAndHead(t, s)
+	if err := s.SetBudget(ctx, actor, head, "2026-04", 10000); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.Report(ctx, "2026-04", "2026-04", "heads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].HeadID != head || rows[0].ProjectID == 0 {
+		t.Fatalf("report IDs=%+v", rows)
+	}
+	id, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: head, PaidOn: "2026-04-01", Amount: 10000, VendorPayee: "Fixture", PaymentMode: "cash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payments, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-04", HeadID: head, ProjectID: rows[0].ProjectID, Scope: ScopeAll, ExcludeRecoverable: true})
+	if err != nil || len(payments) != 1 || payments[0].ID != id {
+		t.Fatalf("payments=%+v err=%v", payments, err)
+	}
+	wrong, err := s.ListPayments(ctx, PaymentListOptions{Month: "2026-04", HeadID: head + 100, Scope: ScopeAll})
+	if err != nil || len(wrong) != 0 {
+		t.Fatalf("wrong head filter=%+v err=%v", wrong, err)
 	}
 }

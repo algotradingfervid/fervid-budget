@@ -45,12 +45,7 @@ func openTestStore(t *testing.T) *store.Store {
 
 func testActor(t *testing.T, st *store.Store) store.User {
 	t.Helper()
-	ctx := context.Background()
-	id, err := st.CreateUser(ctx, "admin@notify.test", "Admin", "h", "admin", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, err := st.UserByID(ctx, id)
+	u, err := st.UserByID(t.Context(), mustUser(t, st, "admin@notify.test", "Admin", "admin"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,12 +83,10 @@ func grantAccounts(t *testing.T, st *store.Store, userIDs ...int64) {
 
 // enableEvent configures one event rule.
 //
-// The INSERT is there because SetNotificationSetting is deliberately an UPDATE,
-// not an upsert — an unknown event must be refused rather than create a rule
-// nothing fires — and migration v9's nine events (F-F-06) are registered in
-// migrations.go, a file this package's owner does not edit. Seeding the row here
-// first makes the tests independent of when that one-line registration lands,
-// and ON CONFLICT DO NOTHING keeps them correct after it has.
+// SetNotificationSetting is deliberately an UPDATE, not an upsert — an unknown
+// event must be refused rather than create a rule nothing fires — so the helper
+// first inserts the row if it is missing (ON CONFLICT DO NOTHING leaves a seeded
+// row alone) and then applies the setting through the real method.
 func enableEvent(t *testing.T, st *store.Store, actor store.User, in store.NotificationSetting) {
 	t.Helper()
 	ctx := context.Background()

@@ -17,7 +17,7 @@ import (
 	"fervidbudget/internal/store"
 )
 
-func TestReverifyBackupRestoreCommandKeepsAttachmentDownloadWorking(t *testing.T) {
+func TestBackupRestoreCommandKeepsAttachmentDownloadWorking(t *testing.T) {
 	source := newAppTestServer(t)
 	actor, head := source.seedHead("Restore Attachment")
 	paymentID, err := source.st.CreatePayment(source.ctx, actor, store.PaymentInput{HeadID: head, PaidOn: "2026-09-20", Amount: 32145, VendorPayee: "Synthetic vendor", PaymentMode: "upi"})
@@ -87,14 +87,14 @@ func TestReverifyBackupRestoreCommandKeepsAttachmentDownloadWorking(t *testing.T
 	t.Log("Verified payment value, restored file bytes and authenticated attachment download after executing generated restore command.")
 }
 
-func TestReverifyPasswordResetValidationPreservesLinkAndSession(t *testing.T) {
+func TestPasswordResetValidationPreservesLinkAndSession(t *testing.T) {
 	s := newAppTestServer(t)
 	actor, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	token := strings.Repeat("ab", 32)
 	if err := s.st.CreatePasswordReset(s.ctx, actor.ID, resetHash(token), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	tooLong := strings.Repeat("界", 24) + "A1"
 	bad := s.postForm("/login/reset", url.Values{"token": {token}, "password": {tooLong}, "confirm_password": {tooLong}})
 	requireStatus(t, bad, 422)
@@ -121,7 +121,7 @@ func TestReverifyPasswordResetValidationPreservesLinkAndSession(t *testing.T) {
 	reused.Body.Close()
 }
 
-func TestReverifyHistoryPermissionGatesAndOfflineReset(t *testing.T) {
+func TestHistoryPermissionGatesAndOfflineReset(t *testing.T) {
 	s := newAppTestServer(t)
 	actor, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	vendorID, err := s.st.CreateVendor(s.ctx, actor, store.VendorInput{Name: "Protected history vendor", ContactPerson: "Private contact", Bank: &store.VendorBank{AccountNumber: "DO-NOT-EXPOSE", UPIID: "private@upi"}})
@@ -162,7 +162,7 @@ func TestReverifyHistoryPermissionGatesAndOfflineReset(t *testing.T) {
 	}
 }
 
-func TestReverifySelectedRoleDestinationIsAvailable(t *testing.T) {
+func TestSelectedRoleDestinationIsAvailable(t *testing.T) {
 	s := newAppTestServer(t)
 	actor, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	id, err := s.st.CreateRole(s.ctx, actor, "Return role", "")
@@ -179,7 +179,7 @@ func TestReverifySelectedRoleDestinationIsAvailable(t *testing.T) {
 	}
 }
 
-func TestReverifyHTTPReactivationRequiresFreshSession(t *testing.T) {
+func TestHTTPReactivationRequiresFreshSession(t *testing.T) {
 	s := newAppTestServer(t)
 	actor, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	hash, _ := auth.HashPassword("Reactivation123")
@@ -246,7 +246,7 @@ func TestReverifyHTTPReactivationRequiresFreshSession(t *testing.T) {
 	t.Log("HTTP cookie replay: fresh=200; deactivated=303; reactivated old cookie=303; fresh re-login=200.")
 }
 
-func TestReverifyBackupManifestRequiresInspection(t *testing.T) {
+func TestBackupManifestRequiresInspection(t *testing.T) {
 	root := t.TempDir()
 	folder := filepath.Join(root, "backup-invalid")
 	if err := os.MkdirAll(filepath.Join(folder, "attachments"), 0700); err != nil {

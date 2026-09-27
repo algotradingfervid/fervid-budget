@@ -20,7 +20,7 @@ func TestAccountsQueueApprovedTabAndSearchMatchItsCount(t *testing.T) {
 	if err := s.st.ReserveRequest(s.ctx, accounts, reserved); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, tc := range []struct {
 		path string
 		want []int64

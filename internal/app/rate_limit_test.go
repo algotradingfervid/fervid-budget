@@ -91,10 +91,7 @@ func TestPasswordResetThrottleKeysOnForwardedClient(t *testing.T) {
 	mailer := &resetTestMailer{}
 	a := &App{cfg: cfg, st: s.st, auth: am, log: slog.Default(), mailer: mailer,
 		tpl: template.Must(template.New("test").Parse(`{{define "login_help"}}{{.Notice}}{{end}}`))}
-	actor, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actor := s.admin()
 	if err := s.st.SetMailSettings(s.ctx, actor, store.MailSettings{SMTPHost: "localhost", SMTPFromAddr: "noreply@example.test", BaseURL: "https://budget.example.test"}); err != nil {
 		t.Fatal(err)
 	}

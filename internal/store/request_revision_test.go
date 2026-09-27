@@ -10,7 +10,7 @@ import (
 func TestRequestRevisionRejectsSameSecondStaleAttachmentResubmitAtomically(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	requester, manager, head := seedRequestActors(t, s, ctx)
+	requester, manager, head := seedRequestActors(t, s)
 	in := RequestInput{Treatment: "budget", Type: "reimbursement", ShortTitle: "Original", ProjectID: 1, HeadID: head, Amount: 12345, Purpose: "Original purpose", ManagerID: manager.ID, ExpenseDate: "2026-09-26"}
 	id, err := s.CreateRequest(ctx, requester, in)
 	if err != nil {
