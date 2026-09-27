@@ -259,6 +259,11 @@ export default page({
        cannot have left the bank after today". The payment date records when money left the bank, so a
        date after today records something that has not happened.`,
     ),
+    note(
+      `A payment against a request also cannot be dated before the day the request was approved:
+       "payment date cannot precede approval". Money paid before anybody approved the spend is not a
+       payment against that approval.`,
+    ),
 
     section('Expired forms'),
     prose(
@@ -377,8 +382,8 @@ export default page({
           'One of the two was wrong. It deliberately does not say which, because that would tell anybody at your keyboard whether an address has an account behind it.',
         ],
         [
-          '"Too many failed attempts. Try again later."',
-          'Repeated failures have locked the account for a period. Wait, or ask an administrator.',
+          '"Too many attempts. Try again later."',
+          'Too many sign-in attempts arrived from your network in one minute. Nothing is locked: wait a minute and try again. A wrong password never locks the account itself.',
         ],
       ],
       'The two sign-in refusals. See [Signing in](page:getting-started/signing-in).',

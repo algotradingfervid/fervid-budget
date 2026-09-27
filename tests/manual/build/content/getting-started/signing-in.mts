@@ -18,10 +18,16 @@ export default page({
       { text: 'Type the email address your account was created with.' },
       { text: 'Type your password.' },
       {
-        text: 'Select **Sign in**.',
+        text: 'Select **Login**.',
         note: 'You land on your home screen, which is tailored to what your account is allowed to do.',
       },
     ]),
+    prose(
+      `If you opened a link to a particular request or payment — from an email, say — before you were
+       signed in, the product takes you straight to that record once you sign in, provided your account
+       may open it. If it may not, you land on Home with a note that the page you asked for is not
+       available to your account. The note does not name the page.`,
+    ),
 
     section('When it will not let you in'),
     prose(
@@ -30,9 +36,16 @@ export default page({
        tell anybody typing at your keyboard whether an address has an account behind it.`,
     ),
     shot('shared/login-rejected', 'A refused sign-in. The wording is the same whichever field was wrong.'),
+    prose(
+      `A wrong password does not lock your account. What the product does limit is how fast sign-in
+       attempts may arrive: too many from the same place in one minute, and it answers *Too many
+       attempts. Try again later.* Wait a minute and try again.`,
+    ),
     note(
-      `There is no self-service password reset. If you cannot get in, ask an administrator — they can
-       set a new password for you from the [People and accounts](page:admin/people) screen.`,
+      `Below the form is a **Can't sign in?** link. When your organisation has set up email, that page
+       sends you a one-time link to set a new password; the link expires after 30 minutes. Otherwise it
+       tells you to ask an administrator, who can set a new password for you from the
+       [People and accounts](page:admin/people) screen.`,
     ),
 
     section('What happens next'),
@@ -51,7 +64,7 @@ export default page({
     faq([
       {
         q: 'I have forgotten my password.',
-        a: 'Ask an administrator to set a new one. They do this from the people screen, and it takes effect immediately.',
+        a: 'Use **Can\'t sign in?** under the form. If email reset is not available there, ask an administrator to set a new password; they do this from the people screen, and it takes effect immediately.',
       },
       {
         q: 'My colleague can see a screen that I cannot.',
