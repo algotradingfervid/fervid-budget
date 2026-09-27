@@ -1,7 +1,11 @@
-{{/* The historical payment's edit screen. Phase 3 retired free-standing
-     creation, but a payment recorded before this module has no request behind
-     it and stays editable (X6); this is the form that edits it, unchanged from
-     the pre-Phase-3 markup. Phase 6 redraws the ledger. */}}
+{{/* Payments ledger: the historical payment edit form (payment_edit_form), the
+     payments list (payments), a payment's detail page (payment_detail, with
+     payment_detail_historical for payments with no request), and the "Paid on"
+     lock banner used by payment entry (payment_lock_banner). Each {{define}}
+     is rendered by name from the Go handlers. */}}
+{{/* Edit form for a historical payment. A payment recorded before requests
+     existed has no request behind it and stays editable; new payments are
+     always recorded against a request through payment entry. */}}
 {{define "payment_edit_form"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -112,24 +116,17 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The recorded payment — mockups/screens/payment-detail.html.
-
-     Two readings of one screen. A payment linked to a request is the end of
-     that request's story: what was approved beside what left the bank, the
-     proof, and the whole trail from submission to settlement. It offers no way
-     to change any of it, because there is none — the store refuses to edit or
-     void a linked payment (S12), and a control the route would reject is a lie.
-
-     A historical, request-less payment predates the link and is still an
-     editable ledger row, so it keeps the pre-Phase-3 screen verbatim in the
-     {{else}} branch until Phase 6 redraws the ledger (X6). */}}
+{{/* A recorded payment's detail page. A payment linked to a request shows what
+     was approved beside what was paid, the proof, and the full trail from
+     submission to settlement. It offers no edit or void controls, because the
+     store refuses to change a linked payment. A payment with no request is
+     still an editable ledger row and renders payment_detail_historical. */}}
 {{define "payment_detail"}}
 {{template "top" .}}
 {{if .Request2.ID}}
-{{/* The banner reports how the reader got here, not that a payment exists:
-     "Payment saved" is true once, on the redirect from the confirming POST,
-     and was being shown on every visit for the life of the record — including
-     after a repeat confirm the store had refused (settlement-5). */}}
+{{/* The banner reports how the reader got here (.Outcome), not that a payment
+     exists: "Payment saved" shows only on the redirect from the confirming
+     POST, and a repeat confirm the store refused gets its own banner. */}}
 {{if eq .Outcome "saved"}}
 <div class="banner good">
   <span class="b-ico" aria-hidden="true">✓</span>
@@ -159,13 +156,12 @@
 <div class="req-head">
   <div class="rh-top"><span class="rh-no">PAY-{{.Payment.ID}} · from {{.Request2.Number}}</span><span class="rh-amt">{{money .Payment.Amount}}</span></div>
   <h1>{{.Payment.VendorPayee}}</h1>
-  {{/* A recoverable settles no head (v8), so it is named, not printed as an
-       empty "Project / Head" (recoverables-2). */}}
+  {{/* A recoverable payment is charged to no head, so it is labelled
+       "Recoverable" rather than printed as an empty "Project / Head". */}}
   <p class="rh-meta">{{if eq .Payment.Treatment "recoverable"}}Recoverable{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Payment.Project}} / {{.Payment.Head}}{{end}} · paid {{dateLong .Payment.PaidOn}}</p>
-  {{/* The same three helpers every other head uses. Waiting exists so the
-       list, the queue and the detail head cannot drift into three answers, and
-       a hand-written line here was already a fourth: it read a manager their
-       own name where every other screen says "you". */}}
+  {{/* Status and "waiting on" come from the same helpers as the request list,
+       queue and request detail, so every screen gives the same answer (and
+       says "you" to the current user). */}}
   <div class="rh-status">
     {{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
     {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
@@ -176,10 +172,9 @@
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
   <div class="cmp-row"><span class="l">Paid</span><span class="v">{{money .Payment.Amount}}</span></div>
   <div class="cmp-row"><span class="l">Total paid on this request</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
-  {{/* The balance row reads the request's status, not only the payment's
+  {{/* The balance row reads the request's status, not the payment's
        settlement: an accepted shortfall keeps settlement="partial" for ever,
-       and "still owed" over "Completed — partial accepted" was a contradiction
-       (partial-1). */}}
+       so only the request status can tell "still owed" from "written off". */}}
   {{if eq .Request2.Status "completed_partial"}}
   <div class="cmp-row">
     <span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span>
@@ -211,9 +206,8 @@
     {{if .Payment.PartialReason}}<div style="grid-column:1/-1"><dt>Settlement reason</dt><dd>{{.Payment.PartialReason}}</dd></div>{{end}}
     {{if .Payment.Remarks}}<div style="grid-column:1/-1"><dt>Processing note</dt><dd>{{.Payment.Remarks}}</dd></div>{{end}}
   </dl>
-  {{/* Said here, on every visit, now that the confirmation banner is shown
-       once: the reader who arrives from the ledger months later still needs
-       to know why there is no Edit (S12). */}}
+  {{/* Shown on every visit, since the confirmation banner shows only once: a
+       reader arriving from the ledger later still learns why there is no Edit. */}}
   <p class="hint">This payment was recorded against {{.Request2.Number}} and can no longer be edited or cancelled. The current request balance is shown above.</p>
 </div>
 
@@ -227,14 +221,10 @@
     {{if $.Perms.Can "attachment" "view"}}<span class="f-actions"><a class="btn small outline" href="/attachments/{{.ID}}">Download</a></span>{{end}}
   </div>
   {{end}}
-  {{/* The bill the request came in with, beside the advice for the money that
-       went out. Both halves of the proof are on the screen that closes the
-       story, so nobody has to open the request to check what was billed. */}}
-  {{/* A request document is served by the request's own route. /attachments/{id}
-       reads payment_attachments, and the two tables have unrelated autoincrement
-       sequences — so this link used to 404, or worse, hand the reader an
-       unrelated payment's bank advice under the request document's filename
-       (F-A-05/F-B-09). */}}
+  {{/* The request's own invoice, shown beside the payment proof so nobody has
+       to open the request to check what was billed. */}}
+  {{/* Served by the request's attachment route: /attachments/{id} reads
+       payment attachments, whose ids are unrelated to request attachment ids. */}}
   {{range .RequestAtts}}
   <div class="file-row">
     <span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span>
@@ -268,9 +258,8 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The pre-Phase-3 ledger detail, moved here unchanged. It is reachable only
-     for a payment with no request behind it, which is the only kind this
-     version still lets anybody edit or void. */}}
+{{/* Detail page for a payment with no request behind it, the only kind that
+     can still be edited, given attachments, or voided. */}}
 {{define "payment_detail_historical"}}
 <section class="page-banner">
   <div>
@@ -344,22 +333,11 @@
 </ol>
 {{end}}
 
-{{/* The payment entry screen — mockups/screens/payment-entry.html.
-
-     Nothing here writes. The primary button posts to the settlement preview,
-     which is pure (D8), and only the confirmation inside that sheet posts to
-     /payments. formenctype on the preview button keeps that honest without
-     JavaScript: the preview is URL-encoded, so it cannot receive the file
-     bytes, and hx-include names the same text fields for the htmx path. Either
-     way the file is transmitted exactly once, by the final multipart POST.
-
-     The ₹ lives in the .money-field's .cur prefix, so the input carries
-     amountValue and never money — money.FormatPaise already has one. */}}
-{{/* One element with id lock-banner, always rendered so htmx has a target:
-     payment_form draws it inline, and GET /payments/lock-status returns it on
-     its own when "Paid on" changes (F-G-020). It sits inside the Payment
-     fieldset's .form-grid, so the wrapper is display:contents — empty, it is no
-     grid item and leaves no gap — and the banner itself spans the row. */}}
+{{/* Warns that the chosen "Paid on" month is locked. The #lock-banner wrapper
+     is always rendered so htmx has a target: payment_form draws it inline, and
+     GET /payments/lock-status returns it alone when "Paid on" changes. It sits
+     in a .form-grid, so the wrapper is display:contents (leaving no gap when
+     empty) and the banner itself spans the row. */}}
 {{define "payment_lock_banner"}}
 <div id="lock-banner" style="display:contents">
   {{if .Locked}}

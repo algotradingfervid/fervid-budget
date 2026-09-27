@@ -1,3 +1,15 @@
+{{/* Recording a payment against an approved request: the entry form
+     (payment_form), the settlement confirmation (settlement_sheet, wrapped in a
+     full page by settlement_confirm when JavaScript is off), and the request
+     picker (payment_pick_request, with its htmx-refreshed list
+     payment_pick_options and row picker_row). Each {{define}} is rendered by
+     name from the Go handlers. */}}
+{{/* The payment entry form. Nothing here writes: the primary button posts to
+     the settlement preview, which saves nothing, and only the confirmation in
+     that sheet posts to /payments. The preview is URL-encoded (formenctype, and
+     hx-include lists the text fields for htmx), so the file is sent exactly
+     once, by the final multipart POST. The ₹ sits in the .cur prefix, so the
+     amount input uses amountValue, not money, which already adds one. */}}
 {{define "payment_form"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -70,16 +82,10 @@
             <p>You will be asked whether this settles the obligation in full or leaves a balance due.</p></div>
         </div>
       </div>
-      {{/* The lock, before the date rather than after the submit. The grid
-           renders "Locked" in place of its Add buttons and /budgets carries a
-           banner; this screen carried nothing, so an accountant filled in the
-           amount, the date, the mode, the reference and the note and only
-           learned the period was closed on the confirmation (F-G-020). The
-           reservation survives the refusal, so nothing is lost — but nothing
-           warned them either. It sits directly above "Paid on" so it is on
-           screen beside the field that decides it, at every width: the field
-           re-asks GET /payments/lock-status on change and this banner is
-           swapped for the one the new date's month calls for. */}}
+      {{/* Warns about a locked month before the form is filled in, not after
+           submit. It sits directly above "Paid on", the field that decides it,
+           at every width; changing the date asks GET /payments/lock-status and
+           swaps in the banner for the new date's month. */}}
       {{template "payment_lock_banner" .}}
       <div class="field span-4 m-half">
         <label for="paid_on">Paid on <span class="req" aria-hidden="true">*</span></label><input id="paid_on" name="paid_on" type="date" value="{{.Payment.PaidOn}}" required
@@ -116,9 +122,8 @@
   <div id="settle-mount"></div>
 
   {{/* The preview and the write are both gated on payment:settle, so the
-       button is too. A role built with payment:create and reservation:reserve
-       but no settle could take a request and then press a button whose POST
-       answered 403 with nothing on screen (queue-2). */}}
+       button is too. A role that can reserve a request but not settle it gets
+       this explanation instead of a button whose POST would answer 403. */}}
   {{if not (.Perms.Can "payment" "settle")}}
   <div class="banner warn">
     <span class="b-ico" aria-hidden="true">i</span>
@@ -142,25 +147,21 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The settlement confirmation — mockups/screens/payment-settlement-confirm.html.
-
-     One markup source, two deliveries (D8). On the htmx path the sheet is swapped
-     into #settle-mount inside the live entry form, so its own file input posts
-     with the confirmation and the advice is uploaded exactly once. Without JS the
-     same sheet is wrapped in a full page that re-offers the upload and carries
-     every typed field forward as hidden inputs.
-
-     Nothing on this screen has been written. The .pill.neutral.no-dot says so,
-     and it is true: settlementPreview holds no transaction. */}}
+{{/* The settlement confirmation sheet, delivered two ways. With htmx it is
+     swapped into #settle-mount inside the live entry form, so the form's own
+     file input posts with the confirmation and the advice is uploaded once.
+     Without JavaScript, settlement_confirm wraps it in a full page that
+     re-offers the upload and carries every typed field forward as hidden
+     inputs. Nothing has been saved yet when this is shown. */}}
 {{define "settlement_sheet"}}
 <div class="overlay" id="settle-sheet">
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settle-title">
     <div class="sh-head">
       <div><h2 id="settle-title">Confirm the payment</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.Vendor}}</p></div>
       {{/* On the htmx path the sheet is inside the live form, so the closers
-           dismiss it in place and the typed amount, mode and reference survive
-           (settlement-6). Anchors, not buttons: a button here would submit the
-           form it sits in, and without JavaScript the href is the way back. */}}
+           dismiss it in place and the typed amount, mode and reference survive.
+           Anchors, not buttons: a button here would submit the form it sits
+           in, and without JavaScript the href is the way back. */}}
       {{if not .ReserveMine}}<a class="sh-close" href="/requests/{{.Request2.ID}}" aria-label="Close">✕</a>{{else if .Settlement.Fragment}}<a class="sh-close" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet" aria-label="Close">✕</a>{{else}}<button class="sh-close" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate aria-label="Close">✕</button>{{end}}
     </div>
     <div class="sh-body stack-12">
@@ -271,34 +272,21 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The request picker — mockups/screens/payment-request-picker.html.
-
-     Three deliberate points. A takeable .co is a submit button inside a POST
-     form, not a link, because selecting one reserves the request and a GET must
-     never mutate. A taken .co.is-taken links to the read-only request instead,
-     which is the only thing the loser may do. And the search degrades to a plain
-     GET on /payments/new when htmx is absent, re-rendering the same list from
-     the same template.
-
-     The mockup's banner ends "An administrator can re-enable direct entry in
-     Configuration if you ever need it." No such control exists, in this phase or
-     any planned one, so that sentence is not shipped. */}}
+{{/* The request picker's list. A takeable .co is a submit button inside a POST
+     form, not a link, because selecting one reserves the request and a GET
+     must never change anything. A taken .co.is-taken links to the read-only
+     request instead. Without htmx the search is a plain GET on /payments/new,
+     which renders the same list from this template. */}}
 {{define "payment_pick_options"}}
-{{/* role="group", not "listbox". A listbox promises a set of option children,
-     and these rows are neither options nor selectable: each is a <form> whose
-     button claims the request, or a plain link for a reader without
-     reservation:reserve. Declaring listbox here made assistive technology
-     announce a control that does not exist and tripped a critical
-     aria-required-children failure; "group" is what this actually is, and it
-     keeps the accessible name. The keyboard handling in fervid-app.js keys off
-     the .combo-list [data-id] selector, not the role, so nothing depends on
-     the old value. */}}
+{{/* role="group", not "listbox": a listbox requires option children, and these
+     rows are forms and links, not options. "group" keeps the accessible name.
+     The keyboard handling in fervid-app.js keys off the .combo-list selector,
+     not the role. */}}
 <div class="combo-list" id="picker-list" role="group" aria-label="Approved requests">
   {{range .Linkable.Available}}
-  {{/* Taking a request is reservation:reserve, exactly as it is in the queue.
-       Without the grant the row is still worth reading, so it degrades to the
-       same read-only .co the reservation's loser gets rather than to a button
-       the route answers 403 to. */}}
+  {{/* Taking a request needs reservation:reserve, as in the queue. Without it
+       the row is still shown, as the same read-only link a taken request gets,
+       rather than a button the route would answer 403 to. */}}
   {{if $.Perms.Can "reservation" "reserve"}}
   <form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}">
     <button class="co" type="submit">{{template "picker_row" .}}</button>

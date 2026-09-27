@@ -1,12 +1,8 @@
-{{/* The work dashboard — mockups/screens/dashboard.html.
-
-     A metric strip plus work areas, not one or the other. The strip is the
-     shape of the day at a glance; each area under it hands over the actual rows
-     to act on and links to the queue behind them.
-
-     Every area is gated on the permission its queue is gated on, so nobody is
-     shown work behind a door they cannot open, and an area with nothing in it
-     is not rendered at all — the strip already carries the zero. */}}
+{{/* Home dashboard (dashboard), rendered by name from the Go handlers: a
+     metric strip showing the day at a glance, then work areas listing the rows
+     to act on, each linking to its queue. Every metric and area is gated on
+     the permission its queue is gated on, and an empty area is not rendered at
+     all, since the strip already shows the zero. */}}
 {{define "dashboard"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -47,9 +43,8 @@
     <span class="metric-value">{{index .Counts "partials"}}</span>
   </a>
   {{end}}
-  {{/* The queue, which is the screen carrying the identical label and the
-       identical number. It used to link to /requests?bucket=open, which is a
-       different set entirely (F-G-007). */}}
+  {{/* Links to the accounts queue's Approved tab, which shows the same label
+       and the same count as this metric. */}}
   {{if .Perms.Can "payment" "process"}}
   <a class="metric" href="/accounts-queue?tab=approved">
     <span class="metric-label">Approved, unclaimed</span>

@@ -1,3 +1,7 @@
+{{/* Budget vs actuals variance grid (grid): filters, month metrics, the
+     project/head matrix on desktop or an accordion on a phone, recent payments
+     and Month Close. usedcell is the shared "Used" bar cell. Each {{define}} is
+     rendered by name from the Go handlers. */}}
 {{define "grid"}}
 {{template "top" .}}
 <div class="gridhead">
@@ -17,32 +21,25 @@
     <div class="metric"><span class="metric-label">Remaining</span><span class="metric-value {{varClass .Grid.Total.Variance}}">{{short .Grid.Total.Variance}}</span></div>
     <div class="metric"><span class="metric-label">Used</span><span class="metric-value">{{usedText .Grid.Total.Budget .Grid.Total.Actual}}</span></div>
   </div>
-  {{/* action="/grid", not "/". / was the variance grid until Phase 4 made it the
-       dashboard, which reads none of these three parameters — so the grid's own
-       filters navigated away from the thing they filter and the headline screen
-       could not be filtered at all (F-G-029). The two buttons beside them are
-       gated on the verbs their own routes are gated on: /export.csv is
-       grid:export and /payments/new is payment:create, and a grid:view-only role
-       was offered both.
+  {{/* action is /grid, not /, because / is the dashboard. Export and Add
+       payment are gated on the verbs their own routes require (grid:export,
+       payment:create), not on grid:view.
 
-       The form is a plain GET, so it filters with no JavaScript at all (Apply).
-       With htmx it swaps the grid in on change instead of reloading the page
-       (BV20, §6: "HTMX swap on month/filter/search"), and pushes the filtered
-       URL so the address bar, Back and a shared link all say what is shown. An
-       htmx request is answered without the shell (renderStatus), #grid-body is
-       taken from it, and the other month- and filter-dependent pieces around
-       this form ride along by id — the form itself is never swapped, so the
-       search box keeps its focus and caret while typing (grid-htmx-1).
+       The form is a plain GET, so Apply filters with no JavaScript. With htmx
+       it swaps #grid-body in on change and pushes the filtered URL, so the
+       address bar, Back and a shared link all say what is shown. The response
+       has no shell; the other filter-dependent pieces ride along by id via
+       hx-select-oob. The form itself is never swapped, so the search box keeps
+       its focus and caret while typing.
 
-       hx-sync queues rather than replaces: replacing aborted the request in
-       flight, and htmx logs every abort as a console error — typing a search
-       and pressing Enter inside the live-search pause did exactly that.
-       data-skip-shown-filters lets fervid-app.js drop the late live-search
+       hx-sync queues rather than replaces: replacing aborts the request in
+       flight, and htmx logs every abort as a console error (typing a search and
+       pressing Enter inside the live-search pause would cause one).
+       data-skip-shown-filters lets fervid-app.js drop a late live-search
        request when the grid already shows those filters. hx-history="false"
-       keeps htmx from snapshotting this page: a snapshot holds the rows but not
-       what was typed or picked in the controls, so Back showed a filtered grid
-       under an empty search box. Back and Forward now ask the server for the
-       URL, which renders the rows and the controls together. */}}
+       stops htmx snapshotting the page: a snapshot holds the rows but not the
+       control values, so Back would show a filtered grid under an empty search
+       box. Back and Forward instead ask the server, which renders both. */}}
   <form class="toolbar" method="get" action="/grid" aria-label="Grid filters"
         hx-get="/grid" hx-trigger="change, input changed delay:350ms from:find input[name='q'], submit"
         hx-target="#grid-body" hx-select="#grid-body" hx-swap="outerHTML"
@@ -146,14 +143,11 @@
   </div>
 </div>
 
-{{/* The variance grid is the widest screen in the app and is the one table that
-     cannot restack into cards — a head means nothing without its project, its
-     budget and its actual side by side. On a phone it becomes a project
-     accordion instead, driven by exactly the same .Grid.Groups data as the
-     matrix above, so the two can never disagree. The open/closed truth ships
-     in the markup as .is-open, which is the contract fervid-app.js's accordion
-     already implements — it republishes that state through aria-expanded and
-     the body. */}}
+{{/* The matrix cannot restack into cards (a head means nothing without its
+     project, budget and actual side by side), so on a phone it becomes a
+     project accordion. It uses the same .Grid.Groups data as the matrix, so
+     the two cannot disagree. .is-open in the markup is the open state that
+     fervid-app.js's accordion reads and mirrors into aria-expanded. */}}
 <div class="acc m-only">
   {{range .Grid.Groups}}
   <div class="acc-item is-open">
@@ -182,10 +176,10 @@
   {{end}}
 </div>
 
-{{/* Recent Payments is payment:view's, not grid:view's (F-A-02/F-G-032). The
-     handler hands a caller without that verb no rows, and the panel is not
-     rendered for them either: an empty panel told them "No payments in this
-     month." beside actuals the same page showed as paid (grid-1). */}}
+{{/* Recent Payments needs payment:view, not grid:view. The handler gives a
+     caller without that verb no rows, and the panel is not rendered for them:
+     an empty panel would say "No payments in this month." beside actuals the
+     same page shows as paid. */}}
 {{if or (.Perms.Can "payment" "view") (.Perms.Can "month" "lock")}}
   <section class="split">
     {{if .Perms.Can "payment" "view"}}

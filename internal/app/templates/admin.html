@@ -1,13 +1,12 @@
-{{/* The Configuration screen — mockups/screens/admin-configuration.html.
-
-     One form of fieldsets closed by one action bar. The screen is a rendering
-     of configSections, so a later phase adds a section by appending to that
-     table and touches nothing here.
-
-     Two controls are deliberately not settings. "Block self-approval" renders
-     checked and disabled because G8 is structural, not configurable, and
-     "Second approval above a threshold" renders disabled as a stated non-goal.
-     Neither carries a name, so neither can be written. */}}
+{{/* Administration screens. "configuration" holds the request-module settings
+     and the recoverable categories; "audit" is the filterable audit log;
+     "backups" lists backups with safe restore steps; "admin_notifications"
+     holds the SMTP settings and the per-event notification rules. */}}
+{{/* The settings form is drawn from configSections, so a new setting is
+     added there, not here. The Approvals section also shows two controls that
+     are not settings: "Block self-approval" is always on, and "Second approval
+     above a threshold" is reserved for later. Both are disabled and have no
+     name, so neither is ever submitted. */}}
 {{define "configuration"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -64,24 +63,14 @@
   </div>
 </form>
 
-{{/* Recoverable categories (Phase 4, D6). This fieldset sits OUTSIDE the
-     settings form on purpose: its rows each need their own POST, and a <form>
-     nested inside another <form> is invalid HTML that the parser silently
-     drops — the row toggles would post nothing at all. A bare fieldset outside
-     a form is valid, and it reads as one more section of the same screen.
+{{/* Recoverable categories. This fieldset sits outside the settings form
+     because each row posts its own form, and HTML drops a form nested inside
+     another. "Requires" shows one plain rule rather than the two underlying
+     flags.
 
-     "Requires" is one derived descriptive column, never the two raw flags: an
-     admin should be told what a category asks for, not asked to reason about
-     two booleans.
-
-     Each row is editable in place (recoverables-5). The name and the rule used
-     to travel as hidden inputs, so the only way to change an in-use category's
-     rule was delete-and-recreate — which the store refuses while any request
-     names it. The name input and the requires select sit in their own cells
-     and belong to the row's form through the form= attribute, the same shape
-     the heads screen uses; Save is the row's submit, and the Active checkbox
-     still saves on change, carrying the row's current name and rule with it.
-     The code is not editable: it is the stable identity every request stores. */}}
+     Rows edit in place: the name input and the requires select join the row's
+     form through the form= attribute, Save submits it, and the Active checkbox
+     saves on change, sending the row's current name and rule with it. */}}
 <fieldset>
   <legend>Recoverable categories</legend>
   <div class="table-wrap" style="margin-bottom:10px"><table class="t-cards">
@@ -113,18 +102,11 @@
         </form>
       {{else}}{{if .Active}}<span class="pill good no-dot">On</span>{{else}}<span class="pill neutral no-dot">Off</span>{{end}}{{end}}</td>
       <td class="c" data-label="In use">{{.InUse}}</td>
-      {{/* F-E-06's control. Its own form, a sibling of the Active toggle's and
-           never nested inside it: the parser drops a nested form silently, which
-           is the same reason this whole fieldset sits outside the settings form.
-
-           No confirm() dialog — the guard is the server's. store.DeleteRecoverableCategory
-           counts the requests pointing at the category inside the DELETE's own
-           transaction and refuses with that count, so the "In use" figure beside
-           this button is a forecast of the answer, never the gate. The button is
-           offered on every row for that reason: a reader who presses it on a
-           category in use is told how many and that deactivating is the way to
-           retire it, which is worth more than a control that quietly is not
-           there. */}}
+      {{/* Delete is its own form, a sibling of the row form and never nested in it.
+           There is no confirm() dialog because the server is the guard: it counts
+           the requests that use the category and refuses the delete with that
+           count, so the "In use" figure only forecasts the answer. A refused
+           delete tells the reader to deactivate the category instead. */}}
       {{if or ($.Perms.Can "recoverable_category" "edit") ($.Perms.Can "recoverable_category" "delete")}}
       <td class="actions-cell" data-label="Actions">
         {{if $.Perms.Can "recoverable_category" "edit"}}<button form="rc-{{.ID}}" class="btn small outline" type="submit">Save<span class="sr-only"> {{.Name}}</span></button>{{end}}
@@ -160,12 +142,9 @@
     </div>
   </form>
   {{end}}
-  {{/* The payee, not the counterparty (F-E-07). forcesRequesterPayee fills
-       vendor_payee — what /requests/{id} shows as "Paid to «name»" — for every
-       employee-advance request whatever its treatment. The Counterparty field, the
-       one RequiresCounterparty governs and the one this hint stands beside, is left
-       exactly as the form left it and reads "Not recorded" for the seeded Employee
-       advance category, which requires neither project nor counterparty. */}}
+  {{/* The hint separates the payee from the counterparty: an employee advance
+       fills the payee in from the requester automatically, but leaves the
+       Counterparty field as the form left it. */}}
   <p class="hint" style="margin:10px 0 0">All recoverables always capture the reason, an expected return date and the refund terms. These rules only add what the category needs on top. An employee advance fills the <b>payee</b> in from the requester automatically — that is a request-type rule, not a category setting, and it does not fill in the counterparty.</p>
 </fieldset>
 {{template "bottom" .}}
@@ -174,13 +153,9 @@
 {{define "audit"}}
 {{template "top" .}}
 <section class="page-banner"><div><div class="eyebrow">Evidence</div><h1>Audit Log</h1><p class="sub muted">Review who changed financial records, when, and why.</p></div></section>
-{{/* Both option lists come from auditEntities/auditActions, which are built from
-     the strings the store actually writes. The hand-maintained literals they
-     replace had drifted so far that payment_request — the entity every request,
-     approval, reservation and settlement is filed under — could not be asked for
-     at all, and the entire Phase-2/Phase-3 action vocabulary was missing, so the
-     screen whose stated purpose is reviewing who changed financial records could
-     not be pointed at the workflow (F-G-004/F-C-06). */}}
+{{/* Both option lists come from auditEntities and auditActions, which are
+     built from the entity and action strings the store actually writes, so
+     every kind of recorded change can be filtered for. */}}
 <form class="toolbar" method="get">
   <label>Entity<select name="entity">
     <option value="">All</option>
@@ -223,8 +198,8 @@
     </tbody>
   </table>
 </div>
-{{/* The log is paged, never silently cut (audit-1). The links repeat every
-     filter, so a page boundary never widens the set. */}}
+{{/* The log is paged, never silently cut. The Newer and Older links repeat
+     every filter, so a page boundary never widens the set. */}}
 {{if or .AuditPage.Truncated .AuditPage.Offset}}
 <div class="cluster" style="margin-top:14px">
   <span class="muted small">Showing {{if .Audit}}{{add .AuditPage.Offset 1}}–{{add .AuditPage.Offset (len .Audit)}}{{else}}0{{end}} of {{.AuditPage.Total}}</span>
@@ -290,15 +265,12 @@
 </section>
 {{template "bottom" .}}{{end}}
 
-{{/* Admin notification rules — mockups/screens/admin-notifications.html.
+{{/* In-app delivery is a static "On" pill, not a control, because it always
+     fires. Everything else about a rule (email on or off, who it goes to, fixed
+     To/CC, subject and message) is edited in that event's sheet.
 
-     In-app delivery is a static "On" pill, not a control: it always fires, and
-     a switch that did nothing would be a lie. Email is the only inline toggle.
-     Everything else — the include flags, fixed To/CC, subject and message —
-     lives in a per-row .overlay > .sheet editor.
-
-     There is no password field anywhere on this screen by design; the SMTP
-     password comes from the environment and is never stored. */}}
+     There is no SMTP password field by design: the password comes from the
+     environment and is never stored. */}}
 {{define "admin_notifications"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -309,8 +281,8 @@
   </div>
 </section>
 
-{{/* No callout here: .Error and .Notice are the layout's one flash (ux-2). A
-     refused rule reports inside its own reopened sheet instead. */}}
+{{/* No flash callout here: .Error and .Notice show in the layout's single
+     flash. A refused rule reports inside its own reopened sheet instead. */}}
 <fieldset>
   <legend>Email delivery</legend>
   <form method="post" action="/admin/notifications/smtp">
@@ -351,20 +323,13 @@
   </tr>{{else}}<tr><td colspan="6" class="empty" data-label="">No notification events are configured.</td></tr>{{end}}</tbody>
 </table></div>
 
-{{/* The hidden attribute, like every other .overlay in the product (approve-sheet,
-     return-sheet, reject-sheet, hold-sheet). .overlay is
-     position:fixed;inset:0;z-index:50;display:grid and there is no
-     .overlay[hidden] rule — author-stylesheet origin beats the user agent's
-     [hidden]{display:none} whatever the specificity — so without the attribute all
-     twenty-one sheets laid out full-viewport at once, later siblings painted over
-     earlier ones at equal z-index, and only the last one was reachable by a
-     pointer. Every other event's Edit button and the SMTP form's own Save button
-     sat underneath the stack (F-F-01). openDialog/closeDialog already toggle the
-     attribute, so restoring it is the whole fix and needs no CSS. */}}
+{{/* Each event sheet starts with the hidden attribute, like every .overlay;
+     without it every sheet would be open at once, stacked over the page.
+     openDialog and closeDialog in fervid-app.js toggle the attribute. */}}
 {{if .Perms.Can "notification" "edit"}}
 {{range .NotifSettings}}
-{{/* $d is what the sheet's fields show: the stored rule, or — for the one rule
-     just refused — what the admin typed, so a typo costs them nothing (ux-2).
+{{/* $d is what the sheet's fields show: the stored rule, or, for the one
+     rule just refused, what the admin typed, so nothing they entered is lost.
      data-reopen asks fervid-app.js to open that one sheet on load. */}}
 {{$d := .}}{{$refused := and $.NotifDraft (eq $.NotifDraft.Event .Event)}}{{if $refused}}{{$d = $.NotifDraft}}{{end}}
 <div class="overlay" id="ev-{{.Event}}" hidden{{if $refused}} data-reopen{{end}}>

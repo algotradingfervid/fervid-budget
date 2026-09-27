@@ -1,5 +1,8 @@
+{{/* Payment request lists. "request_card" draws one request; "request_filter_sheet"
+     is the phone filter sheet; "requests" is the requests list (own or all);
+     "approvals" is the manager's queue of requests waiting on them. */}}
 {{/* One request as a card. Shared by the list, the approvals queue and the
-     duplicate warning, so the three describe a request the same way.
+     duplicate warning, so all three describe a request the same way.
 
      It is called through the "card" function rather than with a bare dot: a
      {{template}} inside a {{range}} rebinds dot to the request, and the viewer
@@ -58,12 +61,10 @@
 </div>
 {{end}}
 
-{{/* The requests list — mockups/screens/requests-list.html.
-
-     Sorted by who has been kept waiting longest, urgent first, and every card
-     ends with the plain sentence naming whoever owes the next action. The
+{{/* Sorted by who has been kept waiting longest, urgent first, and every card
+     ends with a plain sentence naming whoever owes the next action. The
      .segmented tabs are links, not client-side tabs: each is its own URL, so a
-     view can be bookmarked and sent to somebody.
+     view can be bookmarked and shared.
 
      The desktop toolbar and the mobile .m-filters are both plain GET forms
      over the same parameters; the stylesheet hides whichever does not belong
@@ -74,9 +75,8 @@
   <div>
     <div class="eyebrow">Requests</div>
     <h1>{{if eq .Scope "own"}}My requests{{else}}All requests{{end}}</h1>
-    {{/* The sub-line names both numbers. The row query was capped at 200 while the
-         tab count beside it had none, so the All tab promised 214 and the list drew
-         200 with nothing anywhere admitting it (F-B-16). */}}
+    {{/* When the list is paged, the sub-line says "N of Total shown" so the
+         count always matches what the tabs promise. */}}
     <p class="sub">{{if .Page.Truncated}}{{len .Requests}} of {{.Page.Total}} shown{{else}}{{len .Requests}} shown{{end}} · sorted by who is holding them up</p>
   </div>
   <div class="pb-actions">
@@ -120,10 +120,9 @@
   {{range .Requests}}{{template "request_card" (card . $.User.ID)}}{{else}}<p class="empty">No requests match. <a href="{{.RequestClearHref}}">Clear filters</a> or choose another tab.</p>{{end}}
 </div>
 
-{{/* Paging, so nothing is merely unreachable. The cap is real — a screen does not
-     render ten thousand cards — but it now says so and offers the rest, and the
-     export carries every row (F-B-16). Both links repeat every filter, so a page
-     boundary never silently widens the set. */}}
+{{/* Paging: one screen shows a limited number of cards, says so, and links
+     to the rest; the CSV export carries every row. Both links repeat every
+     filter, so a page boundary never silently widens the set. */}}
 {{if or .Page.Truncated .Page.Offset}}
 <div class="cluster" style="margin-top:14px">
   <span class="muted small">Showing {{if .Requests}}{{add .Page.Offset 1}}–{{add .Page.Offset (len .Requests)}}{{else}}0{{end}} of {{.Page.Total}}</span>
@@ -137,15 +136,13 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The manager queue — mockups/screens/approvals-list.html.
-
-     Its own route, because it answers a different question from the requests
+{{/* Its own route, because it answers a different question from the requests
      list: not "where are my requests" but "what is mine to decide". The tabs
      are statuses, and Cancellations is one of them because a frozen payment is
-     a decision only this person can make (G1).
+     a decision only this person can make.
 
-     There is no checkbox column and no "approve selected" button. Every
-     approval is a decision made after opening the request (A6). */}}
+     There is no checkbox column and no "approve selected" button: every
+     approval is a decision made after opening the request. */}}
 {{define "approvals"}}
 {{template "top" .}}
 <section class="page-banner">

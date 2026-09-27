@@ -1,3 +1,6 @@
+{{/* Budget setup screens. "months" creates and lists monthly plans;
+     "budgets" is the budget overview grid; "projects" and "heads" maintain the
+     project buckets and the spend heads filed under them. */}}
 {{define "months"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -187,13 +190,12 @@
 {{end}}
 {{/* Each row's project select renders only the project the head is filed
      under, looked up in .AllProjects (retired projects included) so it keeps
-     its "(retired)" marker. If the option were missing, the browser would
-     select the first one and saving the row would move the head to a project
-     nobody chose. fervid-app.js swaps in the full list from the shared
-     <template id="project-options"> below when someone opens the control;
-     rendering every project in every row would add hundreds of KB. The "Add
-     head" form above offers only active projects, because a new head may not
-     be filed under a retired project. */}}
+     its "(retired)" marker; if that option were missing, the browser would
+     select the first one and saving would move the head. fervid-app.js swaps
+     in the full list from <template id="project-options"> below when the
+     control is opened, which keeps the page small. The "Add head" form above
+     offers only active projects, because a new head may not be filed under a
+     retired project. */}}
 <div class="table-wrap">
   <table class="t-cards heads-editor">
     <thead><tr><th>Project</th><th>Head</th><th>Due</th><th>Status</th><th>Order</th><th>Update</th></tr></thead>

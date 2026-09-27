@@ -1,18 +1,17 @@
-{{/* The user's notification centre — mockups/screens/notifications.html.
-
-     Every row here is already addressed to the signed-in user, so the screen
-     carries no permission gate. Each .notif is a real POST that marks the row
-     read and then redirects to where it points, so the centre works with no
-     JavaScript and a click can never lose the read state. */}}
+{{/* "notifications" is the signed-in user's notification centre: scope tabs
+     (all, unread, mentions, reminders), the paged list, and Mark all read. */}}
+{{/* Every row here is already addressed to the signed-in user, so the screen
+     carries no permission gate. Each .notif is a link to
+     /notifications/{id}/open, which marks the row read on the server and then
+     redirects to where it points, so this works with no JavaScript. */}}
 {{define "notifications"}}
 {{template "top" .}}
 <section class="page-banner">
   <div>
     <div class="eyebrow">Your activity</div>
     <h1>Notifications</h1>
-    {{/* The sub-line names both numbers when they differ. The row query stopped
-         at 100 while the "All" count beside it had no cap, so a user past the cap
-         read a number the list below could not account for (F-G-037). */}}
+    {{/* When the list is paged, the sub-line names both numbers ("N of Total
+         shown") so the count matches what the list below can show. */}}
     <p class="sub">{{if or .NotifPage.Truncated .NotifOffset}}{{len .Notifs}} of {{.NotifPage.Total}} shown · {{end}}{{if .NotifCounts.Unread}}{{.NotifCounts.Unread}} unread of {{.NotifCounts.All}}{{else}}Everything here is read{{end}}</p>
   </div>
   <div class="pb-actions">{{if .NotifCounts.Unread}}
@@ -42,10 +41,9 @@
   {{end}}
 </div>
 
-{{/* Paging, the same shape /requests uses: the cap is real, and it now says so
-     and offers the rest rather than dropping rows in silence (F-G-037). Both
-     links carry the scope, so crossing a page boundary never widens the filter
-     the reader is standing in. */}}
+{{/* Paging, the same shape /requests uses: the list is capped, says so, and
+     links to the rest. Both links carry the scope, so crossing a page boundary
+     never widens the filter the reader is in. */}}
 {{if or .NotifPage.Truncated .NotifOffset}}
 <div class="cluster" style="margin-top:14px">
   <span class="muted small">Showing {{if .Notifs}}{{add .NotifOffset 1}}–{{add .NotifOffset (len .Notifs)}}{{else}}0{{end}} of {{.NotifPage.Total}}</span>

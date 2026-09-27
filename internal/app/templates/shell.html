@@ -1,3 +1,9 @@
+{{/* The page shell shared by every signed-in screen. Every full page starts
+     with {{template "top" .}} (head, sidebar, flash messages) and ends with
+     {{template "bottom" .}} (phone tab bar and More sheet); handlers render a
+     page by its define name. Also here: the shell pieces (shell_sidebar,
+     shell_topbar, shell_tabbar, shell_more), "error_page", and the shared
+     partials head_common, nav_item and sheet_foot. */}}
 {{define "top"}}
 <!doctype html>
 <html lang="en">

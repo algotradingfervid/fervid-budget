@@ -1,10 +1,13 @@
-{{/* The merged history-and-conversation stream — one .thread, not a history
-     list and a conversation list side by side. Everything that happened to a
-     request happened in one order, and that order is the story: an edit sits
+{{/* Request detail and decisions: the request page (request_detail), the
+     returned-request correction screen (request_returned), the cancellation
+     screens for requester and approver (request_cancel, request_cancellation),
+     and the shared partials request_thread, request_sheets and request_head.
+     Each {{define}} is rendered by name from the Go handlers or included with {{template}}. */}}
+{{/* History and conversation as one .thread in time order, so an edit sits
      between the comment that asked for it and the approval that followed.
 
-     The comment box is part of the thread rather than a separate screen,
-     because asking a question is the alternative to returning a request. */}}
+     The comment box sits in the thread, because asking a question is the
+     alternative to returning a request. */}}
 {{define "request_thread"}}
 <div class="section-head">
   <h2>History and conversation</h2>
@@ -38,12 +41,12 @@
 {{end}}
 {{end}}
 
-{{/* The approver's three decisions, each in its own .overlay > .sheet. None
-     of them is a bare inline button: returning and rejecting demand words, and
-     approving offers an amount, so each needs a moment and a form of its own.
+{{/* The approver's three decisions, each in its own .overlay > .sheet: returning
+     and rejecting need a reason and approving offers an amount, so each needs a
+     form of its own.
 
-     The amount uses amountValue, not money: the .money-field draws its own ₹
-     in the .cur prefix and money.FormatPaise already carries one. */}}
+     The amount uses amountValue, not money: the .money-field draws its own
+     rupee sign in the .cur prefix, and money already includes one. */}}
 {{define "request_sheets"}}
 <div class="overlay" id="approve-sheet" {{if .ApprovalError}}data-open-on-load{{else}}hidden{{end}}>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/approve">
@@ -116,9 +119,9 @@
 </div>
 {{end}}
 
-{{/* The request head — number, amount, title, status and the plain sentence
-     naming whoever owes the next action. Shared by every screen that is about
-     one request, so the four of them cannot describe it four ways. */}}
+{{/* The request head: number, amount, title, status and a plain sentence naming
+     whoever owes the next action. Shared by every screen about one request so
+     they all describe it the same way. */}}
 {{define "request_head"}}
 <div class="req-head">
   <div class="rh-top">
@@ -129,33 +132,26 @@
   <p class="rh-meta">{{typeLabel .Request2.Type}}{{if .Request2.Project}} · {{.Request2.Project}}{{if .Request2.Head}} / {{.Request2.Head}}{{end}}{{end}} · raised by {{.Request2.RequesterName}} on {{date .Request2.CreatedAt}}</p>
   <div class="rh-status">
     {{if .Request2.Urgent}}<span class="pill urgent">Urgent</span>{{end}}
-    {{/* L7: a hold leaves the status 'approved' so the queue's availability
-         test drops it out of the takeable set without a status of its own.
-         The pill has to say what is true anyway — a screen reading "Approved —
-         awaiting payment" over a banner saying payment is blocked is a lie
-         either the reader or the accountant acts on. */}}
+    {{/* A hold leaves the status "approved" (the queue simply skips held requests),
+         so the pill checks for an active hold first and says "On hold" rather
+         than "Approved, awaiting payment". */}}
     {{if activeHold .Request2}}<span class="pill hold">On hold</span>{{else}}{{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>{{end}}
     {{$w := waitingOn .Request2 .User.ID}}<span class="waiting {{$w.Class}}">{{$w.Text}}</span>
   </div>
 </div>
 {{end}}
 
-{{/* One request, every audience — mockups/screens/request-detail-employee.html
-     and request-detail-manager.html are the same page.
-
-     Only the .action-bar changes between them, and it changes on permission
-     plus the reader's seat on this row: whether they raised it, whether they
-     are the approver it was sent to. Nothing here compares a role name, and
-     nothing depends on which link the reader followed to get here. */}}
+{{/* The request page for every audience: requester, approver and Accounts see
+     the same page. Only the .action-bar changes, based on permissions and the
+     reader's relation to this request (raised it, or is its approver). Nothing
+     compares role names or depends on which link brought the reader here. */}}
 {{define "request_detail"}}
 {{template "top" .}}
 {{template "request_head" .}}
 
-{{/* Not while the request is on hold. mockups/screens/request-on-hold.html
-     carries exactly one banner in that state, and stacking this one above it
-     tells the requester that "payment freezes while your approver decides" when
-     the approver is deciding nothing — Accounts is holding it, and the banner
-     below says so. */}}
+{{/* Not shown while the request is on hold: the hold banner below is the only
+     banner in that state, and this one would wrongly say the approver is
+     deciding when Accounts is holding it. */}}
 {{if and (eq .Request2.RequesterID .User.ID) (eq .Request2.Status "approved") (not (activeHold .Request2))}}
 <div class="banner locked">
   <span class="b-ico" aria-hidden="true">🔒</span>
@@ -166,10 +162,8 @@
   </div>
 </div>
 {{end}}
-{{/* L7 — mockups/screens/request-on-hold.html. The hold is a state of this
-     screen rather than a screen of its own: the question Accounts asked belongs
-     where the requester already reads everything about their request, and they
-     answer it in the comment box the thread already carries. */}}
+{{/* The hold is a state of this page, not a separate screen: the requester reads
+     Accounts' question here and answers in the thread's comment box. */}}
 {{if activeHold .Request2}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">⏸</span>
@@ -177,10 +171,9 @@
     <b>This request is on hold</b>
     <p>“{{.Request2.HoldReason}}”</p>
     <p>Payment is blocked until Accounts lifts the hold.</p>
-    {{/* Q6: the answer may be a document as well as a comment. The edit path is
-         closed once a request is approved, so this is the requester's only way to
-         supply what Accounts asked for (hold-1). The route refuses anybody but the
-         requester, which is why only they see it. */}}
+    {{/* The requester may answer with a document too. Editing is closed once a
+         request is approved, so this is their only way to supply what Accounts
+         asked for. The route accepts only the requester, so only they see it. */}}
     {{if and (eq .Request2.RequesterID .User.ID) (.Perms.Can "attachment" "create")}}
     <form class="cluster" method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/attachments" style="margin-top:8px">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -191,8 +184,8 @@
   </div>
 </div>
 {{end}}
-{{/* settlement-8: the concern is shown where Accounts reads the request, and
-     the holder is told in as many words that the answer is theirs to give. */}}
+{{/* An open concern about a partial payment is shown where Accounts reads the
+     request, and tells the holder the answer is theirs to give. */}}
 {{if .Request2.ConcernOpen}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">?</span>
@@ -261,18 +254,16 @@
   </dl>
 </div>
 
-{{/* Q4: the outcome, on the request, for the person who raised it. Approved
-     beside paid, and the difference named — a settled shortfall is agreed, an
-     unsettled one is still owed, and the two must never read the same. */}}
+{{/* The payment outcome for the person who raised it: approved beside paid, with
+     the difference named. A settled shortfall is agreed and an unsettled one is
+     still owed, and the two must never read the same. */}}
 {{if .Payment.ID}}
 <div class="section-head"><h2>Payment outcome</h2></div>
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
   <div class="cmp-row"><span class="l">Total paid to date</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
-  {{/* The status decides the row, not the settlement alone: an accepted
-       shortfall keeps settlement="partial", and "still owed" under
-       "Completed — partial accepted · Nothing pending" contradicted the
-       manual's own meaning of the row (partial-1). */}}
+  {{/* The status decides the row, not the settlement alone: an accepted shortfall
+       keeps settlement="partial" but is written off, not still owed. */}}
   {{if eq .Request2.Status "completed_partial"}}
   <div class="cmp-row">
     <span class="l">Balance written off · shortfall accepted by {{.Request2.ManagerName}}</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span>
@@ -307,9 +298,8 @@
 {{end}}
 <div class="section-head"><h2>Attachments</h2><span class="small muted">{{len .RequestAtts}} {{plural (len .RequestAtts) "file" "files"}}</span></div>
 <div class="stack-8">
-  {{/* The request's own route, not /attachments/{id}: that one reads
-       payment_attachments and served a stranger's payment proof under this
-       document's name (F-A-05/F-B-09). */}}
+  {{/* Downloads go through the request's own attachment route, not /attachments/{id},
+       which serves payment attachments. */}}
   {{range .RequestAtts}}
   <div class="file-row">
     <span class="f-ico" aria-hidden="true">{{fileKind .OriginalName}}</span>
@@ -324,13 +314,11 @@
 {{$mine := eq .Request2.RequesterID .User.ID}}{{$mineToDecide := eq .Request2.ManagerID .User.ID}}
 {{$mayHold := .Perms.Can "payment" "hold"}}{{$held := activeHold .Request2}}
 <div class="action-bar">
-  {{/* The hold's own note. The mockup gives the hold state a bar of its own;
-       there is only ever one bar on this screen, so the note joins this one. */}}
+  {{/* The hold note joins this action bar; the screen only ever has one bar. */}}
   {{if $held}}{{if $mayHold}}<span class="ab-note d-only">Releasing returns it to Approved — awaiting payment.</span>{{else}}<span class="ab-note d-only">Only Accounts can take this off hold.</span>{{end}}{{end}}
   <span class="row-end"></span>
-  {{/* One action bar, not two: at phone width it is sticky to the bottom of the
-       viewport, so a second one would sit on top of this. The payment link
-       therefore joins the bar rather than bringing its own. */}}
+  {{/* One action bar only: at phone width it sticks to the bottom of the viewport,
+       so a second would sit on top of it. The payment link joins this bar. */}}
   {{if and .Payment.ID (.Perms.Can "payment" "view")}}
     <a class="btn outline" href="/payments/{{.Payment.ID}}">View the payment</a>
   {{end}}
@@ -357,15 +345,15 @@
   {{if and (eq .Request2.Status "cancellation_requested") $mineToDecide (.Perms.Can "approval" "cancel")}}
     <a class="btn primary" href="/requests/{{.Request2.ID}}/cancellation">Decide the cancellation</a>
   {{end}}
-  {{/* S11: the partial review is the manager's screen, and the Accounts queue
-       that also links to it is gated on payment:process — a verb a manager does
-       not hold. Without this the decider has no way in. */}}
+  {{/* The partial review is the approver's decision, and the Accounts queue that
+       also links to it needs payment:process, which an approver may not hold.
+       This button is the approver's way in. */}}
   {{if and (eq .Request2.Status "partial_review") $mineToDecide (.Perms.Can "approval" "accept_partial")}}
     <a class="btn primary" href="/requests/{{.Request2.ID}}/partial-review">Decide the partial payment</a>
   {{end}}
-  {{/* L7: only Accounts holds and only Accounts lifts. "Keep on hold" is the
-       screen itself — the accountant read the answer and decided it was not
-       enough — so it links here rather than posting anything. */}}
+  {{/* Only Accounts places and lifts holds. "Keep on hold" means the accountant
+       read the answer and decided it was not enough, so it just reloads this
+       page rather than posting anything. */}}
   {{if and $held $mayHold}}
     <a class="btn outline" href="/requests/{{.Request2.ID}}">Keep on hold</a>
     <form method="post" action="/requests/{{.Request2.ID}}/unhold"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Release hold</button></form>
@@ -373,22 +361,17 @@
   {{if and (not $held) (eq .Request2.Status "approved") $mayHold}}
     <button class="btn outline" type="button" data-open="hold-sheet">Put on hold</button>
   {{end}}
-  {{/* Phase-3 spec §6: "Record payment" on the request itself, when it is
-       approved · unclaimed · not on hold, posting to the one reservation route
-       the queue and the picker already use (S1/S2). The third entry point the
-       spec asked for, never built (settlement-4). */}}
+  {{/* "Record payment" on the request itself when it is approved, unclaimed and
+       not on hold. It posts to the same reservation route the payments queue
+       uses. */}}
   {{if and (not $held) (eq .Request2.Status "approved") (not .Request2.ProcessingBy) (.Perms.Can "reservation" "reserve")}}
     <form method="post" action="/requests/{{.Request2.ID}}/record-payment"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn primary" type="submit">Record payment</button></form>
   {{end}}
-  {{/* A7 — hand the approval to a different approver, with a reason and a history
-       entry. store.ReassignRequest carried every rule and had no door until Wave 3
-       built POST /requests/{id}/reassign-approver, and this is the control for it
-       (F-A-06/F-C-02). It is the recovery path for a request routed to somebody who
-       cannot decide it — a deactivated approver (F-G-025), or one who lost
-       approval:approve (F-A-08). CanReassignApprover is mayReassignApprover's
-       answer — the request's own approver, or a holder of user:edit rescuing it —
-       in a status the store will move; the route asks the same question, so a
-       manager who is not this request's approver is offered nothing (rbac-8). */}}
+  {{/* Hands the approval to a different approver, with a reason and a history
+       entry: the recovery path for a request routed to somebody who cannot
+       decide it, such as a deactivated approver or one who lost approval:approve.
+       CanReassignApprover is true for the request's own approver or a holder of
+       user:edit, in a status the store will move; the route checks the same. */}}
   {{if and .CanReassignApprover .Approvers}}
     <button class="btn outline" type="button" data-open="reassign-approver-sheet">Reassign approval</button>
   {{end}}
@@ -408,10 +391,9 @@
     <div class="sh-body stack-12">
       <div class="field">
         <label for="ra-manager">Send it to <span class="req" aria-hidden="true">*</span></label>
-        {{/* The list is ListApprovers, so every name in it holds approval:approve
-             and none of them is the requester — the same two rules the store
-             re-checks, which is what keeps the control from offering a target the
-             POST would refuse. */}}
+        {{/* The list comes from ListApprovers, so everyone in it holds approval:approve
+             and none is the requester: the same rules the store re-checks, so the
+             control never offers a target the POST would refuse. */}}
         <select id="ra-manager" name="manager_id" required>
           <option value="">Choose an approver</option>
           {{/* The reader's own name is disabled as well as the current approver's:
@@ -429,10 +411,8 @@
 </div>
 {{end}}
 
-{{/* Placing a hold has no mockup of its own — the approved design jumps
-     straight to the on-hold state — so the reason is captured in the same
-     .overlay > .sheet every other reason on this screen uses. The store
-     refuses an empty reason, which is what makes the asterisk true. */}}
+{{/* Placing a hold uses the same .overlay > .sheet as every other reason on this
+     page. The store refuses an empty reason, which is what the asterisk means. */}}
 {{if and (not $held) (eq .Request2.Status "approved") $mayHold}}
 <div class="overlay" id="hold-sheet" hidden>
   <form class="sheet" method="post" action="/requests/{{.Request2.ID}}/hold">
@@ -459,21 +439,16 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The correction screen — mockups/screens/request-returned.html.
+{{/* The returned-request screen. Returned is not rejected: the request keeps its
+     number and history, so this screen lives on the detail URL above the same
+     thread, and its primary action sends the request back to the approver.
 
-     "Returned is not rejected. A returned request keeps its number and its
-     history — you correct it and resubmit. A rejected request is final and
-     read-only; the employee raises a new one." So this lives on the same URL as
-     the detail, above the same thread, and its primary action sends the request
-     back rather than saving it.
+     Save and resubmit share one form and one action bar, so a phone never shows
+     two sticky bars.
 
-     Correcting and resubmitting are one press. Two buttons over two forms would
-     be two sticky action bars on a phone, and saving-then-forgetting is how a
-     returned request sits for a week with nobody waiting on it.
-
-     Every field the store validates is here, visible where the approver is
-     likely to have asked for a change and hidden where it is not: a field that
-     is missing from the body is a field the store reads as cleared. */}}
+     Every field the store validates is sent: the likely corrections are visible
+     and the rest travel as hidden inputs, because a field missing from the body
+     is one the store reads as cleared. */}}
 {{define "request_returned"}}
 {{template "top" .}}
 {{template "request_error_summary" .}}
@@ -490,10 +465,9 @@
 <p class="hint">Returned is not rejected. This request keeps its number and its history — correct it
   and send it again.</p>
 
-{{/* The same cautions the full edit form shows. A legacy deposit filed as an
-     employee advance is reclassified by the one-press resubmit below exactly as
-     it is by "Edit every field", so the reader is told here, before the press,
-     and not only on the screen they might never open (form-1, review). */}}
+{{/* The same cautions the full edit form shows. Resubmitting here reclassifies a
+     legacy deposit filed as an employee advance, just as the edit form does, so
+     the reader is warned here before pressing. */}}
 {{template "form_warnings" .}}
 
 <form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
@@ -517,9 +491,8 @@
   {{if or (eq .FormType "vendor_invoice") (eq .FormType "vendor_advance")}}
   <input type="hidden" name="vendor_id" value="{{deref .Request2.VendorID}}">
   {{end}}
-  {{/* A deposit's payee is a field the store reads as cleared when absent, and
-       refuses cleared; it travels with the rest of what this screen does not
-       show. "Edit every field" is where it is changed. */}}
+  {{/* A deposit's payee travels as a hidden input: the store reads a missing payee
+       as cleared and refuses it. "Edit every field" is where it is changed. */}}
   {{if eq .FormType "recoverable"}}
   <input type="hidden" name="vendor_payee" value="{{.Request2.VendorPayee}}">
   {{end}}
@@ -578,10 +551,9 @@
   <div class="action-bar">
     <span class="ab-note d-only">Saving keeps it with you; resubmitting sends it back to {{.Request2.ManagerName}}.</span>
     <span class="row-end"></span>
-    {{/* This screen replaces request_detail for a returned request, and with it
-         the Edit request control — so the full form was reachable only by typing
-         its address, even though the route permits it. The inline fields above
-         cover the common correction; this is the way to the rest of them. */}}
+    {{/* This screen replaces request_detail for a returned request, including its
+         Edit request button. The inline fields cover the common correction; this
+         link reaches the full edit form for everything else. */}}
     {{if .Perms.Can "request" "edit"}}<a class="btn outline" href="/requests/{{.Request2.ID}}/edit">Edit every field</a>{{end}}
     {{/* On a legacy row both presses file it as an Employee advance (the store
          accepts nothing else for this type), so the buttons say so. */}}
@@ -600,12 +572,10 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The employee's side of a cancellation — mockups/screens/request-cancel.html.
-
-     An approved request cannot be withdrawn on your own, so this screen asks
-     rather than acts, and it says what asking costs before you ask: payment
-     freezes the moment the request is sent, whether or not the approver ever
-     gets round to deciding. */}}
+{{/* The requester's side of a cancellation. An approved request cannot be
+     withdrawn directly, so this screen asks the approver, and says up front that
+     payment freezes as soon as the request is sent, whether or not the approver
+     decides. */}}
 {{define "request_cancel"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -659,13 +629,10 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The approver's side — mockups/screens/manager-cancellation-decision.html.
-
-     One screen for two questions, because they are the same question asked by
-     two people: should this still be paid. When a cancellation is pending the
-     answer is accept or decline; when none is, the approver may still cancel
-     outright with a reason (G2). Either way the reason is written down, because
-     the requester and Accounts both read it. */}}
+{{/* The approver's side of a cancellation: one screen for one question, should
+     this still be paid. With a cancellation pending the approver accepts or
+     declines; with none, they may still cancel outright with a reason. The
+     reason is always recorded, because the requester and Accounts both read it. */}}
 {{define "request_cancellation"}}
 {{template "top" .}}
 {{template "request_head" .}}

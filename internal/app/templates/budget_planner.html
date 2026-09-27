@@ -1,3 +1,7 @@
+{{/* "budget-planner" is the guided three-step wizard for creating a monthly
+     budget: choose the month, set amounts, then review and create. The steps
+     are driven by budget-planner.js from the JSON embedded at the foot of the
+     page, so the page needs JavaScript. */}}
 {{define "budget-planner"}}{{template "top" .}}
 <link rel="stylesheet" href="/static/budget-planner.css">
 <section class="budget-planner" id="budget-planner" data-server-error="{{if .Error}}true{{else}}false{{end}}">

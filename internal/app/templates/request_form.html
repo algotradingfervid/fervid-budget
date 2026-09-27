@@ -1,13 +1,15 @@
-{{/* Payment requests — mockups/screens/request-new-type.html.
+{{/* Request forms: the type picker (request_new_type), the new-request form
+     (request_form) and its htmx-swapped middle (request_form_fields), the edit
+     screen (request_edit), the confirmation (request_submitted), and shared
+     partials for the payee, vendor, warnings, error summary and duplicate check.
+     Each {{define}} is rendered by name from the Go handlers or included with {{template}}. */}}
+{{/* Step 1 of 2. Picking a type is navigation, not a form control: each card
+     links to the same route with ?type=, so the form that follows is built for
+     exactly one type. There is no <select name="type"> anywhere.
 
-     Step 1 of 2. Picking a type is a NAVIGATION, not a form control (A16):
-     each card is a link to the same route carrying ?type=, so the form that
-     follows can be built for one type and never has to un-build itself. There
-     is deliberately no <select name="type"> anywhere in the application.
-
-     The banner keeps its heading on every device rather than carrying .d-only
-     as the mockup does: the mobile top bar renders the screen title as a <b>,
-     not a heading, so hiding this one would leave a phone with no h1 at all. */}}
+     The banner heading shows on every device: the mobile top bar renders the
+     screen title as a <b>, not a heading, so hiding this h1 would leave phones
+     without one. */}}
 {{define "request_new_type"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -43,21 +45,17 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The treatment-dependent middle of the request form — the htmx fragment
-     GET /requests/new/fields returns, and the same markup the full page
-     renders inline on first paint.
+{{/* The treatment-dependent middle of the request form: the fragment that
+     GET /requests/new/fields returns, also rendered inline on first paint.
 
-     Budget and recoverable are rendered as ALTERNATIVES, not as two fieldsets
-     with one hidden: a hidden control is still submitted, so leaving the
-     budget project/head in the document during a recoverable request would
-     post two project_id values and let the stale one win. data-when is the
-     instant local feedback while the swap is in flight; the server is what
-     decides which fieldset exists.
+     Budget and recoverable fieldsets are alternatives, never both in the page:
+     a hidden control is still submitted, so a hidden budget project would post
+     a second project_id. data-when gives instant feedback while the htmx swap
+     is in flight; the server decides which fieldset exists.
 
-     Nothing in here carries the required attribute. A required control that data-when has
-     hidden makes the whole form unsubmittable in Chrome ("not focusable"), and
-     validateRequestInput enforces every one of these rules anyway — the
-     asterisk is the promise to the reader, the store is the enforcement. */}}
+     Nothing here carries the required attribute: a required control hidden by
+     data-when makes the form unsubmittable in Chrome ("not focusable").
+     validateRequestInput enforces every rule; the asterisk informs the reader. */}}
 {{define "request_form_fields"}}
 {{if eq .Request2.Treatment "recoverable"}}
 <fieldset data-when="treatment:recoverable">
@@ -65,12 +63,9 @@
   <div class="form-grid">
     <div class="field span-6 m-half">
       {{if eq .Request2.Type "employee_advance"}}
-      {{/* The category is the type's, not a choice (form-1 / recoverables-1). An
-           employee advance pays the person raising it, so an EMD, PBG or ICD
-           filed under it was a deposit recorded as owed to the employee; those
-           are the "Deposit or guarantee" type now, and this form states its
-           category the way the vendor invoice states its treatment.
-           validateRequestInput refuses any other code for this type. */}}
+      {{/* For an employee advance the category is fixed, not a choice: deposits and
+           guarantees are their own request type. validateRequestInput refuses any
+           other category code for this type. */}}
       <label for="rcategory-fixed">Category</label>
       {{if .RecCategory.Code}}
       <input id="rcategory-fixed" value="{{.RecCategory.Name}}" readonly>
@@ -81,16 +76,10 @@
       {{end}}
       {{else}}
       <label for="rcategory">Category <span class="req" aria-hidden="true">*</span></label>
-      {{/* The options are the active category rows, not six literals. V4's promise
-           is that an admin can add a category and have its rules enforced without
-           a code change; the enforcement shipped and the affordance did not, so a
-           new category was unselectable and a deactivated one was still offered
-           and only refused after the whole form had been filled in
-           (F-E-02/F-B-17). The empty option exists for the same reason: an
-           unrecognised code is no longer silently rewritten to "emd", so
-           "nothing chosen" is a state the control has to be able to show.
-           categoriesForType leaves the Employee advance category out: an advance
-           to an employee is the employee advance type, which pays them. */}}
+      {{/* The options are the active category rows, so a category an admin adds is
+           offered without a code change and a deactivated one is not. The empty
+           option lets the control show "nothing chosen". categoriesForType leaves
+           out the Employee advance category, which belongs to its own type. */}}
       <select id="rcategory" name="recoverable_category" aria-required="true"
               hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change">
         {{if not .RecCategory.Code}}<option value="" selected>Choose a category</option>{{end}}
@@ -103,17 +92,13 @@
       <label for="expected-return">Expected return date <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "expected-return"}}<span class="field-error-message" id="error-expected-return">{{.}}</span>{{end}}
       <input id="expected-return" type="date" name="expected_return_date" aria-required="true" value="{{.Request2.ExpectedReturnDate}}" {{if index .RequestFieldErrors "expected-return"}}aria-invalid="true" aria-describedby="error-expected-return"{{end}}>
     </div>
-    {{/* Which extra fields a category needs is the category's own data, so an
-         admin-added one behaves like a seeded one. data-when carries the current
-         code rather than a hardcoded pair: the field stays while the select still
-         reads what the server rendered and disappears the instant it changes,
-         until the htmx swap arrives with the right fieldset. */}}
-    {{/* Every category may link a project (design §4: a recoverable "may still
-         link to a real project"); only EMD/PBG must. The field used to exist
-         solely inside the RequiresProject branch, so an ICD or a security deposit
-         could never be linked and read "Not project linked" in the register with
-         no way to say otherwise (recoverables-7). Required and its hint follow
-         the category's own flag. Absent a category there is nothing to say yet. */}}
+    {{/* Which extra fields a category needs comes from the category's own data, so
+         an admin-added category behaves like a seeded one. data-when carries the
+         current code: the field hides the instant the select changes, until the
+         htmx swap brings the right fieldset. */}}
+    {{/* Any recoverable may link a project; only categories flagged RequiresProject
+         must. The required marker and the hint follow that flag. With no category
+         chosen yet, nothing is shown. */}}
     {{if .RecCategory.Code}}
     <div class="field span-6 m-half" data-when="recoverable_category:{{.RecCategory.Code}}">
       <label for="rproject">Related project {{if .RecCategory.RequiresProject}}<span class="req" aria-hidden="true">*</span>{{else}}<span class="opt" aria-hidden="true">optional</span>{{end}}</label>
@@ -154,10 +139,10 @@
       <select id="project" name="project_id" aria-required="true"
               hx-get="/requests/new/fields" hx-include="closest form" hx-target="#form-fields" hx-trigger="change" {{if index .RequestFieldErrors "project"}}aria-invalid="true" aria-describedby="error-project"{{end}}>
         <option value="">Choose a project</option>
-        {{/* "(retired)" only ever appears on the edit form: offerRetiredRefs adds
-             the request's own project or head back when it was retired after the
-             request was raised, so the form shows what is charged today (T12,
-             form-3). The new-request lists are the active set and carry none. */}}
+        {{/* "(retired)" appears only on the edit form: offerRetiredRefs adds back the
+             request's own project or head when it was retired after the request was
+             raised, so the form shows what is charged today. The new-request lists
+             hold only active entries. */}}
         {{range .Projects}}<option value="{{.ID}}" {{if eq (deref $.Request2.ProjectID) .ID}}selected{{end}}>{{.Name}}{{if not .Active}} (retired){{end}}</option>{{end}}
       </select>
       <span class="hint">Picking a project narrows the heads below to that project's own.</span>
@@ -176,16 +161,13 @@
 {{end}}
 {{end}}
 
-{{/* The adaptive request form — mockups/screens/request-new-form.html.
+{{/* Step 2 of 2: the adaptive request form. The type is fixed by the route and
+     travels as one hidden input; treatment and recoverable category swap
+     #form-fields through htmx. There is one submit and one POST: there are no
+     drafts, so the request gets its number when it is submitted.
 
-     Step 2 of 2. The type is fixed by the route and travels as one hidden
-     input; treatment and recoverable category swap #form-fields through htmx.
-     There is exactly one submit button and exactly one POST: D1 removed drafts,
-     so creating and submitting are the same act and the request takes its
-     number at that moment.
-
-     No bank or account field appears here or on any other request screen —
-     bank details live on the vendor record behind vendor_bank (Phase 1V). */}}
+     No bank or account field appears on any request screen; bank details live
+     on the vendor record. */}}
 {{define "request_form"}}
 {{template "top" .}}
 {{template "request_error_summary" .}}
@@ -210,14 +192,9 @@
         <input id="short-title" name="short_title" value="{{.Request2.ShortTitle}}" required {{if index .RequestFieldErrors "short-title"}}aria-invalid="true" aria-describedby="error-short-title"{{end}}>
         <span class="hint">What your approver will see in their approval list.</span>
       </div>
-      {{/* The recoverable treatment is only offered where the store will accept
-           it. internal/store/requests.go refuses it for a vendor invoice, a
-           vendor advance and a reimbursement, each with its own "... is a budget
-           expense" message — but this fieldset sits in the shared top of the
-           form, so it used to present the choice on all four types and reject it
-           on three of them after the requester had filled in the recoverable
-           fields it revealed. Where there is no choice, the form now says so
-           instead of offering one. */}}
+      {{/* The recoverable treatment is offered only where the store accepts it. The
+           store refuses it for a vendor invoice, vendor advance and reimbursement,
+           so those types state the treatment instead of offering a choice. */}}
       <div class="field span-12">
         {{if eq .Request2.Type "employee_advance"}}
         <span class="flabel">How should this be treated <span class="req" aria-hidden="true">*</span></span>
@@ -233,9 +210,8 @@
           </label>
         </div>
         {{else if eq .Request2.Type "recoverable"}}
-        {{/* A deposit or guarantee is recoverable by definition (form-1): the
-             store refuses any other treatment for the type, so the form states
-             it the way a vendor invoice states "budget expense". */}}
+        {{/* A deposit or guarantee is always recoverable (the store refuses any other
+             treatment for the type), so the form states it rather than asking. */}}
         <span class="flabel">How this is treated</span>
         <input type="hidden" name="treatment" value="recoverable">
         <p class="fixed-treatment"><b>Refundable or recoverable.</b> A deposit, guarantee or loan the company expects back. Kept out of budget actuals.</p>
@@ -292,11 +268,10 @@
     <div class="form-grid">
       <div class="field span-6">
         <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "vendor"}}<span class="field-error-message" id="error-vendor">{{.}}</span>{{end}}
-        {{/* The combobox is offered only to somebody who may actually reach
-             GET /vendors/search. Everyone else — and every browser with no
-             JavaScript — gets the plain select below, which posts the same
-             vendor_id. The visible text is never trusted: the hidden id is
-             what the server reads, and it comes from the vendor master. */}}
+        {{/* The combobox is offered only to somebody allowed to call GET /vendors/search.
+             Everyone else, and any browser without JavaScript, gets a plain select
+             posting the same vendor_id. The visible text is never trusted: the server
+             reads the hidden id, which comes from the vendor master. */}}
         {{if .Perms.Can "vendor" "view"}}
         <span class="combo">
           <input class="combo-input" id="vendor" name="q" aria-required="true" autocomplete="off" value="{{.Request2.Vendor}}"
@@ -435,21 +410,18 @@
       </div>
       <div class="field span-6">
         <span class="flabel">Reminders</span>
-        {{/* The number is the configured threshold, not a literal: Phase 5 turned
-             this wait into app_settings.reminder_pending_days and left four
-             sentences describing the old constant (F-F-03). "days", not "calendar
-             days" — Wave 2b deleted calendarDaysBetween deliberately, because a
-             calendar boundary needs a timezone this application does not have and
-             reminder_repeat_days becomes nightly spam under those semantics, so
-             every threshold in the product is elapsed days and the copy says so. */}}
+        {{/* The day counts are the configured reminder settings, not literals. The copy
+             says "days", not "calendar days": every threshold in the product is
+             elapsed days, because the application has no timezone to draw a
+             calendar boundary with. */}}
         <p class="hint" style="margin:4px 0 0">If nothing happens for {{.Reminders.PendingAfterDays}} {{plural .Reminders.PendingAfterDays "day" "days"}}, this request starts sending a reminder every {{if eq .Reminders.RepeatEveryDays 1}}day{{else}}{{.Reminders.RepeatEveryDays}} days{{end}} to whoever it is waiting on.</p>
       </div>
     </div>
   </fieldset>
 
-  {{/* Where the advisory duplicate warning lands. It is never on the path
-       between the requester and the submit button: an empty answer leaves it
-       empty, and a full one only points. */}}
+  {{/* Where the duplicate-check result lands (filled by htmx and on re-render).
+       It only points at possible matches; the override reason below is what a
+       same-year duplicate vendor invoice needs. */}}
   <div id="dup-check" aria-live="polite">{{if .Similar}}{{template "request_duplicates" .}}{{end}}</div>
   {{if eq .FormType "vendor_invoice"}}
     <div class="field">
@@ -467,12 +439,10 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* Who a deposit or guarantee is paid to — the one type whose payee is free
-     and is not a vendor row (form-1 / recoverables-1). An EMD goes to the tender
-     authority, an ICD to the counterparty company; the requester names them
-     here and Accounts pay that name. It is rendered on the new and the edit form
-     alike, and validateRequestInput refuses the type without it: a request that
-     names nobody cannot be paid. */}}
+{{/* Who a deposit or guarantee is paid to: the one type whose payee is free text
+     rather than a vendor row, such as a tender authority or counterparty company.
+     Used on the new and the edit form; validateRequestInput refuses the type
+     without a payee, because a request that names nobody cannot be paid. */}}
 {{define "request_payee_field"}}
 <fieldset>
   <legend>Who is paid</legend>
@@ -487,23 +457,18 @@
 </fieldset>
 {{end}}
 
-{{/* The vendor control, shared by the new-request form and the edit screen so
-     the two cannot disagree about what a vendor is. The combobox is offered
-     only to somebody who may actually reach GET /vendors/search; everyone else,
-     and every browser with no JavaScript, gets the plain select. The visible
-     text is never trusted — the hidden id is what the server reads. */}}
+{{/* The vendor control used by the edit screen, with the same rules as the
+     new-request form's: the combobox only for somebody allowed to call
+     GET /vendors/search, a plain select for everyone else and for no-JavaScript
+     browsers. The server reads the hidden id, never the visible text. */}}
 {{define "request_vendor_field"}}
 <div class="field span-6">
   <label for="vendor">Vendor <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "vendor"}}<span class="field-error-message" id="error-vendor">{{.}}</span>{{end}}
   {{if .Perms.Can "vendor" "view"}}
   <span class="combo">
-    {{/* name="q", as the create form's identical control has. htmx sends the
-         triggering element's own name/value pair with hx-get, so an unnamed input
-         sent nothing at all: vendorSearch read q="", SearchVendors("") returns nil,
-         and the fragment rendered only its placeholder row for every keystroke
-         forever — leaving the vendor on a pending invoice unchangeable except by
-         withdrawing and raising it again (F-B-13). The visible text is still never
-         trusted; #vendor-id is what the server reads. */}}
+    {{/* The input must be named q: htmx sends the triggering element's own
+         name/value with hx-get, and vendor search reads q. Without a name every
+         search would come back empty. */}}
     <input class="combo-input" id="vendor" name="q" aria-required="true" autocomplete="off" value="{{.Request2.Vendor}}"
            placeholder="Type a name, GSTIN or city"
            hx-get="/vendors/search" hx-trigger="input changed delay:250ms" hx-target="#vendor-options" {{if index .RequestFieldErrors "vendor"}}aria-invalid="true" aria-describedby="error-vendor"{{end}}>
@@ -533,20 +498,9 @@
 </div>
 {{end}}
 
-{{/* The correction screen — mockups/screens/request-edit.html.
-
-     Its whole job is to promise, before the person commits, the three things
-     the store already does: record the change in the history, tell the approver
-     again, and restart the reminder clock, whose length is the configured
-     reminder_pending_days (F-F-03). Changing the approver
-     moves the request to that person instead.
-
-     The type is not editable. It is what the request *is*, and it travels as
-     the same hidden input the new-request form carries (A16). */}}
-{{/* form_warnings renders every caution a form carries, one banner each with
-     its own heading, so a legacy-category notice is never titled with a
-     retirement it does not have. The legacy notice links to the deposit form it
-     points the reader at. */}}
+{{/* form_warnings renders each caution a form carries as its own banner with its
+     own heading. On a legacy-category request it also links to the deposit form
+     the notice points at. Used by the edit and returned screens. */}}
 {{define "form_warnings"}}
 {{range .Warnings}}
 <div class="banner warn">
@@ -559,6 +513,10 @@
 {{end}}
 {{end}}
 
+{{/* The edit screen. The banner promises what the store does on save: record the
+     change in the history, notify the approver again and restart the reminder
+     clock (reminder_pending_days). Changing the approver moves the request to
+     that person. The type is not editable; it travels as a hidden input. */}}
 {{define "request_edit"}}
 {{template "top" .}}
 {{template "request_error_summary" .}}
@@ -573,21 +531,18 @@
 <div class="banner info">
   <span class="b-ico" aria-hidden="true">i</span>
   <div>
-    {{/* Both labels that name the approver follow the #apr select (rbac-10):
-         the request moves to whoever is chosen, so a label fixed at render
-         time named somebody the save would not notify. */}}
+    {{/* Both labels that name the approver follow the #apr select, because the
+         request moves to whoever is chosen and the save notifies that person. */}}
     <b data-follows-select="apr" data-follows-text="Editing tells {name} again">Editing tells {{.Request2.ManagerName}} again</b>
     <p>Every change is recorded in the history, notifies your approver, and restarts the
       {{.Reminders.PendingAfterDays}}-{{plural .Reminders.PendingAfterDays "day" "day"}} reminder clock. Change the approver and it moves to that person instead.</p>
   </div>
 </div>
 
-{{/* Each warning carries its own heading. T12 (form-3): a project or head
-     retired after the request was raised is offered back in the selects below,
-     marked, and its warning says why it has to be chosen again — the store still
-     refuses a retired head, and the refusal used to be "project and head are
-     required", about a request that had both. form-1: a legacy deposit filed as
-     an employee advance says what saving does before the press. */}}
+{{/* A project or head retired after the request was raised is offered back in
+     the selects below, marked, with a warning that it must be chosen again (the
+     store refuses a retired head). A legacy deposit filed as an employee advance
+     is told here what saving will do. */}}
 {{template "form_warnings" .}}
 
 <form method="post" enctype="multipart/form-data" action="/requests/{{.Request2.ID}}/edit">
@@ -731,10 +686,9 @@
     <span class="ab-note d-only">Every change is recorded in the history.</span>
     <span class="row-end"></span>
     <a class="btn outline" href="/requests/{{.Request2.ID}}">Discard changes</a>
-    {{/* On a returned request the promise is only true if this press also
-         resubmits: a save alone leaves it returned and tells nobody
-         (notifications-1). Saving without sending stays on the returned
-         screen's own "Save corrections". */}}
+    {{/* On a returned request this button also resubmits, so the "notify" promise
+         holds; a plain save leaves it returned and tells nobody. The returned
+         screen keeps its own "Save corrections" for saving without sending. */}}
     <button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}"{{if eq .Request2.Status "returned"}} name="submit_action" value="resubmit"{{end}}>Save and notify {{.Request2.ManagerName}}</button>
   </div>
 {{template "duplicate_override" .}}
@@ -742,12 +696,10 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The advisory duplicate warning — mockups/screens/request-duplicate-warning.html.
-
-     "A duplicate warning never blocks submission. Legitimate repeat payments
-     exist — the same rent, the same monthly retainer. The system points, the
-     person decides." The endpoint that renders this is a read; the submit does
-     not consult it and cannot be failed by it. */}}
+{{/* The override reason field for a vendor invoice on the edit and returned
+     screens; the store needs it only when the invoice duplicates one already
+     recorded in the same year. request_error_summary lists field errors as links
+     to their fields; request_duplicates is the possible-match warning. */}}
 {{define "duplicate_override"}}{{if eq .Request2.Type "vendor_invoice"}}
   <div class="field">
     <label for="duplicate-reason">Duplicate invoice override reason</label><textarea id="duplicate-reason" name="duplicate_reason">{{.DuplicateReason}}</textarea><span class="hint">Only needed when changing this to a vendor invoice already recorded in the same year. Explain why in at least 10 characters.</span>
@@ -782,11 +734,9 @@
 </div>
 {{end}}
 
-{{/* The confirmation — mockups/screens/request-submitted.html.
-
-     It exists to answer the only question a person has after pressing Submit:
-     what happens now, and who has it. The three-step .thread is a forecast, not
-     a history; the request's real history lives on its detail screen. */}}
+{{/* The confirmation after submitting: what happens next and who has the request.
+     The three-step .thread is a forecast, not a history; the real history is on
+     the detail screen. */}}
 {{define "request_submitted"}}
 {{template "top" .}}
 <div class="banner good">

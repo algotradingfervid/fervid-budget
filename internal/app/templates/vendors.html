@@ -1,14 +1,12 @@
-{{/* Vendors list — mockups/screens/vendors-list.html.
-
-     The page banner keeps its h1 on every width: the mobile top bar carries a
-     title too, but the shell contract is that every screen has a visible h1,
-     so this is not a d-only banner.
-
-     Two filter renderings, one dataset: the desktop .toolbar and the mobile
-     .m-filters are both real GET forms, so filtering works with no JavaScript
-     at all, and the stylesheet hides whichever one does not belong at that
-     width. Every <td> carries data-label because t-cards restacks into cards
-     below 860px and the attribute is what captions each field. */}}
+{{/* Vendor screens. "vendors_list" is the filterable vendor register;
+     "vendor_combo_options" is the htmx fragment behind the request form's vendor
+     picker; "vendor_detail" is one vendor's record, or the form for a new vendor;
+     "vendor_tabs" and "vendor_related" show that vendor's requests, payments
+     and history. */}}
+{{/* The page banner keeps its h1 on every width, so every screen has a
+     visible h1. The filter toolbar is a plain GET form, so filtering works with
+     no JavaScript. Every <td> carries data-label because t-cards restacks into
+     cards below 860px and the attribute captions each field. */}}
 {{define "vendors_list"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -84,34 +82,29 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* Vendor combobox options — an htmx fragment, not a page. It starts at
+{{/* Vendor combobox options: an htmx fragment, not a page. It starts at
      .combo-list and never at "top", so it can be swapped straight into the
      request form's picker. SearchVendors returns no bank details to anyone, so
      the picker cannot become a side door onto the restricted block. The
-     add-a-vendor row is offered only to a caller who could actually complete
-     it, because an affordance that 403s is worse than no affordance. */}}
+     add-a-vendor row is offered only to a caller who may create vendors,
+     because a link that ends in a 403 is worse than no link. */}}
 {{define "vendor_combo_options"}}<div class="combo-list" role="listbox" aria-label="Vendor results">
 {{range .Vendors}}<a class="co" role="option" href="/vendors/{{.ID}}" data-id="{{.ID}}" data-name="{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}"><span class="co-main"><b>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</b><small>{{if and .DisplayName (ne .DisplayName .Name)}}{{.Name}} · {{end}}{{if .GSTIN}}{{.GSTIN}}{{else}}No GSTIN{{end}}{{if .City}} · {{.City}}{{end}}</small></span></a>
 {{else}}<span class="co"><span class="co-main"><b>{{if .Query}}No vendor matches “{{.Query}}”{{else}}Type a name, GSTIN or city{{end}}</b><small>Only active vendors can be picked.</small></span></span>
 {{end}}{{if .Perms.Can "vendor" "create"}}<a class="co co-add" href="/vendors/new">＋ Add a new vendor</a>{{end}}
 </div>{{end}}
 
-{{/* Vendor detail — mockups/screens/vendor-detail.html.
+{{/* The Payment details fieldset has two gates. .Perms.Can is the
+     presentation gate; .Vendor.Bank being non-nil is the data gate, and it is
+     the one that matters: the store does not read the bank columns for a
+     caller without vendor_bank:view, so there is nothing to print even if the
+     permission check were wrong. A locked banner takes the fieldset's place,
+     so the reader knows the details exist but are hidden from them.
 
-     The Payment details fieldset is gated twice over, and the two gates are
-     not redundant. .Perms.Can is the presentation gate; .Vendor.Bank being
-     non-nil is the DATA gate, and it is the one that matters — the store never
-     read the bank columns for a caller without vendor_bank:view, so there is
-     nothing here to print even if this condition were wrong. The locked banner
-     takes the fieldset's place rather than the fieldset quietly vanishing:
-     hiding the section entirely would leave a reader wondering whether the
-     vendor has no bank details or whether they simply cannot see them.
-
-     Bank inputs carry their own disabled attribute rather than relying on the
-     surrounding fieldset, because vendor_bank:edit is a separate permission
-     from vendor:edit: someone may edit the contact block and not the bank
-     block. A disabled input is not submitted, so the browser cannot send what
-     the caller may not change — and UpdateVendor ignores it regardless. */}}
+     Bank inputs carry their own disabled attribute because vendor_bank:edit is
+     separate from vendor:edit: someone may edit the contact block and not the
+     bank block. A disabled input is not submitted, and UpdateVendor ignores
+     bank fields from such a caller regardless. */}}
 {{define "vendor_detail"}}
 {{template "top" .}}
 <section class="page-banner">

@@ -1,10 +1,10 @@
-{{/* Recoverables dashboard — mockups/screens/recoverables-dashboard.html.
-
-     The mockup's by-counterparty "Type" column ("Government body", "Client", …)
-     has no field behind it anywhere in the schema, so it is replaced by the
-     distinct categories that counterparty holds — real data that answers the
-     same question. The page-banner is not d-only: that would leave a phone with
-     no visible h1 and fail the UX sweep. */}}
+{{/* Recoverable payments (money paid out that is expected back).
+     "recoverables_dashboard" totals what is outstanding by category and by
+     counterparty; "recoverables_list" is the filterable register;
+     "recoverable_detail" is one recoverable with its returns and history. */}}
+{{/* The by-counterparty table's Categories column lists the distinct
+     categories each counterparty holds. The page banner shows on every width
+     so a phone still has a visible h1. */}}
 {{define "recoverables_dashboard"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -37,11 +37,9 @@
 <div class="table-wrap"><table class="t-cards">
   <thead><tr><th>Category</th><th class="c">Count</th><th class="num">Outstanding</th><th class="num">Overdue</th><th>Oldest</th></tr></thead>
   <tbody>{{range .ByCategory}}<tr>
-    {{/* ?category={id}, which the list honours, not ?q={label}, which searches
-         number, counterparty, project and requester — none of which ever contain a
-         category name, so the row that said 1 landed on a different number
-         (F-G-012). A row with no category ("Uncategorised") maps to no id and is
-         correctly not a link. */}}
+    {{/* Links by ?category={id}, which the list filters on; the text search does
+         not look at category names. A row with no category ("Uncategorised")
+         has no id and so is not a link. */}}
     <td class="t-lead" data-label="Category">{{$id := index $.CategoryIDs .Label}}{{if $id}}<a href="/recoverables/list?category={{$id}}&amp;ageing=outstanding">{{.Label}}</a>{{else}}{{.Label}}{{end}}</td>
     <td class="c" data-label="Count">{{.Count}}</td>
     <td class="num" data-label="Outstanding">{{money .Outstanding}}</td>
@@ -79,11 +77,8 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* Recoverables list — mockups/screens/recoverables-list.html.
-
-     The desktop .toolbar and the mobile .m-filters are both plain GET forms, so
-     filtering works with no JavaScript and the phone is not left with a subset
-     of the filters. */}}
+{{/* The desktop .toolbar and the mobile .m-filters are both plain GET forms,
+     so filtering works with no JavaScript and a phone gets every filter. */}}
 {{define "recoverables_list"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -140,11 +135,9 @@
 </details>
 
 <div class="table-wrap"><table class="t-cards">
-  {{/* Status, Requester and Repayment notes are here because the CSV beside this
-       table has always carried them and the screen did not, so anybody who had only
-       ever looked at the register had no way to know the download said more
-       (F-E-04). The table scrolls inside its own .table-wrap, so eleven columns cost
-       the page no horizontal scroll. */}}
+  {{/* The table shows the same columns as the CSV export, including Status,
+       Requester and Repayment notes. It scrolls inside its own .table-wrap, so
+       the wide table causes no page-level horizontal scroll. */}}
   <thead>
     <tr>
       <th>Request</th>
@@ -178,9 +171,9 @@
     <td data-label="Repayment notes">{{if .RepaymentNotes}}{{.RepaymentNotes}}{{else}}Not recorded{{end}}</td>
   </tr>{{else}}<tr><td colspan="13" class="empty" data-label="">No recoverable payments match these filters.</td></tr>{{end}}</tbody>
   <tfoot><tr>
-    {{/* The spacers only hold the Amount under its column on a desktop. Below
-         860px the tfoot restacks into a card and each empty cell became a
-         blank stripe, so they are .d-only (recoverables-6). */}}
+    {{/* The empty spacer cells only hold the total under its column on a
+         desktop. Below 860px the footer restacks into a card, where they would
+         be blank stripes, so they are .d-only. */}}
     <td data-label="">{{len .Recoverables}} shown</td>
     <td class="d-only" data-label=""></td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
     <td class="num" data-label="Outstanding">{{money .RecoverableTotal}}</td><td class="d-only" data-label=""></td><td class="d-only" data-label=""></td>
@@ -191,12 +184,9 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* Recoverable detail — mockups/screens/recoverable-detail.html.
-
-     The history is Phase 2's merged RequestThread, not a second rendering of
-     the same events: a recoverable is a payment request, and its story should
-     read identically wherever it is opened. The comment box posts to Phase 2's
-     existing route rather than introducing a parallel conversation. */}}
+{{/* The history is the request's shared RequestThread, the same timeline
+     the request page shows, because a recoverable is a payment request. The
+     comment box posts to the request's own comment route. */}}
 {{define "recoverable_detail"}}
 {{template "top" .}}
 <div class="req-head">

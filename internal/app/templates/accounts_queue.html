@@ -1,13 +1,11 @@
-{{/* The Accounts work queue — mockups/screens/accounts-queue.html.
-
-     Two departures from the mockup, both deliberate. Its "Take for processing"
-     is a link; reserving is a mutation, so here it is a submit button inside a
-     POST form. And its .page-banner carries .d-only, which would leave a phone
-     with no visible h1 at all — the banner is unconditional and the heading
-     travels with it.
-
-     .metric.warn has no rule in the design system, so the "Reserved by you"
-     tile is a plain .metric until Phase 0 grows one. */}}
+{{/* Accounts payment work: the payment queue (accounts_queue), the screen for a
+     refused reservation (reservation_conflict), the manager's partial-payment
+     review (partial_review), release/reassign (reservation_form) and the stale
+     reservation reminder (reservation_stale). Each {{define}} is rendered by
+     name from the Go handlers. */}}
+{{/* The Accounts payment queue, tabbed by status. "Take for processing" is a
+     submit button in a POST form, not a link, because reserving changes state.
+     The page banner shows at every width, so a phone still has a visible h1. */}}
 {{define "accounts_queue"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -43,12 +41,9 @@
   <a class="{{if eq .Tab "paid"}}is-active{{end}}" {{if eq .Tab "paid"}}aria-current="page"{{end}} href="/accounts-queue?tab=paid">Paid <span class="n">{{$counts.Paid}}</span></a>
 </div>
 
-{{/* Both renderings, as requests, approvals, vendors and recoverables all ship.
-     The queue used to ship the mobile form alone, and .m-filters is display:none
-     above 860 px — so the one screen whose job is finding the request that matches
-     the invoice in your hand had no search box on a laptop at all, while the
-     server-side search worked perfectly (F-D-07). #queue-q stays on the desktop
-     twin, which is the one a wide viewport can actually use. */}}
+{{/* Two search forms, as on the other list screens: the desktop toolbar and
+     the phone .m-filters, which is hidden above 860 px. #queue-q is on the
+     desktop form. */}}
 <form class="toolbar" method="get" action="/accounts-queue">
   <input type="hidden" name="tab" value="{{.Tab}}">
   <div class="field search"><label for="queue-q">Search</label><input id="queue-q" name="q" value="{{.Query}}" placeholder="Number, payee, project, head or amount…"></div>
@@ -111,17 +106,12 @@
         <td class="c" data-label="Action">
           {{if .OnHold}}<a class="btn small" href="/requests/{{.ID}}">Read reply</a>
           {{else if eq .Status "partial_review"}}<a class="btn small outline" href="/requests/{{.ID}}/partial-review">View</a>
-          {{/* Past the one-day mark the mockup's own Resume goes to
-               accounts-stale-processing.html, not back to the form: the nudge
-               screen is the only place that names what may be done about a
-               reservation this old, and this row is the only thing that knows
-               which reservation it is. The count in the banner above is an
-               aggregate and cannot. */}}
-          {{/* Resume only while the request is still in flight. processing_by
-               survives settlement, so on the Paid tab this offered every row the
-               reader had settled themselves a link back to the payment form —
-               which answers a conflict, because the request is no longer
-               approved. Once it is paid, the useful destination is the request. */}}
+          {{/* A stale reservation resumes to the stale-reservation screen,
+               which lists what may be done about it; a recent one goes straight
+               back to the payment form. */}}
+          {{/* Resume shows only while the request is still processing:
+               processing_by survives settlement, and a paid request's payment
+               form would answer a conflict, so a paid row links to the request. */}}
           {{else if and .ProcessingBy (eq (deref .ProcessingBy) $.User.ID) (eq .Status "processing")}}<a class="btn small" href="{{if stale .ProcessingAt}}/requests/{{.ID}}/reservation/stale{{else}}/payments/new?request={{.ID}}{{end}}">Resume</a>
           {{else if and (eq .Status "processing") .ProcessingBy ($.Perms.Can "reservation" "reassign")}}<a class="btn small outline" href="/requests/{{.ID}}/reservation">Reassign</a>
           {{else}}<a class="btn small outline" href="/requests/{{.ID}}">View</a>{{end}}
@@ -135,23 +125,12 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* G15 — a refused reservation is a screen, not an error page.
-     mockups/screens/accounts-reservation-conflict.html: say what happened, say in
-     as many words that nothing was saved, show the request in context, and offer
-     the things the reader may actually do next.
-
-     Three refusals, three screens. ReserveRequest returns a different sentinel for
-     each — already taken, on hold, not approved — and this screen used to report
-     all three as "Someone else took this request before you", on a request whose
-     status was approved and whose processing_by was NULL. The accountant's natural
-     next step was to go and ask a colleague who did not exist, while the real
-     answer — the requester owes us an answer — was one click away on the request
-     (F-D-02). The picker already got the hold case right in the same codebase;
-     only the reserve path discarded it.
-
-     The mockup lists "Ask for it to be reassigned" unconditionally with the
-     note "Needs reassign permission". Offering a control the reader cannot use
-     leaks it, so the entry is gated and the note moves into the sub-line. */}}
+{{/* Shown when the reader cannot take a request for processing: it says what
+     happened and that nothing was saved, shows the request, and offers the
+     next steps the reader may take. .ConflictCause picks the message: "hold",
+     "not-approved", "unclaimed" (nobody holds it), or "taken" (the default,
+     lost to a colleague). "Ask for it to be reassigned" is shown only to
+     readers with reservation:reassign. */}}
 {{define "reservation_conflict"}}
 {{template "top" .}}
 {{if eq .ConflictCause "hold"}}
@@ -173,9 +152,8 @@
 </div>
 {{else if eq .ConflictCause "unclaimed"}}
 {{/* Nothing was refused: the reader opened the entry screen for a request
-     nobody holds — after releasing it, or by URL. It used to be reported as a
-     lost race to "Someone else" (settlement-2). The form needs a reservation
-     first, and taking one is offered right here. */}}
+     nobody holds (after releasing it, or by URL). The form needs a
+     reservation first, and taking one is offered right here. */}}
 <div class="banner info">
   <span class="b-ico" aria-hidden="true">i</span>
   <div>
@@ -198,11 +176,10 @@
   <h1>{{.Request2.Vendor}}{{if .Request2.ShortTitle}} — {{.Request2.ShortTitle}}{{end}}</h1>
   <p class="rh-meta">{{if eq .Request2.Treatment "recoverable"}}Recoverable{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Request2.Project}} / {{.Request2.Head}}{{end}}{{if .Request2.ApprovedAt}} · approved {{datep .Request2.ApprovedAt}}{{end}}</p>
   <div class="rh-status">
-    {{/* The pill tells the same truth the banner does. A .pill.processing naming a
-         holder is a lie on a request nobody holds. The lost-race branch names
-         the holder from .Holder rather than statusPill because the row it has
-         may predate the winner's write; the words are statusPill's, so this
-         screen reads like every other (settlement-7 review). */}}
+    {{/* The pill matches the banner: only the lost-race branch names a holder.
+         It takes the holder from .Holder rather than statusPill because the
+         loaded row may predate the winner's write; the wording still matches
+         statusPill's. */}}
     {{if eq .ConflictCause "hold"}}<span class="pill hold">On hold</span>
     {{else if or (eq .ConflictCause "not-approved") (eq .ConflictCause "unclaimed")}}{{$p := statusPill .Request2 .User.ID}}<span class="pill {{$p.Class}}">{{$p.Text}}</span>
     {{else}}<span class="pill processing">{{reqStatus "processing"}} — taken by {{.Holder}}</span>{{end}}
@@ -224,8 +201,8 @@
 <div class="action-bar">
   <span class="row-end"></span>
   <a class="btn outline" href="/payments/new">Pick another request</a>
-  {{/* A POST, exactly as the queue's button is: reserving is a mutation. The
-       same route, so the concurrency guarantee is the same one (S1/S2). */}}
+  {{/* A POST to the same route as the queue's button, because reserving
+       changes state; the same route gives the same concurrency guarantee. */}}
   {{if and (eq .ConflictCause "unclaimed") (.Perms.Can "reservation" "reserve")}}
   <a class="btn outline" href="/accounts-queue">Back to queue</a>
   <form method="post" action="/requests/{{.Request2.ID}}/record-payment">
@@ -238,22 +215,13 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* The manager's partial review — mockups/screens/payment-partial-review.html.
-
-     This is the one settlement Accounts cannot close on its own, so the screen
-     puts the whole question on one page: what was approved, what left the bank,
-     what is still owed, why Accounts thinks that is legitimate, and the payment
-     itself — read-only, because a recorded payment is never amended (S12).
-
-     Two decisions, each in its own .overlay > .sheet. Both are permanent in
-     different directions: accepting writes the balance off for good (G14), and
-     raising a concern is a line in the trail rather than a chat message. An
-     inline disclosure would offer either one with a shrug.
-
-     The mockup's data-for / data-not-for persona attributes are prototype
-     scaffolding. The action bar is chosen here, server-side, on the very
-     permission the decision routes are gated by — never hidden in the browser,
-     which hides nothing from a hand-rolled POST. */}}
+{{/* The manager's review of a partial payment, the one settlement Accounts
+     cannot close alone. One page shows what was approved, what was paid, what
+     is still owed, Accounts' reason, and the payment itself (read-only, since
+     a recorded payment is never amended). Accepting (writes the balance off
+     for good) and raising a concern each open in their own confirmation sheet.
+     The action bar is chosen server-side on the same permission the decision
+     routes check. */}}
 {{define "partial_review"}}
 {{template "top" .}}
 <div class="req-head">
@@ -272,8 +240,8 @@
 <div class="compare" style="margin-bottom:14px">
   <div class="cmp-row"><span class="l">Approved</span><span class="v">{{money (approvedOf .Request2)}}</span></div>
   <div class="cmp-row"><span class="l">Total paid to date</span><span class="v">{{money .Request2.PaidAmount}}</span></div>
-  {{/* "payee", as the request and the payment screens say: a reimbursement
-       is owed to the employee, not to a vendor (partial-1). */}}
+  {{/* "payee", as the request and payment screens say: a reimbursement is
+       owed to the employee, not to a vendor. */}}
   <div class="cmp-row diff"><span class="l">Still owed to the payee</span><span class="v">{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}</span></div>
 </div>
 
@@ -285,9 +253,9 @@
   </div>
 </div>
 
-{{/* An open concern is displayed as "Partial — under discussion" and the
-     accountant who recorded the shortfall owes the answer (settlement-8). The
-     status is untouched; this banner and the pill are what change. */}}
+{{/* An open concern shows as "Partial — under discussion", and the accountant
+     who recorded the shortfall owes the answer. The request status does not
+     change; only this banner and the pill do. */}}
 {{if .Request2.ConcernOpen}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">?</span>
@@ -337,10 +305,10 @@
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   {{/* A reply asked mid-decision comes back to the decision. */}}
   <input type="hidden" name="return_to" value="partial-review">
-  {{/* The prompt follows the seat, not the permission: "before you decide" is
-       the manager's sentence, and the requester holding request:comment was
-       being read it too (partial-1). The holder is asked to answer the open
-       concern; everybody else simply comments. */}}
+  {{/* The prompt follows the reader's role on this request, not their
+       permission: the manager is asked to reply before deciding, the
+       reservation holder to answer an open concern, and everyone else simply
+       comments. */}}
   {{if eq .User.ID .Request2.ManagerID}}
   <label for="cmt" class="flabel">Reply to Accounts</label>
   <textarea id="cmt" name="body" placeholder="Ask {{.Payment.EnteredByName}} something before you decide." required></textarea>
@@ -364,8 +332,8 @@
   <span class="ab-note d-only">Choose a writeoff only when the balance is no longer owed.</span>
   <span class="row-end"></span>
   <button class="btn outline" type="button" data-open="concern-sheet">Raise a concern</button>
-  {{/* The mockup's green .btn.approve has no rule in fervid-ds.css, so the
-       accept is a plain .btn.primary like every other button in this file. */}}
+  {{/* Each button opens its confirmation sheet below; nothing is posted until
+       the sheet is submitted. */}}
   <button class="btn primary" type="button" data-open="close-sheet">Accept and close</button>
 </div>
 
@@ -440,21 +408,12 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* Release or reassign a reservation — mockups/screens/accounts-release-reassign.html.
-
-     One screen, one .choice, two POSTs. The radio picks which formaction the
-     submit carries, and the same [data-when] contract that reveals the target
-     select swaps the buttons underneath it. None of that is a rule: both
-     handlers re-validate everything the reveal implies, so a hand-rolled POST
-     can no more reassign without a target than release without a reason.
-
-     Three departures from the mockup. Its .page-banner carries .d-only, which
-     would leave a phone with no visible h1 at all, so the banner is
-     unconditional here exactly as it is on the queue. Its second choice is
-     offered to everyone with the note "Needs reassign permission"; a control the
-     reader cannot use is gated off instead, the rule the conflict screen already
-     applies. And its history reads newest-first, while every other .thread in
-     the product tells the story forwards — one product, one direction. */}}
+{{/* Release or reassign a reservation: one form, one radio choice, two POST
+     routes. The radio's [data-when] reveal shows the target select and the
+     matching submit button. The handlers re-validate everything, so a
+     hand-made POST cannot reassign without a target or release without a
+     reason. Each choice is shown only with its permission, and the history
+     reads oldest-first like every other thread. */}}
 {{define "reservation_form"}}
 {{template "top" .}}
 <section class="page-banner">
@@ -479,10 +438,9 @@
   </div>
 </div>
 
-{{/* The form's own action is the branch the reader may actually take, so
-     implicit submission never posts a verb that answers 403. The screen is
-     reachable on either grant, and the two are independent cells of the
-     matrix. */}}
+{{/* The form's own action is a branch the reader may take, so implicit
+     submission never posts to a route that answers 403. The screen is
+     reachable with either release or reassign, independently. */}}
 <form id="reservation-form" method="post" action="/requests/{{.Request2.ID}}/{{if .Perms.Can "reservation" "release"}}release{{else}}reassign{{end}}">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <fieldset>
@@ -504,15 +462,14 @@
 
     <div class="form-grid" style="margin-top:13px">
       {{if .Perms.Can "reservation" "reassign"}}
-      {{/* hidden only while there is another branch to be on. A reader who can
-           only reassign has the reassign radio checked, so the reveal would
-           unhide it the moment the script boots — and without the script they
-           would face a form whose only field was invisible. */}}
+      {{/* Hidden only when release is also offered. A reader who can only
+           reassign sees it from the start, so the form still works without
+           JavaScript. */}}
       <div class="field span-6" data-when="action:reassign"{{if .Perms.Can "reservation" "release"}} hidden{{end}}>
         <label for="to_user_id">Reassign to <span class="req" aria-hidden="true">*</span></label>
         {{/* aria-required, not required: a required control inside a hidden
-             field makes the whole form unsubmittable in Chrome. requestReassign
-             is the enforcement, and it refuses an empty target outright. */}}
+             field makes the whole form unsubmittable in Chrome. The reassign
+             handler refuses an empty target. */}}
         <select id="to_user_id" name="to_user_id" aria-required="true">
           <option value="">Choose…</option>
           {{range .Users}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
@@ -533,13 +490,10 @@
     <span class="ab-note d-only">The requester and the approver are both notified.</span>
     <span class="row-end"></span>
     {{if and .ReserveMine (.Perms.Can "payment" "create")}}<a class="btn outline" href="/payments/new?request={{.Request2.ID}}">Keep working on it</a>{{else}}<a class="btn outline" href="/accounts-queue">Back to the queue</a>{{end}}
-    {{/* Release is first in the DOM and last on the screen. HTML makes the
-         first submit button in tree order the form's default button, and
-         hidden — unlike disabled — does not exempt it: with Reassign first,
-         pressing Enter on the checked "Release it" radio submitted through the
-         hidden button, posted to /reassign with no target, and lost the typed
-         reason on a 400. .action-bar is a flex row, so order: 2 puts the
-         danger button back on the right where the mockup has it. */}}
+    {{/* Release is first in the DOM but last on screen. The first submit
+         button in tree order is the form's default for Enter, even when
+         hidden, so Release must come first or Enter would post a reassign
+         with no target. order:2 in the flex .action-bar moves it to the right. */}}
     {{if .Perms.Can "reservation" "release"}}<button class="btn danger" type="submit" data-when="action:release" style="order:2" formaction="/requests/{{.Request2.ID}}/release">Release reservation</button>{{end}}
     {{if .Perms.Can "reservation" "reassign"}}<button class="btn outline" type="submit" data-when="action:reassign"{{if .Perms.Can "reservation" "release"}} hidden{{end}} formaction="/requests/{{.Request2.ID}}/reassign">Reassign</button>{{end}}
   </div>
@@ -560,28 +514,19 @@
 {{template "bottom" .}}
 {{end}}
 
-{{/* Q6 — the 26-hour nudge, mockups/screens/accounts-stale-processing.html.
-
-     Nothing on this screen releases anything, and nothing about it is
-     automatic. An automatic release would let a second accountant pay an
-     invoice that is already moving through a bank portal, so the reminder
-     nudges and a person decides — which is why the whole page is one .a-list of
-     four choices and no default.
-
-     The mockup's data-for="admin" bar is server-side gating here, as
-     everywhere: "Carry on" is the holder's, "Release it" needs the holder plus
-     reservation:release, "Hand it to a colleague" needs reservation:reassign
-     and "Put it on hold" needs payment:hold. A choice the reader could not take
-     is not shown greyed out — it is not shown. */}}
+{{/* The stale-reservation reminder. Nothing here releases anything
+     automatically: a transfer may already be under way in a bank portal, so a
+     person decides from a list of choices with no default. Each choice is
+     gated server-side on who may take it, and a choice the reader cannot take
+     is not shown at all. */}}
 {{define "reservation_stale"}}
 {{template "top" .}}
 <div class="banner warn">
   <span class="b-ico" aria-hidden="true">◷</span>
   <div>
     <b>This has been reserved by {{if .ReserveMine}}you{{else}}{{.Request2.ProcessingByName}}{{end}} for {{since .Request2.ProcessingAt}}</b>
-    {{/* The threshold, not "the one-day mark": reminder_stale_days is
-         admin-configurable and an admin who sets it to 3 made this sentence
-         false (F-F-03). Elapsed days, not calendar days, for the reason above. */}}
+    {{/* States the configured threshold (reminder_stale_days, set by an
+         admin) rather than a fixed "one day". */}}
     <p>A reminder goes out once a reservation has been open {{.Reminders.StaleAfterDays}} {{plural .Reminders.StaleAfterDays "day" "days"}}. Nothing is released automatically — a transfer may
       already be under way, so only {{if .ReserveMine}}you{{else}}{{.Request2.ProcessingByName}}{{end}} or an authorised colleague can act.</p>
   </div>
@@ -597,9 +542,9 @@
   </div>
 </div>
 
-{{/* Every entry below is gated on holding the reservation or on
-     reservation:reassign, so a reader with neither was shown "Pick one" over
-     an empty list (queue-1). They are told instead who can act. */}}
+{{/* Every choice below needs the reader to hold the reservation or have
+     reservation:reassign; a reader with neither is told who can act instead
+     of seeing an empty list. */}}
 {{if not (or .ReserveMine (.Perms.Can "reservation" "reassign"))}}
 <div class="banner info">
   <span class="b-ico" aria-hidden="true">i</span>
@@ -613,23 +558,16 @@
   <div class="card-head"><h2>Pick one</h2></div>
   <div class="a-list">
     {{if and .ReserveMine (.Perms.Can "payment" "create")}}<a href="/payments/new?request={{.Request2.ID}}"><span class="al-main"><b>Carry on and record the payment</b><small>Opens the payment form with your reservation intact</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
-    {{/* The store lets a non-holder release when the caller resolved
-         reservation:reassign — taking work off somebody is that verb — so an
-         administrator clearing a colleague's stale reservation is offered the
-         choice the store would honour, rather than having to infer it from the
-         reassign entry that happens to share this href. */}}
+    {{/* The store lets a non-holder release when they have
+         reservation:reassign (taking work off somebody is that verb), so an
+         administrator clearing a colleague's stale reservation is offered
+         Release too. */}}
     {{if and (.Perms.Can "reservation" "release") (or .ReserveMine (.Perms.Can "reservation" "reassign"))}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Release it</b><small>Requires a reason and confirming no payment was initiated</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
     {{if .Perms.Can "reservation" "reassign"}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Hand it to a colleague</b><small>Stays reserved, assigned to them, with your reason recorded</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
-    {{/* A hold pauses an approved request, and this screen only exists while the
-         request is reserved — so the first step is the release screen, not the
-         request. The mockup links straight to the on-hold state; sending the
-         reader there would land them on a page whose hold control is gated off.
-         And because the first step *is* the release screen, this entry is gated
-         the way the release entry is: on being able to act on **this**
-         reservation. Gated on payment:hold alone it was offered to every
-         accountant, and /reservation answers 403 to anybody who neither holds the
-         reservation nor may reassign — so a non-holding accountant was shown
-         exactly one thing to do and refused when they took it (F-D-03). */}}
+    {{/* A hold applies only to an approved request, and this one is reserved,
+         so the first step is releasing it: the link goes to the release
+         screen. It is therefore gated like Release, on being able to act on
+         this reservation, since /reservation answers 403 to anyone else. */}}
     {{if and (.Perms.Can "payment" "hold") (or .ReserveMine (.Perms.Can "reservation" "reassign"))}}<a href="/requests/{{.Request2.ID}}/reservation"><span class="al-main"><b>Put it on hold</b><small>If you are waiting on the requester for something — release the reservation first</small></span><span class="al-amt" aria-hidden="true">→</span></a>{{end}}
   </div>
 </div>
