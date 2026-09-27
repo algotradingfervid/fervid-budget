@@ -67,9 +67,8 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 		}
 	}
 
-	// The four resources the design-system adoption spec adds (D2): the roles
-	// matrix and Phases 1V-5 are written against them, so they must exist here
-	// before any of those screens can be gated.
+	// Four resources the roles matrix and the screens behind it are gated on;
+	// they must be in the vocabulary before those screens can be gated.
 	for _, g := range []Grant{
 		{"vendor", "view"}, {"vendor", "create"}, {"vendor", "edit"},
 		{"vendor_bank", "view"}, {"vendor_bank", "edit"},
@@ -80,7 +79,7 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 			t.Fatalf("canonical grant %s:%s is missing from the vocabulary", g.Resource, g.Action)
 		}
 	}
-	// The cancellation flow Phase 2 adds gates its routes on these two pairs;
+	// The cancellation flow gates its routes on these two pairs;
 	// the vocabulary has to carry them before those routes can be registered.
 	for _, g := range []Grant{
 		{"request", "cancel"}, {"approval", "cancel"},
@@ -118,10 +117,8 @@ func countGrants() int {
 	return total
 }
 
-// The Phase 0 stub matched "*" because Casbin's admin policy was a wildcard.
-// Once roles are data a stale wildcard row would grant everything to everyone,
-// which is precisely the failure mode this phase exists to remove: matching is
-// exact, and AllGrants is how a caller asks for everything.
+// Permission matching is exact: a stray "*" row grants nothing, and AllGrants
+// is how a caller asks for everything.
 func TestNewPermissionSetMatchesExactlyAndAllGrantsIsTheWholeVocabulary(t *testing.T) {
 	wildcard := NewPermissionSet([]Grant{{Resource: "*", Action: "*"}}, nil)
 	if wildcard.Can("payment", "view") || wildcard.Scope("request") != "" {
@@ -513,9 +510,8 @@ func TestCreateUserAssignsDefaultRole(t *testing.T) {
 	}
 }
 
-// F-G-022 — user_roles.role_id cascades, so deleting an assigned role stripped it
-// from every holder in silence. F-G-023 — and the refusal has to say something
-// true, which is what the app layer renders through friendly().
+// A role somebody holds cannot be deleted (user_roles.role_id cascades, so the
+// delete would strip it from every holder in silence), and the refusal says why.
 func TestDeleteRoleRefusesARoleSomebodyHolds(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

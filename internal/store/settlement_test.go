@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// The 2026-09-25 fix wave, cluster D (settlement). Each test here reproduces
-// one of the wave's defects at the store layer before the fix and pins the
-// behaviour after it.
-
 // settlementDisplayFixture takes one request to partial_review the way the
 // product does — reserved by the accountant, paid short, marked partial — and
 // returns the people involved.
@@ -32,9 +28,9 @@ func settlementDisplayFixture(t *testing.T, s *Store, seq int) (acc, req, mgr Us
 	return acc, req, mgr, headID, id
 }
 
-// settlement-8: a concern is a question to Accounts, and the request has to
-// say so until Accounts answers. The status never changes (owner decision —
-// no new state in the machine); the row carries a flag the display reads.
+// A concern is a question to Accounts, and the request says so until Accounts
+// answers. The status never changes (there is no extra state in the machine);
+// the row carries a flag the display reads.
 func TestRaiseConcernMarksTheRequestUnderDiscussionUntilAccountsAnswers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -91,7 +87,7 @@ func TestRaiseConcernMarksTheRequestUnderDiscussionUntilAccountsAnswers(t *testi
 	}
 }
 
-// settlement-3 / settlement-8: "needs me" is the one predicate the design turns
+// "Needs me" is the one predicate the design turns
 // on. A partial review is the manager's to decide, and an open concern is the
 // holder's to answer, so both belong in it.
 func TestNeedsMeCountsPartialReviewsForTheManagerAndOpenConcernsForTheHolder(t *testing.T) {
@@ -138,7 +134,7 @@ func TestNeedsMeCountsPartialReviewsForTheManagerAndOpenConcernsForTheHolder(t *
 	}
 }
 
-// settlement-7: every screen that reads a Request has to be able to name who
+// Every screen that reads a Request has to be able to name who
 // holds it, so the holder's name rides on the row itself rather than on one
 // queue query.
 func TestRequestRowsCarryTheHolderName(t *testing.T) {
@@ -168,10 +164,9 @@ func TestRequestRowsCarryTheHolderName(t *testing.T) {
 	}
 }
 
-// settlement-1: the four settlement templates said {{amount}} — the requested
-// figure — where they meant the amount paid. The seeded defaults now say
-// {{paid_amount}}, and migration v14 carries the correction onto an installed
-// database without touching a template an administrator has edited.
+// The four settlement notices speak of the amount paid ({{paid_amount}}), not the
+// amount requested ({{amount}}). Migration v14 carries that wording onto an
+// installed database without touching a template an administrator has edited.
 func TestMigrationV14RewritesOnlyTheUneditedSettlementTemplates(t *testing.T) {
 	s := newTestStore(t)
 	for _, event := range []string{"payment_settled", "payment_partial_review", "payment_partial_accepted", "payment_partial_concern"} {
@@ -226,6 +221,7 @@ func TestMigrationV14RewritesOnlyTheUneditedSettlementTemplates(t *testing.T) {
 	}
 }
 
+// Paying the whole remaining balance cannot be recorded as a short payment.
 func TestFullBalanceCannotEnterShortfallReview(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -247,6 +243,9 @@ func TestFullBalanceCannotEnterShortfallReview(t *testing.T) {
 	}
 }
 
+// After a short payment is continued and a second short payment is accepted,
+// the request's paid amount and the grid count every instalment once, and the
+// accepted deduction cannot be reopened.
 func TestContinuedShortfallThenAcceptedDeductionKeepsCumulativeAccounting(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

@@ -182,11 +182,10 @@ func TestHiddenRequestIsNotFoundInWriteTimeChecks(t *testing.T) {
 	}
 }
 
-// Fixwave 2026-09-25, rbac-2: an empty data scope — the role editor's "None",
-// stored as no role_data_scope row — used to leave the request list, the
-// request export, the payment queue and the payment ledger unrestricted, while
-// the detail pages refused the same rows. Every scoped read now fails closed
-// on anything other than own, assigned or all, the way recoverableScope does.
+// An empty data scope — the role editor's "None", stored as no role_data_scope
+// row — reads nothing: the request list, the request export, the payment queue
+// and the payment ledger all fail closed on anything other than own, assigned
+// or all, as the detail pages do.
 func TestEmptyScopeReadsNoRequestsOrPayments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

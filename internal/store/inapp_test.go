@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestNotificationLifecycleAndScopedFilters(t *testing.T) { // G19
+func TestNotificationLifecycleAndScopedFilters(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	me, err := s.CreateUser(ctx, "me@test", "Me", "h", "data_entry", true)

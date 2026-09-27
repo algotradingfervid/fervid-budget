@@ -298,7 +298,9 @@ func TestSecurityCSRFCannotBeForgedOrTransferredBetweenSessions(t *testing.T) {
 	}
 }
 
-func TestReverifyPasswordValidationMatchesBcryptByteLimit(t *testing.T) {
+// A password longer than bcrypt's 72-byte limit is refused (counting bytes, not
+// characters), so no accepted password is silently truncated.
+func TestPasswordValidationMatchesBcryptByteLimit(t *testing.T) {
 	for _, value := range []string{strings.Repeat("a", 72) + "1", strings.Repeat("界", 24) + "A1"} {
 		if err := ValidatePassword(value); err == nil {
 			t.Fatalf("accepted %d-byte password that bcrypt cannot hash", len(value))
@@ -309,7 +311,9 @@ func TestReverifyPasswordValidationMatchesBcryptByteLimit(t *testing.T) {
 	}
 }
 
-func TestReverifyReactivationDoesNotReviveOldSession(t *testing.T) {
+// Deactivating a user ends their sessions for good: reactivating them does not
+// bring back a session issued before the deactivation.
+func TestReactivationDoesNotReviveOldSession(t *testing.T) {
 	manager, st := newTestManager(t)
 	u := createTestUser(t, st, "reactivate@example.invalid", "data_entry", true)
 	request := authenticatedRequest(t, manager, u, "GET", "/")

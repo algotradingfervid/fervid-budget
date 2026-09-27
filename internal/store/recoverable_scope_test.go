@@ -7,16 +7,12 @@ import (
 	"time"
 )
 
-// The recoverables register is a second view over payment_requests, and F-G-016 /
-// F-E-03 found that it asked nobody who was reading it: recoverable_report:view
-// alone returned every counterparty, amount, requester and repayment note in the
-// company, including rows the same caller is refused on /requests/{id}.
+// The recoverables register is a second view over payment_requests, so it
+// applies the reader's request data scope: recoverable_report:view alone must not
+// show rows the same caller is refused on /requests/{id}.
 //
-// These tests pin the SQL half of the fix, for all four readers. They matter
-// disproportionately because the defect is invisible through the shipped roles —
-// Accounts and Admin both hold request=all, so every seeded holder of the report
-// permission legitimately sees everything, and only a custom narrow role can
-// observe the difference. That is precisely why it survived the original build.
+// These tests cover all four readers in SQL. The shipped Accounts and Admin roles
+// both hold request=all, so only a custom narrow role shows the difference.
 
 // seedTwoPartyRecoverables plants one paid recoverable for each of two requesters
 // and returns them. B's counterparty is the disclosure canary: nothing A can read
@@ -38,7 +34,7 @@ func seedTwoPartyRecoverables(t *testing.T, s *Store) (a, b User, headID int64) 
 	return a, b, headID
 }
 
-func TestRecoverableReportAppliesTheRequestDataScope(t *testing.T) { // R3, R6 · F-G-016/F-E-03
+func TestRecoverableReportAppliesTheRequestDataScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	a, b, _ := seedTwoPartyRecoverables(t, s)
@@ -82,7 +78,7 @@ func TestRecoverableReportAppliesTheRequestDataScope(t *testing.T) { // R3, R6 �
 	}
 }
 
-func TestRecoverableMetricsAndRollupsApplyTheRequestDataScope(t *testing.T) { // R3, R6 · F-G-016
+func TestRecoverableMetricsAndRollupsApplyTheRequestDataScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	a, b, _ := seedTwoPartyRecoverables(t, s)

@@ -8,29 +8,16 @@ import (
 	"time"
 )
 
-// Two people in Accounts settling their own requests at the same moment used to
-// take the whole application down, not just lose one of the two writes.
+// Several people in Accounts settling their own requests at the same moment all
+// succeed, and the database is still writable afterwards.
 //
-// RecordPaymentForRequest opened a deferred transaction and then read before it
-// wrote. SQLite will not promote a transaction holding a read snapshot into a
-// writer while another writer is active, and does not consult the busy handler
-// for that upgrade, so one settlement failed instantly with SQLITE_BUSY. Worse,
-// in rollback-journal mode the COMMIT itself waited on other readers, and a
-// COMMIT that gives up with SQLITE_BUSY leaves its transaction OPEN: database/sql
-// has already marked the Tx done, so `defer tx.Rollback()` returns ErrTxDone
-// without rolling back, and the connection goes back to the pool still holding
-// the write lock. From then on every writer met "database is locked" and every
-// BEGIN on that connection met "cannot start a transaction within a transaction"
-// — including the write that login performs, so nobody could sign in until the
-// process was restarted.
-//
-// The fix is three-part: WAL so a COMMIT no longer waits on readers, write
+// Three things make that hold: WAL, so a COMMIT does not wait on readers; write
 // transactions that take the write lock at BEGIN (_txlock=immediate on the DSN),
-// and validating on the caller's own transaction instead of a second pooled
-// connection.
-//
-// This test asserts both halves: every concurrent settlement succeeds, AND the
-// database is still writable afterwards.
+// because SQLite will not upgrade a read snapshot to a writer while another
+// writer is active; and validating on the caller's own transaction rather than a
+// second pooled connection. Without them a COMMIT that gives up with SQLITE_BUSY
+// can leave its connection holding the write lock, and every later write —
+// sign-in included — fails until a restart.
 func TestConcurrentSettlementsAllSucceedAndLeaveTheDatabaseWritable(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

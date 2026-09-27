@@ -185,7 +185,7 @@ func seedRequestActors(t *testing.T, s *Store) (requester User, manager User, he
 	return requester, manager, seedHead(t, s, "Operations", "Rent")
 }
 
-// seedTestVendor inserts a Phase-1V vendor row directly; Phase 2 only needs its id.
+// seedTestVendor inserts a vendor row directly, for tests that only need its id.
 func seedTestVendor(t *testing.T, s *Store, name string) int64 {
 	t.Helper()
 	ctx := t.Context()

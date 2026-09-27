@@ -17,7 +17,7 @@ func TestMigrationV3CreatesRequestTables(t *testing.T) {
 	if version < 3 {
 		t.Fatalf("user_version = %d, want >= 3", version)
 	}
-	// A2/A4/A21: the design-system columns exist.
+	// The request form's columns exist.
 	for _, col := range []string{"vendor_id", "vendor_payee", "short_title", "invoice_no", "invoice_date",
 		"expense_date", "advance_reason", "urgency_reason", "attachment_exception_reason",
 		"cancel_reason", "recoverable_category", "recoverable_category_id"} {
@@ -26,7 +26,7 @@ func TestMigrationV3CreatesRequestTables(t *testing.T) {
 			t.Fatalf("payment_requests.%s missing (n=%d err=%v)", col, n, err)
 		}
 	}
-	// G9: every user may carry a default approver.
+	// Every user may carry a default approver.
 	var n int
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='default_approver_id'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("users.default_approver_id missing (n=%d err=%v)", n, err)
@@ -37,7 +37,7 @@ func TestMigrationV3CreatesRequestTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// D1: status has no default and 'draft' is refused by the schema itself.
+	// Status has no default and 'draft' is refused by the schema itself.
 	if _, err := s.DB().Exec(`INSERT INTO payment_requests(number,treatment,type,amount,purpose,requester_id,manager_id) VALUES('PR-NODEF','budget','vendor_invoice',1,'p',?,?)`, actorID, actorID); err == nil {
 		t.Fatal("status accepted a default; D1 requires the writer to name a status")
 	}
@@ -51,7 +51,7 @@ func TestMigrationV3CreatesRequestTables(t *testing.T) {
 	if _, err := s.DB().Exec(`INSERT INTO payment_requests(number,status,treatment,type,amount,purpose,requester_id,manager_id) VALUES('PR-DUP','pending','budget','vendor_invoice',1,'p',?,?)`, actorID, actorID); err == nil {
 		t.Fatal("duplicate request number was accepted; UNIQUE(number) missing")
 	}
-	// D6: the Configuration screen's Phase-2 keys are seeded.
+	// The Configuration screen's request-numbering keys are seeded.
 	for key, want := range map[string]string{
 		"number_prefix": "PR", "number_year_mode": "calendar", "number_width": "6",
 		"require_attachments": "0", "attachment_max_mb": "10",

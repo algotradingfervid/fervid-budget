@@ -31,7 +31,7 @@ func TestAppSettingRoundTripAndDefault(t *testing.T) {
 	}
 }
 
-// D6: the Configuration screen saves a whole form atomically.
+// The Configuration screen saves a whole form atomically.
 func TestSetAppSettingsIsAtomicAndAudited(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

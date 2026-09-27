@@ -130,11 +130,10 @@ func TestMigrationBackfillsExistingUsers(t *testing.T) {
 	}
 }
 
-// The reservation verbs entered the vocabulary with Phase 3, long after v1 had
-// seeded the starter roles on every installed database — and seedSystemRoles
-// runs only inside v1. Without the v5 back-fill, an upgraded system has an
-// Accounts role that cannot take a request out of the queue, which is the first
-// step of every payment this phase records.
+// The reservation verbs arrived after v1 had seeded the starter roles, and
+// seedSystemRoles runs only inside v1. The v5 back-fill gives an upgraded
+// system's Accounts role those grants, so it can take a request out of the
+// queue — the first step of every linked payment.
 func TestMigrationBackfillsAccountsReservationGrants(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -304,7 +303,7 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 			t.Fatalf("index %s missing after rebuild", idx)
 		}
 	}
-	// S9 still holds: a second payment on the same request is refused by the
+	// One payment per request still holds: a second one is refused by the
 	// partial unique index …
 	if _, err := s.DB().Exec(`INSERT INTO payments(head_id,paid_on,amount,entered_by,request_id,settlement) VALUES(?,?,?,?,?, 'settled')`,
 		headID, "2026-06-16", 1000, acc.ID, reqID); err != nil {
@@ -341,9 +340,9 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 	}
 }
 
-func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) { // G19, G20
+func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) {
 	s := newTestStore(t)
-	// v7 creates notification_settings and notifications; app_settings is Phase 2's (v3).
+	// v7 creates notification_settings and notifications; app_settings comes from v3.
 	for _, table := range []string{"notification_settings", "notifications"} {
 		var name string
 		if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
@@ -351,7 +350,7 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 		}
 	}
 	// Scoped to v7's own sort_order block, because notification_settings is
-	// append-only across migrations: v9 seeds nine more events (F-F-06) at
+	// append-only across migrations: v9 seeds nine more events at
 	// sort_order 13-21, and a count of the whole table would make this test about
 	// the size of the catalogue rather than about what v7 does.
 	// TestMigrationV9SeedsTheNineMissingEvents owns the total.
@@ -376,7 +375,7 @@ func TestMigrationV7CreatesNotificationTablesAndSeedsTwelveEvents(t *testing.T) 
 		if subject == "" || body == "" {
 			t.Fatalf("event %q seeded with an empty template", event)
 		}
-		// G20: the admin-facing vocabulary is {{token}}, never Go template syntax.
+		// The admin-facing vocabulary is {{token}}, never Go template syntax.
 		if strings.Contains(subject+body, "{{.") || strings.Contains(subject+body, "{{money") {
 			t.Fatalf("event %q still uses Go template syntax: %q / %q", event, subject, body)
 		}
@@ -514,7 +513,9 @@ CREATE UNIQUE INDEX idx_payments_request ON payments(request_id) WHERE request_i
 	}
 }
 
-func TestUXUpgradeFromVersion15PreservesHistoricalWriteoffAndPayment(t *testing.T) {
+// Upgrading a database from schema version 15 keeps an accepted short payment
+// (a write-off) and its payment exactly as they were.
+func TestUpgradeFromVersion15PreservesHistoricalWriteoffAndPayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	acc, requester, managerID, headID := seedRequestParty(t, s)

@@ -8,13 +8,14 @@ import "testing"
 // sheet ids on /admin/notifications, and the `event` column store.AddNotification
 // derives a notification's kind from. A rename must break a test here, not
 // silently stop delivering.
-func TestAllEventsIsTheFullCatalogueInSeededOrder(t *testing.T) { // G20, F-F-06
+// AllEvents lists every seeded event, in seeded order.
+func TestAllEventsIsTheFullCatalogueInSeededOrder(t *testing.T) {
 	want := []string{
-		// v7 — the twelve of G20.
+		// v7 — the original twelve.
 		"request_submitted", "request_edited", "request_returned", "request_rejected",
 		"request_approved", "request_urgent", "request_on_hold", "request_cancellation_requested",
 		"payment_settled", "payment_partial_review", "reminder_pending", "reminder_stale_reservation",
-		// v9 — the nine the 2026-07-27 audit found missing (F-F-06).
+		// v9 — nine more workflow events.
 		"request_withdrawn", "request_reraised", "request_unheld",
 		"reservation_released", "reservation_reassigned",
 		"payment_partial_accepted", "payment_partial_concern",
@@ -58,8 +59,8 @@ func TestAllEventsIsTheFullCatalogueInSeededOrder(t *testing.T) { // G20, F-F-06
 
 // Both reminders land on the same request's audit trail, so the row each writes
 // has to say which one it was — the stale-reservation screen's banner is
-// specifically about the stale one (F-F-02).
-func TestReminderLabelDistinguishesTheTwoReminders(t *testing.T) { // F-F-02
+// specifically about the stale one.
+func TestReminderLabelDistinguishesTheTwoReminders(t *testing.T) {
 	pending := reminderLabel(EventReminderPending)
 	stale := reminderLabel(EventReminderStaleReservation)
 	if pending == stale {

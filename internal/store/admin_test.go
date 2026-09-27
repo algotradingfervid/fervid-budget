@@ -148,7 +148,9 @@ func TestVendorAuditRecordsContactChangesWithoutFalseBankChanges(t *testing.T) {
 	}
 }
 
-func TestReverifyAdminChangeRevokesOutstandingReset(t *testing.T) {
+// An administrator setting a password, or deactivating and reactivating the
+// user, cancels any password-reset link still outstanding for them.
+func TestAdminChangeRevokesOutstandingReset(t *testing.T) {
 	for _, mode := range []string{"legacy password", "profile password", "deactivate then reactivate"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)

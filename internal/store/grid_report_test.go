@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// recoverables-2 / grid-2. A recoverable payment is a deposit, not budget
+// A recoverable payment is a deposit, not budget
 // spend, so the variance grid's Recent Payments panel must not list it; and
 // every payment row carries its request's treatment so a screen can name a
 // head-less recoverable instead of printing an empty "Project / Head".
@@ -74,9 +74,8 @@ func TestListPaymentsCanLeaveOutRecoverablesAndCarriesTreatment(t *testing.T) {
 	}
 }
 
-// audit-2 (BV36). Saving the budget form used to write an "update" audit row for
-// every head on the form, including the ones whose amount did not move, and the
-// summary named neither the head nor the month.
+// Saving the budget form audits only the heads whose amount changed, and each
+// summary names the head and the month.
 func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -100,8 +99,8 @@ func TestSetBudgetsAuditsOnlyChangedBudgetsWithAReadableSummary(t *testing.T) {
 	}
 	// Power was submitted at ₹0 with no budget behind it. A head with no budget
 	// already reads as ₹0 everywhere, so nothing changed: no row is written and
-	// nothing is audited. Only Rent, which the user set, is recorded (audit-2,
-	// review: the first save of a month used to log every head on the form).
+	// nothing is audited. Only Rent, which the user set, is recorded, even on the
+	// first save of a month.
 	if got := count(); got != 1 {
 		t.Fatalf("the first save wrote %d budget audit rows, want 1 (only Rent was set)", got)
 	}
@@ -187,7 +186,9 @@ func TestSetBudgetsRefusesAnUnknownHeadEvenAtZero(t *testing.T) {
 	}
 }
 
-func TestUXGridNeutralStatusAndFilteredTotalScope(t *testing.T) {
+// A head with no budget and no payments reads "no activity", not "not paid",
+// and a filtered grid labels its total as a filtered subtotal.
+func TestGridNeutralStatusAndFilteredTotalScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, head := seedActorAndHead(t, s)
@@ -217,7 +218,9 @@ func TestUXGridNeutralStatusAndFilteredTotalScope(t *testing.T) {
 	}
 }
 
-func TestUXReportStableIDsAndPaymentHeadScope(t *testing.T) {
+// Report rows carry the head and project ids, and the payment list filtered by
+// them returns that head's payments.
+func TestReportStableIDsAndPaymentHeadScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, head := seedActorAndHead(t, s)

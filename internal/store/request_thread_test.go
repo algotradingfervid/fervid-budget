@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// REQ-DEF-01: later decisions replace the live note, but each historical event
+// Later decisions replace the live note, but each historical event
 // must retain the note its actor actually entered, in decision order.
 func TestRequestThreadRetainsDecisionNotesAfterCancellation(t *testing.T) {
 	ctx := context.Background()

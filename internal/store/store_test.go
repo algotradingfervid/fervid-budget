@@ -615,12 +615,9 @@ func TestRecordAuditCreatesQueryableEntry(t *testing.T) {
 	}
 }
 
-// TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest is the F-D-01 proof:
-// a manager approves an amount against a project and head, and the entry
-// screen offers no control to change the head, the payee or the invoice — so
-// the store derives all three from the request row and ignores the form's
-// copies. Before the fix a forged head_id charged an approved payment to a
-// head nobody approved, with the audit blob recording the forgery as truth.
+// A linked payment takes its head, payee and invoice from the approved request
+// and ignores the form's copies, so a forged head_id cannot charge the payment
+// to a head nobody approved.
 func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -672,12 +669,10 @@ func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	}
 }
 
-// TestRecoverableSettlementNeedsNoHead is the F-D-11 / F-E-01 / F-G-001 proof,
-// through the real write path end to end: CreateRequest (the shape the form
-// produces — no head for a recoverable), ApproveRequest, ReserveRequest, then
-// RecordPaymentForRequest posting head_id=0 exactly as the entry screen's
-// hidden input does. Before v8 this died on payments.head_id NOT NULL for
-// every one of the six categories.
+// A recoverable is settled without a head, for every category, through the
+// real write path: CreateRequest (no head for a recoverable), ApproveRequest,
+// ReserveRequest, then RecordPaymentForRequest posting head_id=0 exactly as the
+// entry screen's hidden input does.
 func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -795,9 +790,8 @@ func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 	}
 }
 
-// TestReserveRequestNamesEachRefusalCause is the F-D-02 store half: the three
-// reasons a reservation can be refused arrive as three distinct sentinels, each
-// still an ErrForbidden so every existing handler branch keeps working.
+// The three reasons a reservation can be refused arrive as three distinct
+// errors, each still an ErrForbidden so every handler branch keeps working.
 func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -837,9 +831,8 @@ func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 	}
 }
 
-// TestClassifyTurnsForeignKeyViolationsIntoValidation covers F-B-06 / F-G-027:
-// a forged foreign id is a client error that must surface as a 400 keeping the
-// typed form, not a 500 losing it — and the driver text never travels.
+// A forged foreign id is a client error: it surfaces as a validation error
+// (a 400 that keeps the typed form), and the driver's text never travels.
 func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -870,11 +863,10 @@ func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 	}
 }
 
-// TestListPaymentsScopeNarrowsToEnteredBy is the F-A-04 / F-G-003 store half:
-// the `payment` data scope finally reads. "own" (and "assigned", which has no
-// routed-to meaning on the ledger) narrow to rows the viewer entered; "all" is
-// unrestricted and "" — the role editor's "None" — reads nothing, like
-// requestWhere (fixwave rbac-2; the empty scope used to be unrestricted here).
+// The `payment` data scope narrows the ledger. "own" (and "assigned", which has
+// no routed-to meaning on the ledger) narrow to rows the viewer entered; "all"
+// is unrestricted and "" — the role editor's "None" — reads nothing, like the
+// request list.
 func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -925,15 +917,10 @@ func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 	}
 }
 
-// TestValidatePaymentRefusesFutureDateAgainstInjectedClock is F-D-06.
-//
-// The rule reads the injected clock when the caller supplies one, so a test can
-// pin the day — and falls back to the server's local day when it does not, so the
-// rule is enforced whether or not anybody remembered to wire a clock. The
-// second half is the fix: the check shipped skipping on a zero Now, no
-// production caller ever set the field, and the guard therefore refused nothing
-// for a whole release. The last block below is what pins that, and it is the
-// exact assertion this test used to make in reverse.
+// A payment cannot be dated in the future. The rule reads the injected clock
+// when the caller supplies one, so a test can pin the day, and falls back to the
+// server's local day when it does not, so the rule holds whether or not a clock
+// was wired.
 func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -970,9 +957,7 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 		t.Fatalf("future-dated settlement = %v, want ErrValidation", err)
 	}
 	// No clock at all — the shape every production caller uses. The rule must
-	// still bite, because a guard that switches itself off when the caller
-	// forgets to inject a clock guards nothing, which is what F-D-06 found.
-	// Both dates are relative to the real day, so this cannot rot into a test
+	// still apply. Both dates are relative to the real day, so this cannot rot into a test
 	// that passes only until the calendar catches up with a literal.
 	localToday := time.Now()
 	tomorrow := localToday.AddDate(0, 0, 1).Format("2006-01-02")
@@ -985,9 +970,8 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	}
 }
 
-// TestAddAttachmentRefusesLinkedPayment closes F-D-08: a linked payment is the
-// request's outcome and the screen calls it read-only; edit and void already
-// refuse it, and a new document now gets the same answer.
+// A linked payment is the request's outcome and is read-only: like edit and
+// void, adding a document to it is refused.
 func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1010,10 +994,9 @@ func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
 	}
 }
 
-// TestRequestAttachmentByIDAndAttachmentWithPayment pins the store surface
-// Wave 3 builds the F-A-01 / F-A-05 ownership checks on: request documents
-// resolve from their own table, and a payment attachment resolves to its
-// payment (and through Payment.RequestID to its request) in one call.
+// The attachment lookups the download ownership checks rely on: request
+// documents resolve from their own table, and a payment attachment resolves to
+// its payment (and through Payment.RequestID to its request) in one call.
 func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1105,9 +1088,8 @@ func assertAuditPayloads(t *testing.T, audits []AuditEntry, paymentID int64) {
 	}
 }
 
-// F-G-034 — the profile, the role assignment and the default approver used to be
-// three store calls with three transactions, so a save refused by the second
-// left the first one's rename committed.
+// Saving a user is one transaction across the profile, the role assignment and
+// the default approver: a save refused part-way leaves nothing committed.
 func TestSaveUserIsAtomicAcrossProfileRolesAndApprover(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

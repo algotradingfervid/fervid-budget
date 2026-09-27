@@ -40,7 +40,7 @@ func bankBlind() PermissionSet {
 	return NewPermissionSet([]Grant{{"vendor", "view"}, {"vendor", "edit"}, {"payment", "view"}, {"request", "view"}}, []ScopeGrant{{"payment", "all"}, {"request", "all"}})
 }
 
-// The whole point of Phase 1V: the gate is on the data. A caller without
+// Bank details are gated on the data itself. A caller without
 // vendor_bank:view must not receive the bank block from the store at all, so a
 // handler bug or a template mistake still cannot leak it.
 func TestVendorBankDetailsAreGatedByThePermissionSet(t *testing.T) {
@@ -400,10 +400,9 @@ func TestVendorStatsAndCategories(t *testing.T) {
 	}
 }
 
-// The list screen's "Paid this year" column. Until Phase 3 links payments to
-// vendor_id, the only link is the payee snapshot, so the match is exact: it
-// may under-count a payment whose payee was typed differently, but it can
-// never attribute one to the wrong vendor.
+// The list screen's "Paid this year" column counts a payment with no vendor id
+// by its payee snapshot, matched exactly: it may under-count a payment whose
+// payee was typed differently, but it never attributes one to the wrong vendor.
 func TestListVendorsTotalsPaymentsRecordedAgainstTheVendorName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -426,8 +425,8 @@ func TestListVendorsTotalsPaymentsRecordedAgainstTheVendorName(t *testing.T) {
 		return id
 	}
 	// Every in-year payment is dated today. A literal month would make this test
-	// depend on when in the year it is run: F-D-06 refuses a future paid_on, so
-	// `year+"-04-15"` is a payment the store rejects outright every January.
+	// depend on when in the year it is run: the store refuses a future paid_on, so
+	// `year+"-04-15"` would be rejected outright every January.
 	today := time.Now().Format("2006-01-02")
 	pay("Sundaram Electricals Pvt Ltd", today, 500000)
 	pay("sundaram electricals pvt ltd", today, 250000)        // case-insensitive
@@ -577,15 +576,9 @@ func vendorByName(t *testing.T, rows []Vendor, name string) Vendor {
 	return Vendor{}
 }
 
-// TestVendorPaidThisYearSurvivesARename is F-G-009, and the rename is the whole
-// point.
-//
-// The figure used to be string equality between payments.vendor_payee — a
-// denormalised snapshot of the payee's name at the moment of settlement — and
-// vendors.name. So correcting a vendor's legal name, with the payment untouched
-// and still sitting in the ledger, silently zeroed its entire spend history.
-// Migration v10 gives a payment the vendor id it was made to, and this asserts
-// the figure is now a fact about the vendor rather than about their spelling.
+// A vendor's "Paid this year" survives renaming the vendor: payments carry the
+// vendor id they were made to (migration v10), so the figure is a fact about the
+// vendor rather than about the spelling of its name.
 func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -638,10 +631,7 @@ func TestVendorPaidThisYearSurvivesARename(t *testing.T) {
 	}
 }
 
-// TestVendorOpenRequestsCountsLiveWork is F-G-010. The column was declared on
-// the struct, scanned by nothing and therefore printed Go's zero value beside
-// every vendor, live work or not — which is worse than an absent column,
-// because it asserts that there is none.
+// The vendor list's open-requests column counts the vendor's live requests.
 func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -679,8 +669,7 @@ func TestVendorOpenRequestsCountsLiveWork(t *testing.T) {
 
 // TestVendorOpenRequestsUsesTheProductsOwnOpenBucket pins the definition rather
 // than the number: "open" here is requestBuckets["open"], the set behind
-// /requests?bucket=open, so this count and that list cannot drift apart the way
-// F-G-006's dashboard tile drifted from the bucket its own link pointed at.
+// /requests?bucket=open, so this count and that list cannot drift apart.
 func TestVendorOpenRequestsUsesTheProductsOwnOpenBucket(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -708,16 +697,15 @@ func TestVendorOpenRequestsUsesTheProductsOwnOpenBucket(t *testing.T) {
 	}
 }
 
-// TestVendorPaidThisYearPrefersTheIdAndFallsBackExactly covers the two halves of
-// the F-G-009 fix that the rename test cannot reach:
+// How "Paid this year" matches payments to a vendor, beyond the rename case:
 //
 //   - the id wins over the text, so a payment carrying somebody else's name in
 //     its snapshot is still counted against the vendor it was actually made to;
 //   - the payee match survives ONLY for rows with no vendor_id — the pre-v10
 //     direct payments, which settle no request and so have nothing to inherit —
 //     and is still EXACT, so a near-miss name is never credited to the wrong
-//     vendor. That property is older than the fix and must outlive it: on a
-//     financial screen a missing row is recoverable, a misattributed one is not.
+//     vendor. On a financial screen a missing row is recoverable, a
+//     misattributed one is not.
 func TestVendorPaidThisYearPrefersTheIdAndFallsBackExactly(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

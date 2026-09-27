@@ -25,11 +25,7 @@ func seedReminderRequest(t *testing.T, s *Store, number, status string) int64 {
 	})
 }
 
-// F-F-08: the thresholds are elapsed 24-hour days, not calendar-date
-// boundaries. TestCalendarDaysBetweenCountsDateBoundaries used to live here and
-// exercised a helper nothing in production ever called; the helper is gone and
-// this test replaces it by pinning the semantics that actually run, so the two
-// can no longer disagree.
+// Reminder thresholds are elapsed 24-hour days, not calendar-date boundaries.
 //
 // A request submitted at 23:50 has not "waited a day" ten minutes later at
 // 00:00, and — the decisive case — a reminder sent at 23:55 is not repeatable
@@ -73,7 +69,7 @@ func TestReminderThresholdsCountElapsedDaysNotCalendarBoundaries(t *testing.T) {
 	}
 }
 
-// F-F-02: "a reminder went out" needs a witness. The stale-reservation screen's
+// A reminder leaves an audit row. The stale-reservation screen's
 // "Who has been told" thread is built from the audit log, so the reminder has to
 // leave a row there — naming which reminder and who was told, since both
 // reminders land on the same request's trail.

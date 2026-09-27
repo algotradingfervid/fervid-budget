@@ -122,7 +122,7 @@ func TestReserveRequestMovesApprovedToProcessing(t *testing.T) {
 	if pb := requestProcessingBy(t, s, reqID); pb == nil || *pb != acc.ID {
 		t.Fatalf("processing_by = %v, want %d", pb, acc.ID)
 	}
-	// Illegal source states are rejected (L11): a second reserve, and reserving a
+	// Illegal source states are rejected: a second reserve, and reserving a
 	// non-approved (e.g. still-pending) request, both fail.
 	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("double reserve = %v, want ErrForbidden", err)
@@ -148,8 +148,8 @@ func TestReserveRequestSkipsOnHoldRequests(t *testing.T) {
 	}
 }
 
-// TestReserveRequestIsAtomicUnderConcurrency is the S5 proof: many accountants
-// race to reserve one request; exactly one wins and the rest get ErrForbidden.
+// Many accountants race to reserve one request; exactly one wins and the rest
+// get ErrForbidden.
 func TestReserveRequestIsAtomicUnderConcurrency(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -220,18 +220,18 @@ func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	const reason = "Vendor bank details need confirming before I can transfer."
-	// No confirm → validation, still processing (S7).
+	// No confirm → validation, still processing.
 	if err := s.ReleaseRequest(ctx, acc, reqID, reason, false, false); !errors.Is(err, ErrValidation) {
 		t.Fatalf("release without confirm = %v, want ErrValidation", err)
 	}
-	// G12: no reason → validation, still processing, nothing recorded.
+	// A release needs a reason: none → validation, still processing, nothing recorded.
 	if err := s.ReleaseRequest(ctx, acc, reqID, "   ", true, false); !errors.Is(err, ErrValidation) {
 		t.Fatalf("release without reason = %v, want ErrValidation", err)
 	}
 	if got := requestStatus(t, s, reqID); got != "processing" {
 		t.Fatalf("status after refused release = %q, want processing", got)
 	}
-	// Non-assignee, non-authorized → forbidden (S6).
+	// Non-assignee, non-authorized → forbidden.
 	if err := s.ReleaseRequest(ctx, other, reqID, reason, true, false); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-assignee release = %v, want ErrForbidden", err)
 	}
@@ -245,7 +245,7 @@ func TestReleaseRequestRequiresConfirmReasonAndAuthority(t *testing.T) {
 	if pb := requestProcessingBy(t, s, reqID); pb != nil {
 		t.Fatalf("processing_by not cleared: %v", pb)
 	}
-	// G12: the reason is in the audit trail, which is what the release .thread renders.
+	// The reason is in the audit trail, which is what the request thread shows for the release.
 	var trail int
 	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE entity_type='payment_request' AND entity_id=? AND action='release' AND summary LIKE ?`, reqID, "%"+reason+"%").Scan(&trail); err != nil {
 		t.Fatal(err)
@@ -340,7 +340,7 @@ func TestRecordPaymentSettledCompletesEvenWhenUnderApproved(t *testing.T) {
 	if err != nil || p.ID != payID || p.RequestID == nil || *p.RequestID != reqID || p.Settlement != "settled" {
 		t.Fatalf("linked payment = %+v, err=%v", p, err)
 	}
-	// One payment per request: a second settlement is refused (S9).
+	// One payment per request: a second settlement is refused.
 	if _, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-16", Amount: 100000, VendorPayee: "Acme"}, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("second settlement = %v, want ErrForbidden", err)
 	}
@@ -355,7 +355,7 @@ func TestRecordPaymentPartialNeedsReasonAndRoutesToReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme Landlord"}
-	// Partial without reason → validation; nothing written; still processing (S13).
+	// Partial without reason → validation; nothing written; still processing.
 	if _, err := historicalSettlement(ctx, s, acc, reqID, in, "partial", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("partial without reason = %v, want ErrValidation", err)
 	}
@@ -365,7 +365,7 @@ func TestRecordPaymentPartialNeedsReasonAndRoutesToReview(t *testing.T) {
 	if _, err := s.PaymentForRequest(ctx, reqID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("payment written despite rejected settlement: %v", err)
 	}
-	// Partial with reason → partial_review (L9).
+	// Partial with reason → partial_review.
 	if _, err := historicalSettlement(ctx, s, acc, reqID, in, "partial", "Balance pending vendor confirmation", nil); err != nil {
 		t.Fatalf("record partial: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestRecordPaymentRequiresActorReservation(t *testing.T) {
 	other, _ := s.UserByID(ctx, otherID)
 	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	in := PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000, VendorPayee: "Acme Landlord"}
-	// Not reserved at all → forbidden, no payment (store-level X5).
+	// Not reserved at all → forbidden, no payment.
 	if _, err := historicalSettlement(ctx, s, acc, reqID, in, "settled", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("record without reservation = %v, want ErrForbidden", err)
 	}
@@ -405,10 +405,9 @@ func TestRecordPaymentRequiresActorReservation(t *testing.T) {
 	}
 }
 
-// TestRecordPaymentRejectsOverpayment is the G13 proof: the mockup's read-only
-// approved field and .banner.bad both promise that paid can never exceed
-// approved. Rejection must leave the request reserved and no payment written, so
-// the accountant can correct the figure without re-reserving.
+// The amount paid can never exceed the amount approved. A refusal leaves the
+// request reserved and no payment written, so the accountant can correct the
+// figure without re-reserving.
 func TestRecordPaymentRejectsOverpayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -487,12 +486,12 @@ func TestAcceptPartialAndRaiseConcern(t *testing.T) {
 	if err := s.AcceptPartial(ctx, mgr, accepted, "Balance will be invoiced separately."); err != nil {
 		t.Fatalf("accept partial: %v", err)
 	}
-	// G14: a distinguishable terminal state, not plain 'completed'. The ledger and
-	// the .pill.completed-partial both depend on being able to tell them apart.
+	// An accepted short payment ends in its own state, not plain 'completed': the
+	// ledger and the "completed (partial)" pill both need to tell them apart.
 	if got := requestStatus(t, s, accepted); got != "completed_partial" {
 		t.Fatalf("accepted status = %q, want completed_partial (G14)", got)
 	}
-	// Accepting a non-partial_review request is rejected (L11).
+	// Accepting a non-partial_review request is rejected.
 	if err := s.AcceptPartial(ctx, mgr, accepted, ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("accept completed_partial = %v, want ErrForbidden", err)
 	}
@@ -592,8 +591,7 @@ func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 	if onHold != 1 || holdReason != "await vendor GST" || amount != 500000 || approved != 480000 {
 		t.Fatalf("hold changed approved fields: on_hold=%d reason=%q amount=%d approved=%d", onHold, holdReason, amount, approved)
 	}
-	// Q6: while on hold the requester may still add a comment; no field changes.
-	// (Phase 2's AddRequestComment returns the new comment id alongside its error.)
+	// While on hold the requester may still add a comment; no field changes.
 	if _, err := s.AddRequestComment(ctx, req, reqID, "Attaching the corrected invoice"); err != nil {
 		t.Fatalf("comment while on hold: %v", err)
 	}
@@ -603,7 +601,7 @@ func TestHoldUnholdPreserveApprovedFieldsAndAllowComments(t *testing.T) {
 	if amount != 500000 || approved != 480000 {
 		t.Fatalf("comment changed approved fields: amount=%d approved=%d", amount, approved)
 	}
-	// A held request cannot be reserved (L7).
+	// A held request cannot be reserved.
 	if err := s.ReserveRequest(ctx, acc, reqID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("reserve held = %v, want ErrForbidden", err)
 	}
@@ -652,7 +650,7 @@ func TestLinkablePaymentRequestsFilterAndSearch(t *testing.T) {
 		}
 	}
 
-	// Search narrows both sets, by number, payee and amount (S4).
+	// Search narrows both sets, by number, payee and amount.
 	byNumber, err := s.LinkablePaymentRequests(ctx, LinkableOptions{Scope: "all", ViewerID: acc.ID, Query: "PR-2026-000001"})
 	if err != nil || len(byNumber.Available) != 1 || byNumber.Available[0].ID != linkable {
 		t.Fatalf("search by number = %+v, err=%v", byNumber.Available, err)
@@ -751,7 +749,7 @@ func TestLinkablePaymentRequestsTabsCountsAndReserver(t *testing.T) {
 	if c.PartialReview != 1 {
 		t.Fatalf("Partial review tab = %d, want 1", c.PartialReview)
 	}
-	if c.Paid != 2 { // completed + completed_partial both count as paid (G14)
+	if c.Paid != 2 { // completed + completed_partial both count as paid
 		t.Fatalf("Paid tab = %d, want 2 (completed and completed_partial)", c.Paid)
 	}
 	// .metric-strip metrics.

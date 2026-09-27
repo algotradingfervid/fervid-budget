@@ -191,10 +191,10 @@ func TestRestoreBackupFailureLeavesLivePathsUntouched(t *testing.T) {
 	}
 }
 
-// backup-1: an unclean stop leaves most committed pages in <db>-wal. Restoring
-// over that database used to swap only the main file, so SQLite replayed the
-// stale WAL on the next open and the "restored" database still held the live
-// data the backup never had.
+// An unclean stop leaves most committed pages in <db>-wal. Restoring over that
+// database must deal with the WAL too; swapping only the main file would let
+// SQLite replay the stale WAL on the next open, so the "restored" database would
+// still hold live data the backup never had.
 func TestRestoreBackupOverDatabaseWithLiveWALServesTheBackup(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -276,7 +276,10 @@ func TestRestoreBackupOverDatabaseWithLiveWALServesTheBackup(t *testing.T) {
 	}
 }
 
-func TestReverifyRestoreRebasesBothAttachmentTablesAndRejectsTraversal(t *testing.T) {
+// Restoring a backup re-points request and payment attachment paths at the
+// restored attachment folder (absolute or legacy relative), and refuses a path
+// that points outside it.
+func TestRestoreRebasesBothAttachmentTablesAndRejectsTraversal(t *testing.T) {
 	for _, mode := range []string{"absolute", "legacy relative", "outside root"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()

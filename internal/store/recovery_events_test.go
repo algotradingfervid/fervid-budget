@@ -218,6 +218,8 @@ func TestRecoverableNamedDepositPayeeIsCounterpartyFallback(t *testing.T) {
 	}
 }
 
+// Re-sending the same recovery (same token) is idempotent, but re-sending the
+// token with a changed amount is refused rather than confirmed.
 func TestRecoveryReplayCannotConfirmDifferentAmount(t *testing.T) {
 	ctx := context.Background()
 	s, actor, _, id := recoveryFixture(t)

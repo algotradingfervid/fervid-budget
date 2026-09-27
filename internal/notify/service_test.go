@@ -11,7 +11,8 @@ import (
 	"fervidbudget/internal/store"
 )
 
-func TestRenderTemplateSubstitutesTheTokenVocabulary(t *testing.T) { // G20
+// Notification templates use the admin-facing {{token}} vocabulary.
+func TestRenderTemplateSubstitutesTheTokenVocabulary(t *testing.T) {
 	v := RequestView{
 		Number: "PR-1", Amount: 123456, ApprovedAmount: 100000, Payee: "Acme",
 		ManagerName: "Kavita Rao", Project: "Ops", Head: "Rent", NeededBy: "2026-08-01",
@@ -35,7 +36,7 @@ func TestRenderTemplateSubstitutesTheTokenVocabulary(t *testing.T) { // G20
 
 // A typo must fail loudly at save time, not emit an empty string into an email
 // nobody can debug afterwards.
-func TestRenderTemplateRejectsUnknownToken(t *testing.T) { // G20
+func TestRenderTemplateRejectsUnknownToken(t *testing.T) {
 	if _, err := renderTemplate("Hello {{recipient}}", RequestView{}); err == nil {
 		t.Fatal("unknown token accepted")
 	}
@@ -48,7 +49,7 @@ func TestRenderTemplateRejectsUnknownToken(t *testing.T) { // G20
 }
 
 // Admin-editable text must never reach the Go template engine.
-func TestRenderTemplateDoesNotExecuteGoTemplates(t *testing.T) { // G20
+func TestRenderTemplateDoesNotExecuteGoTemplates(t *testing.T) {
 	// A Go action would be executed by text/template; here it is just an
 	// unknown token, which is refused.
 	if _, err := renderTemplate(`{{.Number}}`, RequestView{Number: "PR-1"}); err == nil {
@@ -99,7 +100,7 @@ func TestResolveRecipientsDedupesAcrossToAndCc(t *testing.T) {
 	}
 }
 
-func TestNotifyWritesInAppRowsAndSendsEmailWhenEnabled(t *testing.T) { // G19
+func TestNotifyWritesInAppRowsAndSendsEmailWhenEnabled(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
 	actor := testActor(t, st)
@@ -150,7 +151,7 @@ func TestNotifyWritesInAppRowsAndSendsEmailWhenEnabled(t *testing.T) { // G19
 	}
 }
 
-// N1/G19: disabling an event turns off email, never the in-app record.
+// Disabling an event turns off email, never the in-app record.
 func TestNotifyDisabledEventStillWritesInAppButSendsNoEmail(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
@@ -248,11 +249,10 @@ func TestNotifyResolvesAccountsGroup(t *testing.T) {
 	}
 }
 
-// N3: the approval email goes To the requester and Accounts and is copied (Cc)
+// The approval email goes To the requester and Accounts and is copied (Cc)
 // to the management list. The list is set only in MailSettings — not in the
-// event's own To or Cc — so the Cc below can only have come from the N3 rule
-// (test-1: no earlier test pinned it).
-func TestNotifyCopiesManagementOnTheApprovalEmail(t *testing.T) { // N3
+// event's own To or Cc — so the Cc below can only have come from that rule.
+func TestNotifyCopiesManagementOnTheApprovalEmail(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
 	actor := testActor(t, st)
@@ -288,12 +288,11 @@ func TestNotifyCopiesManagementOnTheApprovalEmail(t *testing.T) { // N3
 	}
 }
 
-// notify-2: the in-app body is the email body minus what only makes sense on
-// paper. Its line breaks are kept (the centre renders them), and a line whose
-// template field came out empty is dropped rather than shown as a bare label —
-// a request raised with no Needed-by date used to read "Needed by:" with
-// nothing after it.
-func TestNotifyInAppBodyDropsEmptyFieldLinesAndKeepsLineBreaks(t *testing.T) { // N1
+// The in-app body is the email body minus what only makes sense on paper. Its
+// line breaks are kept (the notification centre renders them), and a line whose
+// template field came out empty is dropped rather than shown as a bare label
+// such as "Needed by:".
+func TestNotifyInAppBodyDropsEmptyFieldLinesAndKeepsLineBreaks(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
 	actor := testActor(t, st)
@@ -365,14 +364,14 @@ func TestNotifyUnknownEventIsANoOp(t *testing.T) {
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
-// F-F-06: the nine events the audit found missing must reach the person who
-// needs to know, and — for the events about one specific reservation — must not
+// The nine workflow events added in v9 reach the person who needs to know,
+// and — for the events about one specific reservation — do not
 // chase the whole Accounts group about work that belongs to one accountant.
 //
 // The audience flags below are the seeded ones; internal/store's
 // TestMigrationV9SeedsTheNineMissingEvents pins that the migration really seeds
 // these, and this test pins what they resolve to.
-func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
+func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
 	actor := testActor(t, st)
@@ -468,7 +467,7 @@ func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
 			cfg.SubjectTemplate = "{{number}} — " + tc.event
 			cfg.BodyTemplate = "{{amount}} to {{payee}}. Open it: {{link}}"
 			// Email on, so the email audience is checked against the in-app one:
-			// the two must reach the same people (notify-1).
+			// the two must reach the same people.
 			cfg.EmailEnabled = true
 			enableEvent(t, st, actor, cfg)
 
@@ -535,7 +534,7 @@ func TestNotifyResolvesRecipientsForTheAuditEvents(t *testing.T) { // F-F-06
 // store.AddNotification derives from the event at write time — there is no
 // second copy in this package to drift from it. So a new event's rows really are
 // reachable under the tab they belong to, not only under "All".
-func TestNewEventsAreReachableUnderTheirFilterTab(t *testing.T) { // F-F-06
+func TestNewEventsAreReachableUnderTheirFilterTab(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
 	actor := testActor(t, st)
@@ -585,7 +584,7 @@ func TestNewEventsAreReachableUnderTheirFilterTab(t *testing.T) { // F-F-06
 // that convention rather than inventing another: none of them copies management
 // on its own, and an organisation that wants them to sets the event's own
 // cc_recipients.
-func TestAuditEventsDoNotCopyManagementByThemselves(t *testing.T) { // F-F-06
+func TestAuditEventsDoNotCopyManagementByThemselves(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
 	actor := testActor(t, st)
@@ -627,11 +626,8 @@ func TestAuditEventsDoNotCopyManagementByThemselves(t *testing.T) { // F-F-06
 	}
 }
 
-// settlement-1: every settlement notification states the amount actually
-// paid, and the approved figure where it differs. The four seeded templates
-// used {{amount}} — the requested figure — so an approver was told "only
-// ₹12,345.67 was paid" about an ₹8,000 payment, and "paid in full: ₹50,000"
-// about ₹45,000.
+// Every settlement notification states the amount actually paid, and the
+// approved figure where it differs — never the requested amount ({{amount}}).
 func TestSettlementNotificationsNameTheAmountActuallyPaid(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)

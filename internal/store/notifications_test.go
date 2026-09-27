@@ -88,7 +88,7 @@ func TestNotificationSettingUpsertAndFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Screen order is the seeded sort_order, and notification_settings is
-	// append-only across migrations — v9 adds nine more events (F-F-06). So this
+	// append-only across migrations — v9 adds nine more events. So this
 	// pins that v7's twelve come first and in their seeded order, which is what
 	// the screen's order actually means, rather than a total that grows with each
 	// migration that adds an event.

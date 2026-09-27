@@ -50,7 +50,7 @@ func TestNextRequestNumberIsMonotonicPerYear(t *testing.T) {
 	}
 }
 
-// A20/D6: the Configuration numbering fieldset actually drives the format.
+// The numbering settings on the Configuration screen decide the request number format.
 func TestNextRequestNumberHonoursConfiguredFormat(t *testing.T) {
 	s := newTestStore(t)
 	if _, err := s.DB().Exec(`UPDATE app_settings SET value='REQ' WHERE key='number_prefix'`); err != nil {
@@ -155,7 +155,7 @@ func TestValidateRequestInputPerType(t *testing.T) {
 		// An employee advance is always in the Employee advance category. A deposit
 		// or guarantee in any other category is its own request type with its own
 		// payee, so the category cannot smuggle an EMD into a request that pays the
-		// requester (form-1 / recoverables-1).
+		// requester.
 		{"employee_advance recoverable must be in the Employee advance category", base(func(i *RequestInput) {
 			*i = RequestInput{Treatment: "recoverable", Type: "employee_advance", ShortTitle: "ICD to Meridian",
 				Amount: 1000, Purpose: "deposit", ManagerID: 7, AdvanceReason: "deposit",
@@ -222,7 +222,7 @@ func TestValidateRequestInputPerType(t *testing.T) {
 	}
 }
 
-// A5/D1: 'draft' is gone; cancellation_requested and cancelled are in.
+// The status machine has no draft state; cancellation_requested and cancelled are real states.
 func TestCanTransition(t *testing.T) {
 	legal := map[[2]string]bool{
 		{"returned", "pending"}: true,
@@ -241,7 +241,7 @@ func TestCanTransition(t *testing.T) {
 			}
 		}
 	}
-	// L1 (inverted): 'draft' is not a status this system knows.
+	// 'draft' is not a status this system knows.
 	if requestStatuses["draft"] {
 		t.Fatal("draft is present in the status enum; D1 removed it")
 	}
@@ -271,7 +271,7 @@ func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}
-	// D1: created already pending, numbered, and stamped in one operation.
+	// A new request is created already pending, numbered, and stamped in one operation.
 	if got.Status != "pending" {
 		t.Fatalf("status = %q, want pending (D1: there are no drafts)", got.Status)
 	}
@@ -288,7 +288,7 @@ func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
 	if got.RequesterID != req.ID || got.ManagerID != mgr.ID {
 		t.Fatalf("requester/manager = %d/%d, want %d/%d", got.RequesterID, got.ManagerID, req.ID, mgr.ID)
 	}
-	// T5: the urgent flag and its reason round-trip.
+	// The urgent flag and its reason round-trip.
 	if !got.Urgent || got.UrgencyReason == "" {
 		t.Fatalf("urgent=%v reason=%q; both must round-trip", got.Urgent, got.UrgencyReason)
 	}
@@ -302,7 +302,7 @@ func TestCreateRequestIsAtomicCreateAndSubmit(t *testing.T) {
 	}
 }
 
-// T9/T11 (form-1 / recoverables-1): the payee rule is the TYPE's. An employee
+// The payee rule belongs to the request type. An employee
 // advance pays the person raising it whatever the form said, and a deposit or
 // guarantee — the `recoverable` type — pays whoever the requester named, because
 // that money goes to a counterparty or a tender authority, never to the employee.
@@ -364,7 +364,7 @@ func TestEmployeeAdvancePayeeIsForcedAndADepositPayeeIsFree(t *testing.T) {
 	}
 }
 
-// D1 proof of absence: coverage row L1 inverted. No draft state exists anywhere.
+// No draft state exists anywhere: not in the status list, the transitions or the schema.
 func TestNoDraftStateExists(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -413,8 +413,8 @@ func TestCreateRequestRejectsInvalidType(t *testing.T) {
 	}
 }
 
-// A staged attachment is written in the same transaction as the request; D1
-// left no earlier moment at which a file could be attached.
+// A staged attachment is written in the same transaction as the request, since
+// a request has no earlier saved moment at which a file could be attached.
 func TestCreateRequestWritesStagedAttachments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -465,7 +465,7 @@ func TestSubmitRequestResubmitsAReturnedRequest(t *testing.T) {
 	}
 }
 
-// T12: retired project/head disappears from new selection but the historical
+// A retired project/head disappears from new selection but the historical
 // request keeps showing its name.
 func TestRequestRetainsHistoricalProjectHead(t *testing.T) {
 	ctx := context.Background()
@@ -687,7 +687,7 @@ func TestUpdateRequestRejectedAfterApproval(t *testing.T) {
 		ProjectID: 1, HeadID: headID, Amount: 1000, Purpose: "advance", ManagerID: mgr.ID,
 		VendorID: vendorID, AdvanceReason: "booking"}
 	id, _ := s.CreateRequest(ctx, req, in)
-	// Drive it to approved directly (ApproveRequest arrives in Task 12) to prove edits are then blocked.
+	// Move it to approved directly to prove edits are then blocked.
 	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='approved' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +723,7 @@ func TestWithdrawRequestFromPending(t *testing.T) {
 	if err := s.WithdrawRequest(ctx, req, id); !errors.Is(err, ErrValidation) {
 		t.Fatalf("double withdraw = %v, want ErrValidation", err)
 	}
-	// G1: an approved request cannot be withdrawn — cancellation is a decision
+	// An approved request cannot be withdrawn — cancellation is a decision
 	// the approver makes, not something the requester does alone.
 	other := mk()
 	if _, err := s.DB().Exec(`UPDATE payment_requests SET status='approved' WHERE id=?`, other); err != nil {
@@ -777,7 +777,7 @@ func TestApproveRequestAdjustsAmountAndIsAssignedOnly(t *testing.T) {
 	if err := s.ApproveRequest(ctx, mgr, id2, 0, ""); !errors.Is(err, ErrValidation) {
 		t.Fatalf("zero approved amount = %v, want ErrValidation", err)
 	}
-	// G8, defence in depth: even a row that somehow routed to its own requester
+	// Nobody approves their own request: even a row that somehow routed to its own requester
 	// cannot be self-approved.
 	if _, err := s.DB().Exec(`UPDATE payment_requests SET manager_id=requester_id WHERE id=?`, id2); err != nil {
 		t.Fatal(err)
@@ -878,7 +878,7 @@ func TestReassignAndReraise(t *testing.T) {
 		t.Fatal("reassign not recorded in history")
 	}
 
-	// D1: re-raising a rejected request creates a new PENDING request, not a draft.
+	// Re-raising a rejected request creates a new PENDING request, not a draft.
 	rid := mk(newMgrID, 4000)
 	newMgr, _ := s.UserByID(ctx, newMgrID)
 	if err := s.RejectRequest(ctx, newMgr, rid, "out of budget"); err != nil {
@@ -976,7 +976,7 @@ func TestCancellationRequestAcceptAndDecline(t *testing.T) {
 		t.Fatalf("cancellation of a cancelled request = %v, want ErrValidation", err)
 	}
 
-	// --- G2: the approver may cancel outright, with a reason. ---
+	// --- The approver may cancel outright, with a reason. ---
 	direct := mkApproved()
 	if err := s.CancelRequest(ctx, mgr, direct, ""); !errors.Is(err, ErrValidation) {
 		t.Fatalf("outright cancel without a reason = %v, want ErrValidation", err)
@@ -1045,7 +1045,7 @@ func TestRequestCommentsAndAttachments(t *testing.T) {
 	}
 }
 
-// A19: history and conversation are ONE chronological stream.
+// History and conversation are ONE chronological stream.
 func TestRequestThreadMergesEventsCommentsAndFiles(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1121,10 +1121,7 @@ func TestRequestThreadMergesEventsCommentsAndFiles(t *testing.T) {
 }
 
 // The freeze is the status itself: a frozen request is not `approved`, so no
-// Phase-3 query that filters on `approved` can pick it up.
-//
-// This is Task 15's second test. It is verbatim, but it lands with Task 17
-// because it is written against ListRequests, which Task 17 introduces.
+// payment query that filters on `approved` can pick it up.
 func TestCancellationFreezesTheApprovedState(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1198,7 +1195,7 @@ func TestListRequestsByScopeAndCount(t *testing.T) {
 	}
 }
 
-// A19: the `.segmented` tabs are SQL buckets, so tab counts and tab contents
+// The request list's tabs are SQL buckets, so tab counts and tab contents
 // can never disagree.
 func TestListRequestsBuckets(t *testing.T) {
 	ctx := context.Background()
@@ -1323,10 +1320,6 @@ func TestSimilarRequestsFindsRecentNearDuplicatesOnly(t *testing.T) {
 	}
 }
 
-// ===========================================================================
-// The 2026-07-27 QA audit repairs. One test per finding, named by it.
-// ===========================================================================
-
 // auditRequest raises a plain, valid reimbursement so a decision test does not
 // have to restate the whole body.
 func auditRequest(t *testing.T, s *Store, req, mgr User, headID, amount int64) int64 {
@@ -1341,10 +1334,8 @@ func auditRequest(t *testing.T, s *Store, req, mgr User, headID, amount int64) i
 	return id
 }
 
-// F-C-01. The approved amount is the authority to pay — G13 caps a payment at it
-// — so an approver may reduce it and may never raise it. Before this guard one
-// person could authorise ₹25,000 against an ₹18,400 request and Accounts paid the
-// larger figure in full.
+// The approved amount is the authority to pay — a payment is capped at it — so
+// an approver may reduce it and may never raise it above what was requested.
 func TestApproveRequestRefusesMoreThanWasRequested(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1382,12 +1373,10 @@ func TestApproveRequestRefusesMoreThanWasRequested(t *testing.T) {
 	}
 }
 
-// F-C-03. legalTransitions carries cancellation_requested → approved for
-// DecideCancellation(accept=false) alone: that path is gated on approval:cancel,
-// demands a written reason and records `cancel_decline`. ApproveRequest borrowed
-// the edge through canTransition and so lifted the requester's freeze with none of
-// the three, rewriting approved_amount and leaving a stale cancel_reason on an
-// approved row that no screen renders.
+// While a cancellation is undecided, approving is refused. The move from
+// cancellation_requested back to approved belongs to DecideCancellation
+// (declining), which needs approval:cancel, a written reason and records
+// `cancel_decline`; ApproveRequest must not take that route.
 func TestApproveIsRefusedWhileACancellationIsUndecided(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1436,10 +1425,8 @@ func TestApproveIsRefusedWhileACancellationIsUndecided(t *testing.T) {
 	}
 }
 
-// F-C-07. Requirement L7 is "On hold (only Accounts lifts)". A cancellation ask
-// used to destroy the hold and a declined cancellation restored nothing, so a
-// requester and an approver lifted an accountant's block between them and the
-// request came back genuinely re-reservable with the question unanswered.
+// Only Accounts lifts a hold. A cancellation ask and its decline must not lift
+// it between them: a declined cancellation puts the Accounts hold back.
 //
 // `on_hold=1` still implies `status='approved'`, so the flag is suspended for the
 // duration of the freeze; hold_reason carries the question across it, and the
@@ -1531,11 +1518,11 @@ func TestAnAcceptedCancellationClearsTheHoldEntirely(t *testing.T) {
 	}
 }
 
-// F-B-10. CreateRequest reads the numbering settings and then writes. In a
-// deferred transaction SQLite refuses that upgrade while another writer is active
-// and does not consult the busy handler for it, so busy_timeout could not help and
-// the loser of two simultaneous submits met a 500 with their form gone. Both must
-// now succeed, with consecutive numbers and no duplicate.
+// Two simultaneous submits both succeed, with consecutive numbers and no
+// duplicate. CreateRequest reads the numbering settings and then writes, so it
+// must take the write lock up front: SQLite refuses a read-to-write upgrade in a
+// deferred transaction while another writer is active, and busy_timeout does not
+// help with that.
 func TestConcurrentSubmitsBothSucceed(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1585,10 +1572,9 @@ func TestConcurrentSubmitsBothSucceed(t *testing.T) {
 	}
 }
 
-// F-C-05. Two sessions of the same approver deciding at once: exactly one commits
-// — that always held — and the loser is now told no rather than handed
-// SQLITE_BUSY and a 500. Every pairing in the finding is covered: approve vs
-// approve, approve vs reject, and accept vs decline a cancellation.
+// Two sessions of the same approver deciding at once: exactly one commits and
+// the loser is told no rather than handed SQLITE_BUSY. Covered pairings: approve
+// vs approve, approve vs reject, and accept vs decline a cancellation.
 func TestConcurrentDecisionsRefuseTheLoserRatherThanFailing(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1675,10 +1661,9 @@ func TestConcurrentDecisionsRefuseTheLoserRatherThanFailing(t *testing.T) {
 	}
 }
 
-// F-B-16. The list capped itself at 200 rows while the tab count beside it had no
-// cap, so a queue promised 214 and drew 200 with nothing saying so, and the CSV
-// export dropped the same rows. ListRequestsPage reports the total and whether
-// anything was left out; RequestsUnlimited carries every row.
+// A capped list says so: ListRequestsPage reports the total and whether
+// anything was left out, so the screen never shows fewer rows than its tab count
+// silently; RequestsUnlimited (the CSV export) carries every row.
 func TestListRequestsPageReportsTheTotalAndTheTruncation(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1741,9 +1726,9 @@ func TestListRequestsPageReportsTheTotalAndTheTruncation(t *testing.T) {
 	}
 }
 
-// F-B-18. "Sorted by who is holding them up" is created_at ASC. It used to be
-// DESC, so the request kept waiting longest was last — or on no page at all once
-// the cap bit. CURRENT_TIMESTAMP is second-resolution, so id breaks the tie.
+// "Sorted by who is holding them up" means the longest-waiting request comes
+// first (created_at ascending). CURRENT_TIMESTAMP is second-resolution, so id
+// breaks the tie.
 func TestListRequestsPutsTheLongestWaitingFirst(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1777,10 +1762,9 @@ func TestListRequestsPutsTheLongestWaitingFirst(t *testing.T) {
 	}
 }
 
-// F-A-08. The approver <select> is built from ListApprovers, so it only ever
-// offers people who can approve — and that was the only enforcement. A request
-// routed anywhere else can be decided by nobody: the named person fails the route
-// gate and every real manager fails the ownership check.
+// A request can only be routed to somebody who can approve it. The approver
+// dropdown offers only such people, but the store checks again: a request routed
+// anywhere else could be decided by nobody.
 func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1814,7 +1798,7 @@ func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 	if err := s.UpdateRequest(ctx, req, id, reroute); !errors.Is(err, ErrValidation) {
 		t.Fatalf("rerouting to a non-approver = %v, want ErrValidation", err)
 	}
-	// So is reassignment, which is this finding's own recovery path.
+	// So is reassigning to them.
 	if err := s.ReassignRequest(ctx, mgr, id, strangerID, "Take this over.", false); !errors.Is(err, ErrValidation) {
 		t.Fatalf("reassigning to a non-approver = %v, want ErrValidation", err)
 	}
@@ -1839,8 +1823,8 @@ func TestARequestCannotBeRoutedToSomebodyWhoCannotApprove(t *testing.T) {
 	}
 }
 
-// F-B-05, F-B-03, F-B-07. The form narrows all three of these controls, and
-// narrowing a <select> is not validation.
+// The store re-checks every id the form's dropdowns narrow: narrowing a
+// <select> is not validation.
 func TestCreateRequestRechecksTheIdsTheFormNarrows(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1911,17 +1895,16 @@ func TestCreateRequestRechecksTheIdsTheFormNarrows(t *testing.T) {
 	}
 }
 
-// F-B-15, F-B-04. The form renders these fieldsets as alternatives, so no browser
-// can send both — and `hidden` is not validation. A crafted POST stored the
-// concealed half and request_detail printed every non-empty column, so a budget
-// expense read as recoverable and a reimbursement carried an invoice number.
+// A request keeps only the columns its treatment and type own; the rest are
+// cleared. The form shows these fieldsets as alternatives, but a hidden field is
+// not validation, and a crafted POST could otherwise store both halves.
 func TestColumnsAShapeDoesNotOwnAreCleared(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	req, mgr, headID := seedRequestActors(t, s)
 	vendorID := seedTestVendor(t, s, "Acme Supplies")
 
-	// F-B-15: a budget vendor_invoice carrying the recoverable fieldset.
+	// A budget vendor_invoice carrying the recoverable fieldset.
 	budgetID, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "vendor_invoice",
 		ShortTitle: "Switchgear", ProjectID: 1, HeadID: headID, VendorID: vendorID, Amount: 100000,
 		Purpose: "panels", InvoiceNo: "SE/1", InvoiceDate: "2026-07-18", ManagerID: mgr.ID,
@@ -1939,7 +1922,7 @@ func TestColumnsAShapeDoesNotOwnAreCleared(t *testing.T) {
 		t.Fatalf("a budget expense kept a category: %q / %v", budget.RecoverableCategory, budget.RecoverableCategoryID)
 	}
 
-	// F-B-04: a reimbursement carrying the invoice and advance fields.
+	// A reimbursement carrying the invoice and advance fields.
 	reimbID, err := s.CreateRequest(ctx, req, RequestInput{Treatment: "budget", Type: "reimbursement",
 		ShortTitle: "Cab receipts", ProjectID: 1, HeadID: headID, Amount: 4500, Purpose: "travel",
 		ExpenseDate: "2026-07-21", ManagerID: mgr.ID, InvoiceNo: "FORGED-1",
@@ -1984,12 +1967,9 @@ func TestColumnsAShapeDoesNotOwnAreCleared(t *testing.T) {
 	}
 }
 
-// F-G-035/F-C-04: one press of the correction form is one transaction. The
-// handler used to call UpdateRequest, AddRequestAttachment and SubmitRequest in
-// sequence, so a resubmit refused on its own preconditions still left the edit
-// committed and audited as "edited and re-sent" while the request sat in
-// `returned` — the trail asserting a change the requester had just been told did
-// not happen.
+// One press of the correction form is one transaction: the edit, its
+// attachments and the resubmit commit together or not at all, so a refused
+// resubmit leaves no committed edit and no "edited and re-sent" audit entry.
 func TestEditRequestCommitsTheWholePressOrNoneOfIt(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -2076,7 +2056,7 @@ func TestEditRequestCommitsTheWholePressOrNoneOfIt(t *testing.T) {
 }
 
 // A former approver who read the request before an administrator moved it must
-// not be able to move it again on that stale read (rbac-8 review). The route's
+// not be able to move it again on that stale read. The route's
 // "is this the current approver" answer is taken outside the write
 // transaction, so the store has to ask the question again, on the row it is
 // about to change, and only an administrator's override skips it.
@@ -2134,7 +2114,7 @@ func TestReassignmentIsRefusedToAnApproverTheRequestHasAlreadyLeft(t *testing.T)
 }
 
 // The hold-only document door is decided on the row inside the write
-// transaction, not on whatever the handler read first (hold-1 review).
+// transaction, not on whatever the handler read first.
 func TestHeldRequestAttachmentIsOpenExactlyAsWideAsTheHold(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

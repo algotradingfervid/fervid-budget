@@ -28,7 +28,7 @@ func applyAuditNotificationEvents(t *testing.T, s *Store) {
 	}
 }
 
-// auditEventKeys is the nine events of F-F-06, in the order they are seeded.
+// auditEventKeys is the nine workflow events migration v9 adds, in the order they are seeded.
 // Spelled out as literals rather than read off the slice, because these strings
 // are the contract with internal/notify's event constants and with the handlers
 // that fire them — a rename must break a test, not silently stop delivering.
@@ -57,7 +57,7 @@ var notifyTokenVocabulary = map[string]bool{
 
 var seededTokenPattern = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
 
-func TestMigrationV9SeedsTheNineMissingEvents(t *testing.T) { // F-F-06
+func TestMigrationV9SeedsTheNineMissingEvents(t *testing.T) {
 	s := newTestStore(t)
 	applyAuditNotificationEvents(t, s)
 
@@ -76,7 +76,7 @@ func TestMigrationV9SeedsTheNineMissingEvents(t *testing.T) { // F-F-06
 		t.Fatalf("seeded events = %d, want %d", count, want)
 	}
 
-	// Who each new event is addressed to. This is the half of the F-F-06 contract
+	// Who each new event is addressed to. This is the half of the contract
 	// that lives in data; internal/notify's TestNotifyResolvesRecipientsForThe
 	// AuditEvents owns the other half — given these flags, which user ids get a
 	// row. Both are literal, so a change to either has to be deliberate.
@@ -117,15 +117,14 @@ func TestMigrationV9SeedsTheNineMissingEvents(t *testing.T) { // F-F-06
 		if email != 0 {
 			t.Fatalf("event %q ships with email on; email is opt-in", event)
 		}
-		// An event addressed to nobody delivers nothing, which is the F-F-06
-		// defect all over again.
+		// An event addressed to nobody delivers nothing.
 		if req+mgr+acct == 0 {
 			t.Fatalf("event %q has no audience flag set, so it would notify nobody", event)
 		}
 		if wantOrder := len(defaultNotificationSettings) + i + 1; order != wantOrder {
 			t.Fatalf("event %q sort_order = %d, want %d — v9's events list after v7's", event, order, wantOrder)
 		}
-		// G20: the admin-facing vocabulary is {{token}}, never Go template syntax.
+		// The admin-facing vocabulary is {{token}}, never Go template syntax.
 		if strings.Contains(subject+body, "{{.") {
 			t.Fatalf("event %q uses Go template syntax: %q / %q", event, subject, body)
 		}
@@ -141,7 +140,7 @@ func TestMigrationV9SeedsTheNineMissingEvents(t *testing.T) { // F-F-06
 // /notifications actually queries, or its rows are invisible under every tab but
 // "All". kind is derived once at write time from the event, so this is the only
 // definition there is.
-func TestEverySeededEventLandsInAKnownNotificationBucket(t *testing.T) { // F-F-06
+func TestEverySeededEventLandsInAKnownNotificationBucket(t *testing.T) {
 	all := append(append([]NotificationSetting(nil), defaultNotificationSettings...), auditNotificationSettings...)
 	for _, n := range all {
 		switch notificationKind(n.Event) {
@@ -165,11 +164,11 @@ func TestEverySeededEventLandsInAKnownNotificationBucket(t *testing.T) { // F-F-
 	}
 }
 
-// PROGRESS.md, "Seeding only happens in v1": a migration that re-seeds resets
-// every deliberate change an administrator has made. v9 adds rows and never
+// A migration that re-seeds would reset every deliberate change an
+// administrator has made. v9 adds rows and never
 // touches one, so it is safe to run twice — which is what makes it safe to
 // re-apply after a user_version reset.
-func TestMigrationV9IsIdempotentAndKeepsAdministratorEdits(t *testing.T) { // F-F-06
+func TestMigrationV9IsIdempotentAndKeepsAdministratorEdits(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, _ := seedActorAndHead(t, s)
@@ -231,7 +230,7 @@ func TestMigrationV9IsIdempotentAndKeepsAdministratorEdits(t *testing.T) { // F-
 // An installed database that has already taken v9 must survive it arriving a
 // second time on a partially-seeded table — the shape a half-applied upgrade
 // leaves behind.
-func TestMigrationV9FillsGapsWithoutDuplicating(t *testing.T) { // F-F-06
+func TestMigrationV9FillsGapsWithoutDuplicating(t *testing.T) {
 	s := newTestStore(t)
 	// Simulate a database where only some of the nine landed.
 	tx, err := s.db.Begin()
@@ -258,10 +257,9 @@ func TestMigrationV9FillsGapsWithoutDuplicating(t *testing.T) { // F-F-06
 	}
 }
 
-// v13 rewords the approval_reassigned notice. Since fix wave B a request is
-// reassignable while returned, awaiting a cancellation decision or in partial
-// review, and "needs your approval" is wrong for all three (deactivation-2
-// review). The seed carries the new wording for a fresh database; v13 carries
+// v13 rewords the approval_reassigned notice. A request is reassignable while
+// returned, awaiting a cancellation decision or in partial review, and "needs
+// your approval" is wrong for all three. The seed carries the new wording for a fresh database; v13 carries
 // it onto an installed one — and only where the row still reads exactly as v11
 // wrote it, so an administrator's own wording is never overwritten.
 func TestMigrationV13RewordsTheReassignmentNoticeWithoutTouchingAnAdminsEdit(t *testing.T) {

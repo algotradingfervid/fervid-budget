@@ -10,11 +10,9 @@ import (
 	"time"
 )
 
-// The seeded categories must reproduce the Phase-2 recoverableCategoryRules map
-// exactly. Phase 2 shipped those rules hardcoded and its tests pin them; moving
-// the rules onto table rows is only safe if the rows say the same thing. Note
-// security_deposit requires a counterparty — the Phase-4 plan text says it
-// requires nothing, which would have silently weakened shipped validation.
+// The seeded categories reproduce the built-in recoverableCategoryRules map
+// exactly, so moving the rules onto table rows changed no validation. Note that
+// security_deposit requires a counterparty.
 func TestMigrationV6SeedsRecoverableCategories(t *testing.T) {
 	s := newTestStore(t)
 	var version int
@@ -59,8 +57,8 @@ func TestMigrationV6SeedsRecoverableCategories(t *testing.T) {
 	}
 }
 
-// The seeded rows are the authority the request validator reads. If this ever
-// disagrees with recoverableCategoryRules, Phase 2's shipped behaviour changed.
+// The seeded rows are the authority the request validator reads, and they agree
+// with the built-in recoverableCategoryRules.
 func TestSeededCategoriesMatchPhase2Rules(t *testing.T) {
 	s := newTestStore(t)
 	rows, err := s.DB().Query(`SELECT code,requires_project,requires_counterparty FROM recoverable_categories`)
@@ -116,10 +114,9 @@ func TestMigrationV6IsIdempotent(t *testing.T) {
 	}
 }
 
-// Phase 2 wrote payment_requests.recoverable_category (a code) and hardcoded
-// recoverable_category_id to NULL. Every register query in Phase 4 joins on the
-// id, so an installed database full of Phase-2 requests must be back-filled or
-// the whole register renders a blank category for real rows.
+// Older requests carry only the category code, with recoverable_category_id
+// NULL. The register joins on the id, so the migration back-fills it from the
+// code; otherwise those rows would show a blank category.
 func TestBackfillLinksExistingRequestsToCategories(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -283,10 +280,9 @@ func TestListRecoverableCategoriesWithUsageCountsRequests(t *testing.T) {
 	}
 }
 
-// The register joins payment_requests to recoverable_categories on the id, and
-// Phase 2 hardcoded that id to NULL. If CreateRequest does not fill it, every
-// screen in Phase 4 shows a blank category for every request the real form ever
-// produced — while tests that INSERT the id by hand still pass.
+// CreateRequest fills recoverable_category_id. The register joins on the id, so
+// without it every request the real form produced would show a blank category
+// (while tests that INSERT the id by hand would still pass).
 func TestCreateRequestLinksRecoverableCategoryID(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -346,9 +342,8 @@ func TestBudgetRequestHasNoCategoryLink(t *testing.T) {
 	}
 }
 
-// V4: categories are admin-configurable, so the rules must come from the table.
-// With the Phase-2 map still in charge, a category an admin adds is simply an
-// unknown code and every request naming it is rejected.
+// Categories are admin-configurable, so the rules come from the table: a
+// category an admin adds is accepted and its own rules are enforced.
 func TestAdminAddedCategoryRulesAreEnforced(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -453,7 +448,8 @@ func payRecoverable(t *testing.T, s *Store, actor User, headID, requestID int64,
 	return id
 }
 
-func TestGridAndReportExcludeRecoverablePayments(t *testing.T) { // V2
+// A recoverable payment is a deposit, not budget spend: the grid and the report leave it out.
+func TestGridAndReportExcludeRecoverablePayments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s)
@@ -499,7 +495,7 @@ func TestHistoricalPaymentsStillCountAsActuals(t *testing.T) {
 	}
 }
 
-func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.T) { // V3, V6
+func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s)
@@ -530,7 +526,7 @@ func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.
 	}
 }
 
-func TestRecoverableReportShowsLinkedProject(t *testing.T) { // V8
+func TestRecoverableReportShowsLinkedProject(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s)
@@ -571,7 +567,7 @@ func TestRecoverableAgeingLabels(t *testing.T) {
 	}
 }
 
-func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { // G18
+func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s)
@@ -612,7 +608,7 @@ func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { 
 	}
 }
 
-func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
+func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s)
@@ -681,7 +677,7 @@ func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
 	}
 }
 
-func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
+func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s)
@@ -719,7 +715,7 @@ func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
 	}
 }
 
-func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
+func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	actor, headID := seedActorAndHead(t, s)
@@ -770,7 +766,7 @@ func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
 	}
 }
 
-// V7: settling a recoverable closes the request but must not quietly turn it
+// Settling a recoverable closes the request but must not quietly turn it
 // into an ordinary expense. The classification and the return information are
 // what keep it in the register after it closes.
 func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) {
@@ -821,12 +817,10 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 	}
 }
 
-// F-E-05. The dashboard's "Past expected return" tile and the register are the
-// same population at two levels of detail, so they must apply the same rule:
-// recoverableAgeing checks `paidOn == ""` first and answers "Awaiting payment",
-// because money that never left cannot be overdue. RecoverableMetrics compared
-// only dates, so an approved, unpaid, years-overdue request inflated the tile and
-// the reader who followed it found fewer red rows than they were promised.
+// Money that never left cannot be overdue. The dashboard's "Past expected
+// return" tile and the register show the same population at two levels of
+// detail, so RecoverableMetrics applies the register's rule: an unpaid request
+// is "Awaiting payment", whatever its expected return date.
 func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -884,13 +878,9 @@ func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 	}
 }
 
-// F-E-02 (store half). The request form's category <select> is six hardcoded
-// options, so an admin-added category is enforced and unreachable and a
-// deactivated one is still offered. The store half is
-// ListRecoverableCategories(ctx, true): this pins the contract the template needs
-// — every active category, in the order it should be rendered, each carrying the
-// stable `code` that goes in the option's value and the admin's `name` for its
-// label. TestRecoverableCategoryCRUD covers the CRUD; this covers the handover.
+// ListRecoverableCategories(ctx, true) gives the request form its category
+// options: every active category, in display order, each carrying the stable
+// `code` for the option's value and the admin's `name` for its label.
 func TestActiveCategoriesAreTheOptionsTheRequestFormMustRender(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -962,9 +952,8 @@ func categoryUsage(t *testing.T, s *Store, id int64) (RecoverableCategoryUsage, 
 	return RecoverableCategoryUsage{}, false
 }
 
-// TestDeleteRecoverableCategoryRemovesAnUnusedOne is F-E-06's happy path: the
-// permission recoverable_category:delete has been grantable since Phase 4 with
-// no code behind it at all, and this is the store half of it meaning something.
+// A recoverable category that no request uses can be deleted
+// (recoverable_category:delete).
 func TestDeleteRecoverableCategoryRemovesAnUnusedOne(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -1104,7 +1093,7 @@ func mustDeleteErr(t *testing.T, s *Store, actor User, id int64) string {
 	return err.Error()
 }
 
-// V6: a recoverable request records who owes the money (the employee, or the
+// A recoverable request records who owes the money (the employee, or the
 // counterparty company), when it is expected back, and the repayment notes —
 // and those are what the store gives back when the request is read. Two shapes
 // are created through CreateRequest and read back through Request:
@@ -1192,11 +1181,9 @@ func TestRecoverableCreateRecordsCounterpartyReturnDateAndNotes(t *testing.T) {
 	})
 }
 
-// recoverables-1 (F-E-05, second half). The dashboard tile learned that money
-// which never left cannot be overdue; the By-category/By-counterparty rollup and
-// the register's ageing=overdue filter did not, so an approved-but-unpaid row
-// with a past return date showed red in its category row while the Total row
-// and the tile beneath it read ₹0.00.
+// Money that never left cannot be overdue in the By-category/By-counterparty
+// rollup or the register's ageing=overdue filter either, matching the dashboard
+// tile: an approved-but-unpaid row with a past return date is not counted.
 func TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
