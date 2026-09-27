@@ -203,7 +203,7 @@ func ValidScope(resource, scope string) bool {
 }
 
 // scanRole reads one roles row; sql.ErrNoRows becomes ErrNotFound.
-func scanRole(scanner interface{ Scan(...any) error }) (Role, error) {
+func scanRole(scanner rowScanner) (Role, error) {
 	var r Role
 	var sys int
 	err := scanner.Scan(&r.ID, &r.Name, &r.Description, &sys, &r.CreatedAt, &r.UpdatedAt)

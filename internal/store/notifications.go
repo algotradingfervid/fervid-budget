@@ -99,7 +99,7 @@ const notificationSettingSelect = `SELECT event,label,audience,email_enabled,to_
 
 // scanNotificationSetting reads one notification_settings row; sql.ErrNoRows
 // becomes ErrNotFound.
-func scanNotificationSetting(sc interface{ Scan(...any) error }) (NotificationSetting, error) {
+func scanNotificationSetting(sc rowScanner) (NotificationSetting, error) {
 	var n NotificationSetting
 	var email, req, mgr, acct int
 	err := sc.Scan(&n.Event, &n.Label, &n.Audience, &email, &n.ToRecipients, &n.CcRecipients,

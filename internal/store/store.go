@@ -115,6 +115,14 @@ type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// querier is rowQuerier plus multi-row queries: what *sql.DB and *sql.Tx
+// have in common, so the budget-plan and permission readers can run inside
+// the caller's transaction or on their own.
+type querier interface {
+	rowQuerier
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // validDate reports whether s is a "YYYY-MM-DD" date.
 func validDate(s string) bool {
 	_, err := time.Parse("2006-01-02", s)

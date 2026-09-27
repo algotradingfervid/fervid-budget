@@ -146,7 +146,7 @@ const recoverableCategorySelect = `SELECT id,code,name,requires_project,requires
 	FROM recoverable_categories`
 
 // scanRecoverableCategory reads one recoverableCategorySelect row.
-func scanRecoverableCategory(sc interface{ Scan(...any) error }) (RecoverableCategory, error) {
+func scanRecoverableCategory(sc rowScanner) (RecoverableCategory, error) {
 	var c RecoverableCategory
 	var rp, rc, active int
 	if err := sc.Scan(&c.ID, &c.Code, &c.Name, &rp, &rc, &active, &c.SortOrder, &c.CreatedAt); err != nil {

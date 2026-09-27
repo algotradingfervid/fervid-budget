@@ -191,7 +191,7 @@ func (s *Store) Notification(ctx context.Context, userID, id int64) (Notificatio
 
 // scanNotification reads one row selected by notificationSelect; sql.ErrNoRows
 // becomes ErrNotFound.
-func scanNotification(sc interface{ Scan(...any) error }) (Notification, error) {
+func scanNotification(sc rowScanner) (Notification, error) {
 	var n Notification
 	err := sc.Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt)
 	if err == sql.ErrNoRows {

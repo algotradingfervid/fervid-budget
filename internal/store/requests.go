@@ -109,7 +109,7 @@ LEFT JOIN users pu ON pu.id=r.processing_by`
 
 // scanRequest reads one requestSelect row into a Request. Nullable columns
 // become nil pointers, and a missing row becomes ErrNotFound.
-func scanRequest(sc interface{ Scan(...any) error }) (Request, error) {
+func scanRequest(sc rowScanner) (Request, error) {
 	var r Request
 	var catID, projID, headID, vendorID, approvedAmt, approvedBy, processingBy sql.NullInt64
 	var approvedAt, reminder, submitted, processingAt sql.NullTime
@@ -349,9 +349,7 @@ func (s *Store) RequestEditRevision(ctx context.Context, req Request) (string, e
 
 // requestEditRevision computes RequestEditRevision through q (the database or
 // a transaction).
-func requestEditRevision(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, req Request) (string, error) {
+func requestEditRevision(ctx context.Context, q rowQuerier, req Request) (string, error) {
 	var generation int64
 	if err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM audit_log WHERE entity_type='payment_request' AND entity_id=?`, req.ID).Scan(&generation); err != nil {
 		return "", err
