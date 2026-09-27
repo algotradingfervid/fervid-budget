@@ -134,7 +134,9 @@ func validDate(s string) bool {
 	return err == nil
 }
 
-// validMonth reports whether s is a "YYYY-MM" month.
+// validMonth reports whether s is a "YYYY-MM" month. The app package checks
+// form input with its own validMonthInput, which is the same test; each
+// package keeps its copy so neither has to import the other for one line.
 func validMonth(s string) bool {
 	_, err := time.Parse("2006-01", s)
 	return err == nil
