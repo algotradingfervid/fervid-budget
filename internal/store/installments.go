@@ -30,36 +30,22 @@ func upInstallments(tx *sql.Tx) error {
 }
 
 // RequestPayments returns every payment recorded against a request, voided
-// ones included, oldest first. It reads the ids and closes that cursor before
-// loading each payment through Payment, so only one query is open at a time.
+// ones included, oldest first, with the same fields Payment reads.
 func (s *Store) RequestPayments(ctx context.Context, requestID int64) ([]Payment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM payments WHERE request_id=? ORDER BY id`, requestID)
+	rows, err := s.db.QueryContext(ctx, paymentSelect+` WHERE py.request_id=? ORDER BY py.id`, requestID)
 	if err != nil {
 		return nil, err
 	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
+	defer rows.Close()
 	var out []Payment
-	for _, id := range ids {
-		p, err := s.Payment(ctx, id)
+	for rows.Next() {
+		p, err := scanPayment(rows)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // PaymentBySubmission returns the payment this actor already recorded on the
