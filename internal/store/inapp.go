@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// The in-app notification centre (G19).
+// The in-app notification centre.
 //
 // This is a real persisted channel, not a view over the work queues: every
 // event writes one row per recipient and those rows always fire, whether or not
@@ -22,6 +22,8 @@ import (
 //  2. kind is derived once, at write time, from the event, so the filter strip
 //     never re-derives it and the two can never disagree.
 
+// Notification is one in-app notification row. RequestID is nil when the
+// notification is not about a request; ReadAt is nil while unread.
 type Notification struct {
 	ID        int64
 	UserID    int64
@@ -43,6 +45,7 @@ type NotificationFilter struct {
 	Limit  int
 }
 
+// NotificationCounts are the numbers on the centre's filter strip.
 type NotificationCounts struct {
 	All       int
 	Unread    int
@@ -50,24 +53,15 @@ type NotificationCounts struct {
 	Reminders int
 }
 
-// notificationKind maps an event to the filter bucket it belongs in. A mention
-// is an event where a person wrote something addressed to you and is waiting on
-// an answer; everything else is activity.
-//
-// Of the nine events migration v9 added (F-F-06), exactly one is a mention:
-// payment_partial_concern carries the approver's written words to the
-// accountant who recorded the shortfall and waits on their reply, which is the
-// same shape as request_returned. The other eight report something that has
-// already been settled — a withdrawal, a release, a hold lifted, a decision
-// taken — and ask nothing of the reader, so they are activity.
+// notificationKind maps an event to the filter it belongs in: "reminder" for
+// the scheduler's nudges; "mention" when someone wrote to the reader and is
+// waiting on an answer (returned, on hold, a partial-payment concern) or ended
+// their request against their wishes (rejected, cancelled); "activity" for
+// everything else, which reports something already settled.
 func notificationKind(event string) string {
 	switch event {
 	case "reminder_pending", "reminder_stale_reservation":
 		return "reminder"
-	// request_cancelled sits with rejected rather than with the activity feed:
-	// both end the request against the requester's wishes, and neither leaves
-	// them anything to do — it is the finality that earns the stronger filter,
-	// not an outstanding action.
 	case "request_returned", "request_on_hold", "request_rejected", "payment_partial_concern", "request_cancelled":
 		return "mention"
 	default:
@@ -75,6 +69,8 @@ func notificationKind(event string) string {
 	}
 }
 
+// AddNotification stores a notification for in.UserID and returns its id. Kind
+// is derived from the event unless in.Kind is set.
 func (s *Store) AddNotification(ctx context.Context, in Notification) (int64, error) {
 	if in.UserID == 0 {
 		return 0, fmt.Errorf("%w: a notification needs a recipient", ErrValidation)
@@ -94,15 +90,14 @@ func (s *Store) AddNotification(ctx context.Context, in Notification) (int64, er
 	return res.LastInsertId()
 }
 
+// notificationSelect reads the columns scanNotification expects.
 const notificationSelect = `SELECT id,user_id,event,kind,request_id,title,body,href,read_at,created_at FROM notifications`
 
 // defaultNotificationLimit is the cap applied when a filter names no number.
 const defaultNotificationLimit = 100
 
-// NotificationPage is a window onto the centre that knows what it is not
-// showing. It is deliberately the same shape as RequestPage — Total and
-// Truncated, meaning the same things — so the app layer meets one idiom for
-// "this list is capped" rather than two (F-G-037, F-B-16).
+// NotificationPage is a capped list of notifications that says what it left
+// out. It has the same Total/Truncated shape as RequestPage.
 type NotificationPage struct {
 	Notifications []Notification
 	// Total rows matching the same filter, ignoring Limit. For each scope this
@@ -115,9 +110,8 @@ type NotificationPage struct {
 	Truncated bool
 }
 
-// notificationScopeWhere is the single translation of a filter scope into SQL,
-// shared by the rows query and the count so the two can never select different
-// sets — which is the whole defect this page type exists to close.
+// notificationScopeWhere turns a filter scope into SQL. The rows query and the
+// count share it, so they always select the same set.
 func notificationScopeWhere(scope string) string {
 	switch scope {
 	case "unread":
@@ -130,15 +124,9 @@ func notificationScopeWhere(scope string) string {
 	return ""
 }
 
-// ListNotificationsPage returns the notifications a filter matches together with
-// how many it matched in total.
-//
-// F-G-037: the centre listed at most 100 rows while NotificationCounts, rendered
-// on the filter strip immediately above them, counted with no cap at all — so a
-// user past the cap read "All 137" over 100 rows and nothing said which 37 were
-// missing, or that any were. That is not hypothetical: an area-D test passes
-// alone and fails in a full run purely because the shared admin has crossed the
-// cap by the time it looks. Silence was the defect; the cap is fine.
+// ListNotificationsPage returns up to f.Limit notifications for the filter
+// (defaultNotificationLimit when unset), newest first, plus the total that
+// match, so the screen can say when the list is cut off.
 func (s *Store) ListNotificationsPage(ctx context.Context, f NotificationFilter) (NotificationPage, error) {
 	visible, visibleArgs, err := s.notificationVisibility(ctx, f.UserID)
 	if err != nil {
@@ -166,8 +154,8 @@ func (s *Store) ListNotificationsPage(ctx context.Context, f NotificationFilter)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt); err != nil {
+		n, err := scanNotification(rows)
+		if err != nil {
 			return NotificationPage{}, err
 		}
 		page.Notifications = append(page.Notifications, n)
@@ -194,19 +182,25 @@ func (s *Store) ListNotifications(ctx context.Context, f NotificationFilter) ([]
 // Notification reads one row, scoped to its owner. Another user's id returns
 // ErrNotFound rather than the row, so the caller cannot leak it by guessing.
 func (s *Store) Notification(ctx context.Context, userID, id int64) (Notification, error) {
-	var n Notification
 	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
 	if err != nil {
-		return n, err
+		return Notification{}, err
 	}
-	err = s.db.QueryRowContext(ctx, notificationSelect+` WHERE id=? AND user_id=?`+visible, append([]any{id, userID}, visibleArgs...)...).
-		Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt)
+	return scanNotification(s.db.QueryRowContext(ctx, notificationSelect+` WHERE id=? AND user_id=?`+visible, append([]any{id, userID}, visibleArgs...)...))
+}
+
+// scanNotification reads one row selected by notificationSelect; sql.ErrNoRows
+// becomes ErrNotFound.
+func scanNotification(sc interface{ Scan(...any) error }) (Notification, error) {
+	var n Notification
+	err := sc.Scan(&n.ID, &n.UserID, &n.Event, &n.Kind, &n.RequestID, &n.Title, &n.Body, &n.Href, &n.ReadAt, &n.CreatedAt)
 	if err == sql.ErrNoRows {
 		return n, ErrNotFound
 	}
 	return n, err
 }
 
+// NotificationCounts counts the user's visible notifications for each filter.
 func (s *Store) NotificationCounts(ctx context.Context, userID int64) (NotificationCounts, error) {
 	var c NotificationCounts
 	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
@@ -222,6 +216,8 @@ func (s *Store) NotificationCounts(ctx context.Context, userID int64) (Notificat
 	return c, err
 }
 
+// UnreadNotificationCount counts the user's visible unread notifications (the
+// number on the bell).
 func (s *Store) UnreadNotificationCount(ctx context.Context, userID int64) (int, error) {
 	var n int
 	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
@@ -262,6 +258,8 @@ func (s *Store) MarkNotificationRead(ctx context.Context, userID, id int64, now 
 	return nil
 }
 
+// MarkAllNotificationsRead marks every visible unread notification of the user
+// as read at now.
 func (s *Store) MarkAllNotificationsRead(ctx context.Context, userID int64, now time.Time) error {
 	visible, visibleArgs, err := s.notificationVisibility(ctx, userID)
 	if err != nil {

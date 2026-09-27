@@ -199,9 +199,9 @@ func TestMigrationV14RewritesOnlyTheUneditedSettlementTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := UpPaidAmountTemplates(tx); err != nil {
+	if err := upPaidAmountTemplates(tx); err != nil {
 		_ = tx.Rollback()
-		t.Fatalf("UpPaidAmountTemplates: %v", err)
+		t.Fatalf("upPaidAmountTemplates: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)

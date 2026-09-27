@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 )
 
-// The vendor master (adoption-spec D3 / gap G5).
+// The vendor master: list, search, create and update vendors.
 //
 // The one rule this file exists to enforce: bank details are gated on the
 // DATA, not on the markup. Every read takes the caller's PermissionSet and,
@@ -23,6 +24,7 @@ import (
 // indistinguishable from "this vendor has no bank details on file"; nil says
 // "this caller was not shown them", and the two are different facts.
 
+// Vendor is one vendor as a particular caller may see it.
 type Vendor struct {
 	ID          int64
 	Name        string
@@ -114,6 +116,7 @@ type VendorInput struct {
 	Bank *VendorBank
 }
 
+// The allowed values of VendorInput.VendorType and VendorInput.Status.
 var vendorTypes = []string{"company", "proprietor", "individual"}
 var vendorStatuses = []string{"active", "inactive"}
 
@@ -138,10 +141,13 @@ func canSeeBank(perms PermissionSet) bool {
 	return perms != nil && perms.Can("vendor_bank", "view")
 }
 
+// canEditBank reports whether the caller may change bank details.
 func canEditBank(perms PermissionSet) bool {
 	return perms != nil && perms.Can("vendor_bank", "edit")
 }
 
+// vendorSelect is the SELECT column list, with the bank columns only when
+// withBank is set.
 func vendorSelect(withBank bool) string {
 	if withBank {
 		return vendorColumns + vendorBankColumns
@@ -149,27 +155,12 @@ func vendorSelect(withBank bool) string {
 	return vendorColumns
 }
 
-// vendorPaidThisYear is the list screen's "Paid this year" column.
-//
-// The link is payments.vendor_id, which migration v10 added and back-filled
-// from the request each payment settles (F-G-009). Before v10 there was no such
-// column, and the payee snapshot was the only link there was — which meant
-// renaming a vendor silently zeroed its whole payment history, because the
-// figure was string equality against a denormalised copy of the old name.
-//
-// The payee match survives as a FALLBACK, and only for rows the join cannot
-// reach: a payment with vendor_id IS NULL settles no request, so there is
-// nothing to inherit a vendor from and its payee text is again the only
-// evidence. Those are the pre-v10 direct payments — history, not new work,
-// since every payment this product creates today is linked and carries the id.
-//
-// The fallback keeps the property the original comment was written to defend,
-// and it is not negotiable: the match is EXACT — lowercased and trimmed, never
-// LIKE, never a prefix. A payment counts towards a vendor only when its recorded
-// payee IS that vendor's name, so a row can be missed but can never be credited
-// to the wrong vendor (vendor names are uniquely indexed, case-insensitively).
-// On a financial screen, missing a row is recoverable; crediting the wrong
-// vendor is not.
+// vendorPaidThisYear is the list screen's "Paid this year" column: the sum of
+// this year's non-voided payments to the vendor. Payments are matched by
+// payments.vendor_id, so renaming a vendor keeps its history. Older payments
+// with no vendor_id fall back to an exact payee-name match (trimmed and
+// case-insensitive, never LIKE or a prefix), so a payment can be missed but is
+// never credited to the wrong vendor.
 const vendorPaidThisYear = `,COALESCE((SELECT SUM(py.amount) FROM payments py
 	WHERE py.voided_at IS NULL
 	  AND (py.vendor_id = v.id
@@ -177,22 +168,13 @@ const vendorPaidThisYear = `,COALESCE((SELECT SUM(py.amount) FROM payments py
 	           AND lower(trim(COALESCE(py.vendor_payee,''))) = lower(trim(v.name))))
 	  AND substr(py.paid_on,1,4) = ?), 0)`
 
-// vendorOpenRequests is the list screen's "Open requests" column, which until
-// F-G-010 was declared on the struct, scanned by nothing and therefore rendered
-// a hard 0 for every vendor — an assertion that there is no open work, made
-// without asking.
-//
-// "Open" is deliberately not a new definition. It is requestBuckets["open"] —
-// the exact status set behind /requests?bucket=open — so this count and the list
-// a reader would reach for cannot disagree about how many there are. F-G-006 is
-// the same class of defect (a dashboard tile whose status set had drifted from
-// the bucket its link pointed at), and reusing the slice rather than re-typing
-// the statuses is what stops that happening here.
-//
-// vendorOpenStatuses carries the bind arguments in the same order, so the two
-// can never be updated apart.
+// vendorOpenRequests is the list screen's "Open requests" column: the vendor's
+// requests whose status is in requestBuckets["open"], the same set behind
+// /requests?bucket=open, so the count always matches that list.
+// vendorOpenStatuses holds the bind arguments in the same order.
 var vendorOpenRequests, vendorOpenStatuses = buildVendorOpenRequests()
 
+// buildVendorOpenRequests builds vendorOpenRequests and its arguments.
 func buildVendorOpenRequests() (string, []any) {
 	statuses := append([]string(nil), requestBuckets["open"]...)
 	sort.Strings(statuses) // deterministic SQL text, whatever order the map holds
@@ -328,6 +310,7 @@ type VendorStats struct {
 	MissingGSTIN int
 }
 
+// VendorStats counts all, active, inactive, and active-without-GSTIN vendors.
 func (s *Store) VendorStats(ctx context.Context) (VendorStats, error) {
 	var out VendorStats
 	err := s.db.QueryRowContext(ctx, `SELECT
@@ -460,10 +443,10 @@ func normalizeVendorInput(in VendorInput) (VendorInput, error) {
 	if in.Name == "" {
 		return in, wrapValidation("a vendor name is required")
 	}
-	if !oneOf(in.VendorType, vendorTypes) {
+	if !slices.Contains(vendorTypes, in.VendorType) {
 		return in, wrapValidation("vendor type must be company, proprietor or individual")
 	}
-	if !oneOf(in.Status, vendorStatuses) {
+	if !slices.Contains(vendorStatuses, in.Status) {
 		return in, wrapValidation("vendor status must be active or inactive")
 	}
 	if in.GSTIN != "" && len(in.GSTIN) != gstinLength {
@@ -472,17 +455,9 @@ func normalizeVendorInput(in VendorInput) (VendorInput, error) {
 	return in, nil
 }
 
+// wrapValidation returns msg as an ErrValidation error.
 func wrapValidation(msg string) error {
 	return fmt.Errorf("%w: %s", ErrValidation, msg)
-}
-
-func oneOf(v string, allowed []string) bool {
-	for _, a := range allowed {
-		if v == a {
-			return true
-		}
-	}
-	return false
 }
 
 // CreateVendor inserts a vendor. The case-insensitive unique index on name is
@@ -589,15 +564,16 @@ func (s *Store) UpdateVendor(ctx context.Context, actor User, id int64, in Vendo
 	return tx.Commit()
 }
 
+// writeVendorBankTx saves a vendor's bank block, normalised as
+// normalizedVendorBank does.
 func writeVendorBankTx(ctx context.Context, tx *sql.Tx, id int64, bank *VendorBank) error {
+	b := normalizedVendorBank(*bank)
 	_, err := tx.ExecContext(ctx, `UPDATE vendors SET
 		bank_account_name=?,bank_account_number=?,bank_ifsc=?,bank_name=?,bank_branch=?,
 		upi_id=?,default_payment_mode=?,payment_terms_days=?,updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
-		strings.TrimSpace(bank.AccountName), strings.TrimSpace(bank.AccountNumber),
-		strings.ToUpper(strings.TrimSpace(bank.IFSC)), strings.TrimSpace(bank.BankName),
-		strings.TrimSpace(bank.Branch), strings.TrimSpace(bank.UPIID),
-		strings.TrimSpace(bank.DefaultPaymentMode), bank.PaymentTermsDays, id)
+		b.AccountName, b.AccountNumber, b.IFSC, b.BankName, b.Branch, b.UPIID,
+		b.DefaultPaymentMode, b.PaymentTermsDays, id)
 	return err
 }
 
@@ -613,9 +589,20 @@ func vendorAuditPayload(in VendorInput, bankChanged bool) map[string]any {
 		"bank_changed": bankChanged,
 	}
 }
+
+// vendorAuditInput copies a stored vendor's profile fields (never its bank
+// block) into the shape vendorAuditPayload records.
 func vendorAuditInput(v Vendor) VendorInput {
-	return VendorInput{Name: v.Name, DisplayName: v.DisplayName, VendorType: v.VendorType, Status: v.Status, Categories: v.Categories, GSTIN: v.GSTIN, PAN: v.PAN, MSMEUdyam: v.MSMEUdyam, TDSSection: v.TDSSection, TDSRate: v.TDSRate, ContactPerson: v.ContactPerson, Phone: v.Phone, Email: v.Email, Address: v.Address, City: v.City, State: v.State, StateCode: v.StateCode, Notes: v.Notes}
+	return VendorInput{
+		Name: v.Name, DisplayName: v.DisplayName, VendorType: v.VendorType, Status: v.Status, Categories: v.Categories,
+		GSTIN: v.GSTIN, PAN: v.PAN, MSMEUdyam: v.MSMEUdyam, TDSSection: v.TDSSection, TDSRate: v.TDSRate,
+		ContactPerson: v.ContactPerson, Phone: v.Phone, Email: v.Email, Address: v.Address,
+		City: v.City, State: v.State, StateCode: v.StateCode, Notes: v.Notes,
+	}
 }
+
+// normalizedVendorBank trims every bank field and upper-cases the IFSC. It is
+// both what gets stored and what "did the bank block change?" compares.
 func normalizedVendorBank(v VendorBank) VendorBank {
 	v.AccountName = strings.TrimSpace(v.AccountName)
 	v.AccountNumber = strings.TrimSpace(v.AccountNumber)

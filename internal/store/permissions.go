@@ -1,9 +1,15 @@
+// permissions.go defines the permission vocabulary (which actions exist on
+// which resources), the PermissionSet every access check asks, and the reads
+// and writes for roles and user-role assignments. The privilege rules those
+// writes must pass (role ceiling, last administrator) live in security.go.
+
 package store
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -33,10 +39,9 @@ type Grant struct {
 	Action   string
 }
 
-// Role and ScopeGrant are the Phase 1 permission types consumed by
-// internal/auth and every later phase (overview §8). PermissionSet (an
-// interface) and Grant are already declared in this file by Phase 0 — do not
-// redeclare them.
+// Role is a named bundle of grants and data scopes that can be assigned to
+// users. System roles (Requester, Manager, Accounts, Admin) are seeded and
+// cannot be renamed or deleted.
 type Role struct {
 	ID          int64
 	Name        string
@@ -46,16 +51,15 @@ type Role struct {
 	UpdatedAt   time.Time
 }
 
+// ScopeGrant limits which rows of a scoped resource (request or payment) a role
+// reaches: "own", "assigned" or "all".
 type ScopeGrant struct {
 	Resource string
 	Scope    string
 }
 
-// dbPermissionSet is the effective, resolved permission view for one user,
-// computed from the roles tables. It implements the PermissionSet interface
-// Phase 0 declared, so the shell, the nav, the tab bar and every gated control
-// keep asking Can and Scope exactly as they already do — only the answer's
-// source changes.
+// dbPermissionSet is the PermissionSet built from a user's roles in the
+// database (or from an explicit grant list, see NewPermissionSet).
 type dbPermissionSet struct {
 	grants map[string]map[string]struct{} // resource -> set of actions
 	scopes map[string]string              // scoped resource -> broadest scope
@@ -90,6 +94,7 @@ func NewPermissionSet(grants []Grant, scopes []ScopeGrant) PermissionSet {
 // reaching for a wildcard.
 func AllGrants() []Grant { return adminGrants() }
 
+// Can reports whether the set holds resource:action.
 func (p *dbPermissionSet) Can(resource, action string) bool {
 	acts, ok := p.grants[resource]
 	if !ok {
@@ -105,6 +110,7 @@ func (p *dbPermissionSet) Scope(resource string) string {
 	return p.scopes[resource]
 }
 
+// add records one grant.
 func (p *dbPermissionSet) add(resource, action string) {
 	if p.grants == nil {
 		p.grants = map[string]map[string]struct{}{}
@@ -115,6 +121,7 @@ func (p *dbPermissionSet) add(resource, action string) {
 	p.grants[resource][action] = struct{}{}
 }
 
+// mergeScope records a data scope, keeping the broadest one seen per resource.
 func (p *dbPermissionSet) mergeScope(resource, scope string) {
 	if p.scopes == nil {
 		p.scopes = map[string]string{}
@@ -124,6 +131,8 @@ func (p *dbPermissionSet) mergeScope(resource, scope string) {
 	}
 }
 
+// scopeRank orders data scopes from narrowest to broadest: none < own <
+// assigned < all.
 func scopeRank(scope string) int {
 	switch scope {
 	case "all":
@@ -137,17 +146,10 @@ func scopeRank(scope string) int {
 	}
 }
 
-// resourceActions is the canonical permission vocabulary (overview §5, extended
-// by adoption-spec D2). It is the single source of truth for grant validation,
-// for the Admin grant set, and for the presentation map in
-// internal/app/permmap.go. 21 resources, 66 (resource, action) pairs.
-//
-// vendor, vendor_bank, reservation and config are declared here even though
-// Phases 1V and 3 build the screens behind them: the roles matrix has to be
-// able to grant them from day one, and a vocabulary that grows per phase would
-// make every earlier role definition incomplete. request:cancel and
-// approval:cancel are here for the same reason: Phase 2's cancellation flow
-// gates its routes on them.
+// resourceActions is the canonical permission vocabulary: every action that can
+// be granted on each resource. It is the single source of truth for grant
+// validation, for the Admin grant set, and for the presentation map in
+// internal/app/permmap.go. Matching is exact; there are no wildcards.
 var resourceActions = map[string][]string{
 	"request":              {"view", "create", "edit", "withdraw", "reraise", "comment", "cancel"},
 	"approval":             {"approve", "reject", "return", "reassign", "accept_partial", "cancel"},
@@ -183,21 +185,16 @@ var resourceOrder = []string{
 	"user", "role", "notification", "config", "audit", "backup",
 }
 
+// scopedResources are the resources that take a data scope.
 var scopedResources = map[string]bool{"request": true, "payment": true}
 
+// ValidGrant reports whether resource:action is in the permission vocabulary.
 func ValidGrant(resource, action string) bool {
-	acts, ok := resourceActions[resource]
-	if !ok {
-		return false
-	}
-	for _, a := range acts {
-		if a == action {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(resourceActions[resource], action)
 }
 
+// ValidScope reports whether scope ("own", "assigned" or "all") may be set on
+// resource; only scoped resources take one.
 func ValidScope(resource, scope string) bool {
 	if !scopedResources[resource] {
 		return false
@@ -205,6 +202,7 @@ func ValidScope(resource, scope string) bool {
 	return scope == "own" || scope == "assigned" || scope == "all"
 }
 
+// scanRole reads one roles row; sql.ErrNoRows becomes ErrNotFound.
 func scanRole(scanner interface{ Scan(...any) error }) (Role, error) {
 	var r Role
 	var sys int
@@ -216,6 +214,7 @@ func scanRole(scanner interface{ Scan(...any) error }) (Role, error) {
 	return r, err
 }
 
+// AllRoles lists every role, system roles first, then by name.
 func (s *Store) AllRoles(ctx context.Context) ([]Role, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,description,is_system,created_at,updated_at FROM roles ORDER BY is_system DESC, name`)
 	if err != nil {
@@ -233,11 +232,14 @@ func (s *Store) AllRoles(ctx context.Context) ([]Role, error) {
 	return out, rows.Err()
 }
 
+// Role reads one role, or ErrNotFound.
 func (s *Store) Role(ctx context.Context, id int64) (Role, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,name,description,is_system,created_at,updated_at FROM roles WHERE id=?`, id)
 	return scanRole(row)
 }
 
+// CreateRole adds an empty, non-system role and returns its id. Grants are set
+// afterwards with UpdateRolePermissions.
 func (s *Store) CreateRole(ctx context.Context, actor User, name, description string) (int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -304,6 +306,8 @@ func (s *Store) UpdateRole(ctx context.Context, actor User, id int64, name, desc
 	return tx.Commit()
 }
 
+// DeleteRole removes a non-system role the actor may manage. A role that is
+// still assigned to anyone is refused.
 func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -325,12 +329,8 @@ func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 	if sys == 1 {
 		return fmt.Errorf("%w: system roles cannot be deleted", ErrForbidden)
 	}
-	// user_roles.role_id cascades on delete, so deleting an assigned role used to
-	// strip it from every holder in silence — each of whom lost the permissions it
-	// carried on their very next request, with nothing on screen connecting cause
-	// to effect (F-G-022). The holder count is already on the roles screen,
-	// immediately above the Delete button; this is the check that consults it.
-	// R9 permits deleting a non-system role; it does not permit doing so blind.
+	// Refuse to delete a role that is still assigned: user_roles cascades on
+	// delete, so it would silently strip the role's permissions from every holder.
 	var holders int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_roles WHERE role_id=?`, id).Scan(&holders); err != nil {
 		return err
@@ -348,6 +348,7 @@ func (s *Store) DeleteRole(ctx context.Context, actor User, id int64) error {
 	return tx.Commit()
 }
 
+// pluralUsers returns "user" or "users" for n.
 func pluralUsers(n int) string {
 	if n == 1 {
 		return "user"
@@ -355,43 +356,57 @@ func pluralUsers(n int) string {
 	return "users"
 }
 
+// RolePermissions returns one role's grants and data scopes, ordered by
+// resource and action.
 func (s *Store) RolePermissions(ctx context.Context, id int64) ([]Grant, []ScopeGrant, error) {
-	grantRows, err := s.db.QueryContext(ctx, `SELECT resource,action FROM role_permissions WHERE role_id=? ORDER BY resource,action`, id)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer grantRows.Close()
-	var grants []Grant
-	for grantRows.Next() {
-		var g Grant
-		if err := grantRows.Scan(&g.Resource, &g.Action); err != nil {
-			return nil, nil, err
-		}
-		grants = append(grants, g)
-	}
-	if err := grantRows.Err(); err != nil {
-		return nil, nil, err
-	}
-
-	scopeRows, err := s.db.QueryContext(ctx, `SELECT resource,scope FROM role_data_scope WHERE role_id=? ORDER BY resource`, id)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer scopeRows.Close()
-	var scopes []ScopeGrant
-	for scopeRows.Next() {
-		var sc ScopeGrant
-		if err := scopeRows.Scan(&sc.Resource, &sc.Scope); err != nil {
-			return nil, nil, err
-		}
-		scopes = append(scopes, sc)
-	}
-	return grants, scopes, scopeRows.Err()
+	return roleGrants(ctx, s.db, id)
 }
 
-// UpdateRolePermissions replaces a role's entire grant + scope set atomically.
-// Every grant and scope is validated against the canonical vocabulary first.
+// UpdateRolePermissions replaces a role's entire grant and scope set
+// atomically and audits the before and after. The checks run in this order:
+// every grant and scope must be in the vocabulary (validateGrants), the actor
+// must be allowed to make this edit (requireRolePermissionEdit), and the role
+// must exist.
 func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID int64, grants []Grant, scopes []ScopeGrant) error {
+	if err := validateGrants(grants, scopes); err != nil {
+		return err
+	}
+	tx, err := s.beginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := requireRolePermissionEdit(ctx, tx, actor.ID, roleID, grants, scopes); err != nil {
+		return err
+	}
+
+	var name string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, roleID).Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	oldGrants, oldScopes, err := roleGrants(ctx, tx, roleID)
+	if err != nil {
+		return err
+	}
+	before := roleGrantAudit(name, oldGrants, oldScopes)
+	after := roleGrantAudit(name, grants, scopes)
+	if err := replaceRoleGrantsTx(ctx, tx, roleID, grants, scopes); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE roles SET updated_at=CURRENT_TIMESTAMP WHERE id=?`, roleID); err != nil {
+		return err
+	}
+	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "role", EntityID: &roleID, Summary: "Updated permissions for role " + name, Before: before, After: after}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// validateGrants checks every grant and scope against the vocabulary.
+func validateGrants(grants []Grant, scopes []ScopeGrant) error {
 	for _, g := range grants {
 		if !ValidGrant(g.Resource, g.Action) {
 			return fmt.Errorf("%w: unknown permission %s:%s", ErrValidation, g.Resource, g.Action)
@@ -402,17 +417,22 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 			return fmt.Errorf("%w: invalid data scope %s=%s", ErrValidation, sc.Resource, sc.Scope)
 		}
 	}
-	tx, err := s.beginWriteTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	admin, err := adminMember(ctx, tx, actor.ID)
+	return nil
+}
+
+// requireRolePermissionEdit decides whether actorID may give roleID exactly
+// these grants and scopes. An administrator may edit any role. Anyone else must
+// pass the role ceiling for the role as it is now, may not edit a system role
+// at all, and may only hand out grants and scopes they hold themselves.
+// Whoever the actor is, the built-in Admin role must keep every user and role
+// management permission, so nobody can lock the system out of administration.
+func requireRolePermissionEdit(ctx context.Context, tx *sql.Tx, actorID, roleID int64, grants []Grant, scopes []ScopeGrant) error {
+	admin, err := adminMember(ctx, tx, actorID)
 	if err != nil {
 		return err
 	}
 	if !admin {
-		if err := requireRoleCeiling(ctx, tx, actor.ID, []int64{roleID}); err != nil {
+		if err := requireRoleCeiling(ctx, tx, actorID, []int64{roleID}); err != nil {
 			return err
 		}
 		var system bool
@@ -422,91 +442,55 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 		if system {
 			return ErrForbidden
 		}
-		ps, err := effectivePermissionsQ(ctx, tx, actor.ID)
+		ps, err := effectivePermissionsQ(ctx, tx, actorID)
 		if err != nil {
 			return err
 		}
-		for _, g := range grants {
-			if !ps.Can(g.Resource, g.Action) {
-				return ErrForbidden
-			}
-		}
-		for _, sc := range scopes {
-			if scopeRank(sc.Scope) > scopeRank(ps.Scope(sc.Resource)) {
-				return ErrForbidden
-			}
+		if !within(ps, grants, scopes) {
+			return ErrForbidden
 		}
 	}
-	var protected bool
-	if err := tx.QueryRowContext(ctx, `SELECT is_system=1 AND name='Admin' FROM roles WHERE id=?`, roleID).Scan(&protected); err != nil {
+	protected, err := isAdminRole(ctx, tx, roleID)
+	if err != nil {
 		return err
 	}
-	if protected {
-		next := NewPermissionSet(grants, scopes)
-		for _, g := range adminGrants() {
-			if g.Resource == "user" || g.Resource == "role" {
-				if !next.Can(g.Resource, g.Action) {
-					return fmt.Errorf("%w: administrator management permissions cannot be removed", ErrValidation)
-				}
-			}
-		}
+	if protected && !keepsAdminManagement(grants, scopes) {
+		return fmt.Errorf("%w: administrator management permissions cannot be removed", ErrValidation)
 	}
+	return nil
+}
 
-	var name string
-	if err := tx.QueryRowContext(ctx, `SELECT name FROM roles WHERE id=?`, roleID).Scan(&name); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrNotFound
+// keepsAdminManagement reports whether the grants still include every user and
+// role management permission in the vocabulary.
+func keepsAdminManagement(grants []Grant, scopes []ScopeGrant) bool {
+	next := NewPermissionSet(grants, scopes)
+	for _, g := range adminGrants() {
+		if (g.Resource == "user" || g.Resource == "role") && !next.Can(g.Resource, g.Action) {
+			return false
 		}
-		return err
 	}
-	before := map[string]any{"role": name}
-	oldGrants := []string{}
-	rows, err := tx.QueryContext(ctx, `SELECT resource,action FROM role_permissions WHERE role_id=? ORDER BY resource,action`, roleID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var resource, action string
-		if err := rows.Scan(&resource, &action); err != nil {
-			rows.Close()
-			return err
-		}
-		oldGrants = append(oldGrants, resource+":"+action)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	oldScopes := map[string]string{}
-	rows, err = tx.QueryContext(ctx, `SELECT resource,scope FROM role_data_scope WHERE role_id=? ORDER BY resource`, roleID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var resource, scope string
-		if err := rows.Scan(&resource, &scope); err != nil {
-			rows.Close()
-			return err
-		}
-		oldScopes[resource] = scope
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	before["permissions"], before["data_scopes"] = oldGrants, oldScopes
-	newGrants := []string{}
+	return true
+}
+
+// roleGrantAudit is the before/after shape recorded when a role's permissions
+// change: the role name, its grants as sorted "resource:action" strings (an
+// empty list, never null) and its data scopes as a resource-to-scope map. The
+// audit screen parses exactly this shape.
+func roleGrantAudit(name string, grants []Grant, scopes []ScopeGrant) map[string]any {
+	perms := make([]string, 0, len(grants))
 	for _, g := range grants {
-		newGrants = append(newGrants, g.Resource+":"+g.Action)
+		perms = append(perms, g.Resource+":"+g.Action)
 	}
-	sort.Strings(newGrants)
-	newScopes := map[string]string{}
+	sort.Strings(perms)
+	dataScopes := map[string]string{}
 	for _, sc := range scopes {
-		newScopes[sc.Resource] = sc.Scope
+		dataScopes[sc.Resource] = sc.Scope
 	}
-	after := map[string]any{"role": name, "permissions": newGrants, "data_scopes": newScopes}
+	return map[string]any{"role": name, "permissions": perms, "data_scopes": dataScopes}
+}
+
+// replaceRoleGrantsTx overwrites a role's grants and data scopes inside tx.
+func replaceRoleGrantsTx(ctx context.Context, tx *sql.Tx, roleID int64, grants []Grant, scopes []ScopeGrant) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id=?`, roleID); err != nil {
 		return err
 	}
@@ -523,13 +507,7 @@ func (s *Store) UpdateRolePermissions(ctx context.Context, actor User, roleID in
 			return classify(err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE roles SET updated_at=CURRENT_TIMESTAMP WHERE id=?`, roleID); err != nil {
-		return err
-	}
-	if err := recordAuditTx(ctx, tx, AuditInput{ActorID: &actor.ID, ActorName: actor.Name, Action: "update", EntityType: "role", EntityID: &roleID, Summary: "Updated permissions for role " + name, Before: before, After: after}); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
 
 // CopyRole creates a new, non-system role named `name` whose grants and scopes
@@ -582,15 +560,9 @@ func (s *Store) CopyRole(ctx context.Context, actor User, srcID int64, name stri
 // SetUserRoles replaces a user's entire role assignment atomically. Every role
 // id must exist; unknown ids are rejected before any write.
 //
-// The Users screen no longer calls this: F-G-034 folded the three writes behind
-// one submit into SaveUser, so that a refusal cannot leave a rename committed
-// with the roles unchanged. This stays as the assignment-only write, because
-// SaveUser cannot stand in for it — SaveUser also rewrites the profile from
-// UserSaveInput, so granting somebody a role through it means restating their
-// name, legacy role and active flag, and any field you get wrong is written.
-// Its callers are the seeding fixtures across internal/app and internal/store
-// that need a user to hold a particular role before a route is exercised, which
-// is a genuine and recurring need and not an accident of history.
+// The Users screen saves roles through SaveUser, together with the profile.
+// This is the assignment-only write, used by test fixtures that need a user to
+// hold a particular role without restating the rest of their profile.
 func (s *Store) SetUserRoles(ctx context.Context, actor User, userID int64, roleIDs []int64) error {
 	unique := map[int64]struct{}{}
 	for _, id := range roleIDs {
@@ -632,6 +604,7 @@ func (s *Store) SetUserRoles(ctx context.Context, actor User, userID int64, role
 	return tx.Commit()
 }
 
+// UserRoles lists the roles assigned to a user, system roles first.
 func (s *Store) UserRoles(ctx context.Context, userID int64) ([]Role, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.name,r.description,r.is_system,r.created_at,r.updated_at
 		FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=? ORDER BY r.is_system DESC, r.name`, userID)
@@ -650,18 +623,12 @@ func (s *Store) UserRoles(ctx context.Context, userID int64) ([]Role, error) {
 	return out, rows.Err()
 }
 
-// SetUserDefaultApprover records who approves this user's requests by default
-// (D9). A user can never be their own default approver — self-approval is not
-// acceptable, and the rule lives here rather than in the <select> because a
-// hidden option is not validation. approverID 0 clears the field.
+// SetUserDefaultApprover records who approves this user's requests by default.
+// approverID 0 clears the field. A user can never be their own default
+// approver, and the approver must be an active user who can approve requests.
 //
-// As with SetUserRoles, the Users screen goes through SaveUser since F-G-034,
-// and this is kept as the field-only write for the same reason: SaveUser would
-// also rewrite the profile and clear the role assignment, so using it to set one
-// column means restating four others. It is the function the D9 rules are pinned
-// against (approvers_test.go, permissions_test.go), and SaveUser enforces the
-// identical refusals — self, unknown, inactive, or lacking approval permission.
-// The two must stay in step; if one gains a rule the other needs it too.
+// SaveUser applies the same rules through requireDefaultApproverTx. This is
+// the field-only write, used by tests that need to set just this column.
 func (s *Store) SetUserDefaultApprover(ctx context.Context, actor User, userID, approverID int64) error {
 	if approverID != 0 && approverID == userID {
 		return fmt.Errorf("%w: a user cannot be their own default approver", ErrValidation)
@@ -698,43 +665,14 @@ func (s *Store) SetUserDefaultApprover(ctx context.Context, actor User, userID, 
 
 // EffectivePermissions resolves a user's complete permission view: the union of
 // every grant across all assigned roles, and the broadest data scope per scoped
-// resource (all > assigned > own).
+// resource (all > assigned > own). User id 0 has no permissions.
+//
+// Unlike effectivePermissionsQ it does not check that the user is active: it
+// answers for the roles the user holds. Signing in and session checks are what
+// keep a deactivated user out.
 func (s *Store) EffectivePermissions(ctx context.Context, userID int64) (PermissionSet, error) {
-	ps := &dbPermissionSet{grants: map[string]map[string]struct{}{}, scopes: map[string]string{}}
 	if userID == 0 {
-		return ps, nil
+		return &dbPermissionSet{grants: map[string]map[string]struct{}{}, scopes: map[string]string{}}, nil
 	}
-	grantRows, err := s.db.QueryContext(ctx, `SELECT rp.resource, rp.action
-		FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id
-		WHERE ur.user_id=?`, userID)
-	if err != nil {
-		return ps, err
-	}
-	defer grantRows.Close()
-	for grantRows.Next() {
-		var resource, action string
-		if err := grantRows.Scan(&resource, &action); err != nil {
-			return ps, err
-		}
-		ps.add(resource, action)
-	}
-	if err := grantRows.Err(); err != nil {
-		return ps, err
-	}
-
-	scopeRows, err := s.db.QueryContext(ctx, `SELECT rds.resource, rds.scope
-		FROM user_roles ur JOIN role_data_scope rds ON rds.role_id=ur.role_id
-		WHERE ur.user_id=?`, userID)
-	if err != nil {
-		return ps, err
-	}
-	defer scopeRows.Close()
-	for scopeRows.Next() {
-		var resource, scope string
-		if err := scopeRows.Scan(&resource, &scope); err != nil {
-			return ps, err
-		}
-		ps.mergeScope(resource, scope)
-	}
-	return ps, scopeRows.Err()
+	return loadPermissions(ctx, s.db, userID, false)
 }
