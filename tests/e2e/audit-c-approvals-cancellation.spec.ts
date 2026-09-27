@@ -3,9 +3,9 @@
  *
  * SCOPE. Everything between "the request is pending" and "the request is
  * approved", plus the whole cancellation flow that hangs off `approved`.
- * Raising a request belongs to another agent and so does everything after
- * approval (reservation, payment, settlement); both appear here only as the
- * cheapest way to reach a state this audit needs.
+ * Raising a request is covered by another audit area and so is everything
+ * after approval (reservation, payment, settlement); both appear here only as
+ * the cheapest way to reach a state this file needs.
  *
  * WHY IT DOES NOT DUPLICATE request-workflow.spec.ts. That file walks one happy
  * journey on two devices and applies the quality bar (axe, tap targets, chrome)
@@ -29,8 +29,7 @@
  * driven through the real controls.
  *
  * TRACEABILITY. Every test is named with its TC id from
- * docs/qa/test-cases/TC-C-approvals-cancellation.md, whose verdict column names
- * the finding (F-C-01 … F-C-06) that any failing case belongs to.
+ * docs/qa/test-cases/TC-C-approvals-cancellation.md.
  */
 import { test, expect, admin, login, settlePayment, today } from './fixtures';
 import {
@@ -70,7 +69,7 @@ let mgrA!: Actor; // exactly [Manager] — the approver every request is sent to
 let mgrB!: Actor; // exactly [Manager] — an approver it was NOT sent to
 let accounts!: Actor; // exactly [Accounts] — holds payment:hold, no approval verb
 let nobody!: Actor; // no role at all
-let dual!: Actor; // [Requester, Manager] — the sharpest G8 probe
+let dual!: Actor; // [Requester, Manager] — the sharpest probe of "nobody approves their own request"
 let projectId!: string;
 let headId!: string;
 let adminId!: string;
@@ -100,8 +99,9 @@ test.beforeAll(async ({ browser }) => {
 
   // The project, the head and every approver's row id come from the form the
   // requester actually fills in, so the ids under test are the ones the product
-  // would have posted. ListApprovers is also what makes the G8 assertions
-  // meaningful: a name absent from this list is a name the server refuses.
+  // would have posted. The approver list is also what makes the "nobody
+  // approves their own request" assertions meaningful: a name absent from this
+  // list is a name the server refuses.
   const form = await probeGet(requester.page, '/requests/new?type=reimbursement');
   expect(form.status, 'a Requester must reach the new-request form').toBe(200);
   projectId = optionValue(form.body, 'Operations');
@@ -130,7 +130,7 @@ test.afterAll(async () => {
 
 // --------------------------------------------------------------------------
 // Helpers. All local to this file: audit-support.ts and fixtures.ts are shared
-// and shipped, and this audit adds to the repo without touching them.
+// with the other specs.
 // --------------------------------------------------------------------------
 
 /** The row id behind an <option> the server rendered, matched on its exact label. */
@@ -242,10 +242,9 @@ function succeeded(probe: Probe, what: string) {
 
 /**
  * Asserts the app refused, and refused as a client error rather than falling
- * over. 400 and 403 are the only two refusals the request handlers can produce:
- * store.ErrValidation maps to 400 and store.ErrForbidden to 403
- * (internal/app/http_errors.go:199). A 404 would mean the route vanished and a
- * 5xx would mean a guard crashed instead of answering.
+ * over. For a request the actor may see, a refusal is 400 (a validation or
+ * state rule) or 403 (not theirs to do). A 5xx would mean a guard crashed
+ * instead of answering.
  */
 function refused(probe: Probe, what: string) {
   expect([400, 403], `${what}: expected a refusal, got ${probe.outcome} ${probe.body.slice(0, 200)}`).toContain(
@@ -404,7 +403,7 @@ test.describe('the approvals queue', () => {
 
     // The scope really is "all" — the row is readable, it is just not theirs to
     // decide. Proving both halves is what makes the filter a design choice
-    // rather than a missing grant (internal/app/requests.go:896).
+    // rather than a missing grant.
     const readable = await probeGet(mgrA.page, `/requests/${theirs.id}`);
     expect(readable.status, "request scope all lets a manager READ another manager's request").toBe(200);
   });
@@ -524,20 +523,12 @@ test.describe('approving', () => {
     expect(await thread(requester, req.id), 'the decision is on the shared history').toContain('approved request');
   });
 
-  test('TC-C-014 — an adjusted amount GREATER than requested is refused (finding F-C-01)', async () => {
-    // REWRITTEN for the F-C-01 fix. As written for the audit this case asserted
-    // the defect — that an over-approval commits, because `ApproveRequest`
-    // checked only `approvedAmount <= 0` and there was no ceiling anywhere. The
-    // approved amount is not a note: `approvedOf()` makes it the ceiling Accounts
-    // may pay to (G13), so approving above the request raised that ceiling above
-    // what anybody asked for, on one person's signature, and the audit trail
-    // could not tell it from an ordinary approval. `ApproveRequest` now refuses
-    // it. Downwards remains the adjustment the sheet offers ("You may approve a
-    // smaller amount than was asked for") and TC-C-011 pins that.
-    //
-    // What this case now protects: the ceiling, and that a refused approval is a
-    // no-op — the request is still pending, still asks for what it asked for,
-    // and carries no approved figure at all.
+  test('TC-C-014 — an adjusted amount GREATER than requested is refused', async () => {
+    // The approved amount is the ceiling Accounts may pay up to, so approving
+    // more than was asked for would let one signature raise that ceiling. It is
+    // refused; approving less is the adjustment on offer (TC-C-011). A refused
+    // approval is a no-op: the request stays pending, still asks for what it
+    // asked for, and carries no approved figure.
     const req = await pendingRequest(mgrA.id, '18400');
     const probe = await approve(mgrA, req.id, '25000');
     refused(probe, 'approving ₹25,000 against a ₹18,400 request');
@@ -559,13 +550,9 @@ test.describe('approving', () => {
   });
 
   test('TC-C-014B — the ceiling holds end to end: Accounts cannot pay above what was approved', async () => {
-    // REWRITTEN for the F-C-01 fix. As written this case drove the consequence
-    // half of the defect — ₹25,000 approved and paid against a ₹18,400 request,
-    // ending Completed. That path is unreachable now that the over-approval is
-    // refused, so the case drives the ceiling itself instead, end to end rather
-    // than argued from the code: an approver may approve at or below the
-    // requested amount, and G13 caps the payment at that approved figure
-    // (`approvedOf`, internal/store/store.go:900–910) — not at the requested one.
+    // The ceiling end to end: an approver may approve at or below the requested
+    // amount, and Accounts may then pay up to the approved figure — not up to the
+    // requested one.
     const req = await pendingRequest(mgrA.id, '18400');
     succeeded(await approve(mgrA, req.id, '12000'), 'approving below the request is the adjustment on offer');
 
@@ -573,11 +560,8 @@ test.describe('approving', () => {
     // is refused on the ceiling and not on the reservation guard.
     succeeded(await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}), 'reserving it for payment');
 
-    // 2026-06-15, not 2029-06-15. F-D-06 is enforced through the UI now:
-    // `validatePayment` (internal/store/store.go:1936-1943) refuses a `paid_on`
-    // after today, because paid_on records when money left the bank and a date
-    // in the future records something that has not happened. The date keeps its
-    // own month, so nothing in this file settles twice into one month.
+    // Dated today: a payment may be neither in the future (it records money
+    // that has left the bank) nor before the request was approved.
     const settleBody = (amount: string) => ({
       request_id: String(req.id),
       amount,
@@ -598,7 +582,7 @@ test.describe('approving', () => {
       'is more than the approved'
     );
     expect(over.body, 'naming the ceiling itself').toContain('₹12,000.00');
-    // toContain: since settlement-7 the pill names the holder — "With Accounts — taken by …".
+    // toContain: the pill names the holder — "With Accounts — taken by …".
     expect(await statusPill(mgrA, req.id), 'nothing was paid: the request is still reserved, not completed').toContain(
       'With Accounts'
     );
@@ -677,11 +661,12 @@ test.describe('approving', () => {
 });
 
 // --------------------------------------------------------------------------
-// 3. Who may decide. G8, and "an admin holds every grant but is not that person".
+// 3. Who may decide: nobody approves their own request, and an administrator
+//    holds every grant but is still not the request's approver.
 // --------------------------------------------------------------------------
 
 test.describe('who may decide', () => {
-  test('TC-C-030 — a person who may approve never finds their own name in the approver list (G8)', async () => {
+  test('TC-C-030 — a person who may approve never finds their own name in the approver list', async () => {
     const form = await probeGet(dual.page, '/requests/new?type=reimbursement');
     expect(form.status, 'a Requester+Manager may raise a request').toBe(200);
     expect(
@@ -691,13 +676,13 @@ test.describe('who may decide', () => {
     expect(form.body, 'while other approvers are offered').toContain(`>${mgrA.subject.name}</option>`);
   });
 
-  test('TC-C-031 — a hand-rolled POST naming yourself as approver is refused (G8)', async () => {
+  test('TC-C-031 — a hand-rolled POST naming yourself as approver is refused', async () => {
     const probe = await probePost(dual.page, '/requests', requestBody(`self ${runId}`, dual.id));
     expect(probe.status, 'the store refuses what the form never offered').toBe(400);
     expect(probe.body, 'and says why').toContain('you cannot approve your own request');
   });
 
-  test('TC-C-032 — G8 binds an administrator holding all 66 grants too', async () => {
+  test('TC-C-032 — nobody approves their own request: that binds an administrator holding all 66 grants too', async () => {
     const probe = await probePost(boss, '/requests', requestBody(`selfadmin ${runId}`, adminId));
     expect(probe.status, 'self-approval is a rule about people, not about permissions').toBe(400);
     expect(probe.body, 'and the administrator gets the same sentence').toContain('you cannot approve your own request');
@@ -909,21 +894,16 @@ test.describe('returning and rejecting', () => {
 });
 
 // --------------------------------------------------------------------------
-// 5. Reassignment. The approval reassignment now has a route (F-A-06/F-C-02),
-//    and the reservation reassignment that is easy to mistake for it does not
-//    reach it.
+// 5. Reassignment. The approval reassignment has its own route, and the
+//    reservation reassignment that is easy to mistake for it does not reach it.
 // --------------------------------------------------------------------------
 
 test.describe('reassignment', () => {
   test('TC-C-060 — the reservation reassign route is not the approval one, and a Manager is refused it', async () => {
-    // REWRITTEN: this case was titled "a Manager holding approval:reassign has no
-    // route to use it (finding F-C-02)" and its comment said routes() registered
-    // no handler that called store.ReassignRequest, so the grant was dead. It is
-    // not dead any more — POST /requests/{id}/reassign-approver is that handler,
-    // and TC-C-060B drives it. Every assertion below is unchanged and still worth
-    // making: /requests/{id}/reassign is the RESERVATION reassignment, gated on
-    // reservation:reassign, which Admin alone holds, so a Manager reaching for the
-    // obvious name is refused and moves nothing.
+    // /requests/{id}/reassign is the RESERVATION reassignment, gated on
+    // reservation:reassign, which Admin alone holds, so a Manager reaching for
+    // the obvious name is refused and moves nothing. The approval reassignment
+    // is POST /requests/{id}/reassign-approver (TC-C-060B).
     const req = await pendingRequest(mgrA.id);
     const probe = await probePost(mgrA.page, `/requests/${req.id}/reassign`, {
       to_user_id: mgrB.id,
@@ -941,15 +921,11 @@ test.describe('reassignment', () => {
   });
 
   test('TC-C-060B — the approval reassignment has exactly one URL, and it moves the approver', async () => {
-    // REWRITTEN for the F-A-06/F-C-02 fix. This was a proof-of-absence case: it
-    // fired four plausible names at the server and required all four to be
-    // unrouted, because `approval:reassign` was a grant with nothing behind it.
-    // One of the four is now the real route, so requiring its absence asserts the
-    // defect. What the case protects instead is the property that made it worth
-    // writing — the reassignment has ONE door, not several — plus coverage
-    // requirement A7, which nothing else drives end to end.
+    // The approval reassignment has ONE door, not several: plausible
+    // alternative names are unrouted, and the real route moves the approver.
     //
-    // An unrouted POST answers 405, not 404 (CV1).
+    // An unrouted POST answers 405, not 404: a catch-all GET / route matches the
+    // path, so only the method is wrong.
     const req = await pendingRequest(mgrA.id);
     for (const path of [
       `/requests/${req.id}/approval-reassign`,
@@ -969,7 +945,8 @@ test.describe('reassignment', () => {
 
     // The one that does exist, driven by the approver handing their own request
     // on. store.ReassignRequest carries the rules — pending only, a real approver
-    // at the other end, G8, a mandatory reason — and this is its only HTTP caller.
+    // at the other end, nobody approving their own request, a mandatory reason —
+    // and this is its only HTTP caller.
     succeeded(
       await probePost(mgrA.page, `/requests/${req.id}/reassign-approver`, {
         manager_id: mgrB.id,
@@ -1055,7 +1032,7 @@ test.describe('reassignment', () => {
 });
 
 // --------------------------------------------------------------------------
-// 6. No bulk approval (A6).
+// 6. No bulk approval: every decision is made on the opened request.
 // --------------------------------------------------------------------------
 
 test.describe('no bulk approval', () => {
@@ -1157,19 +1134,11 @@ test.describe('the cancellation flow', () => {
     }
   });
 
-  // REWRITTEN for the F-G-002 fix. The GET used to be required to answer 403 and
-  // now answers 404, and the difference is the fix rather than a slip: a
-  // Requester's data scope really is "own", so the row is not readable — and
-  // `loadViewableRequest` (internal/app/requests.go:325-348), which
-  // `requestCancelForm` resolves through (:1006), now withholds the row's
-  // EXISTENCE too. A 403 there said "this id is real but not yours", which let
-  // anybody holding request:view walk the id space and count the company's
-  // requests.
-  //
-  // The POST is unchanged at 403 and is the sharper half of the case either way:
-  // `RequestCancellation` (internal/store/requests.go:1262) compares
-  // `requester_id` to the actor, so holding request:cancel is not permission to
-  // cancel somebody else's request even for a caller who already knows the id.
+  // A Requester's data scope is "own", so another requester's request is not
+  // theirs to read, and a request the reader may not see answers 404 on every
+  // route — the screen and the POST alike — so its existence is not confirmed
+  // either (otherwise anybody holding request:view could walk the id space and
+  // count the company's requests).
   test('TC-C-085 — holding request:cancel is not permission to cancel somebody else\'s request', async () => {
     const req = await approvedRequest();
     const form = await probeGet(outsider.page, `/requests/${req.id}/cancel`);
@@ -1214,10 +1183,10 @@ test.describe('the cancellation flow', () => {
       'Payment is frozen'
     );
     await expect(requester.page.locator('.banner.warn')).toContainText('The site cancelled the trip.');
-    // The stored action is `cancel_request`; `actionText` now renders it as
-    // "Cancellation asked" (it used to fall through to the raw token), so the
-    // trail is matched on the words a reader actually sees — the same convention
-    // TC-C-121 follows for `update` → "Updated".
+    // The stored action is `cancel_request`; `actionText` renders it as
+    // "Cancellation asked", so the trail is matched on the words a reader
+    // actually sees — the same convention TC-C-121 follows for `update` →
+    // "Updated".
     expect(await auditTrail(req.id), 'the ask is audited as its own action').toContain('Cancellation asked');
   });
 
@@ -1328,32 +1297,26 @@ test.describe('the cancellation flow', () => {
   });
 
   test('TC-C-096 — an outright cancellation is also legal while a cancellation is pending', async () => {
-    // legalTransitions allows cancellation_requested → cancelled
-    // (internal/store/requests.go:97), and CancelRequest does not additionally
-    // insist on 'approved', so this route reaches the same end as accepting.
+    // legalTransitions allows cancellation_requested → cancelled, and
+    // CancelRequest does not additionally insist on 'approved', so this route
+    // reaches the same end as accepting.
     const req = await cancellationRequested();
     succeeded(await cancelOutright(mgrA, req.id, 'Cancelling it myself.'), 'cancelling a frozen request outright');
     expect(await statusPill(requester, req.id), 'the request is cancelled').toBe('Cancelled');
   });
 
   test('TC-C-097 — a hold is suspended by a cancellation ask and restored when the ask is declined', async () => {
-    // REWRITTEN for the F-C-07 fix. As written this case asserted that the hold
-    // was DROPPED by the round trip: a requester asking for cancellation and an
-    // approver declining it lifted an accountant's hold between them, and the
-    // request came back genuinely re-reservable with the accountant's question
-    // still unanswered. That cost requirement L7, "On hold (only Accounts lifts)".
-    //
-    // The fix suspends the hold rather than destroying it: `RequestCancellation`
-    // clears `on_hold` and deliberately keeps `hold_reason`, and
+    // A cancellation ask suspends an Accounts hold rather than destroying it:
+    // `RequestCancellation` clears `on_hold` and keeps `hold_reason`, and
     // `DecideCancellation` restores `on_hold` from it on a decline (and clears
     // both on an accept, because nothing may still be on hold on a dead row).
+    // Only Accounts lifts a hold, so the requester and the approver cannot lift
+    // one between them.
     //
-    // The first half of this case is UNCHANGED and is not a defect: the flag
-    // really is suspended while the request is frozen, because `on_hold=1` implies
-    // `status='approved'` is an invariant the hold tab, the hold pill and
-    // `ReserveRequest` all trust one column for — recorded in the build and pinned
-    // by linking_test.go. What changed is the second half: after the decline the
-    // pause is back, and only Accounts lifts it.
+    // While the request is frozen the flag really is off, because "on hold"
+    // implies status 'approved' — the hold tab, the hold pill and
+    // `ReserveRequest` all trust that one column. After the decline the pause
+    // is back.
     const req = await approvedRequest();
     succeeded(await hold(accounts, req.id, 'Send the original receipt.'), 'Accounts puts an approved request on hold');
     expect(await statusPills(requester, req.id), 'the hold is what the reader sees').toContain('On hold');
@@ -1400,17 +1363,12 @@ test.describe('the cancellation flow', () => {
   });
 
   test('TC-C-098 — after the decline the request is NOT takeable: only Accounts lifts the restored hold', async () => {
-    // REWRITTEN for the F-C-07 fix. As written this case asserted the request was
-    // immediately re-reservable after the declined cancellation — which was the
-    // defect, and its own proof requirement was that a reservation should be
-    // refused instead. `ReserveRequest`'s conditional UPDATE requires
-    // `status='approved' AND processing_by IS NULL AND on_hold=0` and now names its
-    // refusal `ErrRequestOnHold` (a 403), so the reservation probe is the only
-    // proof that `on_hold` is genuinely 1 rather than merely rendered.
-    //
-    // What this case now protects: the restored hold is real all the way down —
-    // the queue offers a reply rather than the work, the reservation route refuses,
-    // and `UnholdRequest` — Accounts — is what clears it.
+    // The restored hold is real all the way down: the queue offers the
+    // accountant's question rather than the work, the reservation route refuses
+    // (`ReserveRequest` only takes an approved, unclaimed request that is not on
+    // hold, and names its refusal `ErrRequestOnHold`), and only Accounts clears
+    // it. The reservation probe is what proves `on_hold` is really set rather
+    // than merely rendered.
     const req = await approvedRequest();
     succeeded(await hold(accounts, req.id, 'Clarify the head.'), 'holding');
     succeeded(await askCancel(requester, req.id, 'Might not need it.'), 'asking');
@@ -1437,8 +1395,8 @@ test.describe('the cancellation flow', () => {
 
     // Not offered is not the same as not permitted. The route is the proof:
     // ReserveRequest answers ErrRequestOnHold, and requestRecordPayment renders
-    // every ErrForbidden reservation refusal as the conflict screen carrying 409
-    // (G15) — the same status TC-D-023 pins for a hold placed the ordinary way.
+    // every refused reservation as the conflict screen carrying 409 — the same
+    // status TC-D-023 pins for a hold placed the ordinary way.
     const reserve = await probePost(accounts.page, `/requests/${req.id}/record-payment`, {});
     expect(
       reserve.status,
@@ -1455,41 +1413,31 @@ test.describe('the cancellation flow', () => {
       await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}),
       'now it reserves'
     );
-    // toContain: since settlement-7 the pill names the holder — "With Accounts — taken by …".
+    // toContain: the pill names the holder — "With Accounts — taken by …".
     expect(await statusPill(mgrA, req.id), 'and it is with Accounts, ready to pay').toContain('With Accounts');
   });
 
   /**
    * The information-flow half of the hold interaction.
    *
-   * REWRITTEN TWICE, and the second rewrite inverts the case's own subject.
-   *
-   * As written for the audit it was called "nobody is told when a cancellation
-   * is decided", and that was true: the notify vocabulary stopped at
-   * `EventCancellationRequested`, so an accountant who had frozen work on a
-   * request learned it was asked about and never learned the answer. That is
-   * F-F-06, and it is fixed. There are now two events, not one, because the two
-   * sentences are opposites — "nothing will be paid" and "payment is unfrozen"
-   * (`EventCancellationAccepted` / `EventCancellationDeclined`,
-   * `internal/notify/events.go:60-67`) — `requestCancellationDecide` fires
-   * whichever is true (`internal/app/requests.go:1057-1064`), and both seed rows
-   * carry IncludeRequester and IncludeAccounts
-   * (`internal/store/migrations_notifications.go:112-119`).
+   * Deciding a cancellation tells the requester and Accounts what became of it,
+   * with two different events because the two sentences are opposites —
+   * "nothing will be paid" and "payment is unfrozen"
+   * (`EventCancellationAccepted` / `EventCancellationDeclined`, fired by
+   * `requestCancellationDecide`). Both notification rules include the requester
+   * and Accounts.
    *
    * Which accountant: `resolveInAppUsers` addresses `processing_by` personally
    * when a reservation exists and falls back to the whole Accounts group when it
-   * does not (`internal/notify/service.go:181-205`). The request here is held,
-   * never reserved, so the group is the right list and the holder is in it.
+   * does not. The request here is held, never reserved, so the group is the
+   * right list and the holder is in it.
    *
-   * The control is kept and still matters — the ask's own notification proves
-   * the mechanism is live in this environment, so a count that did NOT move
-   * afterwards would be a real absence rather than switched-off mail.
+   * The control matters: the ask's own notification proves notifications are
+   * live in this environment, so a count that did NOT move afterwards would be
+   * a real absence rather than switched-off delivery.
    *
-   * The earlier rewrite, for F-C-07, is unchanged: the tail used to assert the
-   * accountant's question was gone from every screen after the decline. It is
-   * not — the hold is suspended by the ask and restored by the decline, so the
-   * question comes back onto the screen they work from. Between the two fixes
-   * the accountant now both keeps the hold and hears about the decision.
+   * And the hold survives the decline: the accountant's question comes back
+   * onto the screen they work from, so the notification and the hold agree.
    */
   test('TC-C-097B — the cancellation decision reaches the accountant and the requester, and the hold survives it', async () => {
     const req = await approvedRequest();
@@ -1533,8 +1481,8 @@ test.describe('the cancellation flow', () => {
       'the newest notice on this request says the cancellation was declined'
     ).toContainText('declined', { ignoreCase: true });
 
-    // And the question the accountant asked is back on the screen they work from
-    // (F-C-07), so the notification and the hold agree with each other.
+    // And the question the accountant asked is back on the screen they work
+    // from, so the notification and the hold agree with each other.
     await accounts.page.goto(`/requests/${req.id}`);
     await expect(
       accounts.page.locator('.banner.warn'),
@@ -1581,13 +1529,9 @@ const transitionActions: TransitionAction[] = [
   {
     key: 'approve',
     legalFrom: ['pending'],
-    // No bypass any more. `cancellation_requested` was excluded from the grid
-    // while F-C-03 was open — legalTransitions carries cancellation_requested →
-    // approved so DecideCancellation can decline, and ApproveRequest reused that
-    // edge — so the failure was reported once, by name, as TC-C-113B rather than
-    // as one lost row in a table. ApproveRequest now tests the frozen status
-    // itself, so approve belongs in the grid like every other action and
-    // TC-C-113 fires it at a frozen request on every run.
+    // Approving a request whose cancellation is awaiting a decision is refused
+    // like any other illegal approve, so it belongs in the grid (TC-C-113 fires
+    // it at a frozen request; TC-C-113B looks at it in detail).
     run: id => approve(mgrA, id, '18400')
   },
   { key: 'return', legalFrom: ['pending'], run: id => sendBack(mgrA, id, 'Needs work.') },
@@ -1640,28 +1584,23 @@ test.describe('legal transitions', () => {
   }
 
   /**
-   * F-C-03, fixed. `legalTransitions` carries cancellation_requested → approved
-   * so `DecideCancellation` can decline, and `ApproveRequest` reused the same
-   * edge — so POST /approve unfroze a request whose cancellation nobody had
-   * decided, with none of the decline's obligations: no `approval:cancel` gate,
-   * no written reason, no `cancel_decline` row. `ApproveRequest` now tests the
-   * frozen status explicitly and refuses.
+   * `legalTransitions` carries cancellation_requested → approved so that
+   * `DecideCancellation` can decline. The approve route must not reuse that
+   * edge: unfreezing a request through approve would skip everything a decline
+   * requires — the approval:cancel gate, a written reason and a
+   * `cancel_decline` record. `ApproveRequest` checks for the frozen status and
+   * refuses.
    *
-   * Soft assertions are kept so one run reports the whole extent of any
-   * regression rather than stopping at the first thing that is wrong.
+   * Soft assertions, so one run reports the whole extent of any regression
+   * rather than stopping at the first thing that is wrong.
    *
-   * WHAT THIS CASE NO LONGER ASSERTS, and must not be given back. It used to
-   * soft-assert that the audit trail contained a `cancel_decline` row. That
-   * assertion could never pass here whatever the product did: this case performs
-   * exactly one POST — the refused approve — and never decides the cancellation,
-   * so there is no decline to record. Its subject is the refusal, not the
-   * decline. The `cancel_decline` row is asserted where a decline is actually
-   * driven: TC-C-092 above, which declines through the sheet and reads the trail,
-   * and `TestApproveIsRefusedWhileACancellationIsUndecided`
-   * (internal/store/requests_test.go:1348), which drives this exact sequence and
-   * then declines, asserting exactly one `cancel_decline` row.
+   * This case performs exactly one POST — the refused approve — and never
+   * decides the cancellation, so it does not look for a `cancel_decline` row:
+   * there is no decline to record. That row is asserted where a decline is
+   * actually driven: TC-C-092 above, and the store test
+   * `TestApproveIsRefusedWhileACancellationIsUndecided`.
    */
-  test('TC-C-113B — approving a request whose cancellation is undecided is refused (finding F-C-03)', async () => {
+  test('TC-C-113B — approving a request whose cancellation is undecided is refused', async () => {
     const req = await cancellationRequested();
     const probe = await approve(mgrA, req.id, '9999');
 
@@ -1674,7 +1613,7 @@ test.describe('legal transitions', () => {
     // The requester must be able to see what became of their ask. Refusing the
     // approve leaves the status at cancellation_requested, so the frozen banner
     // — which is the only place cancel_reason is ever rendered — still carries
-    // it. Accepting the approve stranded the reason in a column nothing shows.
+    // it. An accepted approve would strand the reason in a column nothing shows.
     await requester.page.goto(`/requests/${req.id}`);
     expect
       .soft(
@@ -1685,21 +1624,20 @@ test.describe('legal transitions', () => {
   });
 
   /**
-   * The three live statuses the Phase-2 enum does not list. There are **eleven**
-   * in the shipped product — the seven in `requestStatuses`
-   * (`internal/store/requests.go:86–89`) plus `processing`, `partial_review`,
-   * `completed` and `completed_partial`, which Phase 3 appended — and `draft` is
-   * unrepresentable, not merely unused: `CHECK (status <> 'draft')`
-   * (`internal/store/migrations.go:156`).
+   * The statuses after approval that the grid above does not build. The product
+   * has eleven: the seven in `requestStatuses` plus `processing`,
+   * `partial_review`, `completed` and `completed_partial`. `draft` cannot be
+   * stored at all — the table has `CHECK (status <> 'draft')`.
    *
-   * Reservation and settlement belong to another agent's scope; they appear here
-   * only as the way to reach a state whose *legality* is this suite's question.
+   * Reservation and settlement are covered by another audit area; they appear
+   * here only as the way to reach a state whose *legality* is this file's
+   * question.
    */
   test('TC-C-119A — every action in the grid is refused against a processing request', async () => {
     const req = await approvedRequest();
     // One POST reserves it: requestRecordPayment → ReserveRequest → 'processing'.
     succeeded(await probePost(accounts.page, `/requests/${req.id}/record-payment`, {}), 'reserving the fixture');
-    // toContain: since settlement-7 the pill names the holder — "With Accounts — taken by …".
+    // toContain: the pill names the holder — "With Accounts — taken by …".
     expect(await statusPill(mgrA, req.id), 'a reserved request is with Accounts').toContain('With Accounts');
 
     for (const action of transitionActions) {
@@ -1741,8 +1679,8 @@ test.describe('legal transitions', () => {
       'the manager accepts the shortfall'
     );
     // AcceptPartial writes 'completed_partial', a terminal state distinct from a
-    // clean 'completed' (internal/store/store.go:983) — which is why the
-    // legalTransitions edge partial_review → completed has no writer at all.
+    // clean 'completed' — which is why the legalTransitions edge
+    // partial_review → completed has no writer at all.
     expect(await statusPill(mgrA, req.id), 'accepting a partial closes it as completed_partial').toBe(
       'Completed — partial accepted'
     );
@@ -1839,25 +1777,19 @@ test.describe('rerouting by edit', () => {
   });
 
   /**
-   * F-C-04, fixed — annotation retired. `requestEdit` was three calls in a row —
-   * update, attach, submit — so a resubmission that failed its own preconditions
-   * left the edit committed AND audited as done while the requester was shown a
-   * 400: the history asserted a change the caller had just been told did not
-   * happen, and the approver had silently moved. `canTransition("pending",
-   * "pending")` is false, so this is the ordinary way to reach that state, not a
-   * contrived one.
+   * One press of the correction form is one transaction: `store.EditRequest`
+   * saves the edit, any document and the resubmit together or not at all, and
+   * checks the resubmit against the EDITED row. A resubmission that fails its
+   * own preconditions — `canTransition("pending", "pending")` is false, so
+   * resubmitting a pending request is the ordinary way to get there — must
+   * therefore write nothing and audit nothing: otherwise the history would
+   * record a change the requester had just been told did not happen, and the
+   * approver would have silently moved.
    *
-   * One press is now one transaction: `store.EditRequest` commits all three or
-   * none, and validates the submit against the EDITED row rather than the row as
-   * it was on entry (`internal/app/requests.go:797-822`). So a refused resubmit
-   * writes nothing and audits nothing.
-   *
-   * The soft assertions are kept: a regression that reroutes AND renames should
-   * be reported as both, not stopped at the first. The audit-trail assertion is
-   * new — the original defect's worst half was the audit row, and a rollback
-   * that left the row would be the same lie with the data put back.
+   * Soft assertions: a regression that reroutes AND renames should be reported
+   * as both, not stopped at the first.
    */
-  test('TC-C-123 — a refused resubmission leaves nothing applied (finding F-C-04)', async () => {
+  test('TC-C-123 — a refused resubmission leaves nothing applied', async () => {
     const req = await pendingRequest(mgrA.id);
     const trailBefore = await auditTrail(req.id);
     const probe = await resubmit(requester, req.id, `${req.title} corrected`, mgrB.id);
@@ -1897,9 +1829,8 @@ test.describe('concurrency', () => {
       ]);
       const wins = [first, other].filter(p => p.status === 303);
       expect(wins.length, `exactly one approval may commit — got ${first.outcome} and ${other.outcome}`).toBe(1);
-      // What the loser is TOLD is a separate question, and today it is told the
-      // wrong thing: see TC-C-134 and finding F-C-05. What must hold either way
-      // is that the loser wrote nothing.
+      // What the loser is TOLD is TC-C-134's question. What must hold here is
+      // that the loser wrote nothing.
       expect(await statusPill(mgrA, req.id), 'and the request is approved exactly once').toBe(
         'Approved — awaiting payment'
       );
@@ -1973,24 +1904,17 @@ test.describe('concurrency', () => {
   });
 
   /**
-   * F-C-05, fixed. The loser of a decision race used to be handed a 500
-   * internal-error page: every decision writer opened a deferred transaction,
-   * READ the request and then wrote, so two of them deadlocked on the
-   * read-to-write upgrade and SQLite answered SQLITE_BUSY immediately — the busy
-   * handler is deliberately not consulted for an upgrade that can never succeed,
-   * which is why busy_timeout(5000) never saved it.
-   *
-   * Each writer now takes the write lock with its first statement
+   * The loser of a decision race is refused (400), never handed a 500. Each
+   * decision writer takes the write lock with its first statement
    * (`beginWriteTx`) and applies one conditional UPDATE whose row count decides
-   * the outcome — the shape `ReserveRequest` always had — so the loser matches no
-   * rows and is told `ErrRequestRaced`, a 400.
+   * the outcome, so the loser matches no rows and is told `ErrRequestRaced`.
    *
-   * This case is the regression guard on all three races at once, and the soft
-   * assertions are kept so one run reports every race that regresses rather than
-   * stopping at the first. The bar is deliberately "not a 5xx": which of the two
-   * callers wins is still timing, and TC-C-130/131/133 pin that exactly one does.
+   * This case guards all three races at once, with soft assertions so one run
+   * reports every race that regresses. The bar is deliberately "not a 5xx":
+   * which caller wins is timing, and TC-C-130/131/133 pin that exactly one
+   * does.
    */
-  test('TC-C-134 — the loser of a decision race is refused, not handed a 500 (finding F-C-05)', async ({
+  test('TC-C-134 — the loser of a decision race is refused, not handed a 500', async ({
     browser
   }) => {
     const second = await signIn(browser, mgrA.subject);
