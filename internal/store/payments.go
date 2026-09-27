@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fervidbudget/internal/money"
 	"fmt"
 	"strings"
@@ -165,41 +166,46 @@ func (s *Store) VoidPayment(ctx context.Context, actor User, id int64, reason st
 	return tx.Commit()
 }
 
-// Payment reads one ledger row. The heads/projects joins are LEFT joins with
-// COALESCE because a payment settling a recoverable request has head_id NULL
-// (v8): its detail screen must still resolve, with an empty project and head.
-// The request's treatment rides along so that screen can say "Recoverable"
-// where a budget payment names its project and head.
-func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
+// paymentSelect reads ledger rows with everything a payment screen shows: the
+// project and head names, the name of the person who entered it, and the
+// linked request's treatment. The heads and projects joins are LEFT joins with
+// COALESCE because a payment settling a recoverable request has no head; its
+// screens must still resolve, with an empty project and head. Callers append
+// their own WHERE / ORDER BY. Read the rows with scanPayment.
+const paymentSelect = `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
 		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
 		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
 		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.id=?`, id)
+		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id`
+
+// scanPayment reads one row selected with paymentSelect. A single-row lookup
+// that finds nothing returns ErrNotFound.
+func scanPayment(sc rowScanner) (Payment, error) {
 	var p Payment
-	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
-	if err == sql.ErrNoRows {
+	err := sc.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
+	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
 	return p, err
+}
+
+// Payment reads one ledger row, or returns ErrNotFound. The request's treatment
+// rides along so the detail screen can say "Recoverable" where a budget payment
+// names its project and head.
+func (s *Store) Payment(ctx context.Context, id int64) (Payment, error) {
+	return scanPayment(s.db.QueryRowContext(ctx, paymentSelect+` WHERE py.id=?`, id))
 }
 
 // PaymentForRequest returns the latest payment linked to a request, or
-// ErrNotFound when none exists yet. It powers the requester's outcome view (Q4).
+// ErrNotFound when none exists yet. The requester's outcome view shows it.
 func (s *Store) PaymentForRequest(ctx context.Context, requestID int64) (Payment, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
-		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
-		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id WHERE py.request_id=? ORDER BY py.id DESC LIMIT 1`, requestID)
-	var p Payment
-	err := row.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment)
-	if err == sql.ErrNoRows {
-		return p, ErrNotFound
-	}
-	return p, err
+	return scanPayment(s.db.QueryRowContext(ctx, paymentSelect+` WHERE py.request_id=? ORDER BY py.id DESC LIMIT 1`, requestID))
 }
 
+// paymentInTx reads the payment's own columns inside the caller's transaction.
+// It deliberately reads no joined names (project, head, entered by): edit and
+// void record this snapshot as the audit "before", and names present only on
+// that side would look like changes on the audit screen.
 func paymentInTx(ctx context.Context, tx *sql.Tx, id int64) (Payment, error) {
 	var p Payment
 	err := tx.QueryRowContext(ctx, `SELECT id,COALESCE(head_id,0),paid_on,amount,COALESCE(vendor_payee,''),COALESCE(payment_mode,''),COALESCE(invoice_no,''),COALESCE(reference_no,''),COALESCE(remarks,''),entered_by,updated_by,voided_by,COALESCE(void_reason,''),voided_at,created_at,updated_at,request_id,COALESCE(settlement,''),COALESCE(partial_reason,'') FROM payments WHERE id=?`, id).
@@ -218,11 +224,7 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	if opts.Limit <= 0 {
 		opts.Limit = 300
 	}
-	q := `SELECT py.id,COALESCE(py.head_id,0),COALESCE(h.project_id,0),COALESCE(p.name,''),COALESCE(h.name,''),py.paid_on,py.amount,
-		COALESCE(py.vendor_payee,''),COALESCE(py.payment_mode,''),COALESCE(py.invoice_no,''),COALESCE(py.reference_no,''),COALESCE(py.remarks,''),
-		py.entered_by,u.name,py.updated_by,py.voided_by,COALESCE(py.void_reason,''),py.voided_at,py.created_at,py.updated_at,
-		py.request_id,COALESCE(py.settlement,''),COALESCE(py.partial_reason,''),COALESCE(pr.treatment,'')
-		FROM payments py LEFT JOIN heads h ON h.id=py.head_id LEFT JOIN projects p ON p.id=h.project_id JOIN users u ON u.id=py.entered_by LEFT JOIN payment_requests pr ON pr.id=py.request_id`
+	q := paymentSelect
 	var where []string
 	var args []any
 	// F-A-04 / F-G-003: the payment data scope. "own" narrows the ledger to
@@ -289,12 +291,12 @@ func (s *Store) ListPayments(ctx context.Context, opts PaymentListOptions) ([]Pa
 	defer rows.Close()
 	var out []Payment
 	for rows.Next() {
-		var p Payment
 		// request_id travels with the row because the ledger has to tell a
-		// linked payment from a historical one: the linked one is immutable
-		// (S12), and a screen that cannot see the difference offers an Edit
-		// button the store would refuse.
-		if err := rows.Scan(&p.ID, &p.HeadID, &p.ProjectID, &p.Project, &p.Head, &p.PaidOn, &p.Amount, &p.VendorPayee, &p.PaymentMode, &p.InvoiceNo, &p.ReferenceNo, &p.Remarks, &p.EnteredBy, &p.EnteredByName, &p.UpdatedBy, &p.VoidedBy, &p.VoidReason, &p.VoidedAt, &p.CreatedAt, &p.UpdatedAt, &p.RequestID, &p.Settlement, &p.PartialReason, &p.Treatment); err != nil {
+		// linked payment from a historical one: a linked payment cannot be
+		// edited, and a screen that cannot see the difference would offer an
+		// Edit button the store refuses.
+		p, err := scanPayment(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, p)

@@ -85,6 +85,12 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) DB() *sql.DB  { return s.db }
 
+// rowScanner is what *sql.Row and *sql.Rows have in common, so one scan
+// function can read a single-row lookup and a list alike.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
 // rowQuerier is the read surface *sql.DB and *sql.Tx have in common, so a
 // validation helper can run inside its caller's transaction instead of going out
 // to a second pooled connection. Reading on a second connection while the first
