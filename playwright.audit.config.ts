@@ -62,6 +62,10 @@ export default defineConfig({
       'FERVID_ADMIN_EMAIL=admin@fervid.local',
       'FERVID_ADMIN_PASSWORD=TestAdmin12345',
       'FERVID_SECURE_COOKIES=false',
+      // Every test signs in from 127.0.0.1, far more often than the production
+      // login limits (30 a minute per address, 300 overall) allow.
+      'FERVID_LOGIN_LIMIT_PER_IP=100000',
+      'FERVID_LOGIN_LIMIT_GLOBAL=100000',
       'go run ./cmd/server --seed'
     ].join(' '),
     url: `http://127.0.0.1:${port}/login`,

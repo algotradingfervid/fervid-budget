@@ -34,6 +34,12 @@ type Config struct {
 	TrustedProxies       []string
 	SMTPAllowedHosts     []string
 	AttachmentQuotaBytes int64
+	// LoginLimitPerIP and LoginLimitGlobal cap POST requests to /login and its
+	// sub-pages (sign-in, reset request, reset) per minute: per client address
+	// and across all clients. Production keeps the defaults (30 and 300); test
+	// suites that sign in many times from one address raise them.
+	LoginLimitPerIP  int
+	LoginLimitGlobal int
 }
 
 func Load() Config {
@@ -54,6 +60,8 @@ func Load() Config {
 		TrustedProxies:       strings.FieldsFunc(env("FERVID_TRUSTED_PROXIES", ""), func(r rune) bool { return r == ',' }),
 		SMTPAllowedHosts:     strings.FieldsFunc(env("FERVID_SMTP_ALLOWED_HOSTS", ""), func(r rune) bool { return r == ',' }),
 		AttachmentQuotaBytes: int64(envInt("FERVID_ATTACHMENT_QUOTA_MB", 1024)) * 1024 * 1024,
+		LoginLimitPerIP:      envPositiveInt("FERVID_LOGIN_LIMIT_PER_IP", 30),
+		LoginLimitGlobal:     envPositiveInt("FERVID_LOGIN_LIMIT_GLOBAL", 300),
 	}
 }
 
@@ -106,6 +114,15 @@ func envInt(key string, fallback int) int {
 func envHour(key string, fallback int) int {
 	if h := envInt(key, fallback); h >= 0 && h <= 23 {
 		return h
+	}
+	return fallback
+}
+
+// envPositiveInt reads a whole number above zero. Zero, a negative number or
+// text falls back to the default, so a typo can never switch a limit off.
+func envPositiveInt(key string, fallback int) int {
+	if n := envInt(key, fallback); n > 0 {
+		return n
 	}
 	return fallback
 }

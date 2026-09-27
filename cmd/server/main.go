@@ -14,7 +14,6 @@ import (
 
 	"fervidbudget/internal/app"
 	"fervidbudget/internal/config"
-	"fervidbudget/internal/notify"
 	"fervidbudget/internal/store"
 )
 
@@ -83,7 +82,7 @@ func main() {
 		return
 	}
 
-	srv, err := app.New(cfg, db)
+	srv, notifier, err := app.NewWithNotifier(cfg, db)
 	if err != nil {
 		logger.Error("server initialization failed", "error", err)
 		os.Exit(1)
@@ -96,8 +95,9 @@ func main() {
 	// with the server. It ticks hourly rather than daily because the admin can
 	// set the pending and stale waits to any number of days: an hourly tick
 	// makes the first reminder land within an hour of becoming due, and the
-	// per-request reminder_last_sent stamp is what stops it repeating.
-	notifier := notify.NewService(db, notify.NewSMTPMailer(db, cfg.SMTPPassword))
+	// per-request reminder_last_sent stamp is what stops it repeating. It uses
+	// the app's own notification service, so reminder emails go through the
+	// same mailer (and SMTP host allowlist) as every other email.
 	schedulerDone := make(chan struct{})
 	go func() {
 		defer close(schedulerDone)

@@ -43,10 +43,10 @@ func (a *App) passwordResetRequest(w http.ResponseWriter, r *http.Request) {
 	data := a.resetPageData(r)
 	data.Notice = resetNotice
 	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	// Key the per-address throttle on the real client, resolved the same way
+	// the login limiter does it. Behind a reverse proxy the connection address
+	// is the proxy's, which would put every visitor in one shared bucket.
+	host := a.clientIP(r)
 	allowed, err := a.st.AllowPasswordReset(r.Context(), []string{resetHash("email:" + email), resetHash("ip:" + host)}, time.Now())
 	if err != nil {
 		a.log.ErrorContext(r.Context(), "password reset throttle unavailable", "error", err)
