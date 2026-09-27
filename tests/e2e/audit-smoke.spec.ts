@@ -8,12 +8,10 @@
 import { test, expect } from './fixtures';
 import { asRole, probeGet, probePost, probeAnonymous, csrfToken } from './audit-support';
 
-// Runs on both device projects. There is nothing device-dependent here, but the
-// guard that would have skipped the mobile copy cannot be written on
-// `browserName`: the Pixel 5 project drives chromium too, so `browserName` is
-// 'chromium' in both and the skip never fires. The suite's convention for a
-// genuinely single-run file is `project.name !== 'chromium'`. These four are
-// cheap and pass on both, so they simply run twice.
+// Nothing here is device-dependent, and these four are cheap, so they run on
+// both device projects rather than carrying a skip guard. (A guard would be
+// written on `project.name !== 'chromium'`, never on `browserName`: the Pixel 5
+// project drives chromium too.)
 test.describe('audit harness', () => {
   test('a subject given exactly [Requester] holds no Accounts grant', async ({ adminPage, browser, runId }) => {
     const requester = await asRole(adminPage, browser, runId, ['Requester']);
@@ -29,10 +27,7 @@ test.describe('audit harness', () => {
       const payments = await probeGet(requester.page, '/payments');
       expect(payments.status, 'payments needs payment:view').toBe(403);
 
-      // /grid is registered RequirePermission('grid','view') (app.go:439) and
-      // grid:view is not a seeded Requester grant, so the refusal is the correct
-      // answer. This previously expected 200 on the belief that /grid was
-      // RequireLogin only — which the comment above already contradicted.
+      // /grid needs grid:view, which is not a seeded Requester grant.
       const grid = await probeGet(requester.page, '/grid');
       expect(grid.status, 'grid needs grid:view, which Requester lacks').toBe(403);
 
@@ -62,9 +57,8 @@ test.describe('audit harness', () => {
     }
   });
 
-  // 303 See Other, not 302 — the app answers a GET-after-gate with See Other, so
-  // a matrix row that pins 302 fails for a reason that has nothing to do with
-  // authorisation. Assert the class of redirect, and the target.
+  // The app redirects with 303 See Other; the test asserts the class of
+  // redirect and its target, not one exact code.
   test('an anonymous caller is redirected to /login rather than answered', async ({ browser, baseURL }) => {
     const probe = await probeAnonymous(browser, '/requests', baseURL!);
     expect(probe.status, 'gated routes redirect an anonymous caller').toBeGreaterThanOrEqual(300);

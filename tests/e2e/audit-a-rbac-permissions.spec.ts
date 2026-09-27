@@ -5,59 +5,50 @@
  * Workflow meaning belongs to the sibling suites; here every assertion is about
  * a gate opening or refusing.
  *
- * FOUR THINGS THAT SHAPE EVERY TEST BELOW, all read out of the code first:
+ * FOUR THINGS THAT SHAPE EVERY TEST BELOW:
  *
- * 1. `RequirePermission` wraps `RequireLogin` (internal/auth/auth.go:141), so an
- *    anonymous caller is **redirected 303 → /login** and never 403s. The
- *    permission refusal is only reachable with a session.
+ * 1. `RequirePermission` wraps `RequireLogin`, so an anonymous caller is
+ *    **redirected 303 → /login** and never gets a 403. The permission refusal
+ *    is only reachable with a session.
  *
- * 2. `withCSRF` sits *inside* the permission gate — every POST is registered as
- *    `RequirePermission(res, act, http.HandlerFunc(a.withCSRF(handler)))`. The
- *    order is therefore login → permission → CSRF → handler. That is what makes
- *    the whole POST half of the matrix testable **without writing anything**:
- *    probe every POST with no `csrf` field and read the refusal.
+ * 2. `withCSRF` sits *inside* the permission gate: most POSTs are registered as
+ *    `RequirePermission(res, act, http.HandlerFunc(a.withCSRF(handler)))`, so
+ *    the order is login → permission → CSRF → handler. That makes the POST half
+ *    of the matrix testable **without writing anything**: probe every POST with
+ *    no `csrf` field and read the refusal.
  *      - not signed in            → 303 → /login
  *      - signed in, no grant      → 403 "You do not have permission to perform this action."
  *      - signed in, grant held    → 403 "Your form session expired. Refresh the page and try again."
- *    The third outcome is the proof the gate opened, and nothing was mutated.
- *    The two messages come from different places (auth.go:143 vs app.go's
- *    `withCSRF`) and telling them apart is what makes the POST half readable.
+ *    The third outcome proves the gate opened, and nothing was mutated.
+ *    The project and head saves are the exception: they check their verb
+ *    inside the handler, after CSRF, and their rows say how they are probed.
  *
- *    A store's own refusal is now a third message again. It used to be a
- *    fourth outcome indistinguishable from the first: `respondStoreError`
- *    rendered every `ErrForbidden` with the middleware's exact wording, so a
- *    caller who simply had not reserved a request was told they lacked a
- *    permission they held (F-A-09/F-G-023). It renders `friendly(err)` now
- *    (http_errors.go), which keeps the sentence a wrapped ErrForbidden was
- *    written with — "Reserve this request before recording its payment",
- *    "System roles cannot be deleted" — and falls back to the permission
- *    wording only for a bare one. So a body carrying GATE_REFUSAL really does
- *    mean the gate refused, and TC-A-102 and TC-A-120 lean on that.
+ *    A refusal from the store has its own sentence ("Reserve this request
+ *    first", "System roles cannot be deleted"); only a bare "forbidden" falls
+ *    back to the permission sentence. So a body carrying GATE_REFUSAL really
+ *    does mean the caller lacks the permission.
  *
- * 3. Every subject holds **exactly one** role, via `asRole`. `fixtures.
- *    createApproverUser` cannot be used here: `store.CreateUser` →
- *    `assignDefaultRoleTx` (internal/store/migrations.go:501) gives every new
- *    user the Accounts role, so ticking "Manager" yields Accounts + Manager and
- *    every refusal under test turns into a 200.
+ * 3. Every subject holds **exactly one** role, via `asRole`.
+ *    `fixtures.createApproverUser` cannot be used here: every new user is given
+ *    the Accounts role by default, so ticking "Manager" yields Accounts +
+ *    Manager and every refusal under test turns into a 200.
  *
  * 4. **A row outside the caller's data scope answers 404, not 403.** This is why
  *    so many cells below expect a status that reads like "missing" on an object
- *    the fixture certainly created. `loadViewableRequest` (requests.go:335-348),
- *    `notFoundAttachment` (app.go:1054-1062) and `requestAttachmentDownload` all
- *    refuse that way on purpose: request and attachment ids are consecutive
- *    integers, and a 403 that can be told apart from a 404 lets a caller who may
- *    read nothing still map everything the system holds (F-G-002). The rule is
- *    therefore that the ROUTE IS NOT AN EXISTENCE ORACLE, and 404 here is a
- *    stronger refusal than 403, never a weaker one. Ownership rules layered
- *    ABOVE the scope — "only the raiser may edit", "only the person holding this
- *    reservation" — still answer 403 with their own sentence, because by then
- *    the caller has already been told the row exists.
+ *    the fixture certainly created. Requests and attachments a caller may not
+ *    see are refused exactly like missing ones on purpose: their ids are
+ *    consecutive integers, and a 403 that differs from a 404 would let a caller
+ *    who may read nothing still map everything the system holds. The route is
+ *    not an existence oracle, and 404 here is a stronger refusal than 403.
+ *    Ownership rules layered ABOVE the scope — "only the raiser may edit",
+ *    "only the person holding this reservation" — still answer 403 with their
+ *    own sentence, because by then the caller may already see the row.
  *
  * Row IDs `RT-nn` and caller IDs `C-xxx` are the ones in
  * docs/qa/uml/05-route-permission-matrix.md. TC IDs are in
  * docs/qa/test-cases/TC-A-rbac-permissions.md.
  */
-import { test, expect, admin, login } from './fixtures';
+import { test, expect, admin, login, pdfUpload, ensureVendor } from './fixtures';
 import {
   asRole,
   createUserWithExactRoles,
@@ -66,12 +57,16 @@ import {
   csrfToken,
   probeGet,
   probePost,
+  requestRevision,
   fixturePassword,
   type Probe,
   type RoleName,
-  type Subject
+  type Subject,
+  toProbe
 } from './audit-support';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // The five callers of the matrix, plus the two probes that sharpen it.
@@ -80,8 +75,7 @@ import type { Browser, BrowserContext, Page } from '@playwright/test';
 type CallerId = 'C-anon' | 'C-req' | 'C-mgr' | 'C-acc' | 'C-adm' | 'C-none';
 
 /**
- * The seeded grants, transcribed from `systemRoleDefaults`
- * (internal/store/migrations.go:351-402). This table is the *expectation*: if
+ * The seeded grants, transcribed from `systemRoleDefaults`. This table is the *expectation*: if
  * the seed ever changes, these tests must fail rather than quietly re-baseline.
  */
 const SEEDED_GRANTS: Record<Exclude<CallerId, 'C-anon'>, string[]> = {
@@ -95,11 +89,9 @@ const SEEDED_GRANTS: Record<Exclude<CallerId, 'C-anon'>, string[]> = {
     'approval:approve', 'approval:reject', 'approval:return',
     'approval:reassign', 'approval:accept_partial', 'approval:cancel',
     'grid:view', 'report:view',
-    // Granted by migration 12. Approving is the one moment somebody is asked to
-    // judge whether a payment is justified, and it is the moment the supporting
-    // document matters most; the approver could not open it. The grant is still
-    // scoped — the download handlers check the caller can see the request the
-    // document belongs to before serving a byte.
+    // An approver must be able to open the supporting document of what they
+    // approve. The grant is still scoped: the download handlers check the
+    // caller can see the request the document belongs to before serving it.
     'attachment:view'
   ],
   'C-acc': [
@@ -116,7 +108,7 @@ const SEEDED_GRANTS: Record<Exclude<CallerId, 'C-anon'>, string[]> = {
   'C-none': []
 };
 
-/** The canonical vocabulary, transcribed from `resourceActions` (permissions.go:150-172). */
+/** The canonical vocabulary, transcribed from `resourceActions`. */
 const VOCABULARY: Record<string, string[]> = {
   request: ['view', 'create', 'edit', 'withdraw', 'reraise', 'comment', 'cancel'],
   approval: ['approve', 'reject', 'return', 'reassign', 'accept_partial', 'cancel'],
@@ -161,13 +153,20 @@ interface Row {
   /** RT-nn from docs/qa/uml/05-route-permission-matrix.md */
   id: string;
   method: 'GET' | 'POST';
-  /** Resolved lazily: most paths carry an id created in beforeAll. */
+  /** Resolved lazily: most paths carry an id created by the world build. */
   path: () => string;
   /** The route's own gate, or 'login' / 'public'. */
   gate: string;
   /** Per-caller overrides where an ownership rule refuses a permitted caller. */
   over?: Partial<Record<CallerId, Expected>>;
   note?: string;
+  /**
+   * POST with the caller's real CSRF token and this form. Only for routes that
+   * check their verb inside the handler, after the CSRF check: probed without a
+   * token, every signed-in caller would get the same CSRF refusal. The form
+   * must be one the handler refuses as invalid, so nothing is written.
+   */
+  withToken?: Record<string, string>;
 }
 
 function expectedFor(row: Row, caller: CallerId): Expected {
@@ -244,7 +243,7 @@ interface World {
   vendorId: string;
   customRoleId: string;
   systemRoleIds: Record<RoleName, string>;
-  /** Objects the five callers do NOT own — matrix targets (matrix doc §0.3). */
+  /** Objects the five callers do NOT own — matrix targets. */
   tPending: number;
   tApproved: number;
   tProc: number;
@@ -272,10 +271,18 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
    * cannot live in `beforeAll`, because a `beforeAll` runs before any per-test
    * skip is evaluated — it would build a second world at 390px, where the edit
    * screen's sticky action bar covers its own submit button. Skipping first and
-   * building lazily gets both right, and `workers: 1` means it happens once.
+   * building lazily gets both right. With `workers: 1` the world is built once
+   * per worker; Playwright starts a new worker after a failed test, which then
+   * builds its own world.
    */
   test.beforeEach(async ({ browser, baseURL }, testInfo) => {
     testInfo.skip(testInfo.project.name !== 'chromium', 'the permission matrix runs once, on desktop');
+    // Playwright starts a fresh worker after every failed test, which forgets
+    // `worldError`. The failure is therefore also written next to the run's
+    // results, so a broken world fails every later test at once instead of
+    // being rebuilt (minutes each) by every one of them.
+    const failedMarker = join(testInfo.project.outputDir, 'rbac-world-build-failed.txt');
+    worldError ??= existsSync(failedMarker) ? readFileSync(failedMarker, 'utf8') : null;
     if (W || worldError) {
       expect(worldError, 'the fixture world must be built before any cell is probed').toBeNull();
       return;
@@ -287,6 +294,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       W = await buildWorld(browser, baseURL!);
     } catch (error) {
       worldError = error instanceof Error ? `${error.message}\n${error.stack}` : String(error);
+      mkdirSync(dirname(failedMarker), { recursive: true });
+      writeFileSync(failedMarker, worldError);
       throw error;
     }
   });
@@ -314,36 +323,30 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   matrixTest('TC-A-M01', 'RequireLogin only — session, no verb', () => [
     { id: 'RT-05', method: 'GET', path: () => '/', gate: 'login' },
     { id: 'RT-08', method: 'GET', path: () => '/dashboard', gate: 'login' },
-    // RT-07 used to sit here, and that was the finding: the nav gated the
-    // variance grid on grid:view while the route was RequireLogin only, so the
-    // screen the sidebar hid opened to anybody with a session (F-A-02). The
-    // route now carries the verb the nav always claimed for it
-    // (app.go:439), so the row is no longer a session-only row — it is
-    // TC-A-M58 below.
+    // The variance grid (RT-07) is not a session-only screen: it needs
+    // grid:view, like the sidebar link to it, and is probed under TC-A-M58.
     { id: 'RT-30', method: 'GET', path: () => '/notifications', gate: 'login' },
     { id: 'RT-31', method: 'POST', path: () => '/notifications/read', gate: 'login' },
     // The catch-all: RequireLogin fires before notFound, so a 404 probe needs a
-    // session (matrix doc MX-2/MX-3).
+    // session.
     {
       id: 'RT-06', method: 'GET', path: () => `/no-such-screen-${W.runId}`, gate: 'login',
       over: { 'C-req': 404, 'C-mgr': 404, 'C-acc': 404, 'C-adm': 404, 'C-none': 404 }
     },
-    // Somebody else's notification is indistinguishable from a missing one
-    // (inapp.go:76-81), which is exactly right.
+    // Somebody else's notification is indistinguishable from a missing one.
     {
       id: 'RT-32', method: 'GET', path: () => '/notifications/999999/open', gate: 'login',
       over: { 'C-req': 404, 'C-mgr': 404, 'C-acc': 404, 'C-adm': 404, 'C-none': 404 }
     },
     // RT-60 is gated on a session, then on the request's data scope, then on
-    // ownership: release-if-yours OR reassign (`reservationForm`,
-    // internal/app/linking.go). A2 holds the reservation, so of the five callers
-    // only the Admin — the only holder of reservation:reassign — opens it.
+    // ownership: release-if-yours OR reassign (`reservationForm`). A2 holds the
+    // reservation, so of the five callers only the Admin — the only holder of
+    // reservation:reassign — opens it.
     //
-    // The Requester answers 404, not 403, and the order is why: the screen loads
-    // through `loadViewableRequest` (requests.go:335-348), and a request outside
-    // the caller's data scope is not-found rather than forbidden, so the route
-    // cannot be used to discover which ids exist (F-G-002). A Requester whose
-    // scope is `own` never reaches the reservation rule at all.
+    // The Requester answers 404, not 403: a request outside the caller's data
+    // scope is not found rather than forbidden, so the route cannot be used to
+    // discover which ids exist. A Requester whose scope is `own` never reaches
+    // the reservation rule at all.
     {
       id: 'RT-60', method: 'GET', path: () => `/requests/${W.tProc}/reservation`, gate: 'login',
       over: { 'C-req': 404, 'C-mgr': 403, 'C-acc': 403, 'C-adm': 200, 'C-none': 404 }
@@ -372,8 +375,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-15', method: 'GET', path: () => `/payments/${W.payId}`, gate: 'payment:view' }
   ]);
   matrixTest('TC-A-M08', 'payment:edit', () => [
-    // S12: a linked payment is immutable, so the form redirects to the payment
-    // rather than offering a Save that can only fail (app.go:803-806).
+    // A payment linked to a request cannot be edited, so the form redirects to
+    // the payment rather than offering a Save that can only fail.
     {
       id: 'RT-16', method: 'GET', path: () => `/payments/${W.payId}/edit`, gate: 'payment:edit',
       over: { 'C-acc': 303, 'C-adm': 303 }
@@ -399,15 +402,13 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-19', method: 'POST', path: () => `/payments/${W.payId}/attachments`, gate: 'attachment:create' }
   ]);
   // RT-20 serves *payment* documents and nothing else, and it resolves the
-  // attachment to its payment before serving it: `canReadPayment`
-  // (app.go:1028-1039) applies the request's own row scope, which is the same
-  // rule `paymentDetail` runs — "or payment:view becomes a way around Q5/R6".
-  // A Requester holds attachment:view, so the gate opens and the ownership check
-  // is the thing doing the work: the bank advice on somebody else's request is
-  // refused. It is refused as **404**, deliberately: attachment ids are small
-  // sequential integers and a distinguishable refusal turns the route into an
-  // enumeration oracle over the whole table (`notFoundAttachment`,
-  // app.go:1054-1062). F-A-01.
+  // attachment to its payment before serving it: `canReadPayment` applies the
+  // request's own row scope, the same rule `paymentDetail` runs, so a document
+  // is never a way around the request's visibility. A Requester holds
+  // attachment:view, so the gate opens and the ownership check does the work:
+  // the bank advice on somebody else's request is refused as **404**, because
+  // attachment ids are small sequential integers and a distinguishable refusal
+  // would let a caller enumerate the whole table.
   matrixTest('TC-A-M14', 'attachment:view', () => [
     {
       id: 'RT-20', method: 'GET', path: () => `/attachments/${W.payAttId}`, gate: 'attachment:view',
@@ -455,9 +456,32 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   matrixTest('TC-A-M23', 'budget:view', () => [{ id: 'RT-37', method: 'GET', path: () => '/budgets', gate: 'budget:view' }]);
   matrixTest('TC-A-M24', 'budget:edit', () => [{ id: 'RT-38', method: 'POST', path: () => '/budgets', gate: 'budget:edit' }]);
   matrixTest('TC-A-M25', 'project:view', () => [{ id: 'RT-41', method: 'GET', path: () => '/projects', gate: 'project:view' }]);
-  matrixTest('TC-A-M26', 'project:edit', () => [{ id: 'RT-42', method: 'POST', path: () => '/projects', gate: 'project:edit' }]);
+  // Saving a project or a head is one route for two verbs: `projectSave` and
+  // `headSave` ask for :create when the form has no id and :edit when it has
+  // one, after the CSRF check. So these rows post a real token and a form with
+  // no name: a caller without the verb is refused with the permission sentence,
+  // and the Admin, who holds both, gets the "name is required" refusal (400).
+  matrixTest('TC-A-M26', 'project:create / project:edit', () => [
+    {
+      id: 'RT-42', method: 'POST', path: () => '/projects', gate: 'project:create',
+      withToken: { id: '0', name: '', active: 'on' }, over: { 'C-adm': 400 }
+    },
+    {
+      id: 'RT-42', method: 'POST', path: () => '/projects', gate: 'project:edit',
+      withToken: { id: W.projectId, name: '', active: 'on' }, over: { 'C-adm': 400 }
+    }
+  ]);
   matrixTest('TC-A-M27', 'head:view', () => [{ id: 'RT-43', method: 'GET', path: () => '/heads', gate: 'head:view' }]);
-  matrixTest('TC-A-M28', 'head:edit', () => [{ id: 'RT-44', method: 'POST', path: () => '/heads', gate: 'head:edit' }]);
+  matrixTest('TC-A-M28', 'head:create / head:edit', () => [
+    {
+      id: 'RT-44', method: 'POST', path: () => '/heads', gate: 'head:create',
+      withToken: { id: '0', project_id: W.projectId, name: '', active: 'on' }, over: { 'C-adm': 400 }
+    },
+    {
+      id: 'RT-44', method: 'POST', path: () => '/heads', gate: 'head:edit',
+      withToken: { id: W.headId, project_id: W.projectId, name: '', active: 'on' }, over: { 'C-adm': 400 }
+    }
+  ]);
 
   matrixTest('TC-A-M29', 'vendor:view', () => [
     { id: 'RT-45', method: 'GET', path: () => '/vendors', gate: 'vendor:view' },
@@ -476,14 +500,13 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-51', method: 'GET', path: () => '/requests', gate: 'request:view' },
     { id: 'RT-52', method: 'GET', path: () => '/requests/export.csv', gate: 'request:view' },
     // Every id row below targets a request C-req did not raise: scope own then
-    // refuses it at `loadViewableRequest` (requests.go:335-348) even though the
-    // verb is held. That is Q5/R6.
+    // refuses it at `loadViewableRequest` even though the verb is held.
     //
     // The refusal is **404**, not 403. Holding request:view and being told
     // "forbidden" is an answer — it says the row exists — and these ids are
     // consecutive integers, so a caller could map every request in the system
-    // without reading one. A row outside the data scope now answers exactly as a
-    // row that was never written does (F-G-002).
+    // without reading one. A row outside the data scope answers exactly as a
+    // row that was never written does.
     {
       id: 'RT-70', method: 'GET', path: () => `/requests/${W.tPending}`, gate: 'request:view',
       over: { 'C-req': 404 }
@@ -504,8 +527,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-56', method: 'POST', path: () => '/requests', gate: 'request:create' }
   ]);
   matrixTest('TC-A-M34', 'request:edit', () => [
-    // Only the raiser may edit (`loadEditableRequest`, requests.go:739-752), so
-    // both holders of the verb are refused on a request neither raised — and
+    // Only the raiser may edit (`loadEditableRequest`), so both holders of the verb are refused on a request neither raised — and
     // they are refused differently, which is the point of listing both.
     // `loadEditableRequest` calls `loadViewableRequest` first: the Requester's
     // scope is `own`, so the row is 404 before "only the raiser may edit" is
@@ -528,8 +550,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   ]);
   matrixTest('TC-A-M38', 'request:cancel', () => [
     // Asking for a cancellation is the raiser's act, so an administrator holding
-    // every verb is still refused here (`requestCancelForm`,
-    // requests.go:1005-1023) — 403, and its own sentence rather than the gate's.
+    // every verb is still refused here (`requestCancelForm`) — 403, and its own
+    // sentence rather than the gate's.
     // The Requester is 404 for the same reason RT-71 is: the screen loads
     // through `loadViewableRequest`, and a request outside the data scope is
     // not-found before any ownership rule is consulted.
@@ -552,8 +574,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   ]);
   matrixTest('TC-A-M42', 'approval:cancel', () => [
     { id: 'RT-81', method: 'POST', path: () => `/requests/${W.tApproved}/cancel`, gate: 'approval:cancel' },
-    // The cancellation decision belongs to the request's own approver
-    // (requests.go:837-841): M2 is the manager, so C-mgr and C-adm are refused.
+    // The cancellation decision belongs to the request's own approver: M2 is
+    // the manager, so C-mgr and C-adm are refused.
     {
       id: 'RT-82', method: 'GET', path: () => `/requests/${W.tApproved}/cancellation`, gate: 'approval:cancel',
       over: { 'C-mgr': 403, 'C-adm': 403 }
@@ -571,7 +593,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   matrixTest('TC-A-M45', 'reservation:release', () => [
     { id: 'RT-61', method: 'POST', path: () => `/requests/${W.tProc}/release`, gate: 'reservation:release' }
   ]);
-  // reservation:reassign is held by Admin alone (migrations.go:386-388).
+  // reservation:reassign is held by Admin alone.
   matrixTest('TC-A-M46', 'reservation:reassign', () => [
     { id: 'RT-62', method: 'POST', path: () => `/requests/${W.tProc}/reassign`, gate: 'reservation:reassign' }
   ]);
@@ -599,14 +621,10 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     { id: 'RT-97', method: 'POST', path: () => '/backups', gate: 'backup:create' }
   ]);
 
-  // A row and an ID that did not exist at the audit, because the gate did not.
-  // RT-07 was probed under TC-A-M01 as a RequireLogin row and that WAS the
-  // finding — the sidebar gated the variance grid on grid:view and the route
-  // gated it on nothing, so a Requester who typed the URL read every budget,
-  // every actual, and a Recent Payments table (F-A-02/F-G-032). The route now
-  // names the verb (`RequirePermission("grid","view")`, app.go:439), which makes
-  // it an ordinary matrix row for the first time: Manager, Accounts and Admin
-  // hold grid:view and open it, Requester does not and is refused by the gate.
+  // The variance grid shows every budget, every actual and a Recent Payments
+  // table, so the route needs grid:view, the same verb the sidebar link is
+  // gated on: Manager, Accounts and Admin hold it and open the grid; a
+  // Requester does not and is refused by the gate.
   matrixTest('TC-A-M58', 'grid:view', () => [
     { id: 'RT-07', method: 'GET', path: () => '/grid', gate: 'grid:view' }
   ]);
@@ -615,7 +633,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   // 2. Menu hiding is not enforcement — and the converse.
   // =========================================================================
 
-  /** The sidebar contract: every navigable screen and the verb nav.go gates it on. */
+  /** The sidebar contract: every navigable screen and the verb the sidebar gates it on. */
   const NAV = [
     { label: 'My requests', href: '/requests', gate: 'request:view' },
     { label: 'Approvals', href: '/approvals', gate: 'approval:approve' },
@@ -650,11 +668,9 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
             .soft(probe.status, `${caller} is offered "${item.label}" in the sidebar, so ${item.href} must answer 200`)
             .toBe(200);
         } else {
-          // No exceptions. /grid used to be one — the sidebar hid it and the
-          // route opened it to any session — and the exception is gone because
-          // the hole is (F-A-02, app.go:439). Every screen the sidebar withholds
-          // is now a screen the route withholds, with no route allowed to be
-          // more generous than the menu that advertises it.
+          // No exceptions: every screen the sidebar withholds is a screen the
+          // route withholds, and no route is more generous than the menu that
+          // advertises it.
           expect
             .soft(
               probe.status,
@@ -670,20 +686,19 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // What this protects, in two halves. The grid is a budget screen carrying a
     // Recent Payments panel — amounts, payees, and live links into
     // /payments/{id} — so it discloses two different things and needs two
-    // different verbs. Both were missing (F-A-02/F-G-032):
-    //   (a) the route was RequireLogin only while the nav gated it on grid:view,
-    //       so the screen the sidebar hid opened to anybody who typed the URL;
-    //   (b) the payments panel rode along with the budget matrix, handing a
-    //       ledger to a caller /payments answered 403.
+    // different verbs:
+    //   (a) the screen itself needs grid:view, the verb the sidebar hides it by;
+    //   (b) the payments panel needs payment:view, so it never hands a ledger
+    //       to a caller /payments refuses.
     const req = W.callers['C-req'];
     await req.page.goto('/');
     await expect(
       req.page.locator('.sidebar a[href="/grid"]'),
-      'a Requester holds no grid:view, so nav.go hides the Variance grid entry'
+      'a Requester holds no grid:view, so the sidebar hides the Variance grid entry'
     ).toHaveCount(0);
 
-    // Half (a). The route names the verb the menu always claimed for it
-    // (app.go:439), so the menu and the URL now say the same thing.
+    // Half (a). The route names the verb the menu gates the link on, so the
+    // menu and the URL say the same thing.
     const probe = await probeGet(req.page, '/grid');
     expect(probe.status, 'GET /grid is gated on grid:view, which a Requester does not hold').toBe(403);
     expect(probe.body.includes(GATE_REFUSAL), 'and the refusal comes from the permission gate').toBe(true);
@@ -692,19 +707,19 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'and nothing of the screen is rendered on the way out — no payment link survives the refusal'
     ).toBe(false);
     const ledger = await probeGet(req.page, '/payments');
-    expect(ledger.status, 'while /payments refuses them as it always did — the two screens now agree').toBe(403);
+    expect(ledger.status, 'and /payments refuses them too — the two screens agree').toBe(403);
 
     // The mobile tab bar agrees as well, and it has to: on a phone the bar is
     // the only navigation there is, so a tab that 403s is worse than no tab
-    // (resolveTabs, nav.go:262-291).
+    // (`resolveTabs`).
     await expect(
       req.page.locator('.tabbar a[href="/grid"]'),
       'the tab bar offers no /grid to a caller with no grid:view either'
     ).toHaveCount(0);
 
     // Half (b): grid:view opens the budget matrix and buys nothing else. The
-    // panel is filtered in the handler (app.go:775-784) rather than hidden in
-    // the template, because a screen must not be trusted to withhold data the
+    // panel is filtered in the handler rather than hidden in the template,
+    // because a screen must not be trusted to withhold data the
     // handler already loaded.
     const roleName = `gridonly-${W.runId}`;
     const roleId = await createCustomRole(W.adminPage, roleName);
@@ -737,15 +752,12 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   test('TC-A-64 — a role-less user is offered nothing but the two ungated screens, and refused every other', async () => {
     const none = W.callers['C-none'];
     await none.page.goto('/');
-    // Two, not one. `navItemVisible` shows an item with no Resource to everyone
-    // (nav.go), and the Notifications entry has none — every row that screen can
-    // return is already scoped to the signed-in user by the store, which is why
-    // its route needs no verb either. It was added because the .m-topbar bell is
-    // display:none on every desktop, so above 860px a user had no way to reach
-    // their own notifications at all (F-F-05, nav.go:61). The rule this case
-    // pins is unchanged: the sidebar offers exactly the screens the route layer
-    // will open, and both of these are RequireLogin-only screens asserted as
-    // reachable in the second loop below.
+    // Two, not one. `navItemVisible` shows an item with no Resource to everyone,
+    // and the Notifications entry has none — every row that screen can return
+    // is already scoped to the signed-in user by the store, which is why its
+    // route needs no verb either. The rule this case pins: the sidebar offers
+    // exactly the screens the route layer will open, and both of these are
+    // RequireLogin-only screens asserted as reachable in the second loop below.
     await expect(
       none.page.locator('.sidebar .side-nav a:not(.soon)'),
       'a role-less user is offered only the screens that need no verb: Home and Notifications'
@@ -782,13 +794,13 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toHaveCount(1);
     await expect(
       req.page.locator(`a.req-card[href="/requests/${W.tPending}"]`),
-      'and never a request somebody else raised (Q5/R6)'
+      'and never a request somebody else raised'
     ).toHaveCount(0);
   });
 
   test('TC-A-66 — the request CSV export obeys the same scope as the list', async () => {
     const probe = await probeGet(W.callers['C-req'].page, '/requests/export.csv?bucket=all');
-    expect(probe.status, 'a Requester may export their own list (D3)').toBe(200);
+    expect(probe.status, 'a Requester may export their own list').toBe(200);
     expect(probe.body.includes(W.ownTitle), 'the export carries the requester’s own request').toBe(true);
     expect(
       probe.body.includes(W.foreignTitle),
@@ -802,15 +814,15 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // the refusal must not say which of the two it is. A 403 on a real id and a
     // 404 on an unused one is an existence oracle over consecutive integers, so
     // `loadViewableRequest` answers a row outside the data scope exactly as it
-    // answers a row that was never written (requests.go:343-346, F-G-002).
+    // answers a row that was never written.
     expect(probe.status, 'a request outside the caller’s data scope is not-found, not forbidden').toBe(404);
     expect(
       probe.body.includes('The requested record was not found'),
       'and the wording gives nothing away either'
     ).toBe(true);
 
-    // The proof that it is an oracle no longer: an id that certainly does not
-    // exist answers identically, byte for byte in the part that matters.
+    // The proof that it is no oracle: an id that certainly does not exist
+    // answers identically, byte for byte in the part that matters.
     const missing = await probeGet(W.callers['C-req'].page, '/requests/99999999');
     expect(missing.status, 'an id nobody ever raised answers the same status').toBe(probe.status);
     expect(
@@ -824,19 +836,24 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     await mgr.page.goto('/requests?bucket=all');
     await expect(
       mgr.page.locator(`a.req-card[href="/requests/${W.tPending}"]`),
-      'scope request=all shows a manager a request routed to a different manager (A5)'
+      'scope request=all shows a manager a request routed to a different manager'
     ).toHaveCount(1);
 
-    // Reading is not deciding: the queue is hard-scoped to "assigned"
-    // (requests.go:896), so a request routed elsewhere is not in it.
+    // Reading is not deciding: the approvals queue lists only requests routed to
+    // the reader, so a request routed elsewhere is not in it.
     await mgr.page.goto('/approvals');
     await expect(
       mgr.page.locator(`a.req-card[href="/requests/${W.tPending}"]`),
       'but /approvals lists only what is theirs to decide'
     ).toHaveCount(0);
 
-    const decide = await probePost(mgr.page, `/requests/${W.tPending}/approve`, { approved_amount: '100.00' });
-    expect(decide.status, 'and the decision itself is refused: ManagerID != actor (store/requests.go:687)').toBe(403);
+    // The decision carries the request's current revision, so the only thing
+    // wrong with it is who sends it. Approving answers 404 to anyone who is not
+    // the request's approver, even a reader who can open the request.
+    const decide = await probePost(mgr.page, `/requests/${W.tPending}/approve`, {
+      approved_amount: '100.00', revision: await requestRevision(W.m2.page, W.tPending)
+    });
+    expect(decide.status, 'and the decision itself is refused: only the request’s approver may approve it').toBe(404);
   });
 
   test('TC-A-69 — Accounts with payment=all sees every payment', async () => {
@@ -867,7 +884,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       await session.page.goto('/requests?bucket=all');
       await expect(
         session.page.locator(`a.req-card[href="/requests/${W.tPending}"]`),
-        'holding Requester AND Manager the scope unions to all (R4/R3), so every request is visible'
+        'holding Requester AND Manager the scope unions to all, so every request is visible'
       ).toHaveCount(1);
     } finally {
       await session.close();
@@ -886,7 +903,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       const after = await probeGet(session.page, '/users');
       expect(
         after.status,
-        'permsFor queries per request (auth.go:97-105), so a grant added mid-session is live immediately'
+        'permissions are read on every request, so a grant added mid-session is live immediately'
       ).toBe(200);
 
       await setExactRoles(W.adminPage, subject.email, []);
@@ -898,14 +915,10 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-72 — the payment data scope is declared, grantable AND enforced', async () => {
-    // F-A-04, and the annotation is gone because the defect is. `payment` is in
-    // scopedResources (permissions.go:185) and the roles screen offers
-    // Own / Assigned / All for it, but nothing ever called Scope(u, "payment") —
-    // so a role built as "Payments · Own" received the whole ledger, and the
-    // control on the roles screen was decoration. `ListPayments` now takes
-    // Scope/ViewerID and filters on `entered_by` (app.go:812-818), and
-    // `paymentScopeReaches` (app.go:1042-1049) mirrors that filter exactly so a
-    // payment invisible in the ledger is invisible by id too.
+    // The roles screen offers Own / Assigned / All for payments, and the choice
+    // is enforced: `ListPayments` filters on `entered_by` for scope "own", and
+    // `paymentScopeReaches` applies the same filter by id, so a payment
+    // invisible in the ledger is invisible by id too.
     //
     // Only Accounts and Admin hold payment:view, and both carry payment=all, so
     // the rule needs a custom role to see at all. This is the roles screen doing
@@ -924,7 +937,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       // and this holder has entered none, so the ledger is empty of A2's.
       expect(
         probe.body.includes(`/payments/${W.payId}`),
-        'scope payment=own hides a payment this user did not enter (R3) — F-A-04'
+        'scope payment=own hides a payment this user did not enter'
       ).toBe(false);
     } finally {
       await session.close();
@@ -935,7 +948,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   // 4. Ownership checks layered above the route gate.
   // =========================================================================
 
-  test('TC-A-73 — G8: nobody approves their own request', async () => {
+  test('TC-A-73 — nobody approves their own request', async () => {
     // A subject holding Requester AND Manager is the only way to even reach the
     // attempt: it may raise, and it may approve.
     const subject = await createUserWithExactRoles(W.adminPage, `selfapp-${W.runId}`, W.runId, ['Requester', 'Manager']);
@@ -946,25 +959,30 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       const raiseSelf = await probePost(session.page, '/requests', requestForm({
         title: `Self ${W.runId}`, managerId: selfId, amount: '110.00'
       }));
-      expect(raiseSelf.status, 'validateRequestInput refuses a self-approver outright (store/requests.go:142)').toBe(400);
+      expect(raiseSelf.status, 'validateRequestInput refuses a self-approver outright').toBe(400);
       expect(raiseSelf.body.includes('cannot approve your own request'), 'and says why').toBe(true);
 
       // Second refusal: routed to a real manager, the raiser still cannot decide it.
       const raised = await raiseRequest(session.page, {
         title: `SelfLater ${W.runId}`, managerId: await userIdOf(W.adminPage, W.m2.subject.email), amount: '111.00'
       });
-      const approve = await probePost(session.page, `/requests/${raised}/approve`, { approved_amount: '111.00' });
-      expect(approve.status, 'and ApproveRequest is the last line of defence for G8').toBe(403);
+      // Approving answers 404 to anyone who is not the request's approver.
+      const approve = await probePost(session.page, `/requests/${raised}/approve`, {
+        approved_amount: '111.00', revision: await requestRevision(W.m2.page, raised)
+      });
+      expect(approve.status, 'and the raiser cannot approve it through the route either').toBe(404);
     } finally {
       await session.close();
     }
   });
 
   test('TC-A-74 — a Manager cannot approve a request assigned to a different manager', async () => {
+    // Approving answers 404 to anyone who is not the request's approver, so the
+    // route does not confirm the request exists to a manager it was not sent to.
     const probe = await probePost(W.callers['C-mgr'].page, `/requests/${W.tPending}/approve`, {
-      approved_amount: '100.00'
+      approved_amount: '100.00', revision: await requestRevision(W.m2.page, W.tPending)
     });
-    expect(probe.status, 'approval:approve says you may decide; manager_id says which requests are yours').toBe(403);
+    expect(probe.status, 'approval:approve says you may decide; manager_id says which requests are yours').toBe(404);
     // Reproduced a second way: the request is not in this manager's queue either.
     await W.callers['C-mgr'].page.goto('/approvals');
     await expect(
@@ -981,7 +999,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(owner.status, 'the request’s own manager may raise a concern on it').toBe(303);
 
     // An administrator holds approval:accept_partial and every other grant, and
-    // is still refused: AcceptPartial checks ManagerID != actor (store.go:980).
+    // is still refused: only the request's own manager may accept a shortfall.
     const adminAttempt = await probePost(W.callers['C-adm'].page, `/requests/${W.tPartial}/accept-partial`, {
       note: 'Written off by an administrator'
     });
@@ -1015,8 +1033,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // A requester who cannot read the request is refused before the reservation
     // rule is reached at all, and refused as not-found: `reservationForm` loads
     // through `loadViewableRequest`, which will not tell a caller outside the
-    // data scope that the row exists (requests.go:343-346, F-G-002). The two
-    // refusals above say "this reservation is not yours"; this one says nothing.
+    // data scope that the row exists. The two refusals above say "this reservation is not yours"; this one says nothing.
     const stranger = await probeGet(W.callers['C-req'].page, `/requests/${W.tProc}/reservation`);
     expect(stranger.status, 'and a requester who cannot even read the request is refused first, as not-found').toBe(404);
     expect(
@@ -1034,7 +1051,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     });
     expect(
       otherAccountant.status,
-      'reservation:release lets you give up YOUR reservation; ReleaseRequest refuses somebody else’s (S6)'
+      'reservation:release lets you give up YOUR reservation; ReleaseRequest refuses somebody else’s'
     ).toBe(403);
 
     // Admin is the only role holding reassign, which is what `authorized` is.
@@ -1043,7 +1060,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     });
     expect(
       administrator.status,
-      'reservation:reassign is what authorises releasing work that is not yours (linking.go:630)'
+      'reservation:reassign is what authorises releasing work that is not yours'
     ).toBe(303);
     // And it really went back to the queue rather than merely answering 303.
     const reopened = await probeGet(W.a2.page, `/requests/${target}/reservation`);
@@ -1056,9 +1073,9 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(own.status, 'the raiser edits their own pending request').toBe(200);
 
     // Never anybody else's — and the two refusals differ, which is the whole
-    // shape of `loadEditableRequest` (requests.go:739-752). It asks the data
-    // scope first: a Requester's scope is `own`, so a request they did not raise
-    // is not-found before "only the raiser may edit" is ever reached (F-G-002).
+    // shape of `loadEditableRequest`. It asks the data scope first: a
+    // Requester's scope is `own`, so a request they did not raise is not-found
+    // before "only the raiser may edit" is ever reached.
     const foreign = await probeGet(req.page, `/requests/${W.tPending}/edit`);
     expect(foreign.status, 'and never anybody else’s — outside the scope, so not-found').toBe(404);
 
@@ -1072,7 +1089,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toBe(true);
 
     const adminAsk = await probeGet(W.callers['C-adm'].page, `/requests/${W.ownApproved}/cancel`);
-    expect(adminAsk.status, 'and so is asking for a cancellation (requests.go:802)').toBe(403);
+    expect(adminAsk.status, 'and so is asking for a cancellation').toBe(403);
 
     const ownerAsk = await probeGet(req.page, `/requests/${W.ownApproved}/cancel`);
     expect(ownerAsk.status, 'while the raiser of an approved request may ask').toBe(200);
@@ -1119,8 +1136,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-81 — a CSRF token from another signed-in session is refused', async () => {
-    // The token is per-session (auth.go:186 signs the nanosecond it was minted),
-    // so one person's token must not authorise another person's form.
+    // The token is per-session, so one person's token must not authorise
+    // another person's form.
     const foreign = await csrfToken(W.callers['C-adm'].context);
     const mine = await csrfToken(W.callers['C-req'].context);
     expect(foreign, 'two sessions must not share a token, or there is nothing to test').not.toBe(mine);
@@ -1144,8 +1161,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-83 — POST /login carries no CSRF gate at all', async () => {
-    // Not a hole to fix in this pass, but a fact the matrix has to record:
-    // loginPost is the one state-changing POST outside withCSRF (app.go:365).
+    // A fact the matrix has to record: loginPost is the one state-changing POST
+    // outside withCSRF.
     const probe = await probePost(W.anonPage, '/login', { email: admin.email, password: 'wrong-on-purpose' }, {
       csrf: 'omit'
     });
@@ -1158,7 +1175,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
 
   test('TC-A-84 — POST /logout refuses an anonymous caller with no token', async () => {
     const probe = await probePost(W.anonPage, '/logout', {}, { csrf: 'omit' });
-    expect(probe.status, 'logout is CSRF-gated even though it is not login-gated (app.go:366)').toBe(403);
+    expect(probe.status, 'logout is CSRF-gated even though it is not login-gated').toBe(403);
   });
 
   // =========================================================================
@@ -1175,7 +1192,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ['TC-A-90', '/admin/notifications']
   ];
   for (const [tc, path] of ADMIN_BY_URL) {
-    test(`${tc} — a Requester typing ${path} is refused (R6)`, async () => {
+    test(`${tc} — a Requester typing ${path} is refused`, async () => {
       const probe = await probeGet(W.callers['C-req'].page, path);
       expect(probe.status, `${path} is an administration screen and a Requester holds none of its verbs`).toBe(403);
       expect(probe.body.includes(GATE_REFUSAL), 'and the refusal comes from the permission gate').toBe(true);
@@ -1188,24 +1205,18 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-92 — a Requester cannot download a payment attachment they have no business with', async () => {
-    // F-A-01 was the worst finding in this area: GET /attachments/{id} checked
-    // attachment:view and then only that the file sat inside AttachmentDir — no
-    // ownership check at all — and attachment:view is a seeded **Requester**
-    // grant, so any signed-in user read every bank advice in the system by
-    // walking ids from 1.
-    //
-    // `attachmentDownload` now resolves the attachment to its payment and runs
-    // `canReadPayment` (app.go:1105-1120), which is the same row scope
-    // `paymentDetail` applies — the check whose own comment says "or
-    // payment:view becomes a way around Q5/R6". This route was the hole that
-    // comment was written about.
+    // attachment:view is a seeded **Requester** grant, so the verb alone would
+    // let any signed-in user read every bank advice in the system by walking
+    // ids from 1. `attachmentDownload` therefore resolves the attachment to its
+    // payment and runs `canReadPayment`, the same row scope `paymentDetail`
+    // applies, before serving a byte.
     const probe = await probeGet(W.callers['C-req'].page, `/attachments/${W.payAttId}`);
     // 404 and not 403, deliberately: these ids are small consecutive integers,
     // and a refusal you can tell apart from a miss is an enumeration oracle over
-    // the whole table (`notFoundAttachment`, app.go:1054-1062).
+    // the whole table.
     expect(
       probe.status,
-      'the bank advice for a payment on somebody else’s request is refused, as not-found — F-A-01'
+      'the bank advice for a payment on somebody else’s request is refused, as not-found'
     ).toBe(404);
     expect(
       probe.body.includes(`bank-advice-${W.runId}`),
@@ -1229,29 +1240,24 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-93 — a Manager reads the same attachment, and the scope check is what still guards it', async () => {
-    // Inverted by migration 12. The Manager role held no attachment:view, so an
-    // approver could not open the invoice on the request they were being asked
-    // to approve — the check moved outside the product, where it leaves no
-    // record. The grant is not a skeleton key: attachmentDownload still asks
-    // canReadPayment, which for a request-linked payment defers to whether the
-    // caller may see that request. A Manager may, so this resolves; the verb
-    // opened the door and the scope is what decides who walks through it.
+    // The Manager role holds attachment:view so an approver can open the
+    // documents on the request they are asked to approve. The grant is not a
+    // skeleton key: attachmentDownload still asks canReadPayment, which for a
+    // request-linked payment defers to whether the caller may see that request.
+    // A Manager may, so this resolves; the verb opens the door and the scope
+    // decides who walks through it.
     const probe = await probeGet(W.callers['C-mgr'].page, `/attachments/${W.payAttId}`);
     expect(probe.status, 'an approver can read the documents on a request they can see').toBe(200);
   });
 
   test('TC-A-94 — the Download link on a request document resolves to that document and nothing else', async () => {
-    // F-A-05, and this is the case that pins its fix. One download route used to
-    // serve two tables: `AttachmentByID` reads `payment_attachments`, three
-    // templates rendered **request** attachments through it, and both sequences
-    // start at 1 — so pressing Download on your own invoice could hand you a
-    // stranger's bank advice, filed under your own document's name.
-    //
-    // The tables now have a route each. A request document is served by
-    // `GET /requests/{id}/attachments/{attachmentID}` (app.go:468), which checks
+    // Request documents and payment documents live in two tables whose ids both
+    // start at 1, so each has its own download route. A request document is
+    // served by `GET /requests/{id}/attachments/{attachmentID}`, which checks
     // the document really belongs to the request in the path and then scopes it
     // by that request; `GET /attachments/{id}` serves payment documents only.
-    // Three halves, because the fix has three parts:
+    // Pressing Download on your own invoice must never hand you a stranger's
+    // bank advice. Three parts:
     const own = W.callers['C-req'];
     const link = `/requests/${W.ownPending}/attachments/${W.ownReqAttId}`;
 
@@ -1262,10 +1268,10 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(mine.status(), 'half (a): the requester’s own Download link answers with a file').toBe(200);
     expect(
       (mine.headers()['content-disposition'] ?? '').includes(`invoice-${W.runId}`),
-      'half (a): and the file is the invoice that link is under — F-A-05'
+      'half (a): and the file is the invoice that link is under'
     ).toBe(true);
 
-    // (b) The id spaces no longer cross. Asking the *payment* route for the
+    // (b) The id spaces do not cross. Asking the *payment* route for the
     // request document's id gets a payment document or nothing — never the
     // invoice — whichever way the two sequences happen to line up this run.
     const crossed = await own.page.request.get(
@@ -1275,7 +1281,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(
       (crossed.headers()['content-disposition'] ?? '').includes(`invoice-${W.runId}`),
       `half (b): /attachments/${W.ownReqAttId} reads payment_attachments, so it can never answer with a ` +
-        'request document whatever the id collision — F-A-05'
+        'request document whatever the id collision'
     ).toBe(false);
     expect(
       [404, 200].includes(crossed.status()),
@@ -1292,11 +1298,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     );
     expect(
       wrongParent.status(),
-      'half (c): a document asked for under a request it does not belong to is not-found — F-A-05'
+      'half (c): a document asked for under a request it does not belong to is not-found'
     ).toBe(404);
 
     // And the route is scoped like every other request read: a stranger holding
-    // attachment:view is refused the raiser's invoice, as not-found (F-A-01).
+    // attachment:view is refused the raiser's invoice, as not-found.
     const stranger = await W.r2.page.request.get(new URL(link, W.baseURL).toString(), {
       maxRedirects: 0, failOnStatusCode: false
     });
@@ -1334,7 +1340,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
 
   test('TC-A-97 — a system role cannot be deleted, even by an administrator', async () => {
     const probe = await probePost(W.callers['C-adm'].page, `/roles/${W.systemRoleIds.Requester}/delete`, {});
-    expect(probe.status, 'DeleteRole refuses is_system=1 (store/permissions.go:318) — R9').toBe(403);
+    expect(probe.status, 'DeleteRole refuses a system role').toBe(403);
     await W.adminPage.goto('/roles');
     await expect(
       W.adminPage.locator('.segmented a', { hasText: 'Requester' }),
@@ -1346,7 +1352,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     const probe = await probePost(W.callers['C-adm'].page, '/roles', {
       role_id: W.systemRoleIds.Manager, name: `Manager-renamed-${W.runId}`, description: 'tampered'
     });
-    expect(probe.status, 'UpdateRole refuses renaming a system role (store/permissions.go:290)').toBe(403);
+    expect(probe.status, 'UpdateRole refuses renaming a system role').toBe(403);
     await W.adminPage.goto('/roles');
     await expect(W.adminPage.locator('.segmented a', { hasText: 'Manager' }), 'and the name held').toHaveCount(1);
   });
@@ -1358,8 +1364,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
 
   test('TC-A-100 — a hand-crafted cell value cannot invent a grant', async () => {
     // expandCells drops unknown rows, unknown columns and cells with no
-    // canonical action (permmap.go:274-295), and rolesSave re-screens every
-    // expanded grant with store.ValidGrant (app.go:1321-1326).
+    // canonical action, and rolesSave re-screens every expanded grant with
+    // store.ValidGrant.
     const roleName = `forged-${W.runId}`;
     const roleId = await createCustomRole(W.adminPage, roleName);
     const probe = await probePost(W.callers['C-adm'].page, '/roles', {
@@ -1396,12 +1402,14 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
 
   test('TC-A-102 — the request id on the payment form cannot be swapped for one you have not reserved', async () => {
     // A2 holds a reservation on tProc. Posting a *different* approved request's
-    // id must not create a payment against it (X5).
+    // id must not create a payment against it.
     const probe = await probePost(W.a2.page, '/payments', {
       request_id: String(W.tApproved), amount: '10.00', paid_on: W.today,
-      head_id: W.headId, payment_mode: 'bank_transfer', settlement: 'settled'
+      head_id: W.headId, payment_mode: 'bank_transfer', reference_no: `UTR-${W.runId}-swap`, settlement: 'settled'
     });
-    expect(probe.status, 'RecordPaymentForRequest demands status=processing AND processing_by=actor').toBe(403);
+    // A settlement for a request the caller does not hold answers 409 with the
+    // confirmation sheet, saying the payment was not saved.
+    expect(probe.status, 'a payment is recorded only against a request this accountant has reserved').toBe(409);
     expect(
       probe.body.includes(GATE_REFUSAL),
       'and the refusal is the store’s reservation check, not the route gate — payment:create was held'
@@ -1410,14 +1418,12 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // because this accountant does not hold its reservation.
     const entry = await probeGet(W.a2.page, `/payments/new?request=${W.tApproved}`);
     expect(entry.status, 'and the entry screen for a request you do not hold is a conflict, not a form').toBe(409);
-    // F-A-09: the refusal now carries its own reason. `friendly` keeps the
-    // sentence a wrapped ErrForbidden was written with and falls back to the
-    // permission wording only for a bare one (app.go:2172-2182) — so an
-    // accountant who simply has not reserved the request is told to reserve it,
-    // instead of being sent to an administrator for a grant they already hold.
+    // The refusal carries its own reason, so an accountant who simply does not
+    // hold the request is told their payment was not saved, instead of being
+    // sent to an administrator for a grant they already hold.
     expect(
-      probe.body.includes('Reserve this request before recording its payment'),
-      'the state conflict says what to do about it, not "something went wrong" — F-A-09'
+      probe.body.includes('no longer reserved by you. Your payment was not saved'),
+      'the state conflict says what happened to the payment, not "something went wrong"'
     ).toBe(true);
     expect(
       probe.body.includes('Something went wrong while processing your request'),
@@ -1428,16 +1434,16 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   test('TC-A-103 — a forged settlement value is refused', async () => {
     const probe = await probePost(W.a2.page, '/payments', {
       request_id: String(W.tProc), amount: '10.00', paid_on: W.today,
-      head_id: W.headId, payment_mode: 'bank_transfer', settlement: 'written-off'
+      head_id: W.headId, payment_mode: 'bank_transfer', reference_no: `UTR-${W.runId}-forged`, settlement: 'written-off'
     });
     expect(probe.status, 'settlement is an explicit disposition vocabulary checked in the store').toBe(400);
     expect(probe.body.includes('choose how the remaining balance should be handled'), 'and named').toBe(true);
   });
 
-  test('TC-A-104 — an amount above the approved ceiling is refused (G13)', async () => {
+  test('TC-A-104 — an amount above the approved ceiling is refused', async () => {
     const probe = await probePost(W.a2.page, '/payments', {
       request_id: String(W.tProc), amount: '9999999.00', paid_on: W.today,
-      head_id: W.headId, payment_mode: 'bank_transfer', settlement: 'settled'
+      head_id: W.headId, payment_mode: 'bank_transfer', reference_no: `UTR-${W.runId}-ceiling`, settlement: 'settled'
     });
     expect(probe.status, 'the approved amount is a hard ceiling, not a suggestion').toBe(400);
     expect(probe.body.includes('more than the approved'), 'and the refusal explains the ceiling').toBe(true);
@@ -1456,7 +1462,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(detail.status, 'the request belongs to the caller, so the caller can read it').toBe(200);
     expect(
       detail.body.includes(req.subject.name),
-      'CreateRequest sets requester_id from the session (store/requests.go:366) — a posted one is ignored'
+      'CreateRequest sets requester_id from the session — a posted one is ignored'
     ).toBe(true);
 
     // A reimbursement never carries a vendor: forcesRequesterPayee zeroes it.
@@ -1498,7 +1504,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
 
   test('TC-A-109 — another user’s notification cannot be opened', async () => {
     // Every row is resolved as (user_id, id), so somebody else's is not-found
-    // rather than forbidden — the safer of the two answers (inapp.go:76-81).
+    // rather than forbidden — the safer of the two answers.
     const probe = await probeGet(W.callers['C-req'].page, '/notifications/1/open');
     expect(
       [404, 303].includes(probe.status),
@@ -1515,7 +1521,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     const probe = await probePost(W.callers['C-req'].page, `/requests/${W.tPending}/comment`, { body: marker });
     // request:comment is held and the gate opens; `requestComment` then loads
     // through `loadViewableRequest`, which refuses the row — as 404, so a write
-    // route cannot be used to find out which ids exist either (F-G-002).
+    // route cannot be used to find out which ids exist either.
     expect(probe.status, 'request:comment is held, but loadViewableRequest refuses the row first').toBe(404);
     // Nothing was written: the request's own manager sees no such comment.
     const detail = await probeGet(W.m2.page, `/requests/${W.tPending}`);
@@ -1525,15 +1531,17 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   test('TC-A-111 — a Requester cannot withdraw or re-raise somebody else’s request', async () => {
     for (const path of [`/requests/${W.tPending}/withdraw`, `/requests/${W.tPending}/reraise`]) {
       const probe = await probePost(W.callers['C-req'].page, path, {});
-      expect.soft(probe.status, `${path}: the store checks RequesterID != actor`).toBe(403);
+      // A Requester sees only their own requests, and a request a user may not
+      // see answers 404, so the raiser check behind it is never reached.
+      expect.soft(probe.status, `${path}: somebody else's request is not found for a Requester`).toBe(404);
     }
   });
 
   test('TC-A-112 — a Manager cannot cancel a request routed to another manager', async () => {
     const probe = await probePost(W.callers['C-mgr'].page, `/requests/${W.tApproved}/cancel`, {
-      reason: 'Cancelled by a bystander'
+      reason: 'Cancelled by a bystander', revision: await requestRevision(W.m2.page, W.tApproved)
     });
-    expect(probe.status, 'CancelRequest checks ManagerID != actor (store/requests.go:976)').toBe(403);
+    expect(probe.status, 'only the request’s own approver may cancel it outright').toBe(403);
   });
 
   test('TC-A-113 — a reservation cannot be handed to somebody who cannot work the queue', async () => {
@@ -1564,7 +1572,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       const after = await probeGet(session.page, '/users');
       expect(
         after.status >= 300 && after.status < 400,
-        `userFromRequest rejects an inactive user (auth.go:228), so the live session dies — got ${after.outcome}`
+        `userFromRequest rejects an inactive user, so the live session dies — got ${after.outcome}`
       ).toBe(true);
       expect(after.location ?? '', 'and the caller is sent to the login screen').toContain('/login');
     } finally {
@@ -1580,7 +1588,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     await W.adminPage.goto(`/roles?role=${W.systemRoleIds.Admin}`);
     await openAdvanced(W.adminPage);
     // The desktop Advanced disclosures carry one live checkbox per canonical
-    // pair; the mobile accordion repeats them disabled (templates.go:1594,1611).
+    // pair; the mobile accordion repeats them disabled.
     const values = await W.adminPage.locator('.perm-table input[name="perm"]').evaluateAll(nodes =>
       nodes.map(n => (n as HTMLInputElement).value)
     );
@@ -1594,7 +1602,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(resources.size, 'covering all 21 resources').toBe(21);
 
     const missing = expectedPairs.filter(p => !pairs.has(p));
-    expect(missing, 'no canonical pair may be ungrantable from the screen (R2/R8)').toEqual([]);
+    expect(missing, 'no canonical pair may be ungrantable from the screen').toEqual([]);
     const extra = [...pairs].filter(p => !expectedPairs.includes(p));
     expect(extra, 'and the screen may not offer a pair the vocabulary has never heard of').toEqual([]);
   });
@@ -1604,7 +1612,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     await openAdvanced(W.adminPage);
     await expect(
       W.adminPage.locator('.perm-table input[name="perm"]:checked'),
-      'adminGrants() is every canonical pair (R7), so all 66 render checked'
+      'adminGrants() is every canonical pair, so all 66 render checked'
     ).toHaveCount(66);
   });
 
@@ -1642,10 +1650,9 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toHaveCount(cellCount);
 
     // And the reverse. Clearing a cell revokes everything behind it: the
-    // screen's own script unticks the Advanced boxes it covers (fervid-app.js,
-    // initRoleMatrix). Since fixwave rbac-1 the Advanced boxes are the grant
-    // set the server saves, so unticking boxes alone revokes too; that path
-    // has its own case below.
+    // screen's own script (initRoleMatrix) unticks the Advanced boxes it
+    // covers. The Advanced boxes are the grant set the server saves, so
+    // unticking boxes alone revokes too; that path has its own case below.
     for (let i = 0; i < cellCount; i++) await cells.nth(i).uncheck();
     await expect(
       W.adminPage.locator('.perm-table input[name="perm"]:checked'),
@@ -1679,31 +1686,18 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toBeChecked();
   });
 
-  test('TC-A-119 — seven granted verbs are named by no route gate, four of them by nothing at all', async () => {
-    // Transcribed from the permission gates across internal/app/app.go and
-    // cross-checked against templates. A verb an administrator can grant, and
-    // that nothing consumes, is a promise the product does not keep.
+  test('TC-A-119 — five granted verbs are named by no route gate, two of them by nothing at all', async () => {
+    // Transcribed from the route table's permission gates and the save handlers
+    // that check a verb themselves, cross-checked against templates. A verb an
+    // administrator can grant, and that nothing consumes, is a promise the
+    // product does not keep.
     //
-    // WHY THE PINNED NUMBERS MOVED, 55 → 59 and 9 → 4. Four verbs acquired a
-    // route gate during the repair, and each is a finding closing, not a
-    // transcription being tidied:
-    //   · grid:view              — GET /grid was RequireLogin only (F-A-02),
-    //                              app.go:439.
-    //   · approval:reassign      — A7 had no door at all; POST
-    //                              /requests/{id}/reassign-approver is it
-    //                              (F-A-06/F-C-02), app.go:577.
-    //   · recoverable_category:delete — the category could be created and edited
-    //                              but never removed (F-E-06), app.go:614.
-    //   · user:create            — the ＋ Add user control was gated on it while
-    //                              its POST asked for user:edit (F-A-07). The
-    //                              route now takes BOTH through `requireAnyOf`
-    //                              (app.go:598) and `userSave` demands whichever
-    //                              one the press actually needs, which is why
-    //                              user:create and user:edit both count here even
-    //                              though neither appears in a RequirePermission
-    //                              call any more.
-    // Nothing was removed from the set. If a future change deletes a gate this
-    // list will fail on the size, which is the point of pinning it.
+    // Three saves serve both "create" and "edit" from one route, so each checks
+    // the verb the press needs inside its handler — create when `id` is 0, edit
+    // otherwise — and both verbs count here: `userSave` (behind
+    // `requireAnyOf("user", ["create","edit"])`), `projectSave` and `headSave`.
+    // If a change deletes a gate, this list fails on the size, which is the
+    // point of pinning it.
     const routeGates = new Set([
       'month:view', 'month:create', 'month:lock',
       'payment:view', 'payment:create', 'payment:edit', 'payment:void', 'payment:process',
@@ -1713,7 +1707,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'recoverable_report:view', 'recoverable_report:export',
       'recoverable_category:edit', 'recoverable_category:delete',
       'notification:view', 'notification:edit',
-      'budget:view', 'budget:edit', 'project:view', 'project:edit', 'head:view', 'head:edit',
+      'budget:view', 'budget:edit',
+      'project:view', 'project:create', 'project:edit', 'head:view', 'head:create', 'head:edit',
       'vendor:view', 'vendor:create', 'vendor:edit',
       'request:view', 'request:create', 'request:edit', 'request:withdraw', 'request:reraise',
       'request:comment', 'request:cancel',
@@ -1723,43 +1718,42 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       'user:view', 'user:create', 'user:edit', 'role:view', 'role:edit', 'role:create', 'role:delete',
       'config:view', 'config:edit', 'audit:view', 'backup:view', 'backup:create'
     ]);
-    expect(routeGates.size, 'routes() names 59 distinct pairs').toBe(59);
+    expect(routeGates.size, 'routes and save handlers name 61 distinct pairs').toBe(61);
 
     const all = Object.entries(VOCABULARY).flatMap(([r, acts]) => acts.map(a => `${r}:${a}`));
     const unconsumed = all.filter(p => !routeGates.has(p)).sort();
-    expect(unconsumed, 'the pairs no route gate names — F-A-06').toEqual([
-      'head:create',
+    expect(unconsumed, 'the pairs no route gate names').toEqual([
       'payment:mark_partial',
-      'project:create',
       'recoverable_category:create',
       'recoverable_category:view',
       'vendor_bank:edit',
       'vendor_bank:view'
     ]);
-    // Three of the seven are enforced *below* the route, which is the right place
+    // Three of the five are enforced *below* the route, which is the right place
     // for each of them: the store leaves the bank columns out of its SELECT
-    // without vendor_bank:view (store/vendors.go:16,48) and the vendor form
-    // disables them without vendor_bank:edit; and payment:mark_partial cannot be
-    // a route gate at all, because it applies to one value of one field —
-    // `paymentCreate` checks it when settlement=partial (app.go:847, F-D-10).
-    // The remaining four are consulted by nothing: no route, no handler, no
-    // template. They are still a lie the roles screen tells.
+    // without vendor_bank:view and the vendor form disables them without
+    // vendor_bank:edit; and payment:mark_partial cannot be a route gate at all,
+    // because it applies to one value of one field — `paymentCreate` checks it
+    // when settlement=partial. The remaining two are consulted by nothing: no
+    // route, no handler, no template. They are still a promise the roles screen
+    // makes and the product does not keep.
     const enforcedBelowTheRoute = ['payment:mark_partial', 'vendor_bank:view', 'vendor_bank:edit'];
     const enforcedNowhere = unconsumed.filter(p => !enforcedBelowTheRoute.includes(p));
-    expect(enforcedNowhere.length, 'four pairs are enforced by nothing at all — F-A-06').toBe(4);
+    expect(enforcedNowhere, 'two pairs are enforced by nothing at all').toEqual([
+      'recoverable_category:create',
+      'recoverable_category:view'
+    ]);
     // Every gate a route does name has to be inside the vocabulary, or an
     // administrator could never grant it and the route would be dead.
     const outsideVocabulary = [...routeGates].filter(p => !all.includes(p));
     expect(outsideVocabulary, 'no route may be gated on a pair outside resourceActions').toEqual([]);
   });
 
-  test('TC-A-120 — approval:reassign is granted to Manager and Admin, and now has a door', async () => {
-    // `store.ReassignRequest` existed, was tested, and had no HTTP caller — so
-    // A7, "reassign with reason and history", was a verb two seeded roles held
-    // and nobody could exercise (F-A-06/F-C-02). `POST /requests/{id}/
-    // reassign-approver` (app.go:577) is that door, gated on approval:reassign,
-    // taking `manager_id` and `reason`. It is also the recovery path F-A-08 and
-    // F-G-025 need: the way out when a request is routed to the wrong approver.
+  test('TC-A-120 — approval:reassign is granted to Manager and Admin, and has a door', async () => {
+    // "Reassign with reason and history" is exercised through
+    // `POST /requests/{id}/reassign-approver`, gated on approval:reassign and
+    // taking `manager_id` and `reason`. It is also the way out when a request is
+    // routed to the wrong approver.
     //
     // First, the gate, probed with no CSRF token so nothing is written. A holder
     // of the verb reaches withCSRF — which is the proof the permission gate
@@ -1779,8 +1773,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     expect(refused.status, 'Accounts holds no approval:reassign').toBe(403);
     expect(refused.body.includes(GATE_REFUSAL), 'and is stopped by the permission gate').toBe(true);
 
-    // The route is exactly one path, not three: the two names the audit guessed
-    // at while looking for it still resolve to nothing.
+    // The route is exactly one path: two plausible alternative names resolve to
+    // nothing.
     for (const path of [
       `/requests/${W.tPending}/reassign-manager`,
       `/requests/${W.tPending}/approver`
@@ -1809,8 +1803,11 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       W.callers['C-mgr'].page.locator(`a.req-card[href="/requests/${target}"]`),
       'and the request is in the new approver’s queue'
     ).toHaveCount(1);
-    const oldApprover = await probePost(W.m2.page, `/requests/${target}/approve`, { approved_amount: '121.00' });
-    expect(oldApprover.status, 'while the approver it was taken from can no longer decide it').toBe(403);
+    // Approving answers 404 to anyone who is not the request's approver.
+    const oldApprover = await probePost(W.m2.page, `/requests/${target}/approve`, {
+      approved_amount: '121.00', revision: await requestRevision(W.callers['C-mgr'].page, target)
+    });
+    expect(oldApprover.status, 'while the approver it was taken from can no longer decide it').toBe(404);
 
     // Two verbs, two routes, and they are not the same verb: the reservation's
     // /reassign is gated on reservation:reassign, which a Manager does not hold.
@@ -1826,16 +1823,12 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-121 — user:create is offered on the screen and honoured by the route', async () => {
-    // F-A-07: the "＋ Add user" button was gated on user:create while POST /users
-    // was gated on user:edit, so a role holding create but not edit saw a control
-    // whose submit answered 403 — the button and the route disagreeing about
-    // which verb the press needs.
-    //
-    // One handler still serves both presses, so the route cannot name a single
-    // verb: `requireAnyOf("user", ["create","edit"])` (app.go:598) establishes
-    // that the caller has business here at all, and `userSave` then demands the
-    // verb the press actually needs — create when `id` is 0, edit otherwise
-    // (app.go, F-A-07). This case pins both directions.
+    // The "＋ Add user" button is gated on user:create, and its POST must honour
+    // exactly that verb. One handler serves both creating and editing, so the
+    // route cannot name a single verb: `requireAnyOf("user", ["create","edit"])`
+    // establishes that the caller has business here at all, and `userSave` then
+    // demands the verb the press actually needs — create when `id` is 0, edit
+    // otherwise. This case pins both directions.
     const roleName = `usercreate-${W.runId}`;
     const roleId = await createCustomRole(W.adminPage, roleName);
     await grantMatrix(W.adminPage, roleId, roleName, { perms: ['user:view', 'user:create'] });
@@ -1851,17 +1844,16 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
       ).toBeVisible();
 
       const created = `late-${W.runId}@example.test`;
-      // role_ids, not the superseded account type. The create form asks for real
-      // roles now: the old two-value field could not name a requester or an
-      // approver, and its innocuous option was mapped to the role that settles
-      // and voids payments.
+      // The create form posts real role ids. A user who is not an administrator
+      // may only hand out roles whose grants are all within their own, so the
+      // new user gets the creator's own role.
       const probe = await probePost(session.page, '/users', {
         id: '0', email: created, name: 'Late', password: fixturePassword, active: 'on',
-        role_ids: W.systemRoleIds.Requester
+        role_ids: roleId
       });
       expect(
         probe.status,
-        'the control is offered and its POST is honoured, because the route asks for the verb it renders — F-A-07'
+        'the control is offered and its POST is honoured, because the route asks for the verb it renders'
       ).toBe(303);
       // Reproduced a second way: the user really exists.
       await W.adminPage.goto('/users');
@@ -1893,31 +1885,26 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     // Two rules stand between a caller and the evidence on a payment, and this
     // case pins both, in the order the handler asks them.
     //
-    // F-A-03 was the original subject: POST /payments/{id}/attachments checked
-    // attachment:create and nothing else, and attachment:create is a seeded
-    // Requester grant — so a stranger could append to the proof on a payment
-    // whose request they cannot even read. `attachmentUpload` now resolves the
-    // payment and runs `canReadPayment` FIRST (app.go:1072-1083), the same row
-    // scope the download route runs, and refuses with the same 404 so the write
-    // route is not an enumeration oracle either.
+    // First, the ownership rule: attachment:create is a seeded Requester grant,
+    // so the verb alone would let a stranger append to the proof on a payment
+    // whose request they cannot even read. `attachmentUpload` resolves the
+    // payment and runs `canReadPayment` FIRST, the same row scope the download
+    // route runs, and refuses with the same 404 so the write route is not an
+    // enumeration oracle either.
     //
-    // F-D-08 is the second rule and applies to everyone who gets past the first:
-    // `store.AddAttachment` refuses a payment whose request_id is set, joining
-    // edit and void in treating a linked payment as the request's immutable
-    // outcome, and `paymentCreate` refuses a payment without a request — so
-    // every payment this product can create is linked, and the route is a 400.
-    //
-    // That ordering is why the fix was made anyway rather than declared
-    // unreachable (repair decision 4): the day a free-standing payment becomes
-    // creatable again, F-D-08 stops covering for F-A-03, and the ownership check
-    // is already there.
+    // Second, for everyone who gets past the first: `store.AddAttachment`
+    // refuses a payment whose request_id is set, treating a linked payment as
+    // the request's immutable outcome, like edit and void do. Every payment
+    // this product can create is linked, so the route answers 400. The
+    // ownership check still matters: it is what protects payments if a
+    // free-standing payment ever becomes creatable.
     const before = await W.a2.page.request.get(new URL(`/payments/${W.payId}`, W.baseURL).toString());
     const beforeBody = await before.text();
     const beforeCount = (beforeBody.match(/href="\/attachments\/\d+"/g) ?? []).length;
     expect(beforeCount, 'the settlement wrote its own bank advice and nothing else').toBe(1);
 
-    // Three callers who all hold attachment:create: the stranger F-A-03 was
-    // about, the accountant who entered the payment, and an administrator. Every
+    // Three callers who all hold attachment:create: a stranger, the accountant
+    // who entered the payment, and an administrator. Every
     // one of them is refused, and the two who are refused differently is the
     // whole point — the Requester never reaches the linked-payment rule, because
     // the ownership check turns them away first, and turns them away without
@@ -1943,11 +1930,8 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
         {
           multipart: {
             csrf: token,
-            attachment: {
-              name: `planted-${W.runId}.pdf`,
-              mimeType: 'application/pdf',
-              buffer: Buffer.from('%PDF-1.4\nan attempt to append to a settled payment’s evidence\n%%EOF')
-            }
+            // A well-formed PDF, so the refusal is about the payment, not the file.
+            attachment: pdfUpload(`planted-${W.runId}.pdf`)
           },
           maxRedirects: 0,
           failOnStatusCode: false
@@ -1973,30 +1957,22 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     const afterCount = ((await after.text()).match(/href="\/attachments\/\d+"/g) ?? []).length;
     expect(afterCount, 'the proof list is exactly as the settlement left it').toBe(beforeCount);
 
-    // And this is the same answer S12 already gave to an edit, which is the point:
-    // a payment the screen calls read-only refuses every kind of change alike.
+    // And an edit gets the same answer, which is the point: a payment the screen
+    // calls read-only refuses every kind of change alike.
     const edit = await probePost(W.callers['C-acc'].page, `/payments/${W.payId}/edit`, {
       amount: '1.00', paid_on: W.today, head_id: W.headId, payment_mode: 'bank_transfer'
     });
     expect(
       edit.status,
-      'a linked payment refuses an edit exactly as firmly as it now refuses a new document (S12)'
+      'a linked payment refuses an edit exactly as firmly as it refuses a new document'
     ).toBe(400);
   });
 
   test('TC-A-124 — a 12-character letters-only password is a 400 naming the rule it broke', async () => {
-    // F-A-11: two password rules disagreed about who owned the refusal. The app
-    // layer checked length alone (">= 12 characters"), then `userSave` called
-    // `auth.HashPassword` → `auth.ValidatePassword` (auth.go), which demands a
-    // letter AND a digit. A 12-character letters-only password passed the first
-    // rule, failed the second, and came back as `respondError(500, "The password
-    // could not be secured.")` — a server fault reported for input the server
-    // understood perfectly, telling the administrator nothing about the missing
-    // digit and implying the fault was the product's.
-    //
-    // `validatePassword` now delegates to `auth.ValidatePassword` and adds the
-    // 12-character minimum on top (app.go), so both rules are checked in the
-    // one place that can still answer 400, and every rejection names its rule.
+    // A password needs at least 12 characters AND a letter and a digit.
+    // `validatePassword` checks both rules before anything is hashed, so a
+    // password the server understood and refused is a 400 that names the broken
+    // rule, never a 500 "could not be secured".
     const lettersOnly = 'abcdefghijkl';
     const create = await probePost(W.callers['C-adm'].page, '/users', {
       id: '0', email: `pw500-${W.runId}@example.test`, name: `PW ${W.runId}`,
@@ -2004,7 +1980,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     });
     expect(
       create.status,
-      'input the server understood and refused is a 400, not a server fault — F-A-11'
+      'input the server understood and refused is a 400, not a server fault'
     ).toBe(400);
     expect(
       create.body.includes('must include a letter and a number'),
@@ -2020,7 +1996,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     const reset = await probePost(W.callers['C-adm'].page, '/users', {
       id: victim, name: W.callers['C-req'].subject.name, password: lettersOnly, active: 'on', role: 'data_entry'
     });
-    expect(reset.status, 'and resetting an existing user’s password behaves the same way — F-A-11').toBe(400);
+    expect(reset.status, 'and resetting an existing user’s password behaves the same way').toBe(400);
     expect(reset.body.includes('must include a letter and a number'), 'with the same usable message').toBe(true);
 
     // The control: eleven characters is caught by the app's own rule, correctly.
@@ -2037,26 +2013,19 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   test('TC-A-122 — a request cannot be routed to an approver who cannot approve it', async () => {
-    // F-A-08 was a request that could be created and then decided by nobody.
-    // `ListApprovers` only offers users holding approval:approve, so the form
-    // could not produce a bad manager_id — but the form's narrowed <select> was
-    // the ONLY enforcement, and a hand-rolled POST walked past it. The result was
-    // a stranded request: the named "approver" refused by the route gate because
-    // they hold no approval:approve, and every real manager refused by the
-    // ownership check because they are not this request's manager. Withdrawal
-    // was the only exit, and only the raiser could take it.
-    //
-    // `requireApprover` (store/requests.go:414-426) now re-runs ListApprovers'
-    // own query against the id that was actually submitted, from
-    // `validateRequestRefs` — so the guard is in the store, where a forged form
-    // cannot reach around it.
+    // A request routed to somebody who cannot approve would be stranded: the
+    // named "approver" is refused by the route gate, and every real manager by
+    // the ownership check. `ListApprovers` narrows the form's <select>, but a
+    // hand-rolled POST can name anyone, so `requireApprover` re-runs the same
+    // query against the submitted id in the store, where a forged form cannot
+    // reach around it.
     const strandedManager = await userIdOf(W.adminPage, W.callers['C-req'].subject.email);
     const requester = W.r2;
     const title = `Stranded ${W.runId}`;
     const probe = await probePost(requester.page, '/requests', requestForm({
       title, managerId: strandedManager, amount: '113.00'
     }));
-    expect(probe.status, 'a manager_id holding no approval:approve is refused on create — F-A-08').toBe(400);
+    expect(probe.status, 'a manager_id holding no approval:approve is refused on create').toBe(400);
     expect(
       probe.body.includes('that person cannot approve requests'),
       'and the refusal names the reason, rather than a generic validation failure'
@@ -2070,11 +2039,12 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
     ).toHaveCount(0);
 
     // The same guard on the edit path, which is the other way in: rerouting a
-    // request by editing it strands it exactly as raising it that way did
-    // (store/requests.go:915-918). `tPending` is R2's own pending request, so R2
+    // request by editing it would strand it the same way. `tPending` is R2's
+    // own pending request, so R2
     // may edit it — and this edit is refused, so it stays exactly as it was.
     const reroute = await probePost(requester.page, `/requests/${W.tPending}/edit`, requestForm({
-      title: W.foreignTitle, managerId: strandedManager, amount: '101.00'
+      title: W.foreignTitle, managerId: strandedManager, amount: '101.00',
+      extra: { revision: await requestRevision(requester.page, W.tPending) }
     }));
     expect(reroute.status, 'and rerouting an existing request to a non-approver is refused too').toBe(400);
     expect(
@@ -2092,7 +2062,7 @@ test.describe('TC-A — RBAC and permission enforcement', () => {
   });
 
   // =========================================================================
-  // 9. Fixwave 2026-09-25, cluster A — the roles screen and the data scope.
+  // 9. The roles screen and the data scope.
   // =========================================================================
 
   test('rbac-1 — an Advanced box unticked under a ticked cell is revoked, and the cell shows the partial state', async () => {
@@ -2225,7 +2195,7 @@ function matrixTest(tc: string, gateLabel: string, rows: () => Row[]) {
       const path = row.path();
       for (const caller of callers) {
         const expected = expectedFor(row, caller);
-        const probe = await probeCell(caller, row.method, path);
+        const probe = await probeCell(caller, row.method, path, row.withToken);
         const failure = cellFailure(probe, expected);
         expect
           .soft(
@@ -2239,13 +2209,20 @@ function matrixTest(tc: string, gateLabel: string, rows: () => Row[]) {
   });
 }
 
-async function probeCell(caller: CallerId, method: 'GET' | 'POST', path: string): Promise<Probe> {
+async function probeCell(
+  caller: CallerId,
+  method: 'GET' | 'POST',
+  path: string,
+  withToken?: Record<string, string>
+): Promise<Probe> {
   const page = caller === 'C-anon' ? W.anonPage : W.callers[caller].page;
   const url = new URL(path, W.baseURL).toString();
   // Every POST cell is probed with NO csrf field on purpose: the CSRF check sits
   // inside the permission gate, so a permitted caller is refused by withCSRF and
   // nothing is written. See the file header.
-  return method === 'GET' ? probeGet(page, url) : probePost(page, url, {}, { csrf: 'omit' });
+  if (method === 'GET') return probeGet(page, url);
+  if (withToken && caller !== 'C-anon') return probePost(page, url, withToken);
+  return probePost(page, url, {}, { csrf: 'omit' });
 }
 
 // ---------------------------------------------------------------------------
@@ -2297,7 +2274,7 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   world.headId = await optionValue(r2.page, '#head', 'Operations / Office Rent');
   const m2Id = await optionValue(r2.page, 'select[name="manager_id"]', m2.subject.name);
 
-  world.vendorId = await ensureVendor(adminPage, `Audit Vendor ${runId}`);
+  world.vendorId = await vendorIdFor(adminPage, `Audit Vendor ${runId}`);
   world.systemRoleIds = await readSystemRoleIds(adminPage);
   world.customRoleId = await createCustomRole(adminPage, `matrix-target-${runId}`);
 
@@ -2311,8 +2288,7 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   for (const [id, amount] of [
     [world.tApproved, '102.00'], [world.tProc, '103.00'], [world.tPaid, '104.00'], [world.tPartial, '105.00']
   ] as Array<[number, string]>) {
-    await expectStatus(probePost(m2.page, `/requests/${id}/approve`, { approved_amount: amount }), 303,
-      `approving request ${id}`);
+    await expectStatus(approveAs(m2.page, id, amount), 303, `approving request ${id}`);
   }
 
   // A2 reserves all three payable requests, settles one, part-pays another, and
@@ -2320,20 +2296,14 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   for (const id of [world.tProc, world.tPaid, world.tPartial]) {
     await expectStatus(probePost(a2.page, `/requests/${id}/record-payment`, {}), 303, `reserving request ${id}`);
   }
-  // The settled payment is born carrying its bank advice — the object F-A-01 is
-  // about. The document rides inside the settlement's own multipart POST, which
-  // `RecordPaymentForRequest` writes in the same transaction as the payment
-  // (internal/store/store.go:1011-1015).
-  //
-  // It cannot be added afterwards. This fixture used to POST
-  // /payments/{id}/attachments once the payment existed; F-D-08's fix makes that
-  // request a 400, because `store.AddAttachment` now refuses a payment whose
-  // request_id is set (:1403-1405), joining edit and void in treating a linked
-  // payment as the request's immutable outcome. That behaviour is correct — see
-  // TC-A-123 and audit-d's TC-D-095 — so the fixture changed, not the product.
-  // `fixtures.settlePayment` offers the same `attachment` option through the
-  // screen; this is that request hand-rolled, because the world is built over
-  // HTTP rather than through the UI.
+  // The settled payment is born carrying its bank advice, the document the
+  // attachment probes read. It rides inside the settlement's own multipart
+  // POST, which `RecordPaymentForRequest` writes in the same transaction as the
+  // payment. It cannot be added afterwards: a payment linked to a request
+  // refuses new documents (TC-A-123). `fixtures.settlePayment` offers the same
+  // `attachment` option through the screen; this is that request hand-rolled,
+  // because the world is built over HTTP rather than through the UI.
+  // Payments are dated today: a payment may not precede its approval.
   const advice = `bank-advice-${runId}.pdf`;
   const paid = await expectStatus(settleWithAttachment(a2.page, {
     request_id: String(world.tPaid), amount: '104.00', paid_on: today, head_id: world.headId,
@@ -2357,16 +2327,14 @@ async function buildWorld(browser: Browser, baseURL: string): Promise<World> {
   world.ownApproved = await raiseRequest(callers['C-req'].page, {
     title: `MineApproved ${runId}`, managerId: cReqManagerId, amount: '107.00'
   });
-  await expectStatus(probePost(m2.page, `/requests/${world.ownApproved}/approve`, { approved_amount: '107.00' }), 303,
-    'approving the requester’s own request');
+  await expectStatus(approveAs(m2.page, world.ownApproved, '107.00'), 303, 'approving the requester’s own request');
   world.ownReqAttId = await requestAttachmentId(callers['C-req'].page, world.ownPending, `invoice-${runId}.pdf`);
 
   return world;
 }
 
 // ---------------------------------------------------------------------------
-// Small helpers. All local to this spec — audit-support.ts and fixtures.ts are
-// untouched.
+// Small helpers, local to this spec.
 // ---------------------------------------------------------------------------
 
 async function expectStatus(probe: Promise<Probe>, want: number, what: string) {
@@ -2379,8 +2347,9 @@ async function expectStatus(probe: Promise<Probe>, want: number, what: string) {
 
 /**
  * Today, in the local zone. The server and the runner are the same machine, and
- * `validMonthOrCurrent` defaults the ledger to `time.Now().Format("2006-01")`,
- * so this is the month a new payment has to land in to be visible there.
+ * the ledger defaults to the current month, so this is the month a new payment
+ * has to land in to be visible there. It is also the only valid payment date
+ * for a request approved today.
  */
 function localToday(): string {
   const d = new Date();
@@ -2439,6 +2408,17 @@ function requestForm(opts: RaiseOpts): Record<string, string> {
   };
 }
 
+/**
+ * Approves a request in full as `page` (its approver). The decision must carry
+ * the request's current revision, read by the approver just before the POST.
+ */
+async function approveAs(page: Page, requestId: number, amount: string): Promise<Probe> {
+  return probePost(page, `/requests/${requestId}/approve`, {
+    approved_amount: amount,
+    revision: await requestRevision(page, requestId)
+  });
+}
+
 /** Raises a reimbursement request through POST /requests and returns its id. */
 async function raiseRequest(page: Page, opts: RaiseOpts): Promise<number> {
   const probe = await expectStatus(probePost(page, '/requests', requestForm(opts)), 303, `raising "${opts.title}"`);
@@ -2458,8 +2438,7 @@ async function freshReservedRequest(tag: string): Promise<number> {
   const id = await raiseRequest(W.r2.page, {
     title: `${tag} ${W.runId}-${Date.now()}`, managerId, amount: '120.00'
   });
-  await expectStatus(probePost(W.m2.page, `/requests/${id}/approve`, { approved_amount: '120.00' }), 303,
-    `approving ${tag} request ${id}`);
+  await expectStatus(approveAs(W.m2.page, id, '120.00'), 303, `approving ${tag} request ${id}`);
   await expectStatus(probePost(W.a2.page, `/requests/${id}/record-payment`, {}), 303,
     `reserving ${tag} request ${id}`);
   return id;
@@ -2471,14 +2450,14 @@ async function freshReservedRequest(tag: string): Promise<number> {
  *
  * `POST /payments` takes an `attachment` part and hands it to
  * `RecordPaymentForRequest`, which inserts the `payment_attachments` row inside
- * the settlement's transaction. Since F-D-08 that is the ONLY way a linked
- * payment ever acquires a document, so it is the only way this world can plant
- * the bank advice the F-A-01 probes read.
+ * the settlement's transaction. That is the ONLY way a linked payment ever
+ * acquires a document, so it is the only way this world can plant the bank
+ * advice the attachment probes read. The file is a well-formed PDF, because
+ * uploads are parsed and a stand-in is refused.
  *
  * `probePost` cannot do this — it sends a URL-encoded body, and
  * `stageUploadedAttachment` reads a non-multipart request as "no file at all" —
- * so the Probe is assembled here from the raw response, exactly as
- * `audit-support.describe` would.
+ * so the Probe is assembled here from the raw response, as `toProbe` would.
  */
 async function settleWithAttachment(
   page: Page,
@@ -2489,15 +2468,12 @@ async function settleWithAttachment(
     multipart: {
       ...form,
       csrf: await csrfToken(page.context()),
-      attachment: { name: filename, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4\nadvice body ${filename}\n%%EOF`) }
+      attachment: pdfUpload(filename)
     },
     maxRedirects: 0,
     failOnStatusCode: false
   });
-  const status = response.status();
-  const location = response.headers()['location'] ?? null;
-  const body = status >= 300 && status < 400 ? '' : await response.text().catch(() => '');
-  return { status, location, body, outcome: location ? `${status} → ${location}` : String(status) };
+  return toProbe(response);
 }
 
 /** The `payment_attachments` id of a named document, read off the payment screen. */
@@ -2517,24 +2493,20 @@ async function paymentAttachmentId(page: Page, paymentId: number, filename: stri
  * Puts a document on a request through the real edit screen and returns the id
  * the detail screen's Download link carries — a `request_attachments` id.
  *
- * THE LINK IS SCOPED TO THE REQUEST, and must be read that way. F-A-05's fix
- * split one download route into two: `GET /attachments/{id}` reads
- * `payment_attachments` and now serves payment documents only, while a request
- * document is served by `GET /requests/{id}/attachments/{attachmentID}`
- * (internal/app/app.go:467-468), which checks the document really belongs to the
- * request in the path. `request_detail` renders the request's own route
- * accordingly (internal/app/templates.go:319), so an `a[href^="/attachments/"]`
- * selector finds nothing here — and on a screen that also lists payment proofs
- * it would find the wrong table's id, which is the very confusion the split
- * exists to end.
+ * THE LINK IS SCOPED TO THE REQUEST, and must be read that way.
+ * `GET /attachments/{id}` reads `payment_attachments` and serves payment
+ * documents only, while a request document is served by
+ * `GET /requests/{id}/attachments/{attachmentID}`, which checks the document
+ * really belongs to the request in the path. The request detail screen renders
+ * the request's own route, so an `a[href^="/attachments/"]` selector finds
+ * nothing here — and on a screen that also lists payment proofs it would find
+ * the wrong table's id.
  */
 async function requestAttachmentId(page: Page, requestId: number, filename: string): Promise<number> {
   await page.goto(`/requests/${requestId}/edit`);
   // The uploader's input is nameless to a screen reader beyond its own label, so
   // it is addressed by name attribute the way fixtures.settlePayment does.
-  await page.locator('input[name="attachment"]').setInputFiles({
-    name: filename, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4\ninvoice body ${filename}\n%%EOF`)
-  });
+  await page.locator('input[name="attachment"]').setInputFiles(pdfUpload(filename));
   await page.getByRole('button', { name: /^Save and notify/ }).click();
   await page.waitForURL(new RegExp(`/requests/${requestId}$`));
   const href = await page
@@ -2546,12 +2518,9 @@ async function requestAttachmentId(page: Page, requestId: number, filename: stri
   return id;
 }
 
-async function ensureVendor(page: Page, name: string): Promise<string> {
-  await page.goto('/vendors/new');
-  await page.getByLabel('Vendor name').fill(name);
-  await page.getByLabel('Type').selectOption('company');
-  await page.getByRole('button', { name: 'Save vendor' }).click();
-  await page.waitForURL(url => !url.pathname.endsWith('/vendors/new'));
+/** Makes sure the vendor exists (fixtures.ensureVendor) and returns its id. */
+async function vendorIdFor(page: Page, name: string): Promise<string> {
+  await ensureVendor(page, name);
   await page.goto('/vendors');
   const href = await page.locator('a[href^="/vendors/"]', { hasText: name }).first().getAttribute('href');
   const id = /\/vendors\/(\d+)/.exec(href ?? '')?.[1];

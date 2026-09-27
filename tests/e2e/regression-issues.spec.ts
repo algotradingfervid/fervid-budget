@@ -11,7 +11,8 @@ import {
   settlePayment,
   lastMonth,
   thisMonth,
-  today
+  today,
+  validProofPdf
 } from './fixtures';
 
 test.beforeEach(async ({}, testInfo) => {
@@ -74,36 +75,6 @@ function proofFile(testInfo: TestInfo, name: string, body: string) {
   return path;
 }
 
-// The smallest PDF the upload validator accepts: one empty page, with the
-// cross-reference offsets exactly right. Uploads are parsed as real PDFs now
-// rather than sniffed for a "%PDF" prefix, so a stand-in made of a header and
-// a trailer is refused as a corrupt file. The trailing spaces in the xref
-// entries are part of the format (each entry is exactly twenty bytes).
-const validProofPdf = [
-  '%PDF-1.4',
-  '1 0 obj',
-  '<< /Type /Catalog /Pages 2 0 R >>',
-  'endobj',
-  '2 0 obj',
-  '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
-  'endobj',
-  '3 0 obj',
-  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>',
-  'endobj',
-  'xref',
-  '0 4',
-  '0000000000 65535 f ',
-  '0000000009 00000 n ',
-  '0000000058 00000 n ',
-  '0000000115 00000 n ',
-  'trailer',
-  '<< /Size 4 /Root 1 0 R >>',
-  'startxref',
-  '203',
-  '%%EOF',
-  ''
-].join('\n');
-
 async function addProject(page: import('@playwright/test').Page, name: string, active = true) {
   await page.goto('/projects');
   await page.getByLabel('Project name').fill(name);
@@ -127,17 +98,13 @@ async function activeCheckboxFor(
 }
 
 test.describe('documented issue regression guards', () => {
-  // Was "rejects malformed budget rows atomically". The batch is deliberately no
-  // longer atomic: F-G-028 found that one unreadable field abandoned the whole
-  // save, and because unbudgeted heads render as ₹0.00 while ParsePaise refused
-  // zero, a month with any unbudgeted head could not be saved at all. budgetSave
-  // now applies every field it can read and names the ones it could not.
+  // Saving the budget sheet applies every field it can read and names the
+  // ones it could not, so one bad cell never blocks the rest (and an
+  // unbudgeted head's ₹0.00 cell is a valid value).
   //
-  // What this test still protects is unchanged in substance: the malformed field
-  // is refused rather than coerced, the operator's typed text survives the
-  // round trip so nothing has to be retyped, and the banner says something
-  // happened. What changed is the last assertion — the readable row is now
-  // expected to persist, which is the fix.
+  // The malformed field is refused rather than coerced, the operator's typed
+  // text survives the round trip so nothing has to be retyped, the banner says
+  // what happened, and the readable row is saved.
   //
   // It restores both values before finishing. It did not need to while nothing
   // persisted; now it does, because ISS-029 reads the same month and a leftover
@@ -203,11 +170,9 @@ test.describe('documented issue regression guards', () => {
   // until submit. The refusal therefore has to be met at the confirmation, and
   // it has to be met in words rather than on an error page.
   //
-  // The "read-only form, disabled Save" half belongs to payment_edit_form,
-  // which a linked payment can no longer reach at all: /payments/{id}/edit is a
-  // 303 back to the payment (S12 — it is immutable, locked month or not), and
-  // no route in this product creates an unlinked payment to reach it with. The
-  // redirect is asserted instead of a form this phase put out of reach.
+  // A payment made against a request has no edit form at all:
+  // /payments/{id}/edit is a 303 back to the payment (it is immutable, locked
+  // month or not), so the redirect is what is asserted.
   test('ISS-004 makes locked-month payment surfaces read-only', async ({ adminPage, runId }) => {
     // A payment can only be dated today, so the month under test is this one —
     // the same month every later spec pays into. It is therefore unlocked again
@@ -237,8 +202,8 @@ test.describe('documented issue regression guards', () => {
       await adminPage.getByLabel('Lock reason').fill('Regression close');
       adminPage.once('dialog', dialog => dialog.accept());
       await adminPage.getByRole('button', { name: 'Lock Month' }).click();
-      // lockMonth redirects to /?month=... (app.go:971), which is the dashboard and
-      // shows nothing about the month. The lock notice lives on the grid, so read
+      // Locking a month redirects to /?month=..., the dashboard, which shows
+      // nothing about the lock. The lock notice lives on the grid, so read
       // it there rather than wherever the redirect happens to land.
       await adminPage.goto(`/grid?month=${month}`);
       await expect(adminPage.locator('.locked')).toContainText(`Month ${month} is locked`);
@@ -268,10 +233,9 @@ test.describe('documented issue regression guards', () => {
     }
   });
 
-  // F-G-020's remaining edge. The entry screen warned about the month it opened
-  // on and no other, so a locked month picked in "Paid on" afterwards was only
-  // met at the confirmation above. The date field now re-asks the server on
-  // change and the banner follows it, both ways, without a reload.
+  // The payment entry screen warns about a locked month as soon as "Paid on"
+  // names one: the date field re-asks the server on change and the banner
+  // follows it, both ways, without a reload.
   test('F-G-020 warns about a locked month as soon as Paid on names it', async ({ adminPage, runId }) => {
     // Months no other spec writes into: locking one that another test records a
     // payment in (ISS-023 uses 2024-03) would break that test, not this one.
@@ -318,10 +282,8 @@ test.describe('documented issue regression guards', () => {
     await expect(adminPage.getByLabel('Paid on')).toHaveValue(`${open}-12`);
   });
 
-  // The original attached the file on /payments/{id}/edit. A linked payment has
-  // no edit screen — the store refuses the write (S12) and the route redirects
-  // — so the one moment a payment can be given its proof is while it is being
-  // recorded. The guard moves to that moment; it does not disappear.
+  // A payment made against a request is immutable, so the one moment it can be
+  // given its proof is while it is being recorded.
   test('ISS-005 stores an attachment selected while the payment is recorded', async ({ adminPage, runId }, testInfo) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '50.00' });
     const proof = proofFile(testInfo, 'recorded-proof.pdf', validProofPdf);
@@ -343,8 +305,8 @@ test.describe('documented issue regression guards', () => {
   // 'abc' is no longer a way in either: #amount sits in a .money-field and
   // fervid-app.js strips everything but digits as it is typed, so a malformed
   // amount cannot leave this screen. Paying more than was approved can — the
-  // client only warns, G13 is the store's rule — and that is the rejection this
-  // now drives. core-workflows covers the same refusal from the journey's side;
+  // client only warns, the store refuses a payment above the approved amount —
+  // and that is the rejection this drives. core-workflows covers the same refusal from the journey's side;
   // this one is the documented issue's own guard: what was typed comes back.
   test('ISS-006 retains every payment field after a rejected amount', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '5000.00' });
@@ -525,9 +487,8 @@ test.describe('documented issue regression guards', () => {
 
   test('ISS-018 renders empty future head reports without all-zero rows', async ({ adminPage }) => {
     await adminPage.goto('/reports/heads?from=2099-01&to=2099-01');
-    // Phase 6 gave every empty state an action, so the copy grew past the bare
-    // "No report rows." this used to match. The guard is the row count — one
-    // empty row, never a page of all-zero rows — and that is unchanged.
+    // The guard is the row count: one empty-state row, never a page of
+    // all-zero rows.
     await expect(adminPage.locator('td.empty')).toContainText('No report rows');
     await expect(adminPage.locator('tbody tr')).toHaveCount(1);
   });
@@ -634,17 +595,11 @@ test.describe('documented issue regression guards', () => {
     await expect(trail).toContainText('attached proof of payment');
   });
 
-  // Voiding has no user-reachable subject any more, so this is re-scoped rather
-  // than repaired — deleting it would lose the record.
-  //
-  // Which payment could it void? Neither kind. A linked payment is refused by
-  // the store (VoidPayment: "a payment linked to a request cannot be voided",
-  // S12 — voiding would leave the request completed with nothing paid). A
-  // historical, request-less payment can still be voided, but nothing can
-  // create one: POST /payments answers 400 without a request_id, and the seed
-  // makes projects, heads and budgets only. So the guarantee ISS-025 was
-  // written for — no mutation control is offered where mutation is refused —
-  // is asserted on the payment that does exist, screen and route alike.
+  // No mutation control is offered where mutation is refused. A payment made
+  // against a request cannot be voided (voiding would leave the request
+  // completed with nothing paid), and nothing can create a payment without a
+  // request (POST /payments answers 400 without a request_id), so the rule is
+  // asserted on the payment that does exist, screen and route alike.
   test('ISS-025 offers no attachment or void mutation on a payment that cannot be mutated', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '60.00' });
     const paymentPath = await settlePayment(adminPage, request.id, { amount: '60.00', paidOn: today() });
@@ -698,7 +653,7 @@ test.describe('documented issue regression guards', () => {
     });
     await adminPage.goto(`/payments?month=${month}&q=%25_`);
     // A ledger row links to its payment twice — the Project / Head cell and the
-    // View button (templates.go:190) — so assert on the row, not on the href.
+    // View button — so assert on the row, not on the href.
     const markedRow = adminPage.locator('tr').filter({ has: adminPage.locator(`a[href="${markedPath}"]`) });
     await expect(markedRow).toHaveCount(1);
     await expect(markedRow).toBeVisible();
@@ -742,14 +697,10 @@ test.describe('documented issue regression guards', () => {
     await expect(adminPage.locator('tr.project-row .vbar.is-unbudgeted').first()).toBeVisible();
   });
 
-  // Proof of absence, in the spirit of X3's TestNoRefundRoute. "Save and add
-  // another" was payment_edit_form's, behind {{if not .Payment.ID}}, and it
-  // existed because free-standing entry let one person key in payment after
-  // payment. Phase 3 retires that: a payment exists only against the approved
-  // request it settles, one request takes exactly one payment (S9, enforced by
-  // idx_payments_request), and the request leaves the queue the moment it is
-  // paid — so there is nothing to add another of, and no screen from which to
-  // add it. The test stays as the record of what went and why.
+  // Proof of absence: there is no "Save and add another". A payment exists only
+  // against the approved request it settles, one request takes exactly one
+  // payment, and the request leaves the queue the moment it is paid, so there
+  // is nothing to add another of.
   test('ISS-030 no longer offers Save and add another, because one request takes one payment', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '10.00' });
     await openPaymentEntry(adminPage, request.id);

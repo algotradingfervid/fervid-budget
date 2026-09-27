@@ -64,6 +64,44 @@ export function lastMonth(): string {
   return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// The smallest PDF the upload validator accepts: one empty page, with the
+// cross-reference offsets exactly right. Uploads are parsed as real PDFs now
+// rather than sniffed for a "%PDF" prefix, so a stand-in made of a header and
+// a trailer is refused as a corrupt file. The trailing spaces in the xref
+// entries are part of the format (each entry is exactly twenty bytes).
+export const validProofPdf = [
+  '%PDF-1.4',
+  '1 0 obj',
+  '<< /Type /Catalog /Pages 2 0 R >>',
+  'endobj',
+  '2 0 obj',
+  '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+  'endobj',
+  '3 0 obj',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>',
+  'endobj',
+  'xref',
+  '0 4',
+  '0000000000 65535 f ',
+  '0000000009 00000 n ',
+  '0000000058 00000 n ',
+  '0000000115 00000 n ',
+  'trailer',
+  '<< /Size 4 /Root 1 0 R >>',
+  'startxref',
+  '203',
+  '%%EOF',
+  ''
+].join('\n');
+
+/**
+ * validProofPdf as an in-memory upload, for setInputFiles or a multipart POST.
+ * `name` is the file name the server stores and shows.
+ */
+export function pdfUpload(name: string) {
+  return { name, mimeType: 'application/pdf', buffer: Buffer.from(validProofPdf) };
+}
+
 export async function login(page: Page, email: string, password: string) {
   await page.goto('/login');
   await page.getByLabel('Email').fill(email);
@@ -72,24 +110,27 @@ export async function login(page: Page, email: string, password: string) {
   await expect(page).toHaveURL(/\/$/);
 }
 
-// Creating a user now happens inside the "＋ Add user" overlay sheet, so the
-// sheet is opened first and every field is scoped to it: each user's own edit
-// sheet also carries a Name field and a "Reset password" field, and an
-// unscoped getByLabel would match several of them.
-export async function createDataEntryUser(page: Page, runId: string) {
-  const email = `${runId}@example.test`;
+/**
+ * Adds a user through the "＋ Add user" sheet on /users, ticking the given
+ * roles, with fixturePassword. Every field is looked up inside the sheet,
+ * because each existing user's edit sheet has its own Name and password fields.
+ */
+async function addUser(page: Page, user: { email: string; name: string; roles: RegExp[] }) {
   await page.goto('/users');
   await openNewUserSheet(page);
   const sheet = page.locator('#user-new');
-  await sheet.getByLabel('Email').fill(email);
-  await sheet.getByLabel('Name').fill(`Data Entry ${runId}`);
-  // Accounts, ticked explicitly. The sheet used to offer a two-value account
-  // type whose "Data entry" option was silently mapped to this very role, so
-  // this is the same user these tests always got — now asked for by name.
-  await sheet.getByRole('checkbox', { name: /^Accounts/ }).check();
+  await sheet.getByLabel('Email').fill(user.email);
+  await sheet.getByLabel('Name').fill(user.name);
+  for (const role of user.roles) await sheet.getByRole('checkbox', { name: role }).check();
   await sheet.getByLabel('Password').fill(fixturePassword);
   await sheet.getByRole('button', { name: 'Add User' }).click();
   await expect(page).toHaveURL(/\/users$/);
+}
+
+/** An accountant whose email is `${runId}@example.test`, named "Data Entry …". */
+export async function createDataEntryUser(page: Page, runId: string) {
+  const email = `${runId}@example.test`;
+  await addUser(page, { email, name: `Data Entry ${runId}`, roles: [/^Accounts/] });
   return { email, password: fixturePassword };
 }
 
@@ -99,25 +140,14 @@ export async function openNewUserSheet(page: Page) {
 }
 
 /**
- * Creates a user and gives them one system role.
- *
- * One round trip. This used to take two, because the "Add user" sheet offered
- * only a two-value legacy account type and the roles that actually carry
- * permissions had to be ticked afterwards in the user's own edit sheet. The
- * sheet now asks for the real roles, so the role is set where it is chosen.
+ * Creates a user holding the given system roles (matched by their checkbox
+ * label, e.g. /^Manager/). The email is `${prefix}-${runId}@example.test` in
+ * lower case and the name `${prefix} ${runId}`.
  */
-async function createUserWithRole(page: Page, prefix: string, runId: string, role: RegExp) {
+export async function createUser(page: Page, prefix: string, runId: string, roles: RegExp[]) {
   const email = `${prefix}-${runId}@example.test`.toLowerCase();
   const name = `${prefix} ${runId}`;
-  await page.goto('/users');
-  await openNewUserSheet(page);
-  const sheet = page.locator('#user-new');
-  await sheet.getByLabel('Email').fill(email);
-  await sheet.getByLabel('Name').fill(name);
-  await sheet.getByRole('checkbox', { name: role }).check();
-  await sheet.getByLabel('Password').fill(fixturePassword);
-  await sheet.getByRole('button', { name: 'Add User' }).click();
-  await expect(page).toHaveURL(/\/users$/);
+  await addUser(page, { email, name, roles });
   return { email, name, password: fixturePassword };
 }
 
@@ -127,16 +157,18 @@ async function createUserWithRole(page: Page, prefix: string, runId: string, rol
  * request out of it.
  */
 export async function createAccountsUser(page: Page, runId: string) {
-  return createUserWithRole(page, 'accounts', runId, /^Accounts/);
+  return createUser(page, 'accounts', runId, [/^Accounts/]);
 }
 
 /**
- * An approver: the Manager role holds approval:approve over every request.
- * G8 forbids approving your own request, so every approved request in this
- * suite needs one of these — the requester can never be the decider.
+ * An approver: the Manager role holds approval:approve. Nobody may approve
+ * their own request, so every approved request needs a second person like this.
+ *
+ * Its email is the one createApprovedRequest's cached approver uses, so do not
+ * call both with the same runId in one test.
  */
 export async function createApproverUser(page: Page, runId: string) {
-  return createUserWithRole(page, 'approver', runId, /^Manager/);
+  return createUser(page, 'approver', runId, [/^Manager/]);
 }
 
 // One approver and one vendor per runId is enough for any number of requests in
@@ -169,15 +201,16 @@ export function approverFor(runId: string) {
 }
 
 /**
- * A vendor by that exact name, so the payee on the request — and therefore on
- * the payment — is the caller's to choose.
+ * Makes sure a company vendor with exactly this name exists, so the payee on a
+ * request (and therefore on its payment) is the caller's to choose.
  *
- * Vendor names are uniquely indexed case-insensitively, so a name a previous
- * run already used lands on the refusal page instead of the vendor. The vendor
- * exists either way, which is all this needs; the combobox on the request form
- * is what proves it, and it fails loudly if the name is genuinely absent.
+ * Vendor names are unique regardless of case, so a name an earlier run already
+ * used lands on the refusal page instead of the new vendor. The vendor exists
+ * either way, which is all this needs; the request form's vendor picker fails
+ * loudly if the name is genuinely absent. A spec that must prove a vendor was
+ * created should assert on /vendors/{id} itself.
  */
-async function ensureVendor(page: Page, name: string) {
+export async function ensureVendor(page: Page, name: string) {
   if (vendors.has(name)) return name;
   await page.goto('/vendors/new');
   await page.getByLabel('Vendor name').fill(name);
@@ -189,46 +222,16 @@ async function ensureVendor(page: Page, name: string) {
 }
 
 /**
- * Raises a vendor-invoice request and has it approved, the way two people do it.
+ * Raises a vendor-invoice request through the real form and has a second user
+ * (a Manager created once per runId) approve it in full, because nobody may
+ * approve their own request.
  *
- * Free-standing payment entry is gone: a payment exists only against an
- * approved request, so this is the first half of every payment journey. It
- * drives the real Phase-2 screens rather than seeding rows, because the
- * reserve→settle flow reads fields — the approved amount, the payee, the
- * project and head — that only those screens fill in correctly.
+ * `payee` becomes the request's vendor and appears on the resulting payment.
+ * `head` is the "Project / Head" label to charge (default Operations / Office
+ * Rent); every payment lands in the current month, so a spec that needs a head
+ * nobody else in the run has paid or budgeted picks its own here.
  *
- * The approval happens in a context of its own. G8 means the requester can
- * never be the approver, and the seeded database has exactly one user, so a
- * second signed-in person is not optional.
- *
- * `payee` names the VENDOR on the request, and it DOES reach the payment.
- *
- * This paragraph used to carry a KNOWN GAP saying the opposite — that the queue's
- * Payee column, the entry screen, the payment row and the payment detail `<h1>`
- * were all blank for a request raised through the real form. That was true once
- * and was fixed in commit `fca6939`: `store.Request.Vendor` resolves the display
- * payee as `COALESCE(NULLIF(v.name,''), r.vendor_payee)`, and the settlement path
- * copies it onto the payment (`internal/app/linking.go:260`).
- *
- * The 2026-07-27 QA audit walked all five hops and found the vendor's name at
- * every one — see `docs/qa/results/findings-d-linking-settlement.md` F-D-09. The
- * stale comment had already cost two agents a pass and had talked two shipped
- * specs out of asserting on the payee at all, so a spec that wants to search for
- * or assert on a payee should simply do it.
- *
- * The underlying asymmetry is still worth knowing: a `vendor_invoice` request
- * names its payee with `vendor_id` and leaves the `vendor_payee` snapshot column
- * empty, while reimbursement and employee advance fill the snapshot with the
- * requester's name. Read `.Vendor`, never the raw snapshot. Go tests that seed a
- * request must use `seedVendorRequest`, not `seedApprovedRequest`, to get the
- * shape the real form produces.
- *
- * `head` is the "Project / Head" label to charge, Operations / Office Rent
- * unless a spec says otherwise. Every payment now lands in the current month,
- * so a spec that needs a head or a project nobody else in the run has paid or
- * budgeted picks its own here instead of picking its own month.
- *
- * Returns the request number (PR-YYYY-NNNNNN) and its id.
+ * Returns the request number (PR-YYYY-NNNNNN) and id.
  */
 export async function createApprovedRequest(
   page: Page,
@@ -269,31 +272,54 @@ export async function createApprovedRequest(
   await page.getByLabel('Approver').selectOption({ label: approver.name });
   await page.getByRole('button', { name: 'Submit request' }).click();
 
-  // D1: one POST created it, numbered it and sent it. There is no draft step.
+  // One POST creates, numbers and submits the request; there is no draft step.
   await expect(page).toHaveURL(/\/requests\/\d+\/submitted$/);
   const id = Number(new URL(page.url()).pathname.split('/')[2]);
   const number = (await page.locator('.rh-no').first().innerText()).trim();
 
+  await approveInFull(page, approver, id, opts.amount);
+
+  return { number, id };
+}
+
+/**
+ * Signs `approver` in, in a browser context of its own (sized like `page`),
+ * and approves request `id` for `amount` through the approve sheet.
+ *
+ * Approving the full amount keeps the approved amount equal to what the caller
+ * asked for, so a settlement can be compared against it.
+ */
+export async function approveInFull(
+  page: Page,
+  approver: { email: string; password: string },
+  id: number,
+  amount: string
+) {
   const browser = page.context().browser();
-  if (!browser) throw new Error('createApprovedRequest needs a browser-backed context to sign the approver in');
+  if (!browser) throw new Error('approveInFull needs a browser-backed context to sign the approver in');
   const context = await browser.newContext({ viewport: page.viewportSize() ?? undefined });
   try {
     const approverPage = await context.newPage();
     await login(approverPage, approver.email, approver.password);
-    await approverPage.goto(`/requests/${id}`);
-    await approverPage.getByRole('button', { name: /^Approve / }).click();
-    const sheet = approverPage.locator('#approve-sheet');
-    await expect(sheet).toBeVisible();
-    // Approving the full amount keeps approvedOf(request) equal to the amount
-    // the caller asked for, so a settlement can be compared against it.
-    await sheet.getByLabel('Amount approved').fill(opts.amount);
-    await sheet.getByRole('button', { name: 'Approve request' }).click();
-    await expect(approverPage).toHaveURL(/\/approvals$/);
+    await approveOnSheet(approverPage, id, amount);
   } finally {
     await context.close();
   }
+}
 
-  return { number, id };
+/**
+ * As the request's approver, already signed in on `approverPage`: opens
+ * request `id`, approves `amount` through the approve sheet and lands back on
+ * /approvals.
+ */
+export async function approveOnSheet(approverPage: Page, id: number, amount: string) {
+  await approverPage.goto(`/requests/${id}`);
+  await approverPage.getByRole('button', { name: /^Approve / }).click();
+  const sheet = approverPage.locator('#approve-sheet');
+  await expect(sheet).toBeVisible();
+  await sheet.getByLabel('Amount approved').fill(amount);
+  await sheet.getByRole('button', { name: 'Approve request' }).click();
+  await expect(approverPage).toHaveURL(/\/approvals$/);
 }
 
 /**

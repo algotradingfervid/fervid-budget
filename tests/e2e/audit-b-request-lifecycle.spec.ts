@@ -3,7 +3,7 @@
  * do to it afterwards.
  *
  * Scope: `POST /requests` and the requester's own verbs. The manager's decision
- * is a sibling's area, so where this file needs an approved / returned /
+ * is another audit area's subject, so where this file needs an approved / returned /
  * rejected request it puts the manager's POST in directly rather than driving
  * the approval screens.
  *
@@ -14,16 +14,15 @@
  *    fields — which means every one of those rules can only be probed by a
  *    hand-rolled POST. That is the highest-value group here (TC-B-048..056).
  * 2. Expectations come from the code, never from the output.
- *    `store.validateRequestInput` (internal/store/requests.go:127) is the whole
- *    required/forced matrix; `requestInput` (internal/app/requests.go:298) reads
- *    every field unconditionally, so the store is the only gate.
+ *    `store.validateRequestInput` is the whole required/forced matrix;
+ *    `requestInput` reads every field unconditionally, so the store is the
+ *    only gate.
  * 3. One worker-scoped world. Every subject in this file costs several page
  *    loads to create, and ninety tests cannot each afford four users. The world
  *    is built once per worker and never mutated by a test — anything a test
  *    needs to change (a head's active flag, a setting) it creates or restores
  *    itself.
  */
-import { Buffer } from 'node:buffer';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 import {
   admin,
@@ -31,8 +30,9 @@ import {
   createApprovedRequest,
   expect,
   login,
-  settlePayment,
-  test
+  pdfUpload,
+  test,
+  today
 } from './fixtures';
 import {
   asRole,
@@ -41,6 +41,7 @@ import {
   probeAnonymous,
   probeGet,
   probePost,
+  requestRevision,
   type Probe,
   type Subject
 } from './audit-support';
@@ -235,7 +236,7 @@ function validBody(w: World, type: string, extra: Record<string, string> = {}): 
       treatment: 'recoverable',
       recoverable_category: 'emd',
       project_id: w.operationsId,
-      // The deposit's payee is free but not blank: it is who Accounts pay (form-1).
+      // The deposit's payee is free text but not blank: it is who Accounts pay.
       vendor_payee: 'Ridge Metro Rail Corporation',
       expected_return_date: '2026-12-31',
       repayment_notes: 'Refunded when the tender closes.'
@@ -298,7 +299,7 @@ async function numberOf(page: Page, id: string): Promise<string> {
 const sequenceOf = (number: string) => Number(number.split('-').pop());
 
 /**
- * Mirrors store.categoryCode (internal/store/recoverables.go:99): lowercase, every
+ * Mirrors store.categoryCode: lowercase, every
  * run of non-alphanumerics collapsed to one underscore, ends trimmed. It is how
  * an admin-entered category NAME becomes the code a request stores.
  */
@@ -327,12 +328,8 @@ async function swapSettled(page: Page, select: string, value: string) {
   await expect(page.locator('.htmx-request, .htmx-settling, .htmx-swapping')).toHaveCount(0);
 }
 
-/** A tiny PDF, so nothing on disk has to exist for an upload test. */
-const samplePdf = {
-  name: 'audit-proof.pdf',
-  mimeType: 'application/pdf',
-  buffer: Buffer.from('%PDF-1.4 audit-b evidence')
-};
+/** A small valid PDF (uploads are checked to be real PDFs), so nothing on disk has to exist. */
+const samplePdf = pdfUpload('audit-proof.pdf');
 
 // ===========================================================================
 // A — every type × treatment, raised through the real form
@@ -344,16 +341,16 @@ it.describe('A · every type and treatment, through the real form', () => {
     const failures = capturePageErrors(page);
     try {
       await page.goto('/requests/new');
-      // Five since form-1: the deposit or guarantee has a card of its own.
+      // Five cards: the deposit or guarantee has a card of its own.
       await expect(page.locator('.type-grid .type-card')).toHaveCount(5);
       await page.getByRole('link', { name: /Vendor invoice payment/ }).click();
       await expect(page).toHaveURL(/\/requests\/new\?type=vendor_invoice$/);
 
-      // A16: the type is the route, never a control on the form.
+      // The type is chosen by the URL, never by a control on the form.
       await expect(page.locator('select[name="type"]')).toHaveCount(0);
       await expect(page.locator('input[name="type"]')).toHaveValue('vendor_invoice');
 
-      // Treatment first, then the type's own fields (T1). A vendor invoice can
+      // Treatment first, then the type's own fields. A vendor invoice can
       // only ever be a budget expense — the store refuses anything else for it —
       // so the form states that and submits it, rather than offering a radio it
       // would reject after the recoverable fields had been filled in.
@@ -365,7 +362,7 @@ it.describe('A · every type and treatment, through the real form', () => {
       await page.locator('#head').selectOption({ label: 'Operations / Office Rent' });
 
       // A Requester holds no vendor:view, so the form gives them the plain
-      // select rather than the combobox (internal/app/templates.go:1919).
+      // select rather than the searchable combobox.
       await page.locator('#vendor').selectOption(world.vendor.id);
       await page.getByLabel('Amount').fill('100000');
       await expect(page.locator('.in-words')).toContainText('lakh', { ignoreCase: true });
@@ -426,7 +423,7 @@ it.describe('A · every type and treatment, through the real form', () => {
     const failures = capturePageErrors(page);
     try {
       await page.goto('/requests/new?type=reimbursement');
-      // T11: the payee is shown read-only and posts nothing at all.
+      // The payee is shown read-only and posts nothing at all.
       const paidTo = page.locator('#paid-to');
       await expect(paidTo).toHaveValue(world.requester.subject.name);
       expect(await paidTo.getAttribute('name'), 'the payee is never a posted field').toBeNull();
@@ -458,8 +455,8 @@ it.describe('A · every type and treatment, through the real form', () => {
     try {
       await page.goto('/requests/new?type=employee_advance');
       await expect(page.getByRole('radio', { name: /Refundable or recoverable/ })).toBeChecked();
-      // The category is the type's, stated rather than chosen (form-1): the
-      // picker lives on the deposit-or-guarantee form.
+      // The category belongs to the type, so it is stated rather than chosen:
+      // the picker lives on the deposit-or-guarantee form.
       await expect(page.locator('#rcategory-fixed')).toHaveValue('Employee advance');
       await expect(page.locator('input[name="recoverable_category"]')).toHaveValue('employee_advance');
       await expect(page.locator('#rcategory')).toHaveCount(0);
@@ -518,13 +515,9 @@ it.describe('A · every type and treatment, through the real form', () => {
     }
   });
 
-  // REWRITTEN twice. First the silent fallback went: `requestNew` answers
-  // **400** for any `?type=` naming no card, carrying `unofferedRequestType`
-  // as the reason. Then the gap this case pinned — the store's fifth type had
-  // no way in through the UI — was closed (form-1 / recoverables-1): a deposit
-  // or guarantee has its own card and its own form, with a payee the requester
-  // names, because the only card that used to carry the recoverable treatment
-  // was the employee advance, which pays the requester.
+  // A deposit or guarantee (the store's fifth type) has its own card and its
+  // own form, with a payee the requester names. A `?type=` naming no card is
+  // answered 400 with the reason, never silently replaced by another type.
   it('TC-B-006 — the recoverable type has its own card and form; an unknown ?type= is still refused', async ({
     world
   }) => {
@@ -612,8 +605,8 @@ it.describe('A · every type and treatment, through the real form', () => {
     const page = await world.requester.ctx.newPage();
     const failures = capturePageErrors(page);
     try {
-      // The picker lives on the deposit form (form-1): an employee advance is
-      // always in the Employee advance category and states it instead.
+      // The picker lives on the deposit form: an employee advance is always in
+      // the Employee advance category and states it instead.
       await page.goto('/requests/new?type=recoverable');
 
       // Every pick waits for the swap it depends on — see swapSettled.
@@ -635,7 +628,7 @@ it.describe('A · every type and treatment, through the real form', () => {
 
       await pick('icd');
       await expect(page.locator('#counterparty'), 'an ICD needs a counterparty').toBeVisible();
-      // Every category may link a project; only EMD/PBG must (recoverables-7).
+      // Every category may link a project; only EMD and PBG must.
       await expect(page.locator('#rproject'), 'the project link is offered').toBeVisible();
       await expect(page.locator('#rproject')).not.toHaveAttribute('aria-required', 'true');
 
@@ -679,7 +672,7 @@ it.describe('A · every type and treatment, through the real form', () => {
   it('TC-B-010 — GET /requests/new/fields answers a bare fragment and needs request:create', async ({
     world
   }) => {
-    // The deposit type: an ICD is never an employee advance (form-1).
+    // The deposit type, because an ICD is never an employee advance.
     const fragment = await probeGet(
       world.requester.page,
       `/requests/new/fields?type=recoverable&treatment=recoverable&recoverable_category=icd`
@@ -731,26 +724,27 @@ it.describe('B · the required, forced and optional matrix', () => {
     const id = await raiseOk(world.requester.page, validBody(world, 'vendor_invoice', { amount: '₹ 1,00,000.50' }));
     const page = world.requester.page;
     await page.goto(`/requests/${id}`);
-    // C3: 10000050 paise, rendered once, with exactly one ₹.
+    // 10000050 paise, rendered once, with exactly one ₹.
     const amount = (await page.locator('.rh-amt').innerText()).trim();
     expect(amount, 'money renders once with a single symbol').toBe('₹1,00,000.50');
     expect(amount.match(/₹/g)?.length, 'FormatPaise already carries the symbol').toBe(1);
   });
 
-  it('TC-B-017 — a very large amount that fits int64 paise round-trips exactly', async ({ world }) => {
-    const id = await raiseOk(world.requester.page, validBody(world, 'vendor_invoice', { amount: '99999999999' }));
+  // One entry may be at most 100 crore rupees. The largest allowed amount is
+  // stored and shown exactly; one paisa more is refused.
+  it('TC-B-017 — the largest allowed amount (100 crore) round-trips exactly, and one paisa more is refused', async ({
+    world
+  }) => {
+    const id = await raiseOk(world.requester.page, validBody(world, 'vendor_invoice', { amount: '1000000000' }));
     await world.requester.page.goto(`/requests/${id}`);
-    await expect(world.requester.page.locator('.rh-amt')).toHaveText('₹99,99,99,99,999.00');
+    await expect(world.requester.page.locator('.rh-amt')).toHaveText('₹1,00,00,00,000.00');
+
+    const over = await raise(world.requester.page, validBody(world, 'vendor_invoice', { amount: '1000000000.01' }));
+    expectRefused(over, 'enter the amount you are requesting', 'more than 100 crore');
   });
 
-  // Regression guard for F-B-01. Go's float-to-int64 conversion saturates rather
-  // than wrapping, so an amount whose paise exceed int64 used to arrive as a
-  // positive MaxInt64 — a different number from the one submitted — and
-  // ParsePaise's own "non-positive amounts are rejected" guard never fired.
-  // money.ParsePaise now checks the rounded paise against float64(MaxInt64)
-  // BEFORE the conversion (internal/money/money.go:36-39), so an overflowing
-  // amount is the requester's error, reported with a sentence, and never a
-  // silently substituted figure.
+  // An amount too large to hold as whole paise is the requester's error,
+  // reported with a sentence — never silently replaced by a different number.
   it('TC-B-018 — an amount whose paise overflow int64 is refused', async ({ world }) => {
     const probe = await raise(world.requester.page, validBody(world, 'vendor_invoice', { amount: '1e300' }));
     expectRefused(probe, 'enter the amount you are requesting', 'int64 overflow');
@@ -771,7 +765,7 @@ it.describe('B · the required, forced and optional matrix', () => {
     expectRefused(probe, 'choose an approver', 'no approver');
   });
 
-  it('TC-B-022 — naming yourself as the approver is refused (G8)', async ({ world }) => {
+  it('TC-B-022 — naming yourself as the approver is refused: nobody approves their own request', async ({ world }) => {
     const page = world.requester.page;
     await page.goto('/requests/new?type=vendor_invoice');
     await expect(
@@ -895,7 +889,7 @@ it.describe('B · the required, forced and optional matrix', () => {
       world.requester.page,
       validBody(world, 'recoverable', { recoverable_category: 'slush_fund' })
     );
-    // The rule fires. What the requester is told about it is F-B-02, proved by TC-B-091.
+    // The rule fires. What the requester is told about it is TC-B-091's subject.
     expect(probe.status, `an unknown category must not create anything; got ${probe.outcome}`).toBe(400);
   });
 
@@ -1010,11 +1004,10 @@ it.describe('B · the required, forced and optional matrix', () => {
     }
   });
 
-  // F-B-03, fixed. The store — not the form — is what stands between a retired
-  // head and a new request: `validateRequestInput` now checks that the named head
-  // is one an active project still offers, so a hand-rolled POST naming a head
-  // nobody may charge to any more is refused. This case is the regression guard
-  // on that check; the form hiding the option is not evidence of anything.
+  // The store — not the form — stands between a retired head and a new
+  // request: it checks the named head is one an active project still offers, so
+  // a hand-rolled POST naming a retired head is refused. The form hiding the
+  // option proves nothing on its own.
   it('TC-B-046 — an inactive head named in the POST is refused', async ({ world }) => {
     const probe = await raise(
       world.requester.page,
@@ -1043,7 +1036,7 @@ it.describe('B · the required, forced and optional matrix', () => {
 
     // Retire it, the way an administrator would. The request just raised is
     // still open under this head, so the first save stops on a warning that
-    // names it (F-G-024, warn-and-confirm) and the confirmed re-post saves.
+    // names it, and the confirmed re-post saves.
     const retire = { id: headId, project_id: world.operationsId, name, sort_order: '92' };
     const warned = await probePost(world.adminPage, '/heads', retire);
     expect(warned.status, `retiring a head with an open request asks first — got ${warned.outcome}`).toBe(200);
@@ -1053,7 +1046,7 @@ it.describe('B · the required, forced and optional matrix', () => {
     await world.requester.page.goto(`/requests/${id}`);
     await expect(
       world.requester.page.locator('.dl'),
-      'T12: a historical request still names the head it was charged to'
+      'a historical request still names the head it was charged to'
     ).toContainText(name);
 
     await world.requester.page.goto('/requests/new?type=vendor_invoice');
@@ -1063,22 +1056,13 @@ it.describe('B · the required, forced and optional matrix', () => {
     ).toHaveCount(0);
     await expect(
       world.requester.page.locator(`#head option[value="${world.retiredHeadId}"]`),
-      'T12: a head that was never active is never offered either'
+      'a head that was never active is never offered either'
     ).toHaveCount(0);
   });
 
-  // F-B-02, fixed — annotation retired. `renderRejectedRequestForm` looked the
-  // type up in `requestTypeLabels` and the `recoverable` type is not in it, so
-  // every refusal of that type answered one generic sentence — "that is not a
-  // kind of request this system raises" — about a request the store had accepted
-  // seconds earlier, and threw the whole submission away with it. It now tells
-  // the two apart by the store's own message rather than by a second copy of the
-  // type vocabulary (internal/app/requests.go:249-275): an unknown type keeps the
-  // vocabulary sentence, and a refused `recoverable` keeps **the rule that
-  // refused it** and comes back on the chooser.
-  //
-  // The deposit has its own form since form-1, so a refused submit comes back
-  // on it with the typing kept — asserted here as well as for the other types.
+  // A refused deposit-or-guarantee submit names the rule that refused it and
+  // comes back on its own form with the typing kept. Only a truly unknown type
+  // gets the "not a kind of request this system raises" sentence.
   it('TC-B-091 — a refused recoverable-type submit names the rule that refused it', async ({ world }) => {
     const probe = await raise(world.requester.page, validBody(world, 'recoverable', { repayment_notes: '' }));
     expect(probe.status, 'it is refused, which is the rule working').toBe(400);
@@ -1156,7 +1140,7 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
         head_id: world.officeRentId
       })
     );
-    // Refused, as the rule demands. The message it is refused with is F-B-02.
+    // Refused, as the rule demands. The message it is refused with is TC-B-091's subject.
     expect(probe.status, `a recoverable must stay recoverable; got ${probe.outcome}`).toBe(400);
   });
 
@@ -1175,8 +1159,8 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
         head_id: world.officeRentId
       })
     );
-    // The category is the type's since form-1, so an advance with no category is
-    // told which category it is always in.
+    // The category belongs to the type, so an advance with no category is told
+    // which category it is always in.
     expectRefused(probe, 'always in the Employee advance category', 'budget fieldset on a recoverable advance');
   });
 
@@ -1212,7 +1196,7 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
       world.requester.subject.name
     );
     await expect(page.locator('dt', { hasText: /^Vendor$/ })).toHaveCount(0);
-    // What it does with the rest of that fieldset is F-B-04, proved by TC-B-092.
+    // What it does with the rest of that fieldset is TC-B-092's subject.
   });
 
   it('TC-B-055 — a vendor invoice posted with the reimbursement fieldset is refused', async ({ world }) => {
@@ -1228,10 +1212,9 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     expectRefused(probe, 'choose a vendor from the vendor master', 'reimbursement fieldset on an invoice');
   });
 
-  // F-B-05, fixed. The form only ever offers the chosen project's own heads, and
-  // the store now insists the two agree rather than merely that both are present.
-  // This case guards that agreement: a head belonging to another project charges
-  // the wrong project's budget, which is a number somebody reports on.
+  // The form only offers the chosen project's own heads, and the store insists
+  // the two agree: a head from another project would charge the wrong
+  // project's budget.
   it('TC-B-056 — a head belonging to another project is refused', async ({ world }) => {
     const probe = await raise(
       world.requester.page,
@@ -1240,12 +1223,8 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     expectRefused(probe, /head/i, 'a head from a different project');
   });
 
-  // F-B-04, fixed. CreateRequest used to write every column it was handed
-  // whatever the type was, and request_detail prints any column that is
-  // non-empty — so a forged invoice number on a reimbursement was stored and
-  // then displayed as if the reimbursement had one. The store now clears the
-  // columns a type does not own. This case guards that scrub: a reimbursement's
-  // detail screen must never show invoice or advance fields.
+  // The store keeps only the columns a request's type owns, so a forged invoice
+  // number or advance reason on a reimbursement is neither stored nor shown.
   it('TC-B-092 — a field belonging to another type is neither stored nor shown', async ({ world }) => {
     const id = await raiseOk(
       world.requester.page,
@@ -1262,13 +1241,9 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     expect(detail.includes('Not a field this type has.'), 'and no advance reason').toBe(false);
   });
 
-  // F-B-15, fixed. CreateRequest used to write counterparty,
-  // expected_return_date and repayment_notes for every treatment, and
-  // request_detail prints each one whenever it is non-empty — so the concealed
-  // recoverable fieldset, posted by hand, appeared on a budget expense. The
-  // store now clears the columns a treatment does not own. This case guards that
-  // scrub, and with it a sibling audit's DS3: a budget expense carries no
-  // counterparty, no return date and no repayment terms.
+  // The store keeps only the columns a request's treatment owns: a budget
+  // expense carries no counterparty, no return date and no repayment terms,
+  // even when the recoverable fieldset is posted by hand.
   it('TC-B-096 — the recoverable fieldset posted on a budget request is neither stored nor shown', async ({
     world
   }) => {
@@ -1294,11 +1269,9 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
   it('TC-B-097 — an admin-added recoverable category is enforced on submit and stored as itself', async ({
     world
   }) => {
-    // V4 in the half that works. The category rules are read from
-    // recoverable_categories rows (internal/store/recoverables.go:119), and
-    // requestCreate reads recoverable_category straight off the form — the
-    // rewriting normalizeRecoverableCategory does is reached only by the htmx
-    // fragment, so a crafted submit is NOT silently refiled under EMD.
+    // Category rules are read from the recoverable_categories rows, and the
+    // submit stores the posted category as it is, so an admin-added category is
+    // enforced with its own rule and never silently refiled under EMD.
     const name = `Retention deposit ${world.runId}`;
     const code = categoryCodeOf(name);
     const added = await probePost(world.adminPage, '/configuration/recoverable-categories', {
@@ -1309,13 +1282,9 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     });
     expect(added.status, `the category must be created; got ${added.outcome}`).toBeLessThan(400);
     await world.adminPage.goto('/configuration');
-    // `td.t-lead`, not any `td`: F-E-06's delete control names the category
-    // again for a screen reader — `Delete<span class="sr-only"> {{.Name}}</span>`
-    // (internal/app/templates.go:3324) — so a bare `td` filter now matches two
-    // cells in the one row. The lead cell is the listing; the second is the
-    // accessible name of a button, and counting it as a second listing would be
-    // reading the fix as a duplicate.
-    // The name is an editable input in the row since recoverables-5.
+    // `td.t-lead`, not any `td`: the row's delete button repeats the category
+    // name for screen readers, so a bare `td` filter would match two cells. The
+    // name itself is an editable input in the lead cell.
     await expect(world.adminPage.locator(`td.t-lead input[name="name"][value="${name}"]`)).toHaveCount(1);
 
     const refused = await raise(
@@ -1342,17 +1311,10 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     ).toHaveText(`Recoverable · ${code}`);
   });
 
-  // F-B-17 · F-E-02, fixed — annotation retired. The category `<select>` was
-  // hardcoded to the six seeded codes and `normalizeRecoverableCategory`
-  // rewrote anything else, so a category an administrator added was enforceable
-  // on submit (TC-B-097) and unreachable on the form: the only way to raise one
-  // was to hand-roll the POST. The `<select>` now ranges over `.Categories` —
-  // the live `recoverable_categories` rows (internal/app/templates.go:1826-1830)
-  // — and `normalizeRecoverableCategory` (internal/app/requests.go:171-) checks
-  // against those rows instead of substituting a code, so the htmx swap keeps
-  // the category it was given and reveals the field that category's own rule
-  // requires. This case is the regression guard on the whole path from the
-  // configuration screen to the fieldset.
+  // The category picker lists the live recoverable_categories rows, and the
+  // htmx swap keeps whichever category it was given and reveals the field that
+  // category's rule requires — so an admin-added category can be raised from
+  // the form, not only by a hand-rolled POST.
   it('TC-B-098 — an admin-added recoverable category is offered on the form and survives a swap', async ({
     world
   }) => {
@@ -1366,7 +1328,7 @@ it.describe('C · hidden is not validation — the server re-enforces every reve
     });
     expect(added.status, `the category must be created; got ${added.outcome}`).toBeLessThan(400);
 
-    // The picker lives on the deposit-or-guarantee form (form-1); an admin-added
+    // The picker lives on the deposit-or-guarantee form; an admin-added
     // category is a deposit, never an employee advance.
     const page = world.requester.page;
     await page.goto('/requests/new?type=recoverable');
@@ -1422,11 +1384,9 @@ it.describe('D · the vendor control', () => {
     await expect(world.requester.page.locator('.dl')).not.toContainText('Some Other Company');
   });
 
-  // Regression guard for F-B-06. needsVendor only checks VendorID > 0, so a
-  // forged id still reaches the INSERT and `PRAGMA foreign_keys=ON` still refuses
-  // it — but `classify` (internal/store/store.go:1856) now recognises a FOREIGN
-  // KEY violation and returns ErrValidation, so the requester meets a 400 they
-  // can act on instead of a 500. The driver text stays out of the page.
+  // A vendor id naming no vendor fails the database's foreign key, and the
+  // store reports that as a validation error: the requester gets a 400 they can
+  // act on, never a 500, and no driver text reaches the page.
   it('TC-B-058 — a vendor_id naming no vendor is refused, not answered with a server error', async ({
     world
   }) => {
@@ -1443,7 +1403,7 @@ it.describe('D · the vendor control', () => {
   it('TC-B-059 — a vendor_id naming a real vendor the requester never searched for is accepted', async ({
     world
   }) => {
-    // needsVendor (internal/store/requests.go:167) checks VendorID > 0 and the
+    // needsVendor checks VendorID > 0 and the
     // foreign key checks existence. Selection is not part of the contract.
     const id = await raiseOk(
       world.requester.page,
@@ -1453,10 +1413,8 @@ it.describe('D · the vendor control', () => {
     await expect(world.requester.page.locator('.dl')).toContainText(world.otherVendor.name);
   });
 
-  // F-B-07, fixed — the same hole as F-B-03, one table over. `vendorChoices`
-  // offers active vendors only and the store now re-checks the status instead of
-  // trusting it, so a retired vendor named directly in the POST is refused.
-  // This case is the regression guard on that check.
+  // The form offers active vendors only, and the store re-checks the status,
+  // so a retired vendor named directly in the POST is refused.
   it('TC-B-060 — a vendor_id naming an inactive vendor is refused', async ({ world }) => {
     const probe = await raise(
       world.requester.page,
@@ -1504,15 +1462,10 @@ it.describe('D · the vendor control', () => {
     }
   });
 
-  // F-B-13, fixed — annotation retired. `request_vendor_field`'s combo-input
-  // carried no `name` where the create form's carries `name="q"`, and htmx sends
-  // the triggering input's own name/value pair — so the edit screen asked
-  // GET /vendors/search with no `q` at all and `SearchVendors("")` returns nil
-  // (internal/store/vendors.go:337). The box was there, it typed, and it could
-  // never offer a single vendor, which meant the vendor on a pending request
-  // could not be changed by anybody holding vendor:view. The partial now carries
-  // the same `name="q"` the create form does. This case is the regression guard
-  // on that one attribute, driven end to end through the real control.
+  // htmx sends the triggering input's own name/value pair, so the edit
+  // screen's vendor box must be named `q` like the create form's, or the search
+  // gets no term and the vendor on a pending request can never be changed.
+  // Driven end to end through the real control.
   it('TC-B-094 — the vendor combobox on the edit screen can search', async ({ world }) => {
     // The admin holds vendor:view, so the edit screen renders the combobox for
     // them; a Requester gets the plain select on both screens (TC-B-061).
@@ -1539,11 +1492,8 @@ it.describe('D · the vendor control', () => {
     }
   });
 
-  // The same regression guard as TC-B-058, over the other three columns:
-  // manager_id, project_id and head_id reach the INSERT unchecked exactly as
-  // vendor_id does, so every one of them is a forgeable foreign key and every one
-  // of them must answer 400 rather than 500 now that `classify` maps a FOREIGN KEY
-  // violation to ErrValidation (F-B-06).
+  // The same rule as TC-B-058 for the other three foreign keys: a forged
+  // manager, project or head id is a 400, never a 500.
   it('TC-B-095 — a forged manager, project or head id is refused, not answered with a server error', async ({
     world
   }) => {
@@ -1580,20 +1530,11 @@ it.describe('E · PR-YYYY-NNNNNN is unique and monotonic', () => {
   });
 
   /*
-   * F-B-10, fixed. CreateRequest used to open a DEFERRED transaction, read the
-   * numbering settings and only then write, so SQLite refused the read-to-write
-   * upgrade and answered SQLITE_BUSY without ever consulting the busy handler —
-   * busy_timeout(5000) cannot help an upgrade that can never succeed. It now
-   * takes the write lock with the transaction's first statement
-   * (`beginWriteTx`, internal/store/requests.go:38), so the second submit waits
-   * for the first instead of being refused.
-   *
-   * That is what made this case promotable. It was parked as `fixme` because the
-   * loser's fate depended on the interleaving, so neither a plain test nor a
-   * `test.fail()` could state the truth on every run. With the race removed the
-   * outcome is deterministic: both submits commit, and the sequence is reserved
-   * inside the same transaction so they are consecutive. Its integrity twin
-   * TC-B-093 covers the other half — a number is never handed out twice.
+   * Creating a request takes the database write lock with its first statement,
+   * so a second concurrent submit waits for the first instead of being refused,
+   * and the number is reserved in the same transaction: both succeed, with
+   * consecutive numbers. TC-B-093 covers the other half — a number is never
+   * handed out twice.
    */
   it('TC-B-063 — two concurrent raises from two browsers both succeed, with consecutive numbers', async ({
     world
@@ -1615,8 +1556,8 @@ it.describe('E · PR-YYYY-NNNNNN is unique and monotonic', () => {
   });
 
   it('TC-B-093 — a race never mints a duplicate number, whatever it does to the loser', async ({ world }) => {
-    // The availability half of this is F-B-10. The integrity half must hold
-    // regardless: whoever does get through gets a number nobody else has.
+    // TC-B-063 covers availability. This is integrity, which must hold
+    // regardless: whoever gets through gets a number nobody else has.
     //
     // Three POSTs at once, two of them from the same browser — an API request
     // never conflicts with another on the same page, so the race is real.
@@ -1669,7 +1610,7 @@ it.describe('E · PR-YYYY-NNNNNN is unique and monotonic', () => {
 });
 
 // ===========================================================================
-// F — the single-POST contract (decision D1)
+// F — the single-POST contract: one POST creates, numbers and submits
 // ===========================================================================
 
 it.describe('F · one POST creates, numbers and submits', () => {
@@ -1708,8 +1649,11 @@ it.describe('F · one POST creates, numbers and submits', () => {
 
   it('TC-B-067 — a pending request cannot be submitted a second time', async ({ world }) => {
     const id = await raiseOk(world.requester.page, validBody(world, 'reimbursement'));
+    // The edit form carries the request's current revision; without it the save
+    // is refused before the resubmit rule is ever reached.
     const resubmit = await probePost(world.requester.page, `/requests/${id}/edit`, {
       ...validBody(world, 'reimbursement'),
+      revision: await requestRevision(world.requester.page, Number(id)),
       submit_action: 'resubmit'
     });
     expect(
@@ -1724,7 +1668,7 @@ it.describe('F · one POST creates, numbers and submits', () => {
 // G — the requester's own verbs, each with its legal and illegal case
 // ===========================================================================
 
-/** Puts the manager's decision in directly — the decision itself is a sibling's area. */
+/** Puts the manager's decision in directly — the decision screens are another audit area's subject. */
 async function decide(
   world: World,
   id: string,
@@ -1737,7 +1681,9 @@ async function decide(
       : verb === 'return'
         ? { comment: 'Attach the receipts.', ...extra }
         : { reason: 'Not budgeted this quarter.', ...extra };
-  const probe = await probePost(world.manager.page, `/requests/${id}/${verb}`, form);
+  // Every decision names the revision the manager reviewed, read just before the POST.
+  const revision = await requestRevision(world.manager.page, Number(id));
+  const probe = await probePost(world.manager.page, `/requests/${id}/${verb}`, { ...form, revision });
   expect(probe.status, `the fixture's ${verb} failed: ${probe.outcome} ${message(probe)}`).toBeLessThan(400);
 }
 
@@ -1779,13 +1725,8 @@ it.describe('G · what the requester may still do', () => {
     const failures = capturePageErrors(page);
     try {
       await page.goto(`/requests/${id}/edit`);
-      // F-F-03: the wait is `reminder_pending_days` read from configuration, not
-      // a three spelled out in the copy — the banner renders
-      // `{{.Reminders.PendingAfterDays}}-day` (internal/app/templates.go:2696-2697)
-      // and the seeded default is 3 (internal/store/reminders.go:68). "day", not
-      // "calendar day", is decision 2 of the repair: a calendar boundary needs a
-      // timezone this app does not have, so every threshold is elapsed days.
-      // Nothing in this file changes the setting, so the number here is the seed's.
+      // The wait is the configured `reminder_pending_days` (seeded as 3, and
+      // nothing in this file changes it), counted in elapsed days.
       await expect(page.locator('.banner.info')).toContainText(/restarts the\s+3-day reminder clock/);
       await page.getByLabel('Amount').fill('21500');
       await page.locator('#apr').selectOption(world.manager2.id);
@@ -1810,7 +1751,7 @@ it.describe('G · what the requester may still do', () => {
       'the new approver does'
     ).toHaveCount(1);
 
-    // Re-notified: the in-app row always fires (G19).
+    // Re-notified: the in-app notification is always written.
     await world.manager2.page.goto('/notifications?scope=unread');
     await expect(world.manager2.page.locator('.notif-list')).toContainText(number);
     await expect(world.manager2.page.locator('.notif-list')).toContainText('edited and re-sent');
@@ -1854,7 +1795,7 @@ it.describe('G · what the requester may still do', () => {
 
     const probe = await probePost(page, `/requests/${id}/withdraw`, {});
     expect(probe.status, `the store must refuse it too; got ${probe.outcome}`).toBe(400);
-    // The store's own words, article and all — F-B-08 is the grammar, not the rule.
+    // The store's own words.
     expect(message(probe)).toContain('approved request cannot be withdrawn');
   });
 
@@ -1964,21 +1905,9 @@ it.describe('G · what the requester may still do', () => {
     expect(message(ask)).toContain('cannot be sent for cancellation');
   });
 
-  // REWRITTEN for the F-G-002 fix. Four of these probes used to require 403 and
-  // now require 404, and the split between the two is the fix, not an accident.
-  //
-  // Everything routed through `loadViewableRequest`
-  // (internal/app/requests.go:325-348) answers **404** for a row outside the
-  // caller's data scope — deliberately the same answer an id that does not exist
-  // gets, so the status code stops being an existence oracle a requester could
-  // walk the id space with (TC-B-088 pins the indistinguishability itself).
-  //
-  // The three POSTs that go straight to the store still answer **403**:
-  // `WithdrawRequest` (internal/store/requests.go:986), `ReraiseRequest` (:1199)
-  // and `RequestCancellation` (:1262) each compare `requester_id` to the actor
-  // and return ErrForbidden. That is not an inconsistency — a caller who names
-  // an id in a write already knows it exists, and hiding that would cost the
-  // clearer refusal for nothing.
+  // A request the caller may not see answers 404 on every route, reads and
+  // writes alike — the same answer an id that does not exist gets, so the status
+  // code never tells a stranger which ids are real (TC-B-088 pins that).
   it('TC-B-077 — a stranger cannot edit, withdraw, re-raise or ask to cancel another request', async ({
     world
   }) => {
@@ -1993,11 +1922,11 @@ it.describe('G · what the requester may still do', () => {
       [404],
       'saving somebody else edit'
     );
-    expectOutcome(await probePost(stranger, `/requests/${id}/withdraw`, {}), [403], 'withdrawing');
-    expectOutcome(await probePost(stranger, `/requests/${id}/reraise`, {}), [403], 're-raising');
+    expectOutcome(await probePost(stranger, `/requests/${id}/withdraw`, {}), [404], 'withdrawing');
+    expectOutcome(await probePost(stranger, `/requests/${id}/reraise`, {}), [404], 're-raising');
     expectOutcome(
       await probePost(stranger, `/requests/${id}/cancel-request`, { reason: 'no' }),
-      [403],
+      [404],
       'asking for cancellation'
     );
 
@@ -2062,11 +1991,9 @@ it.describe('H · the conversation', () => {
   it('TC-B-080 — a stranger cannot comment on someone else request', async ({ world }) => {
     const id = await raiseOk(world.requester.page, validBody(world, 'reimbursement'));
     const probe = await probePost(world.stranger.page, `/requests/${id}/comment`, { body: 'Let me in.' });
-    // 404, not 403 (F-G-002). `requestComment` resolves the row through
-    // `loadViewableRequest` (internal/app/requests.go:976), which answers a row
-    // outside the caller's scope exactly as it answers one that does not exist —
-    // so posting comments at ids is not a way to find out which ids are real.
-    // The comment is still refused, which is the whole point of the case.
+    // 404, not 403: a request outside the caller's scope is answered exactly as
+    // one that does not exist, so posting comments at ids does not reveal which
+    // ids are real. The comment is refused either way.
     expectOutcome(probe, [404], 'commenting on a request outside your scope');
 
     await world.requester.page.goto(`/requests/${id}`);
@@ -2130,7 +2057,7 @@ it.describe('I · documents', () => {
     try {
       await setRequired(true);
 
-      // G10: it never hard-blocks — it asks for a reason instead.
+      // It never hard-blocks: without a document it asks for a reason instead.
       const refused = await raise(world.requester.page, validBody(world, 'reimbursement'));
       expectRefused(refused, 'attach a supporting document, or say why you cannot', 'no document, no reason');
 
@@ -2179,21 +2106,11 @@ it.describe('I · documents', () => {
     }
   });
 
-  // F-B-09 (with F-A-05) **critical**, fixed — annotation retired, and the
-  // expected href changed with it. The request screens linked a
-  // `request_attachments` row to `GET /attachments/{id}`, which reads
-  // `payment_attachments` — a different table whose id sequence also starts at
-  // 1 — so Download on your own invoice served whichever stranger's bank advice
-  // happened to share the number, and served nothing at all once the sequences
-  // diverged. Request documents now have a route of their own,
-  // `GET /requests/{id}/attachments/{attachmentID}` (internal/app/app.go:468),
-  // whose handler checks the attachment really belongs to the request in the
-  // path and then applies the request's own row scope
-  // (internal/app/app.go:1129-1159).
-  //
-  // So the assertion this case makes about the href is not cosmetic: a link
-  // back to `/attachments/{id}` would be the defect returning. The scoped half
-  // of the same route is TC-B-085's subject.
+  // A request's document is served by its own route,
+  // `GET /requests/{id}/attachments/{attachmentID}`, which checks the document
+  // belongs to the request in the path and then applies the request's row
+  // scope. The payment route `/attachments/{id}` reads a different table, so a
+  // link there would serve some other record's file.
   it('TC-B-084 — a requester can download the document on their own request', async ({ world }) => {
     const page = await world.requester.ctx.newPage();
     let href = '';
@@ -2238,15 +2155,8 @@ it.describe('I · documents', () => {
     ).toBe(404);
   });
 
-  // F-B-11 (with F-A-01), fixed while this suite was being repaired — the
-  // annotation is removed here because the fix landed in another wave's file, not
-  // because this case changed. `attachmentDownload` used to check only that the
-  // path was inside the attachment directory and that the file existed; it never
-  // asked who was calling, so `attachment:view` — which the Requester role holds —
-  // read the bank advice on any payment in the system. It now resolves the
-  // attachment's payment and applies the same scope check `paymentDetail` runs,
-  // answering 404 rather than 403 so the route is not an enumeration oracle.
-  // This case is the regression guard on that check.
+  // A payment's proof (`/attachments/{id}`) is served only to someone who may
+  // see the payment's request; anyone else is refused.
   it('TC-B-085 — /attachments/{id} obeys the row scope its request obeys', async ({
     world,
     adminPage,
@@ -2257,13 +2167,10 @@ it.describe('I · documents', () => {
     let download = '';
     try {
       const { id } = await createApprovedRequest(adminPage, runId, { amount: '5000' });
-      // The bank advice rides inside the settlement's own multipart POST.
-      // F-D-08's fix makes a post-hoc POST /payments/{id}/attachments a 400 on a
-      // linked payment (internal/store/store.go:1403-1405), so the only way a
-      // settled payment ever carries proof is `RecordPaymentForRequest`'s
-      // `attachment` part, written in the settlement's own transaction — the same
-      // mechanism `fixtures.settlePayment`'s `attachment` option drives through
-      // the screen. head_id is not sent: F-D-01 derives it from the request.
+      // The bank advice rides inside the settlement's own multipart POST: a
+      // linked payment refuses attachments added afterwards, so this is the
+      // only way a settled payment carries proof. head_id is not sent; the
+      // payment takes it from the request.
       const reserved = await probePost(accounts.page, `/requests/${id}/record-payment`, {});
       expect(reserved.status, 'the accountant takes the request out of the queue first').toBe(303);
       const settled = await accounts.page.request.post('/payments', {
@@ -2271,11 +2178,11 @@ it.describe('I · documents', () => {
           csrf: await csrfToken(accounts.context),
           request_id: String(id),
           amount: '5000',
-          paid_on: '2026-07-20',
+          paid_on: today(),
           payment_mode: 'bank_transfer',
           reference_no: `UTR-B85-${runId}`,
           settlement: 'settled',
-          attachment: { name: 'bank-advice.pdf', mimeType: 'application/pdf', buffer: samplePdf.buffer }
+          attachment: pdfUpload('bank-advice.pdf')
         },
         maxRedirects: 0,
         failOnStatusCode: false
@@ -2292,15 +2199,9 @@ it.describe('I · documents', () => {
           .getAttribute('href')) ?? '';
       expect(download, 'the payment carries a downloadable proof').toMatch(/^\/attachments\/\d+$/);
 
-      // The Requester cannot see the request behind it…
-      //
-      // 404 on the request and 403 on the payment, and the two are read from
-      // different code: `loadViewableRequest` (internal/app/requests.go:335-347)
-      // withholds the row's existence as well as its contents (F-G-002), while
-      // `paymentDetail` (internal/app/app.go:911-915) still names the reason —
-      // "You cannot see the request behind this payment." Both are refusals,
-      // which is what this case turns on; the difference is recorded here rather
-      // than smoothed over so a later reader can see it was measured.
+      // The Requester cannot see the request behind it (404, as a missing record
+      // would answer), and holds no payment:view at all, so the payment screen
+      // is refused by permission (403) before any row is read.
       expectOutcome(
         await probeGet(world.requester.page, `/requests/${id}`),
         [404],
@@ -2360,14 +2261,9 @@ it.describe('J · a Requester sees only their own work', () => {
     const header = csv.body.split('\n')[0].split(',');
     expect(header.slice(0, 3).join(','), 'the header names the columns').toBe('Number,Status,Type');
 
-    // REWRITTEN for F-G-030. This used to demand `₹12,500.00` in every money
-    // cell, on C3's "money renders once with a single symbol" — which is the
-    // rule for a *screen*. A CSV is opened by a spreadsheet, and "₹12,500.00" is
-    // text there: the column cannot be summed, sorted or averaged, so the export
-    // was money nobody could do arithmetic on. `csvAmount`
-    // (internal/app/app.go:2147) writes a bare `12500.00`. The rendered screen
-    // still carries the symbol and TC-B-016 pins that; the two are deliberately
-    // different, and this case is what stops the symbol coming back here.
+    // Money in the export is a bare number such as `12500.00`, because a
+    // spreadsheet cannot add up "₹12,500.00". The screen still shows the symbol
+    // (TC-B-016); this case stops the symbol appearing in the file.
     const row = csv.body.split('\n').find(line => line.startsWith(mineNumber));
     expect(row, 'the requester own row is in the export').toBeTruthy();
     const cells = row!.split(',');
@@ -2379,19 +2275,10 @@ it.describe('J · a Requester sees only their own work', () => {
     expect(csv.body.includes('₹'), 'so no cell in the file carries a currency symbol at all').toBe(false);
   });
 
-  // REWRITTEN for the F-G-002 fix. This case used to require 403 on somebody
-  // else's request and 404 on an id that does not exist, and its comment said
-  // "the two must not be swapped". They are now deliberately the same answer:
-  // the existence of a row is information about that row, so a requester walking
-  // the id space could otherwise read off exactly which ids exist and, by
-  // extension, how many requests the company raises. `loadViewableRequest`
-  // (internal/app/requests.go:325-348) answers 404 either way and logs the
-  // attempt.
-  //
-  // What this case now protects is the indistinguishability itself — the same
-  // status AND the same sentence, since a page that names the difference leaks
-  // what the status no longer does. A 403 anywhere in this list puts the oracle
-  // back.
+  // Somebody else's request and an id that does not exist get the same 404 and
+  // the same sentence, so a requester walking the id space cannot tell which
+  // ids exist or how many requests the company raises. A 403 anywhere in this
+  // list, or a different sentence, would give that away.
   it('TC-B-088 — another requester request by direct id is indistinguishable from one that does not exist', async ({
     world
   }) => {
@@ -2452,25 +2339,10 @@ it.describe('J · a Requester sees only their own work', () => {
     );
   });
 
-  // F-B-16, fixed — annotation retired, and the case now asserts the fix rather
-  // than the shape it was guessed to have. `ListRequests` capped the rows at 200
-  // while `CountRequests` — the tab count beside them — had no cap at all, so
-  // the All tab promised 214 and the list drew 200 with nothing on the page
-  // saying so, and the CSV silently dropped the same fourteen.
-  //
-  // The repair is NOT "render every row": 205 cards on one page is a slower
-  // screen and a worse one. It is that the truncation stops being silent —
-  // `ListRequestsPage` returns Total/Offset/Truncated
-  // (internal/store/requests.go:1700-1794, handler at internal/app/requests.go:612),
-  // the screen states "Showing 1–200 of 205" and offers "Older →"
-  // (internal/app/templates.go:2264-2269), and the export takes
-  // `RequestsUnlimited` (internal/app/requests.go:1157-1163) because an export
-  // taken for reconciliation that drops rows without saying so is worse than no
-  // export.
-  //
-  // So the name still holds — never SILENTLY truncated — and the assertions
-  // below are what makes it true: the count is reachable, the page says how much
-  // of it is on screen, and the file carries all of it.
+  // The list shows at most 200 rows a page, but never silently: the page says
+  // "Showing 1–200 of N" and links to the rest, and the CSV export carries
+  // every row, because a reconciliation export that drops rows is worse than
+  // none.
   it('TC-B-099 — a list of more than 200 requests is never silently truncated', async ({ world }) => {
     // Its own subject, so 205 rows cannot disturb any other case's list.
     const bulk = await asRole(world.adminPage, world.browser, world.runId, ['Requester'], 'bulk-b99');
@@ -2493,8 +2365,8 @@ it.describe('J · a Requester sees only their own work', () => {
       // The page carries one screenful and says which screenful it is.
       const rendered = await bulk.page.locator('.req-card').count();
       expect(rendered, 'the first page is the store default of 200 rows').toBe(200);
-      // The pager is a bare `.cluster` (internal/app/templates.go:2265), so it
-      // is addressed by the sentence it exists to say rather than by a class.
+      // The pager has no class of its own, so it is addressed by the sentence
+      // it exists to say.
       const showing = bulk.page.locator('span.muted.small', { hasText: /^Showing / });
       await expect(
         showing,

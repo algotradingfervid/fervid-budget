@@ -1,9 +1,9 @@
-import { type Browser, type Page } from '@playwright/test';
+import { type Page } from '@playwright/test';
 import {
   test,
   expect,
-  login,
   createApproverUser,
+  approveInFull,
   createApprovedRequest,
   settlePayment,
   capturePageErrors
@@ -11,27 +11,23 @@ import {
 import { asRole, probeGet, probePost, probeAnonymous, expectOutcome } from './audit-support';
 
 /**
- * TC-E — Recoverables.
+ * TC-E — Recoverables: money paid out that is expected back (deposits,
+ * guarantees, employee advances).
  *
- * Covers: recoverable-category CRUD (V4), per-category field rules (V5/V6),
- * exclusion of recoverable money from budget actuals (V2/V3), the register /
- * dashboard / detail screens, separate payout/recovery lifecycles, project linkage (V8),
- * append-only recovery events and unsupported legacy aliases, plus the recoverable
- * permission matrix (R6). Full reasoning and expected results are in
- * docs/qa/test-cases/TC-E-recoverables.md — this file is the executable half.
+ * Covers: administrators managing recoverable categories, the project /
+ * counterparty each category demands, keeping recoverable money out of budget
+ * actuals, the register / dashboard / detail screens, payout and recovery as
+ * separate lifecycles, the linked project, append-only recovery events (and the
+ * absence of any other write route), and who may see or export recoverables.
+ * Expected results are in docs/qa/test-cases/TC-E-recoverables.md — this file is
+ * the executable half.
  *
- * F-E-01 (critical, see docs/qa/results/findings-e-recoverables.md) is FIXED. It
- * held that no recoverable request raised through the real screens could ever be
- * settled: the recoverable fieldset collects no head, the payment form's hidden
- * head_id therefore defaults to 0, and `validatePayment` refused it. Migration v8
- * made `payments.head_id` nullable and `validatePayment` now demands a head only
- * for a budget-treatment payment, so a recoverable settles with head_id NULL.
- * TC-E-030 is the regression guard for that, and TC-E-031 / TC-E-042 — which were
- * test.fixme() because a *paid* recoverable was unreachable — run again.
+ * A recoverable has no budget head, so its payment is saved with no head; only a
+ * budget payment must name one. TC-E-030 proves every category can be paid.
  */
 
 // ---------------------------------------------------------------------------
-// Local helpers. Nothing here touches fixtures.ts or audit-support.ts.
+// Local helpers.
 // ---------------------------------------------------------------------------
 
 /** Parses a rendered "₹1,23,456.78" (or "-₹12.00") cell into paise. */
@@ -117,20 +113,18 @@ type RecoverableFormOpts = {
 /**
  * Drives a recoverable request form up to (not including) the submit click.
  *
- * Two forms since form-1 / recoverables-1. An employee advance is
+ * There are two forms. An employee advance is
  * `/requests/new?type=employee_advance`: it opens on the recoverable treatment
  * with its category fixed to Employee advance and pays the requester. Every
  * other category — EMD, PBG, ICD, a security deposit, Other, an admin-added one
  * — is a deposit or guarantee, `/requests/new?type=recoverable`, which carries
- * the category picker and asks who is paid. (Before that fix the employee
- * advance was the only card carrying the recoverable treatment, so every
- * deposit was recorded as paid to the employee.)
+ * the category picker and asks who is paid.
  */
 async function fillRecoverableRequestForm(page: Page, runId: string, opts: RecoverableFormOpts) {
-  // The Approver <select> carries the `required` attribute (templates.go:2015), so a
-  // submission with no approver never reaches the server at all — the browser silently
-  // blocks it. Every caller therefore needs a real approver name; one is created here
-  // when the caller does not already have a specific person it needs to approve as.
+  // The Approver <select> is `required`, so a submission with no approver never
+  // reaches the server at all — the browser silently blocks it. Every caller
+  // therefore needs a real approver name; one is created here when the caller
+  // does not already have a specific person it needs to approve as.
   const approverName = opts.approverName ?? (await createApproverUser(page, runId)).name;
 
   const advance = opts.category === 'employee_advance';
@@ -180,40 +174,20 @@ async function submitAndExpectRejected(page: Page, messageSubstring: string) {
   ).toContainText(messageSubstring);
 }
 
-/** Approves an already-submitted request as `approver`, in a context of its own. G8 forbids self-approval. */
-async function approveAsManager(
-  browser: Browser,
-  requestId: number,
-  amount: string,
-  approver: { email: string; password: string }
-) {
-  const context = await browser.newContext();
-  try {
-    const approverPage = await context.newPage();
-    await login(approverPage, approver.email, approver.password);
-    await approverPage.goto(`/requests/${requestId}`);
-    await approverPage.getByRole('button', { name: /^Approve / }).click();
-    const sheet = approverPage.locator('#approve-sheet');
-    await expect(sheet).toBeVisible();
-    await sheet.getByLabel('Amount approved').fill(amount);
-    await sheet.getByRole('button', { name: 'Approve request' }).click();
-    await expect(approverPage).toHaveURL(/\/approvals$/);
-  } finally {
-    await context.close();
-  }
-}
-
-/** Raises and approves a recoverable request end to end (create + approve; never settles it — see F-E-01). */
+/**
+ * Raises a recoverable request and has `approver` approve it in full, through
+ * the real screens. Nobody approves their own request, so the approver signs in
+ * separately. It does not pay the request.
+ */
 async function raiseAndApproveRecoverable(
   page: Page,
-  browser: Browser,
   runId: string,
   approver: { email: string; name: string; password: string },
   opts: RecoverableFormOpts
 ): Promise<{ id: number; number: string }> {
   await fillRecoverableRequestForm(page, runId, { ...opts, approverName: approver.name });
   const created = await submitAndExpectAccepted(page);
-  await approveAsManager(browser, created.id, opts.amount ?? '25000', approver);
+  await approveInFull(page, approver, created.id, opts.amount ?? '25000');
   return created;
 }
 
@@ -226,9 +200,8 @@ async function gridActualForHead(page: Page, month: string, headName: string): P
 }
 
 /**
- * `/reports/heads` drops any row where Budget AND Actual are both zero
- * (`nonEmptyReportRows`, app.go:1562-1570), so a head with no budget set for
- * the current wall-clock month simply would not appear. This makes sure the
+ * `/reports/heads` drops any row where Budget AND Actual are both zero, so a
+ * head with no budget set for the current month simply would not appear. This makes sure the
  * row can never disappear on us, without perturbing the Actual figure the
  * before/after tests depend on — it only acts when the budget is genuinely 0.
  */
@@ -287,7 +260,7 @@ async function csvActual(
   return parseRupees(match[actualCol]);
 }
 
-/** The Configuration row for a category. Its name is an editable input (recoverables-5), so the row is found by that input's value. */
+/** The Configuration row for a category. Its name is an editable input, so the row is found by that input's value. */
 function categoryRow(page: Page, name: string) {
   return page.locator('tr').filter({ has: page.locator(`td.t-lead input[name="name"][value="${name}"]`) });
 }
@@ -303,7 +276,7 @@ async function categoryRowFields(page: Page, name: string): Promise<{ id: string
   await expect(row, `expected exactly one Configuration row for category "${name}"`).toHaveCount(1);
   const form = row.locator('form');
   const id = (await form.locator('input[name="id"]').getAttribute('value')) ?? '';
-  // The rule is a visible select in the row since recoverables-5, not a hidden input.
+  // The rule is a visible select in the row.
   const requires = (await row.locator('select[name="requires"]').inputValue()) || 'none';
   const sortOrder = (await form.locator('input[name="sort_order"]').getAttribute('value')) ?? '0';
   const active = await form.locator('input[name="active"]').isChecked();
@@ -320,7 +293,7 @@ async function createCategoryThroughScreen(page: Page, name: string, requires: '
 
 test.describe('TC-E — Recoverables', () => {
   // -------------------------------------------------------------------------
-  // Section 1 — Category CRUD (V4)
+  // Section 1 — Administrators add, rename, reorder, deactivate and delete categories
   // -------------------------------------------------------------------------
 
   test('TC-E-001 — Admin creates a recoverable category through the real screen', async ({ adminPage, runId }) => {
@@ -345,7 +318,7 @@ test.describe('TC-E — Recoverables', () => {
       const submit = await probePost(requester.page, '/requests', {
         treatment: 'recoverable',
         // The deposit-or-guarantee type: an admin-added category is a deposit,
-        // and an employee advance is always in its own category (form-1).
+        // and an employee advance is always in its own category.
         type: 'recoverable',
         vendor_payee: `Escrow agent ${runId}`,
         recoverable_category: `escrow_${runId}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''),
@@ -356,8 +329,8 @@ test.describe('TC-E — Recoverables', () => {
         repayment_notes: 'Released on handover',
         manager_id: managerId
       });
-      // The derived code follows categoryCode(name) (internal/store/recoverables.go:99-113):
-      // lowercase, non [a-z0-9] runs collapsed to one underscore, trimmed. "Escrow «runId»"
+      // A category's code is derived from its name (store categoryCode): lowercase,
+      // non [a-z0-9] runs collapsed to one underscore, trimmed. "Escrow «runId»"
       // already matches that shape once lowercased, so the code equals the slug above.
       expect(submit.status, `expected the recoverable request to be accepted, got ${submit.outcome}`).toBe(303);
       const requestId = Number(submit.location?.match(/\/requests\/(\d+)\/submitted/)?.[1]);
@@ -366,8 +339,7 @@ test.describe('TC-E — Recoverables', () => {
       let detail = await probeGet(adminPage, `/recoverables/${requestId}`);
       expect(detail.body).toContain(oldName);
 
-      // Rename through the row's own name input and Save button (recoverables-5):
-      // the name used to travel as a hidden input with no control behind it.
+      // Rename through the row's own name input and Save button.
       await adminPage.goto('/configuration');
       const row = categoryRow(adminPage, oldName);
       await expect(row, 'the category row carries a visible name input').toHaveCount(1);
@@ -533,25 +505,20 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-007 — [F-E-06] A category can be deleted while nothing names it, and the refusal counts what does', async ({
+  test('TC-E-007 — A category can be deleted while nothing names it, and the refusal counts what does', async ({
     adminPage,
     browser,
     runId
   }) => {
-    // F-E-06, fixed. `recoverable_category:delete` had been grantable from the
-    // Roles screen since Phase 4 and no route ever consulted it, so an
-    // administrator could hand it out and buy nothing at all; this test recorded
-    // that absence as if it were the design. The door is now
-    // POST /configuration/recoverable-categories/{id}/delete (internal/app/app.go:614),
-    // gated on that verb, over store.DeleteRecoverableCategory
-    // (internal/store/recoverables.go:260), which counts the requests still
-    // pointing at the row inside the DELETE's own transaction.
+    // A holder of recoverable_category:delete may delete a category through
+    // POST /configuration/recoverable-categories/{id}/delete, but only while no
+    // request names it (store.DeleteRecoverableCategory counts them inside the
+    // delete's own transaction).
     //
-    // The refusal is the interesting half and the reason the finding was worth a
-    // door rather than dropping the verb: deactivating stays the way to retire a
-    // category that has been used, and the refusal has to say so with the count
-    // the "In use" column beside the button already prints, not flatten into "you
-    // do not have permission" (the F-G-023 mistake).
+    // A category that has been used is retired by deactivating it instead, and
+    // the refusal must say so with the same count the "In use" column prints —
+    // never the generic "you do not have permission" sentence, because the
+    // caller does hold the permission; the data is what refuses.
     const bodyBefore = (await probeGet(adminPage, '/configuration')).body;
     expect(bodyBefore, 'an admin holds recoverable_category:delete, so the fieldset offers the control').toMatch(
       />Delete</i
@@ -636,7 +603,7 @@ test.describe('TC-E — Recoverables', () => {
     expect(resave.status, 're-saving an in-use category must succeed').toBe(303);
   });
 
-  test('TC-E-008 — The pre-Phase-4 standalone /recoverable-categories screen is gone', async ({ adminPage }) => {
+  test('TC-E-008 — The old standalone /recoverable-categories screen is gone', async ({ adminPage }) => {
     const get = await probeGet(adminPage, '/recoverable-categories');
     expect(get.status, 'the standalone screen must be gone (folded into /configuration)').toBe(404);
     const post = await probePost(adminPage, '/recoverable-categories', { name: 'Nope' });
@@ -671,27 +638,22 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-010 — [F-E-02] A newly admin-created category is selectable on the real request form', async ({ adminPage, runId }) => {
-    // F-E-02 · F-B-17, fixed. The Category <select> was six hardcoded <option>
-    // literals and never read `recoverable_categories`, so V4's promise — an
-    // admin adds a category and its rules are enforced without a code change —
-    // was half kept: the *enforcement* shipped (TC-E-024/025/026 prove the new
-    // category's own project/counterparty rule is honoured) and the affordance
-    // did not, so the category could only ever be reached by a hand-rolled POST.
-    // The options are now `{{range .Categories}}` over the active rows
-    // (internal/app/templates.go:1829), fed by ListRecoverableCategories(ctx, true)
-    // (internal/app/requests.go:488).
+  test('TC-E-010 — A newly admin-created category is selectable on the real request form', async ({ adminPage, runId }) => {
+    // An administrator adds a category and it is usable without a code change:
+    // the request form's Category <select> lists the active rows of the
+    // category table, so a new category is offered like the seeded ones.
+    // (TC-E-024/025/026 prove its project/counterparty rule is enforced.)
     const name = `Selectable probe ${runId}`;
     await createCategoryThroughScreen(adminPage, name, 'none');
     const code = `selectable_probe_${runId}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
-    // The picker lives on the deposit form (form-1); the employee advance form
-    // states its one category instead.
+    // The picker lives on the deposit form; the employee advance form states
+    // its one category instead.
     await adminPage.goto('/requests/new?type=recoverable');
     const values = await adminPage.locator('#rcategory option').evaluateAll(opts => opts.map(o => (o as HTMLOptionElement).value));
     expect(
       values,
-      'a category an administrator added must be choosable through the product, not only through a forged POST — F-E-02'
+      'a category an administrator added must be choosable through the product, not only through a forged POST'
     ).toContain(code);
     await expect(
       adminPage.locator(`#rcategory option[value="${code}"]`),
@@ -712,12 +674,10 @@ test.describe('TC-E — Recoverables', () => {
     ).toHaveAttribute('selected', '');
   });
 
-  test('TC-E-011 — [F-E-02] A deactivated seed category is no longer offered on the request form', async ({ adminPage }) => {
-    // The other half of F-E-02 · F-B-17. Deactivating was already enforced —
-    // validateRequestInput refused a request naming an inactive category
-    // (TC-E-004) — but the option stayed on the form, so the refusal arrived only
-    // after the whole form had been filled in. The <select> now ranges over the
-    // *active* rows alone, so a retired category is simply not offered.
+  test('TC-E-011 — A deactivated seed category is no longer offered on the request form', async ({ adminPage }) => {
+    // A request naming an inactive category is refused (TC-E-004), and the form
+    // does not offer it in the first place, so the requester never fills in a
+    // whole form only to be refused.
     const other = await categoryRowFields(adminPage, 'Other');
     await probePost(adminPage, '/configuration/recoverable-categories', {
       id: other.id,
@@ -750,7 +710,7 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Section 2 — Per-category field rules (V5, V6), exhaustive
+  // Section 2 — The project / counterparty each category demands, exhaustive
   // -------------------------------------------------------------------------
 
   test('TC-E-012 — EMD without a project is refused', async ({ adminPage, runId }) => {
@@ -801,7 +761,7 @@ test.describe('TC-E — Recoverables', () => {
     expect(id).toBeGreaterThan(0);
   });
 
-  test('TC-E-018 — Security deposit without a counterparty is refused (pins the plan-vs-code divergence)', async ({ adminPage, runId }) => {
+  test('TC-E-018 — Security deposit without a counterparty is refused, like ICD', async ({ adminPage, runId }) => {
     await fillRecoverableRequestForm(adminPage, runId, { category: 'security_deposit', expectedReturn: '2027-03-31', notes: 'On vacating' });
     await submitAndExpectRejected(adminPage, 'this recoverable category needs a counterparty company');
   });
@@ -849,7 +809,7 @@ test.describe('TC-E — Recoverables', () => {
     await fillRecoverableRequestForm(adminPage, runId, { category: 'other', expectedReturn: '2027-03-31', notes: '', approverName });
     await submitAndExpectRejected(adminPage, 'repayment or refund terms are required for recoverables');
 
-    // Whitespace-only must be refused identically (strings.TrimSpace, requests.go:181).
+    // Whitespace-only terms count as missing and are refused the same way.
     await fillRecoverableRequestForm(adminPage, runId, { category: 'other', expectedReturn: '2027-03-31', notes: '   ', approverName });
     await submitAndExpectRejected(adminPage, 'repayment or refund terms are required for recoverables');
   });
@@ -904,7 +864,7 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Section 3 — Exclusion from budget actuals (V2, V3), before/after
+  // Section 3 — Recoverable money is kept out of budget actuals (before/after)
   // -------------------------------------------------------------------------
 
   const HEAD = 'Office Rent';
@@ -960,7 +920,7 @@ test.describe('TC-E — Recoverables', () => {
     if (reserve.status !== 303) throw new Error(`could not reserve request ${id} for settlement: ${reserve.outcome}`);
     return probePost(page, '/payments', {
       request_id: String(id),
-      head_id: '0', // exactly what payments/new's hidden field carries for a recoverable request (linking.go:242-244)
+      head_id: '0', // exactly what the payment form's hidden field carries for a recoverable request
       amount,
       paid_on: today(),
       payment_mode: 'bank_transfer',
@@ -971,19 +931,14 @@ test.describe('TC-E — Recoverables', () => {
 
   test('TC-E-030 — A recoverable request raised through the real screens can be reserved, paid and closed, in every category', async ({
     adminPage,
-    browser,
     runId
   }) => {
-    // Regression guard for F-E-01. The recoverable fieldset still collects no head
-    // — none of its categories has one to collect — so payments/new still leaves
-    // the hidden head_id at 0. The fix is in the data model: migration v8 made
-    // `payments.head_id` nullable and `validatePayment` now requires a head only
-    // for a budget-treatment payment (store.go:1741), so a headless recoverable
-    // settlement is written with head_id NULL instead of being refused. All five
-    // categories are driven — one that requires a project (EMD), two that require
-    // a counterparty (ICD, Security deposit) and two that require neither
-    // (Employee advance, Other) — because the whole finding was that the category
-    // decided whether approved money could be paid at all.
+    // Approved recoverable money can always be paid. A recoverable has no budget
+    // head, so the payment form posts head_id 0 and the payment is saved with no
+    // head; only a budget payment must name one. All five categories are driven —
+    // one that requires a project (EMD), two that require a counterparty (ICD,
+    // Security deposit) and two that require neither (Employee advance, Other) —
+    // because the category must never decide whether approved money can be paid.
     const approver = await createApproverUser(adminPage, runId);
     const cases: Array<{ category: RecoverableFormOpts['category']; opts: Partial<RecoverableFormOpts> }> = [
       { category: 'emd', opts: { projectLabel: 'Operations' } },
@@ -994,7 +949,7 @@ test.describe('TC-E — Recoverables', () => {
     ];
     const outcomes: Array<{ category: string; status: number; body: string }> = [];
     for (const c of cases) {
-      const { id } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+      const { id } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
         category: c.category,
         amount: '50000',
         expectedReturn: '2027-03-31',
@@ -1005,10 +960,8 @@ test.describe('TC-E — Recoverables', () => {
       outcomes.push({ category: c.category, status: settle.status, body: settle.body });
     }
     // Every category is driven before any assertion runs, and the outcomes are
-    // printed, so one run reports all five rather than stopping at the first —
-    // the whole finding was that the *category* decided whether approved money
-    // could be paid at all, which a first-failure abort would hide.
-    console.log('F-E-01 evidence, one settlement attempt per category:', JSON.stringify(outcomes.map(o => ({ category: o.category, status: o.status }))));
+    // printed, so one run reports all five rather than stopping at the first.
+    console.log('One settlement attempt per recoverable category:', JSON.stringify(outcomes.map(o => ({ category: o.category, status: o.status }))));
     for (const o of outcomes) {
       expect(o.status, `${o.category}: settlement must succeed (302/303 → /payments/{id}) — got ${o.status}`).toBeGreaterThanOrEqual(300);
       expect(o.status, `${o.category}: settlement must succeed`).toBeLessThan(400);
@@ -1017,17 +970,13 @@ test.describe('TC-E — Recoverables', () => {
 
   test(
     'TC-E-031 — Grid/report stay unchanged after a genuinely paid recoverable',
-    async ({ adminPage, browser, runId }) => {
-      // Was test.fixme() while F-E-01 stood: no recoverable request raised through
-      // the product could be settled, so the "a recoverable payment exists" state
-      // this test needs was unreachable. It is reachable now, so the exclusion is
-      // proved end to end rather than only at store level
-      // (internal/store/recoverables_test.go:470 TestGridAndReportExcludeRecoverablePayments,
-      // :516 TestRecoverablePaymentExcludedFromActualsButInRecoverableReport).
+    async ({ adminPage, runId }) => {
+      // A paid recoverable is kept out of the budget grid's actuals, proved end
+      // to end through the real screens.
       const month = currentMonth();
       const before = await gridActualForHead(adminPage, month, HEAD);
       const approver = await createApproverUser(adminPage, runId);
-      const { id } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+      const { id } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
         category: 'emd',
         projectLabel: 'Operations',
         amount: '60000',
@@ -1040,13 +989,13 @@ test.describe('TC-E — Recoverables', () => {
     }
   );
 
-  test('TC-E-032 — An approved-but-unpaid recoverable contributes nothing to grid or report', async ({ adminPage, browser, runId }) => {
+  test('TC-E-032 — An approved-but-unpaid recoverable contributes nothing to grid or report', async ({ adminPage, runId }) => {
     const month = currentMonth();
     const beforeGrid = await gridActualForHead(adminPage, month, HEAD);
     const beforeReport = await reportHeadsActual(adminPage, month, HEAD);
 
     const approver = await createApproverUser(adminPage, runId);
-    await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'emd',
       projectLabel: 'Operations',
       amount: '80000',
@@ -1062,12 +1011,11 @@ test.describe('TC-E — Recoverables', () => {
 
   test("TC-E-033 — An unpaid recoverable is listed with zero outstanding and excluded from paid-balance totals", async ({
     adminPage,
-    browser,
     runId
   }) => {
     const before = await dashboardMetric(adminPage, 'Outstanding');
     const approver = await createApproverUser(adminPage, runId);
-    const { number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { number } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'other',
       amount: '35000',
       expectedReturn: '2027-03-31',
@@ -1124,11 +1072,11 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-036 — An unpaid recoverable never reads as overdue, however old its expected return date', async ({ adminPage, browser, runId }) => {
+  test('TC-E-036 — An unpaid recoverable never reads as overdue, however old its expected return date', async ({ adminPage, runId }) => {
     const before = await dashboardMetric(adminPage, 'Past expected return');
 
     const approver = await createApproverUser(adminPage, runId);
-    const { number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { number } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'other',
       amount: '12000',
       expectedReturn: '2020-01-01', // far in the past
@@ -1144,25 +1092,20 @@ test.describe('TC-E — Recoverables', () => {
     void before;
   });
 
-  test('TC-E-036b — [F-E-05] The dashboard\'s "Past expected return" tile applies the same "unpaid cannot be overdue" rule as the row', async ({
+  test('TC-E-036b — The dashboard\'s "Past expected return" tile applies the same "unpaid cannot be overdue" rule as the row', async ({
     adminPage,
-    browser,
     runId
   }) => {
-    // F-E-05, fixed. RecoverableMetrics' OverdueAmount/OverdueCount used to count
-    // by `expected_return_date < today` alone, with no `paid_on <> ''` guard —
-    // unlike recoverableAgeing, which checks paidOn=="" first. An unpaid, past-due
-    // recoverable therefore inflated this dashboard tile while its own row
-    // correctly read "Awaiting payment". The metric now applies the same guard as
-    // the row. This case is what keeps the two agreeing: money that never left
-    // cannot be overdue, on the tile as well as in the register.
+    // Money that never left cannot be overdue, on the dashboard tile as well as
+    // in the register row: an unpaid recoverable whose expected return date has
+    // passed reads "Awaiting payment" in the row and is not counted by the tile.
     const before = await dashboardMetric(adminPage, 'Past expected return');
     const approver = await createApproverUser(adminPage, runId);
-    await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'other',
       amount: '13000',
       expectedReturn: '2020-01-01',
-      notes: 'F-E-05 probe'
+      notes: 'Unpaid past-due probe'
     });
     const after = await dashboardMetric(adminPage, 'Past expected return');
     expect(after.count, 'an unpaid recoverable must never move the "Past expected return" tile').toBe(before.count);
@@ -1182,9 +1125,9 @@ test.describe('TC-E — Recoverables', () => {
     expect(resp.status, 'a budget request must not be reachable through the recoverable detail screen').toBe(404);
   });
 
-  test('TC-E-039 — ageing=unpaid narrows the register correctly', async ({ adminPage, browser, runId }) => {
+  test('TC-E-039 — ageing=unpaid narrows the register correctly', async ({ adminPage, runId }) => {
     const approver = await createApproverUser(adminPage, runId);
-    const { number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { number } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'other',
       amount: '9000',
       expectedReturn: '2027-01-01',
@@ -1211,12 +1154,12 @@ test.describe('TC-E — Recoverables', () => {
     await expect(adminPage.locator('.metric').filter({ has: adminPage.locator('.metric-label', { hasText: /^Outstanding$/ }) }).locator('.metric-value')).not.toBeEmpty();
   });
 
-  test('TC-E-040b — Outstanding dashboard drilldowns exclude unpaid and reconciled siblings in the same category', async ({ adminPage, browser, runId }, testInfo) => {
+  test('TC-E-040b — Outstanding dashboard drilldowns exclude unpaid and reconciled siblings in the same category', async ({ adminPage, runId }, testInfo) => {
     const approver = await createApproverUser(adminPage, runId);
     const counterparty = `Drilldown Company ${runId}`;
     const records: Array<{ id: number; number: string }> = [];
     for (const [index, amount] of ['7000', '8000', '3000'].entries()) {
-      const record = await raiseAndApproveRecoverable(adminPage, browser, `${runId}-${index}`, approver, {
+      const record = await raiseAndApproveRecoverable(adminPage, `${runId}-${index}`, approver, {
         category: 'icd', counterparty, amount, expectedReturn: '2027-12-31', notes: 'Same category and counterparty, distinct payout/recovery states'
       });
       records.push(record);
@@ -1262,7 +1205,7 @@ test.describe('TC-E — Recoverables', () => {
     }
   });
 
-  test('TC-E-041 — .metric-foot now carries a real CSS rule (informational)', async ({ adminPage }) => {
+  test('TC-E-041 — The dashboard metric footnotes are styled, not left at the browser default size', async ({ adminPage }) => {
     await adminPage.goto('/recoverables');
     const foot = adminPage.locator('.metric-foot').first();
     await expect(foot).toBeVisible();
@@ -1274,12 +1217,11 @@ test.describe('TC-E — Recoverables', () => {
   // Section 5 — Payout classification remains independent of recovery
   // -------------------------------------------------------------------------
 
-  test('TC-E-042 — Category and expected-return survive settlement', async ({ adminPage, browser, runId }) => {
-    // Was test.fixme() while F-E-01 stood, because settling any real-UI recoverable
-    // request failed. Store-level proof of the same property:
-    // internal/store/recoverables_test.go:793 TestRecoverableRequestClosesOnPaymentRetainingClassification.
+  test('TC-E-042 — Category and expected-return survive settlement', async ({ adminPage, runId }) => {
+    // Paying a recoverable closes the request but keeps its category and
+    // expected return date.
     const approver = await createApproverUser(adminPage, runId);
-    const { id } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { id } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'emd',
       projectLabel: 'Operations',
       amount: '40000',
@@ -1294,11 +1236,10 @@ test.describe('TC-E — Recoverables', () => {
 
   test('TC-E-043 — Before settlement, the detail screen already shows category and expected return correctly', async ({
     adminPage,
-    browser,
     runId
   }) => {
     const approver = await createApproverUser(adminPage, runId);
-    const { id } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { id } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'icd',
       counterparty: `Beacon Infra ${runId}`,
       amount: '90000',
@@ -1314,19 +1255,18 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Section 6 — Linked project (V8)
+  // Section 6 — Linked project
   // -------------------------------------------------------------------------
 
   test("TC-E-044 — An EMD linked to a real project shows in that project's register row while absent from its grid actuals", async ({
     adminPage,
-    browser,
     runId
   }) => {
     const month = currentMonth();
     const beforeGrid = await gridActualForHead(adminPage, month, HEAD);
 
     const approver = await createApproverUser(adminPage, runId);
-    const { number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { number } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'emd',
       projectLabel: 'Operations',
       amount: '55000',
@@ -1342,9 +1282,9 @@ test.describe('TC-E — Recoverables', () => {
     expect(afterGrid, "the project's grid actual is unaffected (still unpaid, and would be excluded if paid)").toBe(beforeGrid);
   });
 
-  test('TC-E-045 — A recoverable with no project reads "Not project linked" everywhere', async ({ adminPage, browser, runId }) => {
+  test('TC-E-045 — A recoverable with no project reads "Not project linked" everywhere', async ({ adminPage, runId }) => {
     const approver = await createApproverUser(adminPage, runId);
-    const { id, number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { id, number } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'icd',
       counterparty: `Harith Infra ${runId}`,
       amount: '30000',
@@ -1361,7 +1301,7 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Section 7 — Canonical recovery lifecycle and unsupported legacy aliases
+  // Section 7 — Recoveries are recorded only as dated events; no other write route exists
   // -------------------------------------------------------------------------
 
   test('TC-E-046 / 047 — Unsupported repay aliases remain unavailable (canonical writes use events)', async ({ adminPage }) => {
@@ -1384,7 +1324,7 @@ test.describe('TC-E — Recoverables', () => {
 
   test('TC-E-050 — Accounts records a dated recovery, retries safely, refuses excess and retains reconciled history', async ({ adminPage, browser, runId }, testInfo) => {
     const approver = await createApproverUser(adminPage, runId);
-    const { id, number } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { id, number } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'other', amount: '7000', expectedReturn: '2027-03-31', notes: 'Recovery lifecycle audit'
     });
     await settlePayment(adminPage, id, { amount: '7000', paidOn: today() });
@@ -1452,9 +1392,9 @@ test.describe('TC-E — Recoverables', () => {
   // Section 8 — Permissions
   // -------------------------------------------------------------------------
 
-  async function withRecoverableId(adminPage: Page, browser: Browser, runId: string): Promise<number> {
+  async function withRecoverableId(adminPage: Page, runId: string): Promise<number> {
     const approver = await createApproverUser(adminPage, runId);
-    const { id } = await raiseAndApproveRecoverable(adminPage, browser, runId, approver, {
+    const { id } = await raiseAndApproveRecoverable(adminPage, runId, approver, {
       category: 'other',
       amount: '5000',
       expectedReturn: '2027-03-31',
@@ -1464,7 +1404,7 @@ test.describe('TC-E — Recoverables', () => {
   }
 
   test('TC-E-051 — Requester refused recoverable_report:view on all three view routes', async ({ adminPage, browser, runId }) => {
-    const id = await withRecoverableId(adminPage, browser, runId);
+    const id = await withRecoverableId(adminPage, runId);
     const requester = await asRole(adminPage, browser, runId, ['Requester']);
     try {
       for (const path of ['/recoverables', '/recoverables/list', `/recoverables/${id}`]) {
@@ -1479,7 +1419,7 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   test('TC-E-052 — Manager refused recoverable_report:view on all three view routes', async ({ adminPage, browser, runId }) => {
-    const id = await withRecoverableId(adminPage, browser, runId);
+    const id = await withRecoverableId(adminPage, runId);
     const manager = await asRole(adminPage, browser, runId, ['Manager']);
     try {
       for (const path of ['/recoverables', '/recoverables/list', `/recoverables/${id}`]) {
@@ -1494,7 +1434,7 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   test('TC-E-053 — Accounts granted recoverable_report:view on all three view routes', async ({ adminPage, browser, runId }) => {
-    const id = await withRecoverableId(adminPage, browser, runId);
+    const id = await withRecoverableId(adminPage, runId);
     const accounts = await asRole(adminPage, browser, runId, ['Accounts']);
     try {
       for (const path of ['/recoverables', '/recoverables/list', `/recoverables/${id}`]) {
@@ -1522,7 +1462,7 @@ test.describe('TC-E — Recoverables', () => {
   });
 
   test('TC-E-055 — Admin holds every recoverable verb; anonymous refused all four routes', async ({ adminPage, browser, runId, baseURL }) => {
-    const id = await withRecoverableId(adminPage, browser, runId);
+    const id = await withRecoverableId(adminPage, runId);
     const admin = await asRole(adminPage, browser, runId, ['Admin']);
     try {
       for (const path of ['/recoverables', '/recoverables/list', '/recoverables/list.csv', `/recoverables/${id}`]) {
