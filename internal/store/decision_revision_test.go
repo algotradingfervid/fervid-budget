@@ -12,7 +12,7 @@ import (
 func TestDecisionsAtRevisionRefuseABlankRevision(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	requester, manager, head := seedRequestActors(t, s, ctx)
+	requester, manager, head := seedRequestActors(t, s)
 	raise := func(title string) int64 {
 		id, err := s.CreateRequest(ctx, requester, RequestInput{Treatment: "budget", Type: "reimbursement", ShortTitle: title, ProjectID: 1, HeadID: head, Amount: 10000, Purpose: "taxi", ManagerID: manager.ID, ExpenseDate: "2026-09-26"})
 		if err != nil {
