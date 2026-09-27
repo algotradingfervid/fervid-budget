@@ -224,45 +224,60 @@ func (a *App) paymentDetail(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "payment_detail", PageData{Title: "Payment Detail", Payment: p, Attachments: atts, Audit: audit, Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7])})
 }
 
-func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
-	if payment, err := a.st.Payment(r.Context(), pathID(r)); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	} else if !a.canReadPayment(r, payment) {
-		a.respondStoreError(w, r, store.ErrNotFound)
-		return
-	}
+// loadReadablePayment loads the payment named in the URL path. A payment the
+// caller may not read gets the same 404 as a missing one. ok is false when an
+// error response has already been written.
+func (a *App) loadReadablePayment(w http.ResponseWriter, r *http.Request) (p store.Payment, ok bool) {
 	p, err := a.st.Payment(r.Context(), pathID(r))
+	if err == nil && !a.canReadPayment(r, p) {
+		err = store.ErrNotFound
+	}
 	if err != nil {
 		a.respondStoreError(w, r, err)
-		return
+		return store.Payment{}, false
 	}
-	// S12: a payment that settled a request cannot be edited, and the store
-	// refuses the write. Serving the form anyway would let somebody fill in a
-	// screen whose Save can only ever fail, so the URL goes where the payment
-	// actually lives.
-	if p.RequestID != nil {
-		a.redirectToPayment(w, r, p.ID, "immutable")
-		return
-	}
+	return p, true
+}
+
+// paymentEditPageData is what the edit form needs besides the payment itself:
+// the heads to choose from and the payment-mode options (which always include
+// the payment's own mode).
+func (a *App) paymentEditPageData(r *http.Request, p store.Payment) (PageData, error) {
 	heads, err := a.st.ListHeads(r.Context(), true)
 	if err != nil {
-		a.respondStoreError(w, r, err)
+		return PageData{}, err
+	}
+	choices, err := a.paymentEditChoices(r, p.PaymentMode)
+	if err != nil {
+		return PageData{}, err
+	}
+	return PageData{Title: "Edit Payment", Payment: p, Heads: heads, PaymentModeChoices: choices}, nil
+}
+
+// paymentEditForm shows the edit form for a payment that is not linked to a
+// request. A payment that settled a request can never be edited (the store
+// refuses it), so that URL redirects to the payment's page instead.
+func (a *App) paymentEditForm(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.loadReadablePayment(w, r)
+	if !ok {
+		return
+	}
+	if p.RequestID != nil {
+		a.redirectToPayment(w, r, p.ID, "immutable")
 		return
 	}
 	// Older rows may spell the mode "Bank transfer" or "NEFT"; the form's
 	// options carry the stored key, so the saved mode stays selected.
 	p.PaymentMode = canonicalPaymentMode(p.PaymentMode)
-	choices, err := a.paymentEditChoices(r, p.PaymentMode)
+	data, err := a.paymentEditPageData(r, p)
 	if err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
-	// Month is the payment's own, so "Back to grid" returns to the month this
-	// payment belongs to rather than to / — which was the grid before Phase 4 and
-	// is the dashboard now (F-G-029).
-	a.render(w, r, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, Heads: heads, PaymentModeChoices: choices,
-		Month: p.PaidOn[:7], Locked: a.st.IsLocked(r.Context(), p.PaidOn[:7]) || p.VoidedAt != nil})
+	// Month is the payment's own, so "Back to grid" returns to that month.
+	month := p.PaidOn[:7]
+	data.Month, data.Locked = month, a.st.IsLocked(r.Context(), month) || p.VoidedAt != nil
+	a.render(w, r, "payment_edit_form", data)
 }
 
 // paymentEditChoices is the edit form's payment-mode options: the same list the
@@ -275,15 +290,14 @@ func (a *App) paymentEditChoices(r *http.Request, current string) ([]PaymentMode
 	return paymentModeChoices(settings, current), nil
 }
 
+// paymentEdit saves the edit form, with an optional new attachment. A refusal
+// the user can fix shows the form again with what they typed and the reason.
 func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
-	if payment, err := a.st.Payment(r.Context(), pathID(r)); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	} else if !a.canReadPayment(r, payment) {
-		a.respondStoreError(w, r, store.ErrNotFound)
+	payment, ok := a.loadReadablePayment(w, r)
+	if !ok {
 		return
 	}
-	id := pathID(r)
+	id := payment.ID
 	in, err := paymentInput(r)
 	var attachment *store.AttachmentInput
 	var attachmentPath string
@@ -295,41 +309,35 @@ func (a *App) paymentEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		removeStagedAttachment(a.log, r, attachmentPath)
-		status := storeErrorStatus(err)
-		if status >= http.StatusInternalServerError {
+		status, fixable := userError(err)
+		if !fixable {
 			a.respondStoreError(w, r, err)
 			return
 		}
-		heads, headsErr := a.st.ListHeads(r.Context(), true)
-		if headsErr != nil {
-			a.respondStoreError(w, r, headsErr)
-			return
-		}
-		p := paymentFromInput(in)
+		p := paymentFormValues(in)
 		p.ID = id
-		choices, choicesErr := a.paymentEditChoices(r, p.PaymentMode)
-		if choicesErr != nil {
-			a.respondStoreError(w, r, choicesErr)
+		data, dataErr := a.paymentEditPageData(r, p)
+		if dataErr != nil {
+			a.respondStoreError(w, r, dataErr)
 			return
 		}
-		locked := validDateInput(in.PaidOn) && a.st.IsLocked(r.Context(), in.PaidOn[:7])
-		a.renderStatus(w, r, status, "payment_edit_form", PageData{Title: "Edit Payment", Payment: p, PaymentAmount: r.FormValue("amount"), Heads: heads, PaymentModeChoices: choices, Locked: locked, Error: friendly(err)})
+		data.PaymentAmount, data.Error = r.FormValue("amount"), friendly(err)
+		data.Locked = validDateInput(in.PaidOn) && a.st.IsLocked(r.Context(), in.PaidOn[:7])
+		a.renderStatus(w, r, status, "payment_edit_form", data)
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
 }
 
+// paymentVoid voids a payment with the given reason, then returns to the
+// payments page named in "next" or to the payment itself.
 func (a *App) paymentVoid(w http.ResponseWriter, r *http.Request) {
-	if payment, err := a.st.Payment(r.Context(), pathID(r)); err != nil {
-		a.respondStoreError(w, r, err)
-		return
-	} else if !a.canReadPayment(r, payment) {
-		a.respondStoreError(w, r, store.ErrNotFound)
+	payment, ok := a.loadReadablePayment(w, r)
+	if !ok {
 		return
 	}
-	id := pathID(r)
-	err := a.st.VoidPayment(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason"))
-	if err != nil {
+	id := payment.ID
+	if err := a.st.VoidPayment(r.Context(), auth.CurrentUser(r), id, r.FormValue("reason")); err != nil {
 		a.respondStoreError(w, r, err)
 		return
 	}
@@ -340,26 +348,13 @@ func (a *App) paymentVoid(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/payments/%d", id), http.StatusSeeOther)
 }
 
-// canReadPayment is the ownership rule behind every attachment route, and it is
-// the same rule paymentDetail applies before rendering a linked payment: half of
-// what an attachment discloses belongs to the request, so reading it obeys the
-// request's row scope "or payment:view becomes a way around Q5/R6"
-// (paymentDetail's own comment, and this is the route it was written about —
-// F-A-01/F-A-03).
-//
-// A request-less historical payment has no row scope to consult, so it falls
-// back to the ledger's own verb plus the payment data scope.
+// canReadPayment reports whether the signed-in user may read p, which decides
+// the payment edit, void and attachment routes. A payment linked to a request
+// is readable when the user's request scope reaches that request, because its
+// page and files show the request too. A payment without a request needs
+// payment:view and a payment scope that reaches it.
 func (a *App) canReadPayment(r *http.Request, p store.Payment) bool {
-	u := auth.CurrentUser(r)
-	if p.RequestID != nil {
-		req, err := a.st.Request(r.Context(), *p.RequestID)
-		if err != nil {
-			return false
-		}
-		return a.canSeeRequest(r, req)
-	}
-	return a.auth.Can(u, "payment", "view") &&
-		paymentScopeReaches(a.auth.Scope(u, "payment"), u.ID, p)
+	return a.userReadsPayment(r.Context(), auth.CurrentUser(r), p)
 }
 
 // paymentScopeReaches mirrors ListPayments' scope filter exactly, so a caller
@@ -407,7 +402,7 @@ func paymentInput(r *http.Request) (store.PaymentInput, error) {
 	return in, err
 }
 
-func paymentFromInput(in store.PaymentInput) store.Payment {
+func paymentFormValues(in store.PaymentInput) store.Payment {
 	return store.Payment{
 		HeadID:      in.HeadID,
 		PaidOn:      in.PaidOn,

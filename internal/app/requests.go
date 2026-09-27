@@ -332,8 +332,7 @@ func (a *App) requestSubmitted(w http.ResponseWriter, r *http.Request) {
 // recoverable_report:view …) before the handler runs. Notifications, which
 // have no route in front of them, use store.CanViewRequest, which checks both.
 func (a *App) canSeeRequest(r *http.Request, req store.Request) bool {
-	u := auth.CurrentUser(r)
-	return store.RequestInScope(a.auth.Scope(u, "request"), u.ID, req)
+	return a.userSeesRequest(auth.CurrentUser(r), req)
 }
 
 // loadRequestByID reads request id and returns it if the signed-in user's data
