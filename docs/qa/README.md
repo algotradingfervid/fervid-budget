@@ -86,6 +86,26 @@ replayable reproduction, impact, evidence, and a suggested direction — not a p
 
 ---
 
+## Source citations
+
+The `file:line` citations throughout this directory refer to the audited
+snapshot (`30edd6a`). The code has moved since: templates now live in
+`internal/app/templates/*.html`, `templates.go` is gone and the large Go files
+have been split. Look a cited function up by name, not by line.
+
+The rules some test cases were written against have also changed on purpose
+since the audit. The audit specs in `tests/e2e/audit-*.spec.ts` assert the
+current rules, and where they differ from a test-case document the spec is
+current:
+
+- a payment may not be dated before its request's approval, nor after today;
+- uploads must be real PDFs;
+- repeated failed sign-ins throttle the source instead of locking the account;
+- approve, return, reject, cancel and the cancellation decision post the
+  request's revision;
+- a request a user may not see answers 404 everywhere, never 403;
+- a payment made against a request the caller has not reserved answers 409.
+
 ## Running the suites
 
 There are two, and they are deliberately separate.
@@ -142,20 +162,19 @@ Both configs key the port, the test-results directory and the HTML report off
 ### `tests/e2e/audit-support.ts`
 
 Shared helpers, and one trap worth knowing before writing any permission test:
+**a probe user must hold exactly the roles under test.** The "＋ Add user" sheet
+insists on at least one role, and the user edit sheet replaces the whole role
+set with whatever boxes are ticked when it is saved, so a user holding one role
+more than intended quietly passes checks meant to refuse them.
 
-**`store.CreateUser` gives every new user the Accounts system role.**
-`assignDefaultRoleTx` (`internal/store/migrations.go:501`) grants Accounts unless
-the legacy role field is literally `admin`, and the "＋ Add user" sheet posts no
-`role_ids`. So a fresh user already holds all eight payment verbs and request
-scope `all`. The edit sheet pre-checks the current set and `SetUserRoles` DELETEs
-before re-inserting, so ticking "Manager" yields **Accounts + Manager** — which is
-what `fixtures.createApproverUser` does. For a permission probe that is useless:
-the subject holds two roles and every refusal you expected becomes a 200.
+`createUserWithExactRoles` creates the user as a Requester and then unticks
+every role before ticking the ones asked for. Pass `[]` for a signed-in user with
+no role at all — the sharpest probe in the suite, because every route it still
+reaches is a route with no effective gate.
 
-`createUserWithExactRoles` unchecks every box first, so a subject holds precisely
-the grants under test. Pass `[]` for a signed-in user with no role at all — the
-sharpest probe in the suite, because every route it still reaches is a route with
-no effective gate.
+`requestRevision` reads the hidden `revision` field that approve, return,
+reject, cancel and the cancellation decision must post: a missing or
+out-of-date revision is refused with 400.
 
 `probeGet`/`probePost` do **not** follow redirects. A gated route answers an
 anonymous caller `303 → /login`, and a client that follows it reports `200` for
@@ -165,18 +184,12 @@ the login page, turning a refusal into an apparent success.
 
 ## How a known defect is represented in code
 
-> **This section describes the audit pass, which is over.** The instruction
-> *report, do not repair* was reversed, and four repair waves have since changed
-> application code — so "no application code changed" is true of `30edd6a` and
-> false of the working tree. As each defect is fixed its annotation is
-> **removed**, which is the whole point of the scheme below. The count has
-> therefore fallen from roughly 35 at the audit to **15 `test.fail()` and 3
-> `test.fixme()`** across `tests/e2e/audit-*.spec.ts` as of this writing, and it
-> is still falling — count them rather than trusting this figure, and read
-> [`results/REPAIR-LOG.md`](results/REPAIR-LOG.md) for what is actually fixed.
-> Note also that areas A and G are **red on purpose** right now: assertions there
-> recorded defective behaviour as truth without `test.fail()`, so they fail
-> because the product improved.
+> **This section describes the audit pass, which is over.** The defects have
+> since been repaired and each annotation was removed as its defect was fixed.
+> As of 2026-09-27 there is no `test.fail()` or `test.fixme()` left in
+> `tests/e2e/audit-*.spec.ts`, and every area is green against the current
+> rules (see "Source citations" above). Read
+> [`results/REPAIR-LOG.md`](results/REPAIR-LOG.md) for what was fixed.
 
 The audit was instructed to report, not repair, so no application code changed.
 A confirmed defect keeps its honest assertion and is annotated:
