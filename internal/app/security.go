@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const maxRequestBodyBytes int64 = 21 << 20
+
 const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
 type authWindow struct {

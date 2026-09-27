@@ -2,20 +2,26 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"image"
 	"image/jpeg"
 	"image/png"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
 	"fervidbudget/internal/store"
 )
+
+const maxAttachmentMB int64 = 20
 
 // Use the same bounded value for the form and the upload. Invalid legacy
 // settings fall back to the seeded default; configuration rejects new ones.
@@ -113,4 +119,17 @@ func (w *attachmentWriter) Write(p []byte) (int, error) {
 	n, e := w.out.Write(p)
 	w.n += int64(n)
 	return n, e
+}
+
+func removeStagedAttachment(logger *slog.Logger, r *http.Request, path string) {
+	if path == "" {
+		return
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		logger.ErrorContext(r.Context(), "attachment cleanup failed",
+			"request_id", requestID(r),
+			"path", path,
+			"error", err,
+		)
+	}
 }
