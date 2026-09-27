@@ -66,7 +66,7 @@ func TestRequestInputReadsEveryFieldTheAdaptiveFormCanReveal(t *testing.T) {
 		t.Errorf("ids = %d/%d/%d/%d, want 3/7/11/5", in.ProjectID, in.HeadID, in.VendorID, in.ManagerID)
 	}
 	// RequesterID never comes from the form: the store stamps it from the actor,
-	// which is what makes the self-approval rule (G8) unforgeable.
+	// which is what makes the rule that nobody approves their own request unforgeable.
 	if in.RequesterID != 0 {
 		t.Errorf("requester_id = %d, want 0 — it must come from the session, never the form", in.RequesterID)
 	}
@@ -82,7 +82,7 @@ func TestRequestInputReadsEveryFieldTheAdaptiveFormCanReveal(t *testing.T) {
 	}
 }
 
-// The URL may narrow a caller's scope, never widen it. Q5/R6.
+// The URL may narrow a caller's data scope, never widen it.
 func TestScopeNarrowsFromTheURLButNeverWidens(t *testing.T) {
 	s := newAppTestServer(t)
 	a := s.probeApp()
@@ -134,7 +134,7 @@ func TestRequestExportIsScopedAndCarriesThePhase2Columns(t *testing.T) {
 		t.Fatalf("the requester's own row is missing from their export: %s", body)
 	}
 
-	// Q5: another requester exports nothing of it, even asking for scope=all.
+	// Another requester exports nothing of it, even asking for scope=all.
 	s.seedRequester("olga@example.test", "Olga", "OtherPass1234")
 	s.login("olga@example.test", "OtherPass1234")
 	other := s.get("/requests/export.csv?scope=all")
@@ -143,7 +143,7 @@ func TestRequestExportIsScopedAndCarriesThePhase2Columns(t *testing.T) {
 	}
 }
 
-// A16: picking a type is a navigation, not a form control. GET /requests/new is
+// Picking a request type is a navigation, not a form control. GET /requests/new is
 // step 1 of 2 and lists the four types as links; there is no <select name="type">
 // anywhere in the application.
 func TestRequestNewTypeChooser(t *testing.T) {
@@ -154,9 +154,9 @@ func TestRequestNewTypeChooser(t *testing.T) {
 	if !strings.Contains(body, `class="type-grid"`) {
 		t.Fatal("the chooser does not use the .type-grid layout")
 	}
-	// Five, one per store type: the deposit or guarantee got its card in the
-	// 2026-09-25 fix wave (form-1), because the employee advance — the only card
-	// that could carry the recoverable treatment — pays the requester.
+	// Five, one per store type. The deposit or guarantee needs its own card
+	// because the employee advance, the other recoverable type, always pays the
+	// requester.
 	if n := strings.Count(body, `class="type-card"`); n != 5 {
 		t.Fatalf("the chooser renders %d type cards, want 5", n)
 	}
@@ -172,16 +172,16 @@ func TestRequestNewTypeChooser(t *testing.T) {
 			t.Fatalf("type card %q missing", want)
 		}
 	}
-	// A16: the type is never a form control.
+	// The type is never a form control.
 	if strings.Contains(body, `name="type"`) {
 		t.Fatal("the chooser rendered a type form control; the type is a route parameter")
 	}
-	// D1: the screen says so, because the whole flow depends on it.
+	// The screen says it is step 1 of 2, because the whole flow depends on it.
 	if !strings.Contains(strings.ToLower(body), "nothing is saved until you submit") {
 		t.Fatal("the chooser must state that nothing is saved until submit")
 	}
-	// The step-1 screen keeps its own heading on every device — the ux sweep
-	// requires a visible h1 at 390px as well as 1440px.
+	// The step-1 screen keeps a visible h1 on every device, phone (390px) and
+	// desktop (1440px) alike.
 	if !strings.Contains(body, "<h1>") {
 		t.Fatal("the chooser has no h1")
 	}
@@ -194,7 +194,7 @@ func TestRequestNewTypeChooser(t *testing.T) {
 }
 
 // The step-2 form is built for one type, and the treatment half of it is
-// rendered by the server on every change (A16). Nothing here is decided by the
+// rendered by the server on every change. Nothing here is decided by the
 // browser: the same rules run again in validateRequestInput.
 func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	s := newAppTestServer(t)
@@ -205,13 +205,13 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 
 	form := s.get("/requests/new?type=vendor_invoice")
 
-	// T3: bank details live on the vendor record, never on a request screen.
+	// Bank details live on the vendor record, never on a request screen.
 	for _, banned := range []string{"bank account", "ifsc", "copy previous", "save draft", "save as draft"} {
 		if strings.Contains(strings.ToLower(form), banned) {
 			t.Fatalf("the request form exposes %q", banned)
 		}
 	}
-	// A16: the type arrives as a route parameter and leaves as a hidden input.
+	// The type arrives as a route parameter and leaves as a hidden input.
 	if strings.Contains(form, `<select id="rtype"`) || strings.Contains(form, `<select name="type"`) {
 		t.Fatal("the form rendered a type selector; the type is a route parameter")
 	}
@@ -241,7 +241,8 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 		}
 	}
 
-	// G8: the requester is never in their own approver list, and somebody else is.
+	// Nobody may approve their own request: the requester is never in their own
+	// approver list, and somebody else is.
 	admin := s.admin()
 	approverSelect := between(t, form, `<select id="approver"`, `</select>`)
 	if strings.Contains(approverSelect, `value="`+strconvFormat(admin.ID)+`"`) {
@@ -302,7 +303,7 @@ func TestRequestFormIsAdaptiveAndTypeIsNeverAControl(t *testing.T) {
 	}
 }
 
-// G10: when attachments are compulsory the form asks for a written reason
+// When attachments are compulsory the form asks for a written reason
 // instead of blocking, because documents are sometimes genuinely unavailable.
 func TestCompulsoryAttachmentsAskForAReasonRatherThanBlocking(t *testing.T) {
 	s := newAppTestServer(t)
@@ -321,7 +322,7 @@ func TestCompulsoryAttachmentsAskForAReasonRatherThanBlocking(t *testing.T) {
 	}
 }
 
-// A15/A16: an htmx fragment is a fragment — no shell, no document.
+// An htmx fragment is a fragment: no page shell, no full document.
 func TestRenderPartialOmitsTheShell(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedHead("Frag")
@@ -341,8 +342,8 @@ func TestRenderPartialOmitsTheShell(t *testing.T) {
 	}
 }
 
-// D1: there is exactly one submit button and exactly one POST. The request is
-// created, numbered and already pending when that POST returns.
+// There are no drafts: exactly one submit button and exactly one POST. The
+// request is created, numbered and already pending when that POST returns.
 func TestRequesterCreatesAndSubmitsInOnePost(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("One")
@@ -407,7 +408,7 @@ func TestRequesterCreatesAndSubmitsInOnePost(t *testing.T) {
 	}
 }
 
-// A16.4: hidden is not validation. A hand-rolled POST that fills a field the
+// Hiding a field is not validation. A hand-rolled POST that fills a field the
 // form would never have shown is still refused by the store's own rules.
 func TestAHandRolledPostCannotEscapeTheTypeRules(t *testing.T) {
 	s := newAppTestServer(t)
@@ -433,7 +434,7 @@ func TestAHandRolledPostCannotEscapeTheTypeRules(t *testing.T) {
 	requireStatus(t, resp, http.StatusBadRequest)
 	_ = responseBody(t, resp)
 
-	// G8: nor can a requester route a request to themselves.
+	// Nor can a requester route a request to themselves for approval.
 	me, err := s.st.UserByEmail(s.ctx, "forger@example.test")
 	if err != nil {
 		t.Fatal(err)
@@ -454,8 +455,8 @@ func TestAHandRolledPostCannotEscapeTheTypeRules(t *testing.T) {
 	}
 }
 
-// G6: the duplicate check is a read. It renders 200 whether or not anything
-// matched, POST /requests neither calls it nor consults it, and no result it
+// The duplicate check only warns. It is a read that renders 200 whether or not
+// anything matched, POST /requests neither calls it nor consults it, and no result it
 // can produce is capable of refusing a submit.
 func TestDuplicateCheckWarnsAndNeverBlocks(t *testing.T) {
 	s := newAppTestServer(t)
@@ -503,7 +504,7 @@ func TestDuplicateCheckWarnsAndNeverBlocks(t *testing.T) {
 		t.Fatalf("no-match fragment = %q, want empty", got)
 	}
 
-	// G6: the submit goes through anyway, and creates a second request.
+	// The submit goes through anyway, and creates a second request.
 	resp := s.postForm("/requests", url.Values{
 		"type": {"vendor_invoice"}, "treatment": {"budget"}, "short_title": {"July switchgear"},
 		"project_id": {"1"}, "head_id": {strconvFormat(headID)}, "amount": {"1,00,000.00"},
@@ -576,12 +577,12 @@ func TestWaitingOnNamesWhoeverOwesTheNextAction(t *testing.T) {
 		{"rejected", req("rejected", me, them), "Closed. Raise a new request if needed", "closed"},
 		{"withdrawn", req("withdrawn", me, them), "Withdrawn by the requester", "closed"},
 		{"cancelled", req("cancelled", me, them), "Cancelled. Nothing can be paid against it", "closed"},
-		// settlement-7: the assigned accountant by name (uiux design §4), "you"
-		// for the holder, and the department only when the name is not joined.
+		// Processing waits on the assigned accountant by name, "you" for the
+		// holder, and the department only when the name is not joined.
 		{"processing held by someone else", held("processing", them, false), "Waiting on Deepak (Accounts)", ""},
 		{"processing held by me", held("processing", me, false), "Waiting on you", "you"},
 		{"processing without the join", req("processing", me, them), "Waiting on Accounts", ""},
-		// settlement-8: an open concern waits on the manager and Accounts.
+		// An open concern waits on both the manager and Accounts.
 		{"partial review on me", req("partial_review", them, me), "Waiting on you", "you"},
 		{"partial review on someone else", req("partial_review", me, them), "Waiting on Kavita", ""},
 		{"concern open, I hold it", held("partial_review", me, true), "Waiting on you", "you"},
@@ -627,7 +628,7 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 		`class="segmented"`, `class="m-filters"`, `id="filter-sheet"`, `class="overlay"`,
 		"Still waiting", "Sent back to me", "<h1>",
 	)
-	// D5: the design system removed .badge entirely.
+	// The .badge class is retired; status is shown with .pill.
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("the list still renders .badge; the design system uses .pill")
 	}
@@ -654,7 +655,7 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 		t.Fatal("an empty bucket says nothing at all")
 	}
 
-	// Q5: the list is scoped. Another requester sees none of it.
+	// The list is scoped to the viewer. Another requester sees none of it.
 	s.seedRequester("notlister@example.test", "Not Lister", "OtherPass1234")
 	s.login("notlister@example.test", "OtherPass1234")
 	other := s.get("/requests")
@@ -663,9 +664,8 @@ func TestRequestsListRendersCardsTabsAndWaitingLine(t *testing.T) {
 	}
 }
 
-// A15: the manager queue is its own screen, with its own tabs and its own
-// empty state. Folding it into /requests?scope=assigned made the segmented
-// tabs mean two things at once.
+// The manager's approvals queue is its own screen, with its own tabs and its
+// own empty state, so the requests list's tabs mean only one thing.
 func TestApprovalsQueueIsItsOwnScreen(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Appr")
@@ -701,14 +701,14 @@ func TestApprovalsQueueIsItsOwnScreen(t *testing.T) {
 			t.Fatalf("approvals queue is missing %q", want)
 		}
 	}
-	// A6: no bulk approval anywhere on the screen.
+	// No bulk approval anywhere on the screen: each request is decided alone.
 	if strings.Contains(body, `type="checkbox"`) || strings.Contains(strings.ToLower(body), "approve selected") {
 		t.Fatal("the approvals queue offers bulk approval")
 	}
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("the approvals queue still renders .badge")
 	}
-	// The cancellation tab is a first-class part of the queue (G1).
+	// Cancellation requests have their own tab in the queue.
 	if !strings.Contains(body, `href="/approvals?bucket=cancellations`) {
 		t.Fatal("no cancellations tab")
 	}
@@ -722,7 +722,7 @@ func TestApprovalsQueueIsItsOwnScreen(t *testing.T) {
 	requireStatus(t, s.request(http.MethodGet, "/approvals", nil, ""), http.StatusForbidden)
 }
 
-// A19: the two detail mockups are one page. Only the action bar changes, and it
+// Request detail is one page for everyone. Only the action bar changes, and it
 // changes on permission, never on a role name and never on which URL you came
 // from. History and conversation are a single merged .thread.
 func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
@@ -761,7 +761,7 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 		`id="approve-sheet"`, `class="overlay"`, `class="sheet"`,
 		"MFS/26-27/0912", "Meridian Facility Services", "<h1>",
 	)
-	// A19: one merged stream, not two lists.
+	// One merged stream, not two lists.
 	if strings.Count(body, `class="thread"`) != 1 {
 		t.Fatal("the detail page renders more than one thread")
 	}
@@ -804,18 +804,17 @@ func TestRequestDetailIsOneScreenWithPermissionGatedActions(t *testing.T) {
 	}
 	mustContain(t, "approved detail view", body, `class="banner locked"`, `href="/requests/`+strconvFormat(id)+`/cancel"`)
 
-	// --- The three shipped screens that already link here now resolve. ---
+	// --- The screens that link to the detail page resolve. ---
 	for _, path := range []string{"/requests/" + strconvFormat(id), "/requests/" + strconvFormat(id) + "/submitted"} {
 		resp := s.request(http.MethodGet, path, nil, "")
 		requireStatus(t, resp, http.StatusOK)
 		_ = responseBody(t, resp)
 	}
 
-	// --- A third party in neither seat cannot read it at all (Q5/R6). ---
+	// --- A third party in neither seat cannot read it at all. ---
 	// 404, not 403: an out-of-scope row answers exactly as a non-existent one
-	// does, or the status code is an existence oracle for the whole id space
-	// (F-G-002). TestOutOfScopeRequestIsIndistinguishableFromAMissingOne pins the
-	// pair.
+	// does, or the status code reveals which ids exist.
+	// TestOutOfScopeRequestIsIndistinguishableFromAMissingOne pins the pair.
 	s.seedRequester("nosy@example.test", "Nosy Parker", "OtherPass1234")
 	s.login("nosy@example.test", "OtherPass1234")
 	requireStatus(t, s.request(http.MethodGet, "/requests/"+strconvFormat(id), nil, ""), http.StatusNotFound)
@@ -880,7 +879,7 @@ func TestRequestDecisionsThroughTheDetailScreen(t *testing.T) {
 		t.Fatalf("reject left status %q", got.Status)
 	}
 
-	// A rejected request is raised again as a new pending one (D1: never a draft).
+	// A rejected request is raised again as a new pending one, never a draft.
 	s.login("deciding@example.test", "RequesterPass123")
 	resp = s.postForm("/requests/"+strconvFormat(rejected)+"/reraise", url.Values{})
 	requireStatus(t, resp, http.StatusSeeOther)
@@ -920,7 +919,7 @@ func TestRequestEditScreenAndReroute(t *testing.T) {
 	if strings.Contains(body, `value="₹`) {
 		t.Fatal("the amount field carries a second rupee sign")
 	}
-	// A16: the type is still not editable — it is what the request is.
+	// The type is not editable: it is what the request is.
 	if strings.Contains(body, `name="type"`) && !strings.Contains(body, `type="hidden" name="type"`) {
 		t.Fatal("the edit screen offers a type control rather than carrying the route parameter")
 	}
@@ -1033,9 +1032,9 @@ func TestReturnedRequestScreenCorrectsAndResubmits(t *testing.T) {
 	}
 }
 
-// G1, G2, G3: an approved request cannot be withdrawn on your own. The
-// requester asks, payment freezes at that moment, and the approver accepts or
-// declines — or cancels outright with a reason, without being asked.
+// An approved request cannot be withdrawn on your own. The requester asks,
+// payment freezes at that moment, and the approver accepts or declines — or
+// cancels outright with a reason, without being asked.
 func TestCancellationScreensEndToEnd(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Cancel")
@@ -1044,10 +1043,9 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Neither seeded role carries the cancellation verbs: request:cancel and
-	// approval:cancel entered the vocabulary with this flow and Phase 1's
-	// starter roles were never back-filled. An administrator grants them on the
-	// Roles screen; this does the same thing directly.
+	// The seeded starter roles do not carry request:cancel or approval:cancel.
+	// An administrator grants them on the Roles screen; this does the same
+	// thing directly.
 	s.grantAlso(mgrID, "Approver who may cancel",
 		[]store.Grant{{Resource: "approval", Action: "cancel"}},
 		[]store.ScopeGrant{{Resource: "request", Scope: "all"}})
@@ -1127,7 +1125,7 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 		t.Fatalf("accepted cancellation left status %q, want cancelled", got.Status)
 	}
 
-	// --- G2: the approver cancels a different request outright. ---
+	// --- The approver cancels a different request outright. ---
 	other := mk("Second order", 100000)
 	outright := s.get("/requests/" + strconvFormat(other) + "/cancellation")
 	if !strings.Contains(outright, `data-open="outright-sheet"`) {
@@ -1144,10 +1142,10 @@ func TestCancellationScreensEndToEnd(t *testing.T) {
 	}
 }
 
-// D6/G21: one screen, one form, one fieldset per section, one generic
-// app_settings-backed save. Phases 3-5 append a ConfigSection and touch nothing
-// else — if a later phase has to edit the handler, this task got the shape
-// wrong, so the test asserts the shape as much as the behaviour.
+// Configuration is one screen, one form, one fieldset per section, and one
+// generic save into app_settings. A new setting is added by appending a
+// ConfigSection, never by editing the handler, so the test checks that shape as
+// well as the behaviour.
 func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 	s := newAppTestServer(t)
 
@@ -1169,14 +1167,14 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 		`name="allow_approver_choice"`, `class="action-bar"`,
 		"<h1>",
 	)
-	// No "allow direct payments" toggle (recoverables-10): nothing read the
-	// key, paymentCreate refuses a request-less payment regardless (X5), and its
-	// hint promised a reason and an audit flag that did not exist.
+	// No "allow direct payments" toggle: every payment must belong to a
+	// request, and paymentCreate refuses one without, so the toggle would do
+	// nothing.
 	if strings.Contains(body, `name="allow_direct_payments"`) || strings.Contains(body, "Allow direct payments") {
 		t.Fatal("the configuration screen offers a direct-payments toggle that nothing reads")
 	}
-	// One form of fieldsets closed by one action bar: that is the shape later
-	// phases append to.
+	// One form of fieldsets closed by one action bar: new sections append to
+	// that shape.
 	if n := strings.Count(body, `class="action-bar"`); n != 1 {
 		t.Fatalf("the configuration screen has %d action bars, want 1", n)
 	}
@@ -1213,7 +1211,7 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 			t.Fatalf("app_settings[%q] = %q, want %q", k, settings[k], want)
 		}
 	}
-	// The change is audited (C2).
+	// The change is written to the audit log.
 	audit, err := s.st.Audit(s.ctx, "app_setting", 0, 5)
 	if err != nil || len(audit) == 0 {
 		t.Fatalf("configuration save was not audited: %#v, %v", audit, err)
@@ -1253,7 +1251,7 @@ func TestConfigurationScreenReadsAndWritesAppSettings(t *testing.T) {
 	}
 }
 
-// A17: the dashboard is a metric strip plus .work-areas. The strip tells you a
+// The dashboard is a metric strip plus .work-areas. The strip tells you a
 // number; the work area hands you the thing to do. Both are gated on the same
 // permissions the nav is, so a person is never shown a queue they cannot open.
 func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
@@ -1317,7 +1315,8 @@ func TestDashboardShowsGatedWorkAreasWithCounts(t *testing.T) {
 	}
 }
 
-// A6/D5: no bulk-approve and no copy-previous endpoint may exist.
+// No bulk-approve and no copy-previous endpoint may exist: every request is
+// decided and raised on its own.
 func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
@@ -1333,7 +1332,8 @@ func TestNoBulkApproveOrCopyEndpointExists(t *testing.T) {
 	_ = responseBody(t, copyResp)
 }
 
-// X1: nothing tax/TDS-related may leak into the schema or the route table.
+// Tax and TDS are out of scope for the request workflow: nothing tax-related
+// may appear in the schema or the route table.
 func TestNoTaxColumnsInSchema(t *testing.T) {
 	s := newAppTestServer(t)
 	db := s.st.DB()
@@ -1355,8 +1355,8 @@ func TestNoTaxColumnsInSchema(t *testing.T) {
 	}
 	rows.Close()
 	for _, tbl := range tables {
-		// vendors.tds_section / tds_rate are Phase-1V statutory vendor master
-		// fields, not request-workflow tax handling; they are out of scope here.
+		// vendors.tds_section / tds_rate are statutory vendor master fields, not
+		// request-workflow tax handling, so the vendors table is skipped.
 		if tbl == "vendors" {
 			continue
 		}

@@ -10,11 +10,9 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// form-1 / recoverables-1 — a deposit or guarantee (EMD, PBG, ICD, security
-// deposit) is its own request type, paid to the counterparty or authority the
-// requester names. It used to be raisable only as an employee advance, which
-// always pays the requester, so a ₹10 lakh inter-corporate deposit was recorded
-// as "Paid to Rhea Requester".
+// A deposit or guarantee (EMD, PBG, ICD, security deposit) is its own request
+// type, paid to the counterparty or authority the requester names. An employee
+// advance always pays the requester, so it cannot carry a deposit.
 func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
@@ -42,7 +40,7 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 		t.Fatal("the deposit form asks for a budget head or an advance reason, neither of which a deposit has")
 	}
 
-	// The ICD from the finding, raised through the form's POST.
+	// An inter-corporate deposit, raised through the form's POST.
 	resp := s.postForm("/requests", url.Values{
 		"type": {"recoverable"}, "treatment": {"recoverable"}, "recoverable_category": {"icd"},
 		"short_title": {"ICD to Meridian"}, "amount": {"10,00,000"}, "purpose": {"inter-corporate deposit"},
@@ -107,8 +105,8 @@ func TestDepositIsItsOwnTypeAndPaysTheCounterparty(t *testing.T) {
 	}
 }
 
-// form-1 — the deposit's payee is editable where the rest of the request is,
-// and survives the returned screen, which posts only what it shows.
+// A deposit's payee is editable wherever the rest of the request is, and
+// survives the returned screen, which posts only what it shows.
 func TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Ridge")
@@ -156,9 +154,9 @@ func TestDepositPayeeIsOnTheEditFormAndSurvivesTheReturnedScreen(t *testing.T) {
 	}
 }
 
-// form-1, kept readable — an employee advance recorded under a deposit category
-// before deposits were their own type still opens on the edit form: its
-// category is offered back as Employee advance and the banner says so.
+// An employee advance recorded under a deposit category before deposits were
+// their own type still opens on the edit form: its category is offered back as
+// Employee advance and the banner says so.
 func TestLegacyEmployeeAdvanceUnderADepositCategoryStaysEditable(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
@@ -179,9 +177,8 @@ func TestLegacyEmployeeAdvanceUnderADepositCategoryStaysEditable(t *testing.T) {
 	}
 }
 
-// tests-1 (F-E-07) — the Configuration hint says the employee advance fills in
-// the PAYEE, not the counterparty. The fix landed without a test, so the copy
-// could slip back.
+// The Configuration hint says the employee advance fills in the PAYEE, not the
+// counterparty.
 func TestConfigurationHintNamesThePayeeNotTheCounterparty(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
@@ -194,9 +191,9 @@ func TestConfigurationHintNamesThePayeeNotTheCounterparty(t *testing.T) {
 	}
 }
 
-// seedLegacyDepositAsEmployeeAdvance writes the row the review found: an
-// employee advance recorded under a deposit category before deposits were their
-// own request type. Only raw SQL can write it now, which is the point.
+// seedLegacyDepositAsEmployeeAdvance writes an employee advance recorded under
+// a deposit category before deposits were their own request type. Only raw SQL
+// can write it now, which is the point.
 func seedLegacyDepositAsEmployeeAdvance(t *testing.T, s *appTestServer, seq int, requester store.User, approver int64) int64 {
 	t.Helper()
 	return s.insertRequest(t, map[string]any{
@@ -209,12 +206,10 @@ func seedLegacyDepositAsEmployeeAdvance(t *testing.T, s *appTestServer, seq int,
 	})
 }
 
-// form-1 / recoverables-1, review round 2 — the returned screen's one-press
-// "Resubmit for approval" used to file a legacy deposit-as-employee-advance
-// under the Employee advance category without a word: the banner explaining
-// the reclassification was rendered on the full edit form only. The returned
-// screen now carries the same notice, the buttons name what they do, and the
-// notice survives a refused attempt.
+// Resubmitting a returned legacy deposit-as-employee-advance files it under the
+// Employee advance category, so the returned screen says so before the press:
+// it carries the same notice as the full edit form, its buttons name what they
+// do, and the notice survives a refused attempt.
 func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")
@@ -279,11 +274,9 @@ func TestLegacyDepositReturnedScreenSaysWhatResubmittingDoes(t *testing.T) {
 	}
 }
 
-// form-1 / form-3, review round 2 — the edit form's warn banner had one
-// hard-coded heading, "This request charges something that has since been
-// retired", whatever the warning was about. Each warning now carries its own
-// heading, and a request that is both legacy and on a retired project shows
-// both, separately.
+// Each edit-form warning carries its own heading rather than one shared
+// heading about retirement, and a request that is both legacy and on a retired
+// project shows both warnings, separately.
 func TestEditFormWarningsCarryTheirOwnHeadings(t *testing.T) {
 	s := newAppTestServer(t)
 	requester := s.seedRequester("rhea@example.test", "Rhea Requester", "RheaPass12345")

@@ -88,8 +88,8 @@ func TestWorkflowActionsNotifyTheAffectedPerson(t *testing.T) {
 	})
 }
 
-// F-F-06 — the partial-review decisions and the two halves of a cancellation.
-// They are separated from the test above because both need a request in a state
+// The partial-review decisions and both outcomes of a cancellation notify the
+// person who must act next. They are separated from the test above because both need a request in a state
 // only the manager can decide, and the manager here is the admin.
 func TestPartialAndCancellationDecisionsFire(t *testing.T) {
 	s := newAppTestServer(t)
@@ -148,10 +148,9 @@ func TestPartialAndCancellationDecisionsFire(t *testing.T) {
 	})
 }
 
-// F-F-07 — "Save corrections" leaves the request `returned` on purpose, and the
-// seeded template for request_edited says it "was edited and re-sent for
-// approval". Firing on both buttons told the approver something was back in
-// their queue when nothing was.
+// "Save corrections" leaves the request `returned` on purpose, so it must not
+// fire request_edited, whose template says the request "was edited and re-sent
+// for approval": nothing is back in the approver's queue yet.
 func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Save only")
@@ -185,11 +184,9 @@ func TestSaveCorrectionsDoesNotClaimTheRequestWasResent(t *testing.T) {
 	}
 }
 
-// notifications-1 — "Edit every field" on a returned request opens the full
-// edit form, whose banner says editing notifies the approver and whose button
-// reads "Save and notify <approver>". That button sent no submit_action, so it
-// saved without resubmitting: the request stayed returned and nobody was told.
-// It now resubmits, as its label promises, and the approver is told.
+// "Edit every field" on a returned request opens the full edit form, whose
+// button reads "Save and notify <approver>". That button resubmits, as its
+// label promises, and the approver is told.
 func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Full edit returned")
@@ -204,8 +201,8 @@ func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 
 	s.login("fulledit@example.test", "FullEdit12345")
 	page := s.get(fmt.Sprintf("/requests/%d/edit", id))
-	// The same button also follows the approver select (rbac-10), so the
-	// markup carries both: the resubmit action and the follow-select hooks.
+	// The same button also follows the approver select, so the markup carries
+	// both: the resubmit action and the follow-select hooks.
 	button := `<button class="btn primary" type="submit" data-follows-select="apr" data-follows-text="Save and notify {name}" name="submit_action" value="resubmit">Save and notify Apra Approver</button>`
 	if !strings.Contains(page, button) {
 		t.Fatalf("the full edit form's button does not resubmit; want %s", button)
@@ -238,7 +235,7 @@ func TestFullEditOfAReturnedRequestResubmitsAndNotifies(t *testing.T) {
 	}
 }
 
-// A8 (coverage matrix) — editing a request that is still *pending* re-notifies
+// Editing a request that is still *pending* re-notifies
 // the approver: the request is already in their queue and the figures they are
 // about to decide on have changed. The approver here is a plain Manager, not
 // the bootstrap admin, so no other role's rule can satisfy the check, and the
@@ -277,10 +274,9 @@ func TestEditingAPendingRequestReNotifiesTheApprover(t *testing.T) {
 	}
 }
 
-// F-F-03 — four sentences described a wait Phase 5 had already turned into
-// app_settings.reminder_pending_days, and the stale banner asserted "the one-day
-// mark" against a separately configurable threshold. They read the settings now,
-// and they say elapsed days: Wave 2b deleted calendarDaysBetween deliberately.
+// Reminder and stale-request copy reads its thresholds from app_settings
+// (reminder_pending_days, reminder_stale_days) rather than hard-coding them,
+// and counts elapsed days, not calendar days.
 func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Reminder copy")
@@ -303,8 +299,8 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	if strings.Contains(stale, "one-day mark") || strings.Contains(stale, "calendar day") {
 		t.Error("the stale banner still asserts a hardcoded, calendar-day threshold")
 	}
-	// copy-1: the Configuration note under these same three fields still said
-	// "calendar days" after decision 2 made the thresholds elapsed days.
+	// The Configuration note under these same three fields says elapsed days
+	// too.
 	config := s.get("/configuration")
 	if strings.Contains(config, "calendar day") {
 		t.Error("the Configuration reminders note still says calendar days")
@@ -329,12 +325,10 @@ func TestReminderCopyReadsTheConfiguredThresholds(t *testing.T) {
 	}
 }
 
-// The two events the repair's own documentation pass found still firing nothing.
-//
-// Both are the fault F-F-06 was about — a transition that changes what a specific
-// other person must do next, telling nobody — and the first is worse than silence:
-// the reassignment sheet states that "The new approver is told", so the route Wave
-// 3 built to make reassignment possible at all was shipping a false promise.
+// Reassigning an approval tells the new approver, and cancelling an approved
+// request outright tells the requester: each changes what a specific other
+// person must do next. The reassignment sheet also promises "The new approver
+// is told".
 func TestReassignmentAndOutrightCancellationNotifyTheirSubject(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Reassign")
@@ -369,7 +363,7 @@ func TestReassignmentAndOutrightCancellationNotifyTheirSubject(t *testing.T) {
 		s := s.withT(t)
 		// Cancelling outright is the fourth cancellation path and the only one nobody
 		// asked for, which makes it the one the requester is least able to guess at.
-		// It is legal only from `approved` (legalTransitions, internal/store/requests.go:191),
+		// It is legal only from `approved` (see legalTransitions in the store),
 		// so the request is approved first — this is the manager killing money they
 		// had already agreed to, which is exactly why the requester needs telling.
 		cancelled := s.seedPendingRequest(932, requester.ID, admin.ID, headID, 150000)
@@ -385,8 +379,8 @@ func TestReassignmentAndOutrightCancellationNotifyTheirSubject(t *testing.T) {
 	})
 }
 
-// PAY-D02: configured audiences are authoritative. A successful receipt may
-// confirm the write without inventing notification recipients.
+// Configured notification audiences are authoritative. A successful payment
+// receipt confirms the write without inventing notification recipients.
 func TestPaymentReceiptDoesNotInventNotificationRecipients(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("ReceiptAudience")

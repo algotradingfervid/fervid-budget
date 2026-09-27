@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// F-G-014 — /requests ignored ?status= while its own CSV honoured it, so one URL
-// described two different sets on the page and in the file. The export also had
-// no bucket default where the screen defaulted to "open".
+// /requests and its CSV export read the same filters and the same defaults
+// (including ?status= and the "open" bucket), so one URL describes one set on
+// the page and in the file.
 func TestRequestsListAndItsExportDescribeTheSameSet(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Status filter")
@@ -17,8 +17,7 @@ func TestRequestsListAndItsExportDescribeTheSameSet(t *testing.T) {
 
 	s.loginAdmin()
 	number := fmt.Sprintf("PR-2026-%06d", 981)
-	// No bucket at all, which is where the defect lived: the screen's own default
-	// bucket used to swallow the status.
+	// No bucket at all: the screen's default bucket must not swallow the status.
 	for _, path := range []string{
 		"/requests?status=rejected", "/requests?bucket=all&status=rejected",
 		"/requests/export.csv?status=rejected", "/requests/export.csv?bucket=all&status=rejected",
@@ -36,9 +35,9 @@ func TestRequestsListAndItsExportDescribeTheSameSet(t *testing.T) {
 	_ = pending
 }
 
-// F-B-16 — the row query capped itself at 200 while the tab count beside it had
-// no cap, so the All tab promised 214 and the list drew 200 in silence. The
-// screen now says what it is not showing and the export carries every row.
+// The list shows 200 rows a page while its tab counts cover every row, so it
+// says how many it is showing, links to the next page, and the export carries
+// every row.
 func TestTheRequestsListNeverTruncatesInSilence(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Truncation")

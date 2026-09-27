@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// F-G-030 — every CSV amount was a quoted, symbol-bearing, comma-grouped string,
-// so Number() of it is NaN and a spreadsheet has to clean the column first.
-// F-G-031 — /reports/ytd.csv always exported the head level, whichever tab the
-// download was pressed from.
+// CSV amounts are plain numbers (no quotes, currency symbol or grouping) so a
+// spreadsheet can use the column as is, and /reports/ytd.csv exports the level
+// of the tab the download was pressed from.
 func TestCSVExportsCarryNumbersAndTheLevelTheyWereAskedFor(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Numeric CSV")

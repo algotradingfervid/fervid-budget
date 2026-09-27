@@ -87,8 +87,8 @@ func TestOutOfScopeRequestAnswersNotFoundOnReadsAndWrites(t *testing.T) {
 	}
 }
 
-// F-G-002 — an out-of-scope request answered 403 while a missing one answered
-// 404, so the status code enumerated the id space. The two are now identical.
+// An out-of-scope request and a missing one get identical answers (404), so
+// the status code cannot reveal which ids exist.
 func TestOutOfScopeRequestIsIndistinguishableFromAMissingOne(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Oracle")
@@ -112,7 +112,7 @@ func TestOutOfScopeRequestIsIndistinguishableFromAMissingOne(t *testing.T) {
 	_ = responseBody(t, missing)
 }
 
-// rbac-2: a request scope of None (no role_data_scope row) must mean no rows,
+// A request scope of None (no role_data_scope row) must mean no rows,
 // on the list and the CSV alike, which is what the detail page already says
 // with its 404. The same rule applies to the payment ledger and its detail page.
 func TestRequestScopeNoneShowsNoRowsAnywhere(t *testing.T) {

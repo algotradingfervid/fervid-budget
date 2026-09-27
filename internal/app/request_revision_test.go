@@ -84,16 +84,15 @@ func TestRecoveryPrecisionRejectedWithoutLosingInput(t *testing.T) {
 	}
 }
 
-// F-G-035 / F-C-04 — the edit and the resubmission are three transactions, so a
-// refused resubmit used to commit the correction and audit it as done while the
-// requester was shown a 400. Every precondition SubmitRequest checks is now
-// checked before UpdateRequest writes.
+// A refused resubmit writes nothing: every precondition SubmitRequest checks is
+// checked before UpdateRequest writes, so the correction is neither saved nor
+// audited when the requester is shown a 400.
 func TestARefusedResubmitLeavesNothingWritten(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Atomic edit")
 	requester := s.seedRequester("atomic@example.test", "Atomic Requester", "AtomicPass1234")
 	// Pending, not returned: legalTransitions has no pending→pending edge, so
-	// SubmitRequest refuses — which is the finding's own reproduction.
+	// SubmitRequest refuses.
 	id := s.seedPendingRequest(931, requester.ID, admin.ID, headID, 200000)
 
 	s.login("atomic@example.test", "AtomicPass1234")

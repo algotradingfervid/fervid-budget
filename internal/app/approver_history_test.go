@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// Fix wave 2026-09-25, cluster B (approver and history). Each test here
-// reproduces one confirmed defect through the real routes before its fix.
+// Approver reassignment and request history, each rule driven through the
+// real routes.
 
 // reassignForm posts the approver reassignment the sheet posts.
 func (s *appTestServer) reassignForm(reqID, to int64, reason string) *http.Response {
@@ -30,10 +30,9 @@ func (s *appTestServer) managerOf(reqID int64) int64 {
 	return req.ManagerID
 }
 
-// rbac-8 — coverage A5/A7. Any Manager could open another manager's pending
-// request, reassign it to themselves and approve it. Reassignment is for the
-// request's own approver handing it on, or for an administrator rescuing it;
-// and nobody hands a request to themselves.
+// Reassignment is for the request's own approver handing it on, or for an
+// administrator rescuing it; nobody hands a request to themselves. Otherwise any
+// Manager could take another manager's request and approve it.
 func TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Hijack")
@@ -93,10 +92,10 @@ func TestOnlyTheCurrentApproverOrAnAdministratorMayReassignAnApproval(t *testing
 	}
 }
 
-// deactivation-2 — F-G-025. The deactivation warning lists every request that
-// waits on the leaver — pending, returned, cancellation_requested and
-// partial_review — and tells the administrator to reassign each one. Reassign
-// used to accept pending only, so the other three stayed stuck for good.
+// The deactivation warning lists every request that waits on the leaver —
+// pending, returned, cancellation_requested and partial_review — and tells the
+// administrator to reassign each one, so reassignment must work for all four
+// statuses or those requests stay stuck.
 func TestReassignmentRescuesEveryStatusTheDeactivationWarningLists(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Stuck")
@@ -170,8 +169,8 @@ func TestReassignmentRescuesEveryStatusTheDeactivationWarningLists(t *testing.T)
 	}
 }
 
-// rbac-9 — A7/A8. The history's change chip read "Approver 3 → 4": the audit
-// stores user ids and nothing turned them back into people.
+// The history's change chip for an approver change names people, not the user
+// ids the audit log stores.
 func TestHistoryNamesTheApproversAChangeMovedBetween(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Names")
@@ -192,8 +191,8 @@ func TestHistoryNamesTheApproversAChangeMovedBetween(t *testing.T) {
 	}
 }
 
-// rbac-10 — A8. The edit form's banner and submit button named the approver
-// the request had when the page rendered, whatever the select now says.
+// The edit form's banner and submit button name the approver currently chosen
+// in the select, not the one the request had when the page rendered.
 func TestEditFormLabelsFollowTheChosenApprover(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Follow")
@@ -213,10 +212,9 @@ func TestEditFormLabelsFollowTheChosenApprover(t *testing.T) {
 	}
 }
 
-// history-1 — L7–L10. The detail thread's event titles are the audit
-// summaries, and the Accounts-side ones ("Hold lifted", "Reserved request for
-// processing") named nobody, while every request-side line and the whole
-// partial-review trail did.
+// The detail thread's event titles are the audit summaries, and every one names
+// its actor, the Accounts-side events ("Hold lifted", "Reserved request for
+// processing") included.
 func TestDetailThreadNamesTheActorForAccountsEvents(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Actor")
@@ -264,9 +262,8 @@ func TestDetailThreadNamesTheActorForAccountsEvents(t *testing.T) {
 	}
 }
 
-// copy-1 / copy-2 — L11, F-B-08. Illegal-transition refusals dropped the raw
-// status code after a fixed "a": "a approved request cannot be withdrawn", "a
-// completed_partial request cannot be returned".
+// Illegal-transition refusals read as sentences: no raw status codes and no
+// fixed "a" (never "a approved request cannot be withdrawn").
 func TestIllegalTransitionRefusalsReadAsSentences(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Copy")
@@ -306,9 +303,8 @@ func TestIllegalTransitionRefusalsReadAsSentences(t *testing.T) {
 	}
 }
 
-// hold-1 — Q6/L7. The design's On-hold row says the employee may add a
-// comment or an attachment. The held page offered only the comment box, and no
-// route existed for a document at all.
+// While a request is on hold the requester may add a comment or a document,
+// to answer the question the hold asks.
 func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Held")
@@ -383,7 +379,7 @@ func TestRequesterCanAddADocumentWhileTheRequestIsOnHold(t *testing.T) {
 	// Nor does one that is not on hold: the door exists for the hold's question
 	// and for nothing else, so an approved request Accounts has not paused, and
 	// a pending one the edit form still serves, refuse it — and neither offers
-	// the control (hold-1 review).
+	// the control.
 	for _, id := range []int64{openID, pendingID} {
 		body := s.get(fmt.Sprintf("/requests/%d", id))
 		if strings.Contains(body, fmt.Sprintf(`action="/requests/%d/attachments"`, id)) {

@@ -127,8 +127,8 @@ func TestApprovalValidationPreservesDialogAndNeverCommitsInvalidAmounts(t *testi
 	}
 }
 
-// F-B-08 — every validation banner opened with the internal sentinel
-// "validation failed: ", which is not a sentence for a person.
+// Validation banners do not show the internal sentinel "validation failed: ",
+// which is not a sentence for a person.
 func TestValidationMessagesLoseTheSentinelPrefix(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()
@@ -143,9 +143,9 @@ func TestValidationMessagesLoseTheSentinelPrefix(t *testing.T) {
 	}
 }
 
-// F-E-08 / F-B-02 — a refused `type=recoverable` submission looked up a UI label
-// it has none of and answered "That is not a kind of request this system raises."
-// about a type the store had accepted seconds earlier, throwing the form away.
+// A refused submission for a type with no UI label (such as `type=recoverable`)
+// keeps the store's real reason and the form, rather than claiming the type is
+// "not a kind of request this system raises".
 func TestARefusedUnlabelledTypeKeepsItsRealReason(t *testing.T) {
 	s := newAppTestServer(t)
 	admin := s.admin()
@@ -169,12 +169,9 @@ func TestARefusedUnlabelledTypeKeepsItsRealReason(t *testing.T) {
 	}
 }
 
-// F-D-14 — `/requests/new?type=recoverable` used to answer the chooser with no
-// explanation at all, and then (F-D-14's first reconciliation) a 400 on the
-// premise that "recoverable" was a treatment every card carried. It was not:
-// only the employee advance carried the radio, and that type pays the
-// requester, so the store's fifth type has its own card now (form-1). A ?type=
-// naming nothing is still a 400 on the chooser with the reason above it.
+// A ?type= that names no card (such as `/requests/new?type=recoverable`) is a
+// 400 on the chooser with the reason above it, not a silent bounce back to the
+// chooser. Every store type, the deposit included, has its own card.
 func TestATypeWithNoCardIsRefusedRatherThanSilentlyBounced(t *testing.T) {
 	s := newAppTestServer(t)
 	s.loginAdmin()

@@ -10,9 +10,8 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// F-G-024: retiring a head with unfinished requests against it warns, names
-// them, and saves only once the administrator confirms. The owner chose
-// warn-and-confirm over a hard block (2026-09-25).
+// Retiring a head with unfinished requests against it warns, names them, and
+// saves only once the administrator confirms (a warning, not a hard block).
 func TestDeactivatingAHeadWithOpenRequestsAsksForConfirmation(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Retire")
@@ -63,7 +62,7 @@ func TestDeactivatingAHeadWithOpenRequestsAsksForConfirmation(t *testing.T) {
 	}
 }
 
-// F-G-025: deactivating an approver with requests waiting on them warns, lists
+// Deactivating an approver with requests waiting on them warns, lists
 // those requests, and carries the rest of the edit through the confirmation.
 func TestDeactivatingAnApproverWithWaitingRequestsAsksForConfirmation(t *testing.T) {
 	s := newAppTestServer(t)
@@ -117,9 +116,9 @@ func (s *appTestServer) headActive(id int64) bool {
 	return active == 1
 }
 
-// F-G-011: the requests export carries the approved figure beside the
-// requested one, so an approved-down request no longer exports only the amount
-// nobody approved. A request not yet decided leaves the column empty.
+// The requests export carries the approved figure beside the requested one, so
+// an approved-down request shows what was actually approved. A request not yet
+// decided leaves the column empty.
 func TestRequestsExportCarriesTheApprovedAmount(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Export")
@@ -148,9 +147,8 @@ func TestRequestsExportCarriesTheApprovedAmount(t *testing.T) {
 	}
 }
 
-// F-G-033 — the heads screen listed every head and populated each row's project
-// select from the active projects only, so a head on a retired project had no
-// option of its own and that row's Save moved it.
+// On the heads screen, a head on a retired project still has that project in
+// its row's select, so saving the row unchanged does not move the head.
 func TestHeadRowsOfferTheirOwnRetiredProject(t *testing.T) {
 	s := newAppTestServer(t)
 	admin := s.admin()
@@ -185,7 +183,7 @@ func TestHeadRowsOfferTheirOwnRetiredProject(t *testing.T) {
 	}
 }
 
-// form-3 (T12) — a project or head retired after a request was raised is shown
+// A project or head retired after a request was raised is shown
 // on the edit form, marked, with the retirement explained; the historical
 // values are not silently blanked into "Choose a project" and a save is refused
 // for the retirement, not for a missing project.
@@ -242,7 +240,7 @@ func TestEditFormOffersARetiredProjectBackAndSaysWhy(t *testing.T) {
 	}
 }
 
-// form-6 (T12) — a retired PROJECT (not only a head) disappears from the
+// A retired PROJECT (not only a head) disappears from the
 // new-request form, and the request raised against it keeps showing its name.
 func TestRetiredProjectIsHiddenFromNewRequestsAndKeptOnHistory(t *testing.T) {
 	s := newAppTestServer(t)

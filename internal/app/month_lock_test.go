@@ -8,9 +8,8 @@ import (
 	"testing"
 )
 
-// F-G-021 — a request could be raised and approved into a locked month, becoming
-// an approved obligation nobody could pay until the month reopened, and the
-// accountant only discovered it at the settlement.
+// A request cannot be approved into a locked month: it would become an approved
+// obligation nobody could pay until the month reopened.
 func TestARequestCannotBeApprovedIntoALockedMonth(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Locked approval")
@@ -46,9 +45,9 @@ func TestARequestCannotBeApprovedIntoALockedMonth(t *testing.T) {
 		url.Values{"approved_amount": {"1,000.00"}}), http.StatusSeeOther)
 }
 
-// F-G-019 / F-G-020 — locking a month redirected to /?month=, which has been the
-// dashboard since Phase 4 and reads no month at all; and the payment entry
-// screen carried no lock affordance, so the whole form was filled in first.
+// Locking a month redirects to that month's grid, which shows the lock just
+// applied, and the payment entry screen warns about a locked month before the
+// accountant fills in the form.
 func TestTheLockedMonthFamilyConfirmsItselfAndWarnsInAdvance(t *testing.T) {
 	s := newAppTestServer(t)
 	admin, headID := s.seedHead("Lock family")
@@ -81,9 +80,8 @@ func TestTheLockedMonthFamilyConfirmsItselfAndWarnsInAdvance(t *testing.T) {
 	}
 }
 
-// F-G-020, remaining edge — the entry screen warned about the month it opened
-// on and nothing else, so a locked month typed into "Paid on" afterwards was
-// only met at submit. The date field re-asks GET /payments/lock-status on
+// The payment entry lock warning follows the "Paid on" date, not just the month
+// the screen opened on: the date field re-asks GET /payments/lock-status on
 // change, and that fragment is the banner for the month the date names.
 func TestPaymentLockStatusFollowsTheDateField(t *testing.T) {
 	s := newAppTestServer(t)
