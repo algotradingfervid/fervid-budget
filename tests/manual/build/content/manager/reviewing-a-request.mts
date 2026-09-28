@@ -24,9 +24,11 @@ export default page({
 
     section('The Details block'),
     prose(
-      `Every field the requester filled in is here, laid out in two columns. The chip at the top
-       right of the block says whether the money is ordinary spend — **Budget expense** — or is
-       expected back.`,
+      `Every field the requester filled in is here, laid out in two columns. Which fields appear
+       depends on the request type — an invoice number and date for a vendor invoice, an expense
+       date for a reimbursement, a reason for an advance. The chip at the top right of the block
+       says whether the money is ordinary spend — **Budget expense** — or is expected back, when it
+       reads **Recoverable** with the category.`,
     ),
     table(
       ['Field', 'What to look at'],
@@ -34,11 +36,12 @@ export default page({
         ['**Amount**', 'What is being asked for. You may approve this or less, never more.'],
         ['**Needed by**', 'The date the money is wanted. It also decides which month the spend lands in.'],
         ['**Project** and **Head**', 'The budget line this will be booked against. Check it against the grid before a large approval.'],
-        ['**Paid to**', 'The vendor or the person who will receive the money.'],
-        ['**Expense date**', 'When the cost was incurred, which is not always the month it will be paid in.'],
+        ['**Vendor** or **Paid to**', 'Who will receive the money. The label reads **Vendor** when a vendor from the master was chosen, and **Paid to** otherwise.'],
+        ['**Invoice number** and **Invoice date**', 'Shown on a vendor invoice. Check them against the document.'],
+        ['**Expense date**', 'Shown on a reimbursement: when the cost was incurred, which is not always the month it will be paid in.'],
         ['**Requested by**', 'Who raised it. It is never you — the product refuses a self-approval.'],
         ['**Approver**', 'Whose decision it is. If this is not your name, no action bar is drawn.'],
-        ['**Urgency**', 'Either **Normal** or the urgent flag the requester set.'],
+        ['**Urgency**', 'Either **Normal**, or **Urgent** followed by the reason the requester gave.'],
         ['**Purpose**', 'The requester’s own words about what the money is for.'],
       ],
     ),
@@ -49,10 +52,11 @@ export default page({
        it was added, and the count sits beside the heading. Where there is nothing, it reads *No
        documents attached.*
 
-       The approver role carries no permission to open those files, so no **Download** control is
-       drawn beside them. You can see that an invoice exists and what it is called; you cannot read
-       it here. [What an approver cannot see](page:manager/limits-of-the-role) says what to do about
-       that.`,
+       Select **Download** beside a document to open it. Read the invoice before you approve
+       against it: the amount, the payee and the date on the paper should match the request.
+
+       If the requester sent the request without a document, a banner headed **No document was
+       attached** sits above the Details block with the reason they gave.`,
     ),
 
     section('History and conversation'),
@@ -77,7 +81,7 @@ export default page({
         ['Is the amount right?', 'The **Amount** field, and the invoice number on the queue card.'],
         ['Is it booked to the right budget line?', '**Project** and **Head**, checked against [the variance grid](page:manager/the-variance-grid) for that month.'],
         ['Is there room in the budget?', 'The grid row for that head — its **Remaining ₹** and **Used** figures.'],
-        ['Is the paperwork there?', 'The Attachments count. You can see whether a document exists even though you cannot open it.'],
+        ['Is the paperwork there, and does it match?', 'The Attachments section. Download the document and compare it with the **Amount**, payee and invoice fields.'],
         ['Has this been asked for before?', 'The request number and invoice number, searched from the queue.'],
         ['Is anything unclear?', 'Ask in the thread rather than guessing.'],
       ],
@@ -91,14 +95,15 @@ export default page({
     section('Two refusals worth knowing about'),
     warning(
       `If the month the request is needed by has been locked, approving it is refused. The message
-       names the month and offers the two ways out: reopen the month, or have the required-by date
-       changed. Only an administrator can reopen a month —
+       names the month and offers the two ways out — *Reopen the month, or ask for the required-by
+       date to be changed.* Only an administrator can reopen a month —
        [Monthly plans and locking](page:admin/monthly-plans-and-locking) explains it.`,
       'A locked month',
     ),
     note(
       `You cannot approve a request you raised yourself, and you cannot decide a request whose
-       approver is somebody else. Both are refused outright rather than quietly ignored.`,
+       approver is somebody else. Both are refused outright rather than quietly ignored — and on a
+       request routed to somebody else the decision controls are not drawn in the first place.`,
     ),
 
     section('Deciding'),
@@ -114,10 +119,10 @@ export default page({
 
     faq([
       {
-        q: 'The request mentions an invoice but I cannot open it.',
-        a: `That is the role, not a fault. Ask the requester to send you the document, or ask an
-            administrator, who can open it. See
-            [What an approver cannot see](page:manager/limits-of-the-role).`,
+        q: 'The request mentions an invoice but there is nothing to download.',
+        a: `Then no document was attached — the Attachments count reads 0 and the section says *No
+            documents attached.* Ask for it in the conversation, or
+            [return the request](page:manager/returning-for-correction) and say what you need.`,
       },
       {
         q: 'I want to check the vendor before approving.',

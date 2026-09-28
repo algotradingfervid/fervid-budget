@@ -69,10 +69,10 @@ export default page({
     table(
       ['What you see', 'Why'],
       [
-        ['A message saying a comment is required to return a request', 'The message box was left empty. It is checked before anything else.'],
+        ['*a comment is required to return a request*', 'The message box was left empty. It is checked before anything else.'],
         ['*You do not have permission to perform this action.*', 'You are not the approver this request was routed to.'],
         ['*this request changed; reload and review it before deciding*', 'The request changed after you opened it. Reload it, read what changed, and decide again.'],
-        ['A message saying a request in that state cannot be returned', 'Only a `pending` request can be returned. It has already been decided, withdrawn, or returned once already and not yet resubmitted.'],
+        ['A message such as *a returned request cannot be returned*', 'Only a `pending` request can be returned. It has already been decided, withdrawn, or returned once already and not yet resubmitted.'],
       ],
     ),
 

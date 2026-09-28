@@ -7,17 +7,17 @@ export default page({
   summary: 'Everything waiting on you, split by the kind of decision it needs.',
   blocks: [
     prose(
-      `**Approvals** in the sidebar opens your queue. The number beside it is the count of requests
-       sitting at \`pending\` with your name on them, so the sidebar tells you whether there is
-       anything to do without your opening the screen.
+      `**Approvals** in the sidebar opens your queue. The number beside it counts the requests with
+       your name on them that are waiting at \`pending\` or in partial review, so the sidebar
+       tells you whether there is anything to do without your opening the screen.
 
-       The queue is headed *Waiting on you*, and the line under the heading counts the two kinds of
-       work separately — how many there are to approve, and how many cancellations there are to
-       decide.`,
+       The queue is headed *Waiting on you*, and the line under the heading counts three kinds of
+       work separately — how many there are to approve, how many cancellations there are to decide,
+       and how many partial payments there are to review.`,
     ),
     shot('manager/approvals-to-approve', 'The queue on its first tab. Each row is one request, urgent ones first.'),
 
-    section('The three tabs'),
+    section('The four tabs'),
     prose(
       `The tabs divide the queue by what has already happened to the request, not by project or
        amount. The count beside each tab is live and honours whatever you have typed into the search
@@ -28,6 +28,7 @@ export default page({
       [
         ['**To approve**', 'Requests waiting on your decision. This is where the work is.', '`pending`'],
         ['**Cancellations**', 'Approved requests whose raiser has asked you to cancel them.', '`cancellation_requested`'],
+        ['**Partial review**', 'Requests Accounts paid less than you approved, waiting for your decision on the balance.', '`partial_review`'],
         ['**Decided**', 'The record of what you have already settled one way or the other.', '`approved`, `rejected`, `cancelled`'],
       ],
     ),
@@ -40,13 +41,12 @@ export default page({
        request in the product.`,
     ),
 
-    section('What is not in the queue'),
+    section('Partial reviews'),
     prose(
-      `One decision that is genuinely yours never appears here: the shortfall review, which arrives
-       when Accounts pays less than you approved. It has no tab. You reach it from the request
-       itself, where the control reads **Decide the partial payment**, or by following the
-       notification the product sends you.
-       [Reviewing a shortfall](page:manager/shortfall-review) covers it.`,
+      `When Accounts pays less than you approved, the request lands on the **Partial review** tab.
+       Selecting the row opens the request; the control there reads **Decide the partial payment**.
+       You can also follow the notification the product sends you.
+       [Reviewing a shortfall](page:manager/shortfall-review) covers the decision.`,
     ),
 
     section('Only your rows'),
@@ -71,9 +71,10 @@ export default page({
         ['The amount on the right', 'The amount that was *asked for*. Once you approve a smaller figure the card still shows what was requested.'],
         ['The bold line', 'The short title the requester gave it.'],
         ['**! Urgent**', 'Present only when the requester flagged it. Urgent rows sort to the top.'],
+        ['**Recoverable**', 'Present only when the money is expected back, followed by the category where there is one.'],
         ['The grey line', 'The request type, then project and head, then the invoice number where there is one.'],
-        ['The status pill', 'Where the request stands: **Awaiting approval**, **Cancellation requested**, **Approved — awaiting payment**, **Rejected — final**.'],
-        ['The line on the right', 'Who is holding it up. On your own queue that reads **Waiting on you**.'],
+        ['The status pill', 'Where the request stands: **Awaiting approval**, **Cancellation requested**, **Partial — manager review** (or **Partial — under discussion** once you have raised a concern), **Approved — awaiting payment**, **Rejected — final** or **Cancelled**. An approved request Accounts has put on hold still shows **Approved — awaiting payment** here.'],
+        ['The line on the right', 'Who is holding it up. On the first three tabs that reads **Waiting on you** (or *Waiting on you and Accounts* while a concern you raised is unanswered); on **Decided** it names whoever acts next.'],
       ],
     ),
     prose(
@@ -87,8 +88,10 @@ export default page({
        the requester's name. Type and select **Apply**; the tab counts change with it, so you can see
        at a glance how many of each kind match.
 
-       **Export CSV** at the top right downloads the same set as a spreadsheet, honouring your search.
-       It is the only export on this screen that the approver role can use.`,
+       **Export CSV** at the top right downloads a spreadsheet of the open requests routed to you —
+       every open status, not only the tab you are on — narrowed by your search. It also includes
+       any open requests you raised yourself. The columns are Number, Status, Type, Title, Amount,
+       Approved amount, Payee, Requester, Approver and Created.`,
     ),
     note(
       `The list draws at most 200 rows, while the counts beside the tabs are not capped. If a tab
@@ -98,7 +101,7 @@ export default page({
     section('When there is nothing to do'),
     prose(
       `An empty tab says *Nothing is waiting on you here.* — which is the whole message. Check the
-       other two tabs before you conclude your day is clear.`,
+       other tabs before you conclude your day is clear.`,
     ),
     tip(
       `The foot of the queue reads *Every approval is a decision made after opening the request.
@@ -108,10 +111,10 @@ export default page({
 
     faq([
       {
-        q: 'The sidebar badge says 14 but the Cancellations tab has 2 more. Which is right?',
-        a: `Both. The sidebar badge counts only requests at \`pending\` — the **To approve** tab.
-            Cancellations are counted separately, on the line under the heading and on the tab
-            itself.`,
+        q: 'The sidebar badge says 19 but the To approve tab says 14. Which is right?',
+        a: `Both. The sidebar badge adds the **To approve** and **Partial review** tabs together.
+            Cancellations are not in the badge; they are counted on the line under the heading and
+            on their own tab.`,
       },
       {
         q: 'A request I approved has vanished from Decided.',
