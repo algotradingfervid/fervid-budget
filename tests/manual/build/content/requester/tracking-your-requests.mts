@@ -66,8 +66,8 @@ export default page({
     prose(`Each card carries, in order: the request number at the left and the amount at the right; the
        short title you gave it; a meta line naming the type and, where there is one, the project,
        the head and the invoice number; and a foot with the status pill on the left and the waiting
-       sentence on the right. A recoverable request also shows a violet **Recoverable** pill naming
-       its category, and an urgent one a red **Urgent** pill.`),
+       sentence on the right. At the start of the meta line, an urgent request shows a red **Urgent**
+       pill and a recoverable one a violet **Recoverable** pill naming its category.`),
 
     table(
       [`Status pill`, `What it means`, `Waiting sentence`],
@@ -99,7 +99,9 @@ export default page({
        requester's name — its placeholder lists most of them: *Number, payee, invoice, purpose…*.
        **Type** narrows to one of the five request types. **Treatment** narrows to **Budget
        expense** or **Recoverable**. Beneath the toolbar, **Clear filters** empties all three at
-       once.
+       once and keeps you on the same tab. Beside it a hint repeats how the tabs divide: *Open
+       includes payment in progress. Closed includes completed, rejected, withdrawn and cancelled
+       requests.*
 
        When nothing matches, the body reads *No requests match. Clear filters or choose another
        tab.*, where **Clear filters** is a link that does the same as the button. Note that the tab
@@ -120,12 +122,15 @@ export default page({
 
     section(`Exporting`),
 
-    prose(`**⤓ Export CSV** downloads the list as a spreadsheet file with one row per request and these
-       columns: Number, Status, Type, Title, Amount, Payee, Requester, Approver, Created. The
-       export carries every matching row — it is never truncated the way the screen is.`),
+    prose(`**⤓ Export CSV** downloads the list as a file called \`requests.csv\`, with one row per
+       request and these columns: Number, Status, Type, Title, Amount, Approved amount, Payee,
+       Requester, Approver, Created. **Approved amount** stays empty until the request has been
+       approved. The export carries every matching row — it is never cut into pages the way the
+       screen is.`),
 
-    note(`The export follows the tab you are on and the text in **Search**, but not the **Type** and
-       **Treatment** dropdowns. If those matter to you, filter the spreadsheet afterwards.`),
+    note(`The export follows everything the screen is showing: the tab you are on, the text in
+       **Search**, and the **Type** and **Treatment** filters. What you download is what you see,
+       without the page limit.`),
 
     faq([
       { q: `A request I raised is missing from every tab.`, a: `Clear the search box and the two dropdowns, then look at **All**. The counts drop with the filters, so an active filter can empty a tab completely.` },

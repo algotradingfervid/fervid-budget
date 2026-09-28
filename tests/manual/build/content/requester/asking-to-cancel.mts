@@ -22,13 +22,32 @@ export default page({
        **Request cancellation**.`,
     ),
 
+    section('When you can ask'),
+    prose(
+      `**Request cancellation** appears only while all of these are true:`,
+    ),
+    table(
+      ['Condition', 'Why'],
+      [
+        ['You raised the request.', 'Only the person who raised a request may ask for it to be cancelled.'],
+        ['It reads **Approved — awaiting payment**.', 'Before approval you withdraw instead; after Accounts reserve it, it reads **With Accounts** and the button is gone.'],
+        ['Nothing has been paid against it.', 'Once an installment has been paid the request can come back to **Approved — awaiting payment**, but it can no longer be cancelled.'],
+      ],
+    ),
+    prose(
+      `If Accounts has already reserved the request, ask them to release it first — the screen says so
+       too. A request on hold still shows the button: asking suspends the hold while your approver
+       decides, and if they decline, the hold comes back with the accountant's question still
+       unanswered.`,
+    ),
+
     section('Asking'),
     shot('requester/cancel-form', 'The cancellation request. It says what asking costs before you ask.'),
     steps([
       { text: 'Open the approved request and select **Request cancellation**.' },
       {
         text: 'Read the amber banner.',
-        note: '**Payment freezes the moment you ask** — *Accounts cannot reserve or pay this request while a cancellation is pending. If an accountant has already reserved it, they are told immediately.*',
+        note: '**Payment freezes the moment you ask** — *Accounts cannot reserve or pay this request while a cancellation is pending. If Accounts has already reserved a request, ask them to release it before requesting cancellation.*',
       },
       {
         text: 'Write the **Reason**.',
@@ -98,8 +117,10 @@ export default page({
     faq([
       {
         q: 'Accounts have already paid it. Can I still cancel?',
-        a: `No. Once a payment has been recorded the request is settled, and cancelling it would
-            contradict a payment that exists. Talk to Accounts about a refund instead.`,
+        a: `No. Once any payment has been recorded — even one installment — the request cannot be
+            cancelled, and the button does not appear. An attempt is refused with
+            \`a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling\`.
+            Talk to Accounts or your approver about the balance, or about a refund.`,
       },
       {
         q: 'How long does a cancellation take to decide?',

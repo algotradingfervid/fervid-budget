@@ -41,7 +41,7 @@ export default page({
         ['**My requests**, and the approver’s queue', 'Urgent requests sort to the top of the list, ahead of everything else, whatever their age.'],
         ['Each card in a list', 'A red **Urgent** pill appears in front of the status pill.'],
         ['The request itself', 'The same red **Urgent** pill sits before the status, and **Urgency** reads *Urgent —* followed by your reason, instead of *Normal*.'],
-        ['Notifications', 'The urgent event has its own notification, addressed to the approver at once and to Accounts once the request is approved.'],
+        ['Notifications', 'The urgent event has its own notification, addressed to the approver when you submit and to Accounts when the request is approved. Ticking the box later, on the edit form, sends your approver no urgent notification — only the ordinary one about the edit — though Accounts are still told when it is approved.'],
       ],
     ),
     note(
@@ -78,11 +78,11 @@ export default page({
     table(
       ['Setting', 'What you see on the form'],
       [
-        ['Reason required — the default', '**Mark this urgent**, and a required **Why is it urgent** field once ticked.'],
-        ['No reason required', '**Mark this urgent** on its own, with no reason field.'],
-        ['Urgency switched off', 'No checkbox at all. A request submitted as urgent anyway is refused with `urgent requests are switched off`.'],
+        ['**Requires a reason** — the default', '**Mark this urgent**, and a required **Why is it urgent** field once ticked.'],
+        ['**Free to mark, no reason**', '**Mark this urgent** on its own, with no reason field.'],
+        ['**Disabled**', 'No checkbox at all. A request submitted as urgent anyway is refused with `urgent requests are switched off`.'],
       ],
-      'Set on the [Configuration](page:admin/configuration) screen, under **Urgency**.',
+      'Set on the [Configuration](page:admin/configuration) screen, under **Urgency** → **Marking a request urgent**.',
     ),
 
     faq([
