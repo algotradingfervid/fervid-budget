@@ -188,7 +188,9 @@ func vendorInputFromForm(r *http.Request, perms store.PermissionSet) store.Vendo
 		StateCode:     r.FormValue("state_code"),
 		Notes:         r.FormValue("notes"),
 	}
-	if perms != nil && perms.Can("vendor_bank", "edit") {
+	// Bank fields are read only from someone who can see and edit them; the form
+	// shows no bank fields to anyone else, so theirs would arrive blank.
+	if perms != nil && perms.Can("vendor_bank", "view") && perms.Can("vendor_bank", "edit") {
 		terms, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("payment_terms_days")))
 		in.Bank = &store.VendorBank{
 			AccountName:        r.FormValue("bank_account_name"),

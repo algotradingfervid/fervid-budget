@@ -743,3 +743,31 @@ func TestVendorPaidThisYearPrefersTheIdAndFallsBackExactly(t *testing.T) {
 		t.Fatalf("the other vendor's PaidThisYear = %d, want 0 — a linked payment must never be credited by its snapshot text", got)
 	}
 }
+
+// Bank details are changed only by someone who can also see them. A role
+// holding vendor_bank:edit without vendor_bank:view is shown no bank fields,
+// so its save carries them empty; that must leave the stored block untouched.
+func TestUpdateVendorKeepsBankFieldsForBlindEditor(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	actor := vendorActor(t, s)
+	id := seedVendorWithBank(t, s, "Sundaram Electricals Pvt Ltd")
+
+	blindEditor := NewPermissionSet([]Grant{{"vendor", "edit"}, {"vendor_bank", "edit"}}, nil)
+	in := validVendorInput()
+	in.ContactPerson = "New Person"
+	in.Bank = &VendorBank{}
+	if err := s.UpdateVendor(ctx, actor, id, in, blindEditor); err != nil {
+		t.Fatalf("UpdateVendor: %v", err)
+	}
+	after, err := s.Vendor(ctx, id, bankViewer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ContactPerson != "New Person" {
+		t.Fatalf("the permitted part of the edit was not applied: %+v", after)
+	}
+	if after.Bank == nil || after.Bank.IFSC != testIFSC || after.Bank.AccountNumber != testAccountNumber {
+		t.Fatalf("an editor who cannot see the bank block wiped it: %+v", after.Bank)
+	}
+}

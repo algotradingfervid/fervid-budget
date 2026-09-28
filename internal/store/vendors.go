@@ -142,9 +142,11 @@ func canSeeBank(perms PermissionSet) bool {
 	return perms != nil && perms.Can("vendor_bank", "view")
 }
 
-// canEditBank reports whether the caller may change bank details.
+// canEditBank reports whether the caller may change bank details. It needs
+// view as well as edit: someone who cannot see the bank block is shown no bank
+// fields, so their save would otherwise overwrite it with blanks.
 func canEditBank(perms PermissionSet) bool {
-	return perms != nil && perms.Can("vendor_bank", "edit")
+	return canSeeBank(perms) && perms.Can("vendor_bank", "edit")
 }
 
 // vendorSelect is the SELECT column list, with the bank columns only when
