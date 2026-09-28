@@ -41,7 +41,8 @@ export default page({
     note(
       `A request marked urgent carries a red **Urgent** flag in front of its status badge. A request
        Accounts has parked shows **On hold** in place of its normal badge, because that is the truth
-       about it while the hold lasts.`,
+       about it while the hold lasts. While somebody in Accounts has the request reserved, the badge
+       names them: "With Accounts — taken by" and their name, or "taken by you".`,
     ),
 
     subsection('Banners'),
@@ -53,7 +54,8 @@ export default page({
       ['Banner', 'When it appears'],
       [
         ['**Approved requests are locked**', 'You raised it, it is approved, and you can no longer edit it.'],
-        ['**This request is on hold**', 'Accounts has parked it, with the reason they gave and a note that payment is blocked until they lift it.'],
+        ['**This request is on hold**', 'Accounts has parked it, with the question they asked and a note that payment is blocked until they lift it. The person who raised it also gets an **Add a document** box and an **Attach it** button here, to send what Accounts asked for.'],
+        ['**… raised a concern about the partial payment**', 'The approver has questioned a short payment and Accounts has not answered yet.'],
         ['**Payment is frozen**', 'A cancellation has been asked for, and nobody can reserve or pay the request until the approver decides.'],
         ['**… sent this back**', 'The approver returned it for correction, quoting what they wrote.'],
         ['**… rejected this**', 'The approver rejected it, quoting the reason.'],
@@ -98,38 +100,45 @@ export default page({
     section('Payment outcome'),
     shot(
       'requester/detail-completed',
-      'The same screen after the money has gone out. A Payment outcome block has appeared between the details and the attachments.',
+      'The same screen after the money has gone out. Payment outcome and Payment history have appeared between the details and the attachments.',
     ),
     prose(
       `Once a payment has been recorded against the request, a **Payment outcome** block appears.
-       It sets what was approved beside what was actually paid, and names the difference — because
-       a difference that has been agreed and a difference that is still owed must never read the
-       same.`,
+       It sets what was approved beside what has been paid so far, and names the difference —
+       because a difference that has been agreed and a difference that is still owed must never
+       read the same. Its third line depends on where the request stands.`,
     ),
     table(
       ['Line', 'What it means'],
       [
         ['Approved', 'The figure the approver signed off.'],
-        ['Paid on *(date)*', 'What Accounts actually paid, and when.'],
-        ['**Difference · confirmed settled by Accounts**', 'The payment closed the request. In the screenshot the difference is `₹0.00`.'],
-        ['**Still owed to the payee**', 'Accounts paid short and said so. The balance has not been written off.'],
+        ['Total paid to date', 'Everything Accounts has paid against the request so far, across every payment.'],
+        ['**Difference · confirmed settled by Accounts**', 'The request is completed. In the screenshot the difference is `₹0.00`. If Accounts closed it for less than the approved figure, the line reads **Difference · agreed deduction or adjustment · confirmed settled by Accounts**.'],
+        ['**Still owed to the payee · remaining approved balance**', 'Part has been paid and the rest is still approved for payment — an installment.'],
+        ['**Still owed to the payee · awaiting manager decision**', 'Accounts paid short and has asked the approver to decide about the rest.'],
+        ['**Balance written off · shortfall accepted by …**', 'The approver accepted the short payment, and the balance will not be paid.'],
       ],
     ),
     prose(
-      `When Accounts records a genuine short payment, their explanation appears under the block in a
-       banner of its own. [Getting paid](page:requester/getting-paid) covers this from the raiser's
-       side and [Reviewing a shortfall](page:manager/shortfall-review) from the approver's.`,
+      `When Accounts gives a reason for paying less, it appears under the block in a banner headed
+       with their name and "provided this settlement reason". Under that, **Payment history** lists
+       every payment linked to the request — its number, date, amount and reference — so a request
+       paid in installments shows each one. [Getting paid](page:requester/getting-paid) covers this
+       from the raiser's side and [Reviewing a shortfall](page:manager/shortfall-review) from the
+       approver's.`,
     ),
 
     section('Attachments'),
     prose(
       `Under the details sits **Attachments**, with a file count on the right. Each document is one
        row: an icon for its kind, the file name, its size, and the date it was added. A **Download**
-       button on the right appears if your permissions let you open documents. With nothing attached
+       button on the right appears if your permissions let you open documents — all four built-in
+       roles, Requester, Manager, Accounts and Admin, can. With nothing attached
        the section reads "No documents attached", as it does in both screenshots on this page.`,
     ),
     prose(
-      `Adding documents is done from the request form and the edit form, not from here. See
+      `Adding documents is done from the request form and the edit form, not from here — except
+       while the request is on hold, when its raiser can add one from the hold banner. See
        [Attaching documents](page:requester/attachments).`,
     ),
 
@@ -143,9 +152,10 @@ export default page({
       `The finished request above shows four entries: "Rahul Gupta submitted request PR-2026-000537
        for ₹5,300.00", "Manish Patel approved request PR-2026-000537 for ₹5,300.00" with the field
        it changed shown underneath as **Approved amount** and its new value, then the accountant's
-       two lines — "Harsh Agarwal reserved the request for processing" and "Harsh Agarwal settled
-       the request as completed". Every line starts with the name of the person who did it, and
-       each carries the date and time it happened.`,
+       two lines — reserving the request for processing, and settling it as completed. Each line
+       carries the date and time it happened. Lines written today start with the name of the person
+       who acted, for example "Harsh Agarwal reserved the request for processing"; the two
+       accountant lines in this screenshot were recorded before that and read without a name.`,
     ),
     prose(
       `Comments and attached documents appear in the same stream, in place. Below it, if you are
@@ -177,15 +187,17 @@ export default page({
     table(
       ['Control', 'Offered to', 'While the request is'],
       [
-        ['**Edit request**', 'The person who raised it', 'Awaiting approval, or returned for correction'],
+        ['**Edit request**', 'The person who raised it', 'Awaiting approval'],
+        ['**Edit every field**, **Save corrections**, **Resubmit for approval**', 'The person who raised it, on the correction screen that opens in place of this one', 'Returned for correction'],
         ['**Withdraw**', 'The person who raised it', 'Awaiting approval'],
-        ['**Request cancellation**', 'The person who raised it', 'Approved'],
+        ['**Request cancellation**', 'The person who raised it', 'Approved, with nothing paid against it yet'],
         ['**Raise it again**', 'The person who raised it', 'Rejected'],
         ['**Approve …**, **Return for correction**, **Reject**', 'The approver it was sent to', 'Awaiting approval'],
-        ['**Reassign approval**', 'Anybody who may reassign approvals', 'Awaiting approval'],
-        ['**Cancel with reason**', 'The approver it was sent to', 'Approved'],
+        ['**Reassign approval**', 'The approver it was sent to, or an administrator who may edit users — either way holding the reassign permission', 'Awaiting approval, returned for correction, cancellation requested, or paid short and back with the approver'],
+        ['**Cancel with reason**', 'The approver it was sent to', 'Approved, with nothing paid against it yet'],
         ['**Decide the cancellation**', 'The approver it was sent to', 'Cancellation requested'],
         ['**Decide the partial payment**', 'The approver it was sent to', 'Paid short and back with the approver'],
+        ['**Record payment**', 'The accounts team', 'Approved, claimed by nobody and not on hold'],
         ['**Put on hold**', 'The accounts team', 'Approved and not already held'],
         ['**Keep on hold**, **Release hold**', 'The accounts team', 'On hold'],
         ['**View the payment**', 'Anybody who may see payments', 'Carrying a recorded payment'],

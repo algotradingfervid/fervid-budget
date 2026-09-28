@@ -25,7 +25,7 @@ export default page({
         ],
         [
           'The strip of tiles',
-          'One tile per queue that concerns you, each a label and a number. Every tile is a link to the full screen behind it. A tile with work outstanding is tinted.',
+          'One tile per queue that concerns you, each a label and a number. Every tile is a link to the full screen behind it. The three tiles that count work waiting on you — **Needs my action**, **Awaiting my approval** and **Partial payments to review** — are tinted while they are above zero.',
         ],
         [
           'The panels',
@@ -46,8 +46,9 @@ export default page({
     ),
     prose(
       `Two tiles: **Needs my action**, tinted because it is not zero, and **My open requests**.
-       Under them, **Needs your action** collects the requests that are stuck on you, and
-       **In progress** everything of yours still moving.`,
+       Under them sit two panels. Note that the tile says *my* and the panel below it says *your*
+       — they are the same queue. **Needs your action** lists your own requests that were returned
+       to you for correction, and **In progress** lists everything of yours that is not finished.`,
     ),
     prose(
       `Read one row across. The number and the title come first, then the status badge, then a
@@ -55,6 +56,12 @@ export default page({
        is you, "Waiting on Manish Patel" or "Waiting on Accounts" when it is not. The amount sits
        on the right. In this screenshot two requests were returned for correction, so they appear
        in both panels: they are in progress, and they are also waiting on their raiser.`,
+    ),
+    note(
+      `A request of yours that Accounts has put on hold reads "Waiting on you" in the **In
+       progress** panel, because Accounts is waiting for your answer. It is not counted under
+       **Needs my action**, which counts returned requests only, so look down the **In progress**
+       panel as well.`,
     ),
     prose(
       `The foot of each panel opens the list behind it — **Open my requests →** and
@@ -68,17 +75,19 @@ export default page({
       'An approver. The work is other people’s requests, so there is no button for raising one.',
     ),
     prose(
-      `Three tiles here: **Awaiting my approval**, tinted; **Cancellation requests**; and
-       **Budget**, whose value is the words **Variance grid** rather than a count, because it is a
-       way through to that screen rather than a queue. There is no **+ New request** button,
-       because the approver role does not carry permission to raise requests.`,
+      `Four tiles here: **Awaiting my approval** and **Partial payments to review**, both tinted;
+       **Cancellation requests**; and **Budget**, whose value is the words **Variance grid** rather
+       than a count, because it is a way through to that screen rather than a queue. There is no
+       **+ New request** button, because the Manager role does not carry permission to raise
+       requests.`,
     ),
     prose(
       `**Awaiting your approval** lists what is sitting with you; the first row in the screenshot
        also carries an **Urgent** flag before its status. **Decisions only you can make** holds the
-       requests whose raisers have asked to cancel something you already approved — those cannot be
-       handed to anybody else. The feet lead to **Open the approvals queue →** and **Review all →**,
-       both covered in [The approvals queue](page:manager/the-approvals-queue).`,
+       requests whose raisers have asked to cancel something you already approved. **Partial
+       payments to review** holds the requests Accounts paid short and sent back for you to decide.
+       The feet lead to **Open the approvals queue →**, **Review all →** and **Open the partial
+       reviews →**, all covered in [The approvals queue](page:manager/the-approvals-queue).`,
     ),
 
     section('The accounts team'),
@@ -87,14 +96,20 @@ export default page({
       'The accounts team. One queue matters at the start of the day: what is approved and unclaimed.',
     ),
     prose(
-      `One count and one panel. **Approved, unclaimed** is the number of approved requests that
-       nobody has taken and that are not on hold — the same number the accounts queue itself shows,
-       drawn from the same query, so the two can never disagree. **Budget** appears again as a way
-       through to the variance grid.`,
+      `Two tiles and, in the screenshot, one panel. The **Approved, unclaimed** tile is the number of
+       approved requests that nobody has taken and that are not on hold — the same number the
+       accounts queue itself shows, drawn from the same query, so the two can never disagree. The
+       panel under it is headed **Approved and unclaimed** and lists the first four of them, urgent
+       ones first. **Budget** appears again as a way through to the variance grid.`,
+    ),
+    prose(
+      `A second panel, **Concerns to answer**, appears when an approver has raised a concern about a
+       partial payment you recorded and still hold. It has no tile of its own. Its foot, **Open the
+       partial review tab →**, leads to that tab of the queue.`,
     ),
     note(
-      `The rows in this panel carry the request number, the status and the amount, but no title.
-       Open a row to see what the money is for. **Open the payment queue →** at the foot leads to
+      `Each row carries the request number and title, the status, the waiting line and the amount.
+       **Open the payment queue →** at the foot leads to
        [The payment queue](page:accounts/the-payment-queue).`,
     ),
 
@@ -104,13 +119,13 @@ export default page({
       'An administrator sees every tile the product has, and an extra panel of destinations.',
     ),
     prose(
-      `An administrator holds every permission, so every tile is drawn: all six, wrapping onto a
-       second line. Four of them read zero in this screenshot — the administrator account had
+      `An administrator holds every permission, so every tile is drawn: all seven, wrapping onto a
+       second line. Five of them read zero in this screenshot — the administrator account had
        raised nothing and was nobody's approver — and because those queues are empty, no panels are
        drawn for them. The counts are still true; there is just nothing to list.`,
     ),
     prose(
-      `The second panel, **Administration**, is the one nobody else gets. Instead of requests it
+      `The **Administration** panel is the one the other built-in roles do not get. Instead of requests it
        holds four destinations, each with a line saying what it is for: **Configuration**
        ("Numbering, attachments, urgency, approvals"), **Roles & permissions** ("Who can do what"),
        **Users** ("People and their default approvers") and **Vendors** ("The vendor master"). Each
@@ -125,11 +140,12 @@ export default page({
         ['Needs my action', 'Anybody who may raise requests', 'Your own requests that are stuck on you'],
         ['My open requests', 'Anybody who may raise requests', 'Your own requests that are not finished'],
         ['Awaiting my approval', 'Approvers', 'Requests sent to you and not yet decided'],
-        ['Cancellation requests', 'Approvers', 'Approved requests whose raisers have asked to cancel'],
+        ['Cancellation requests', 'Approvers', 'Requests sent to you whose raisers have asked to cancel them after approval'],
+        ['Partial payments to review', 'Approvers who may decide shortfalls', 'Requests sent to you that Accounts paid short and sent back for your decision'],
         ['Approved, unclaimed', 'The accounts team', 'Approved requests nobody has claimed and that are not on hold'],
         ['Budget', 'Anybody who may open the variance grid', 'Nothing — it is a link to the grid'],
       ],
-      'Every tile the home screen can draw. You get the ones your permissions reach.',
+      'Every tile the home screen can draw. You get the ones your permissions reach. The Concerns to answer panel has no tile.',
     ),
     tip(
       `The number on a tile and the number on the panel below it are the same figure, and the panel
@@ -155,7 +171,9 @@ export default page({
     prose(
       `Next to the badge is a sentence naming who owes the next action. It is worked out once, in
        one place, so the home screen, the lists and the request itself always give the same answer.
-       "Waiting on you" is drawn in brand colour; a finished request reads "Nothing pending".`,
+       "Waiting on you" is drawn in brand colour; a finished request reads "Nothing pending".
+       [Statuses and badges](page:reference/statuses-and-badges#the-waiting-line) lists every form
+       it takes.`,
     ),
 
     faq([

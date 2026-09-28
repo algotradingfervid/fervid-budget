@@ -20,7 +20,7 @@ export default page({
       ['Role', 'What it is for', 'Permissions held', 'People holding it'],
       [
         ['Requester', 'Raise and manage your own payment requests.', '9 of 66', '30'],
-        ['Manager', 'Review and decide on payment requests.', '10 of 66', '12'],
+        ['Manager', 'Review and decide on payment requests.', '11 of 66', '12'],
         ['Accounts', 'Process approved requests and record payments.', '19 of 66', '10'],
         ['Admin', 'Full administrative access.', 'All 66', '4'],
       ],
@@ -47,7 +47,7 @@ export default page({
         ['`approval`', '`reject`', '—', '✓', '—', '✓'],
         ['`approval`', '`return`', '—', '✓', '—', '✓'],
         ['`attachment`', '`create`', '✓', '—', '✓', '✓'],
-        ['`attachment`', '`view`', '✓', '—', '✓', '✓'],
+        ['`attachment`', '`view`', '✓', '✓', '✓', '✓'],
         ['`audit`', '`view`', '—', '—', '—', '✓'],
         ['`backup`', '`create`', '—', '—', '—', '✓'],
         ['`backup`', '`view`', '—', '—', '—', '✓'],
@@ -112,7 +112,9 @@ export default page({
     prose(
       `The roles screen does not draw all 66 rows. It groups them into nine pages and seven action
        columns, so one tick there can stand for several permissions at once — the **Approve** cell on
-       the Payment requests row covers all six \`approval\` actions together. Every row carries an
+       the Payment requests row covers five \`approval\` actions together (approve, reject, return,
+       reassign and accept_partial), while the sixth, \`approval:cancel\`, sits in the **Cancel** cell
+       with \`request:withdraw\` and \`request:cancel\`. Every row carries an
        Advanced disclosure listing its individual permissions, which is where you go when you need one
        of them and not the rest.`,
     ),
@@ -194,7 +196,10 @@ export default page({
       `An approver adds **Approvals**, **Variance grid** and **Reports**. They cannot reach the payments
        ledger, the payment queue, the recoverables register, budgets, monthly plans, the vendor,
        project and head masters, or any administration screen. They can read the variance grid but not
-       export it, and read reports but not export those either.`,
+       export it, and read reports but not export those either, so neither screen shows them an
+       export button. Without \`payment:view\` they also do not get the list of recent payments on the
+       variance grid. They can open and download the documents attached to a request — the Manager
+       role holds \`attachment:view\` — but cannot add any.`,
     ),
     shot(
       'manager/payments-refused',
@@ -210,8 +215,10 @@ export default page({
     ),
     warning(
       `\`reservation:reassign\` is an administrator permission. An accountant can release a claim they
-       hold themselves, but taking one off a colleague is not theirs to do. Somebody who tries is told
-       "Only the person holding this reservation can release it."`,
+       hold themselves, but taking one off a colleague is not theirs to do. Somebody who opens the
+       release screen for a colleague's claim is told "Only the person holding this reservation can
+       release it."; a release sent from a page that went out of date while the claim changed hands
+       is refused with "Only the assignee may release this request".`,
     ),
 
     subsection('Admin'),
@@ -227,7 +234,9 @@ export default page({
       `Holding every permission is still not holding every seat. Some acts are tied to the person, not
        the grant: only the person who raised a request may edit it or ask for it to be cancelled, and
        only the approver a request was sent to may decide it. An administrator holding
-       \`request:cancel\` is still refused the cancellation form on somebody else's request.`,
+       \`request:cancel\` is still refused the cancellation form on somebody else's request. The one
+       exception runs the other way: holding \`user:edit\` as well as \`approval:reassign\` lets an
+       administrator hand a request to a different approver when its own approver cannot act.`,
     ),
 
     tip(

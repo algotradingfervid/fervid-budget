@@ -50,7 +50,7 @@ export default page({
       ['Entry', 'What its number counts'],
       [
         ['Notifications', 'Notifications you have not opened yet'],
-        ['Approvals', 'Requests waiting on a decision from you'],
+        ['Approvals', 'Requests waiting on a decision from you: requests awaiting your approval and, if your roles let you decide shortfalls, partial payments sent back to you for review'],
         ['Accounts queue', 'Approved requests nobody has claimed and that are not on hold'],
         ['Payments ledger', 'Recorded payments with no document attached to them'],
         ['Monthly plans', 'Budget months that are still open'],
@@ -84,7 +84,7 @@ export default page({
           'My requests, and nothing else. No approvals queue, no payments, no budget screens.',
         ],
         [
-          'Approver',
+          'Manager',
           'My requests, Approvals, Variance grid and Reports.',
         ],
         [
@@ -92,7 +92,7 @@ export default page({
           'My requests, Accounts queue, Recoverables, Payments ledger, Variance grid and Reports.',
         ],
         [
-          'Administrator',
+          'Admin',
           'Every entry in the table above, including the Masters and Admin groups.',
         ],
       ],
@@ -151,14 +151,14 @@ export default page({
        beneath it. Under that is **Log out**.`,
     ),
     prose(
-      `The line under your name is a property of the account itself, not the list of roles that
-       decides what your menu holds. Two people can both read the same word there and still see
-       different menus. To find out which roles you actually hold, ask an administrator to look you
-       up on [People and accounts](page:admin/people).`,
+      `The line under your name lists the roles your account holds — for example "Accounts" or
+       "Manager". When you hold more than one, they are all listed, separated by a dot. Those roles
+       are what decide your menu, so this line is the quickest answer to "why can I see this?".
+       [People and accounts](page:admin/people) explains how an administrator changes them.`,
     ),
     tip(
-      `**Log out** is the only way out. There is nothing else in the sidebar that ends your session,
-       so use it on any machine other people can reach.`,
+      `**Log out** is the only way out, and it signs you out on every device and browser at once,
+       not only the one in front of you. Use it on any machine other people can reach.`,
     ),
 
     section('On a small screen'),
@@ -169,7 +169,8 @@ export default page({
        bottom. The tabs are built from your permissions in the same way the sidebar is: **Home**,
        then your main list, then one large centre action — approving, paying or raising, whichever
        is the first of those you are allowed to do — then payments or the budget grid, then
-       **More**, which opens the same grouped menu the sidebar holds. The screenshots in this
+       **More**, which opens the same grouped menu the sidebar holds, with **Log out** at the foot
+       under **Session**. The screenshots in this
        manual were all taken on a wide screen, so they show the sidebar.`,
     ),
 

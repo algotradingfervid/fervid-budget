@@ -48,7 +48,7 @@ export default page({
         [`"Only the person who raised a request may edit it."`, `Correcting a request is the requester’s act. An approver who wants a change returns the request instead, which is a different verb with its own audit line.`, `Return the request for correction, or ask its requester to make the change.`],
         [`"Only the person who raised a request may ask for it to be cancelled."`, `Asking is the requester’s act, whoever else holds \`request:cancel\`.`, `An approver with \`approval:cancel\` can cancel the request outright with a reason instead.`],
         [`"Only the approver this request was sent to can decide its cancellation."`, `The decision belongs to the named approver, not to everybody holding the permission.`, `If that approver cannot act, reassign the approval to somebody who can.`],
-        [`"Only the person holding this reservation can release it."`, `Releasing a claim you do not hold is taking work off a colleague, which needs \`reservation:reassign\` — an administrator permission.`, `Ask an administrator to reassign the reservation.`],
+        [`"Only the person holding this reservation can release it."`, `You opened the release screen for a claim you do not hold. Taking work off a colleague needs \`reservation:reassign\` — an administrator permission.`, `Ask an administrator to reassign the reservation.`],
         [`"You do not have permission to record a partial payment."`, `Asking the manager to decide a shortfall needs \`payment:mark_partial\`.`, `Record the payment as settled if that is what it is, or ask a colleague who holds the grant.`],
       ],
       `Refusals that name a seat rather than a permission.`,
@@ -67,7 +67,7 @@ export default page({
         [`"Someone else is already processing this request"`, `Somebody else holds the claim.`],
         [`"Only an approved request can be taken for processing"`, `The request is in some other status entirely.`],
         [`"Reserve this request before recording its payment"`, `A payment was posted for a request you do not currently hold.`],
-        [`"Only the assignee may release this request"`, `You tried to release somebody else’s claim without \`reservation:reassign\`.`],
+        [`"Only the assignee may release this request"`, `A release was sent for a claim somebody else now holds — usually from a page that went out of date while the claim changed hands — and you do not hold \`reservation:reassign\`.`],
         [`"Only a processing request can be released"`, `There is nothing claimed to release.`],
         [`"The reservation changed while you were deciding"`, `The claim moved between the screen loading and your press.`],
         [`"Reservation was lost before settlement"`, `The claim moved between the confirmation sheet and the save. No payment was written.`],
@@ -87,7 +87,7 @@ export default page({
       [`What the product says`, `What it means`],
       [
         [`"That page does not exist. It may have moved, or it may not be built yet."`, `The address itself is not a screen this product serves. Check the URL.`],
-        [`"The requested record was not found."`, `The record does not exist — or it exists and your data scope does not reach it. These two are made deliberately indistinguishable.`],
+        [`"The requested record was not found."`, `The record does not exist — or it exists and your data scope does not reach it. These two are made deliberately indistinguishable. It is also the answer when somebody who is not a request's approver sends an approval for it.`],
       ],
       `The two 404 messages.`,
     ),
@@ -114,8 +114,8 @@ export default page({
 
     subsection(`Somebody else has it`),
 
-    prose(`The heading names the person holding the claim, the badge below it reads **Processing**
-       followed by their name, and the line beside it says when they took it.`),
+    prose(`The heading names the person holding the claim, the badge below it reads **With Accounts —
+       taken by** followed by their name, and the line beside it says when they took it.`),
 
     shot('accounts/conflict-taken', `The taken conflict. The banner names the holder; **What you can do** offers the queue and a read-only view of the request.`),
 
@@ -154,24 +154,25 @@ export default page({
       [`What the product says`, `When`, `What to do`],
       [
         [`"This request is not reserved by anyone."`, `You opened the release or the reserved-too-long screen for a request nobody has claimed.`, `Go back to the queue. If the request is approved and unclaimed, take it for processing.`],
-        [`"This month is locked and cannot be changed."`, `A write landed in a month an administrator has closed.`, `Ask an administrator to unlock the month, or use a date inside an open one.`],
+        [`"This month is locked. Unlock it with a reason before changing budgets or payments."`, `A write landed in a month an administrator has closed.`, `Ask an administrator to unlock the month, or use a date inside an open one.`],
       ],
       `Conflicts that are not about reservations.`,
     ),
 
     section(`Locked months`),
 
-    prose(`Locking a month makes its budgets and its payments read-only. Three refusals come out of
-       that, and they read differently because they arrive at different moments.`),
+    prose(`Locking a month makes its budgets and its payments read-only. The refusals that come out of
+       that read differently because they arrive at different moments.`),
 
     table(
       [`Where`, `What the product says`, `What to do`],
       [
         [`Approving a request whose Needed by date falls in a locked month`, `The month, then "is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed."`, `The check happens before the approval, not after — so the obligation is never created. Ask for the month to be reopened, or for the date to be changed.`],
-        [`A screen that redraws with the message in place, such as the budget editor or the settlement confirmation`, `"This month is locked. Unlock it with a reason before changing budgets or payments."`, `Everything you typed is still on the screen. Unlocking is an administrator act and demands a written reason.`],
-        [`A refusal that takes you to the error page`, `"This month is locked and cannot be changed."`, `The same remedy; only the delivery differs.`],
+        [`Choosing a Paid on date in a locked month on the payment form`, `A warning under the date: the month, then "is locked, so a payment dated in it will be refused. Pick a date in an open month, or ask for" the month "to be unlocked."`, `A warning before you save, not a refusal. Change the date.`],
+        [`Saving a budget in the budget editor`, `"Your changes were not saved because this month is locked. The saved budget is shown below. Unlock the month with a reason before editing."`, `The screen shows the saved budget, read-only. Unlocking is an administrator act and demands a written reason.`],
+        [`Any other write into a locked month, such as recording a payment dated in it`, `"This month is locked. Unlock it with a reason before changing budgets or payments."`, `Ask for the month to be unlocked, or use a date inside an open one.`],
       ],
-      `The three faces of a locked month.`,
+      `The faces of a locked month.`,
     ),
 
     note(`Recording a payment also refuses a date in the future: "paid on cannot be a future date —
@@ -227,7 +228,12 @@ export default page({
         [`"the invoice number is required" / "the invoice date is required"`, `Both, on a vendor invoice.`],
         [`"the expense date is required"`, `When you spent the money, on a reimbursement.`],
         [`"say what the advance is for"`, `A reason, on a vendor advance.`],
-        [`"a vendor invoice is a budget expense" / "a vendor advance is a budget expense" / "reimbursement is a budget expense"`, `The recoverable treatment on a type that cannot carry it. Only an employee advance may be recoverable.`],
+        [`"say what the money is for"`, `A reason, on an employee advance.`],
+        [`"a vendor invoice is a budget expense" / "a vendor advance is a budget expense" / "reimbursement is a budget expense"`, `The recoverable treatment on a type that cannot carry it. Only an employee advance may be either; a deposit or guarantee is always recoverable.`],
+        [`"recoverable type requires recoverable treatment"`, `A deposit or guarantee sent as a budget expense. It is always recoverable.`],
+        [`"an employee advance is always in the Employee advance category — a deposit, guarantee or loan is raised as its own request type"`, `A recoverable employee advance filed under any other category.`],
+        [`"an advance to an employee is raised as an Employee advance, which pays the person raising it"`, `A deposit or guarantee filed under the Employee advance category.`],
+        [`"say who receives the money — the counterparty company or the authority holding the deposit"`, `The payee, on a deposit or guarantee.`],
         [`"choose a recoverable category"`, `A category, once the treatment is recoverable.`],
         [`"expected return date is required for recoverables"`, `When you expect the money back.`],
         [`"repayment or refund terms are required for recoverables"`, `How it comes back.`],
@@ -256,9 +262,13 @@ export default page({
         [`"you cannot reassign a request to yourself"`, `Picking your own name in the reassign panel. Nobody may, an administrator included.`],
         [`"this request is with … now, so it is not yours to reassign"`, `Reassigning from a page loaded before an administrator moved the request to somebody else.`],
         [`"only a rejected request can be re-raised"`, `Re-raising something that was not rejected.`],
-        [`A payment confirmation requires a valid settlement choice`, `Explicitly choose full settlement, installment, or manager shortfall review as appropriate.`],
-        [`"a reason is required for a partial settlement"`, `Paying short without explaining why.`],
+        [`"choose how the remaining balance should be handled"`, `A payment confirmed without choosing **Fully settled**, **Installment — pay the balance later** or **Ask manager to accept a shortfall**.`],
+        [`"a reason is required for a partial settlement"`, `Asking the manager to accept a shortfall without explaining why.`],
+        [`"explain the deduction or agreed adjustment before closing a short payment"`, `Marking a short payment **Fully settled** without saying why less was paid.`],
+        [`"this payment clears the remaining balance; choose fully settled instead of shortfall review"`, `Sending a payment for shortfall review when it pays everything that is left.`],
         [`"… is more than the approved …"`, `The payment exceeds the approved amount. To pay more, cancel the request and raise a new one.`],
+        [`"… exceeds the remaining approved balance of …"`, `A later installment is larger than what is left to pay. Extra spending needs a separately approved request.`],
+        [`"a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling"`, `Asking for, or making, a cancellation on a request that already has a payment against it.`],
         [`"confirm that no payment was initiated before releasing"`, `Releasing a claim without ticking the confirmation.`],
         [`"a reason is required so the requester and approver know why"`, `Releasing a claim without a reason.`],
         [`"a reason is required when a reservation changes hands"`, `Reassigning a claim without a reason.`],
@@ -309,7 +319,7 @@ export default page({
     faq([
       { q: `I got 403 on a screen I use every day.`, a: `Check whether the message is the generic "You do not have permission to perform this action." or one that names a reason. If it is the generic one, a role has changed. If it is "Your form session expired. Refresh the page and try again.", it is not a permission problem at all — reload and try again.` },
       { q: `The conflict screen says nothing was saved. Is that reliable?`, a: `Yes. The confirmation sheet writes nothing — it only computes and displays. The payment and the request status are written together in a single step, so either both happened or neither did.` },
-      { q: `Can I see the messages somebody else got?`, a: `Every refusal is logged with its request ID, and administrators can read the record on [The audit trail](page:admin/the-audit-trail). The messages themselves are not stored on the request.` },
+      { q: `Can I see the messages somebody else got?`, a: `Not from inside the product. Every refusal is written to the server's log with its request ID, which whoever runs your installation can search. [The audit trail](page:admin/the-audit-trail) records changes and sign-ins, including failed sign-ins, but not refusals, and the messages are not stored on the request.` },
       { q: `The form came back with a message but I cannot see which field is wrong.`, a: `The band names the rule rather than highlighting the field. Read the message against [Raising a request](page:requester/raising-a-request), which lists every field and what it requires for each type.` },
     ]),
   ],
