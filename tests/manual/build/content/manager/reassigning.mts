@@ -18,7 +18,7 @@ export default page({
 
     section('Reassigning an approval'),
     steps([
-      { text: 'Open the request. The control sits in the bar along the bottom, at the far right.' },
+      { text: 'Open the request. The control sits in the bar along the bottom, at the far right. On a request in partial review it is on the request page, not on the partial-review screen.' },
       {
         text: 'Select **Reassign approval**.',
         note: 'The panel names the person who currently holds it — *Currently with Karthik Bose*.',
@@ -71,9 +71,9 @@ export default page({
     note(
       `The control appears while the request is waiting on its approver — \`pending\`, returned for
        correction, awaiting a cancellation decision, or in partial review — and only to somebody who
-       may use it, when there is somebody else to send it to. If no other eligible approver exists
-       in the organisation, the button is not drawn at all — there is no message, because there is
-       nothing to offer. Ask an administrator to give somebody the approver role.`,
+       may use it. If nobody else in the organisation can approve, the button still appears but
+       every name in **Send it to** is greyed out, so there is nobody to choose. Ask an
+       administrator to give somebody the approver role.`,
     ),
 
     section('What changes and what does not'),
@@ -98,10 +98,11 @@ export default page({
         ['*Choose the approver this request should go to.*', 'No name was picked from the list.'],
         ['*Give a reason for the reassignment.*', 'The **Why** box was empty.'],
         ['*Only the approver this request was sent to, or an administrator, can reassign it.*', 'You are not the approver named on it. Ask them, or an administrator.'],
-        ['A message saying an approved (or completed, rejected, withdrawn or cancelled) request cannot be reassigned', 'Nothing is waiting on an approver: it is with Accounts, or it is closed.'],
-        ['A message saying you cannot reassign a request to yourself', 'You picked your own name. A request is never handed to the person moving it.'],
-        ['A message saying that person cannot approve requests', 'The chosen account no longer carries the approver role. Pick another, or ask an administrator.'],
-        ['A message saying a request cannot be reassigned to its own requester', 'You picked the person who raised it. Nobody may approve their own request.'],
+        ['A message such as *an approved request cannot be reassigned* (or a request with Accounts, a completed, rejected, withdrawn or cancelled one)', 'Nothing is waiting on an approver: it is with Accounts, or it is closed.'],
+        ['*this request is with … now, so it is not yours to reassign*', 'Somebody moved the request to another approver after you opened it.'],
+        ['*you cannot reassign a request to yourself*', 'You picked your own name. A request is never handed to the person moving it.'],
+        ['*that person cannot approve requests — choose one of the approvers offered*', 'The chosen account is deactivated or no longer carries the approver role. Pick another, or ask an administrator.'],
+        ['*a request cannot be reassigned to its own requester*', 'You picked the person who raised it. Nobody may approve their own request.'],
       ],
     ),
     tip(

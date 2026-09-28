@@ -18,7 +18,13 @@ export default page({
 
     section(`The decisions you take`),
 
-    prose(`Every decision is taken on one request at a time, from the request's own screen. There is no
+    prose(`There are five decisions: approve, return for correction, reject, cancel, and settle a
+       shortfall. Cancelling comes in two forms — deciding a cancellation the requester asked for, or
+       cancelling outright — so the decisions reach you through six controls. A seventh control,
+       **Reassign approval**, is not a decision at all: it leaves the status alone and changes only
+       who decides.
+
+       Every decision is taken on one request at a time, from the request's own screen. There is no
        bulk approval — the approvals queue says so at the foot of the page.`),
 
     table(
@@ -27,17 +33,17 @@ export default page({
         [`Approve`, `**Approve ₹…**`, `The request is \`pending\``, `\`approved\` — Accounts may now pay it`],
         [`Return for correction`, `**Return for correction**`, `The request is \`pending\``, `\`returned\` — back with the requester to fix and send again`],
         [`Reject`, `**Reject**`, `The request is \`pending\``, `\`rejected\` — closed for good`],
-        [`Reassign`, `**Reassign approval**`, `The request is \`pending\` and another approver exists`, `Still \`pending\`, but routed to a different approver`],
-        [`Decide a cancellation`, `**Decide the cancellation**`, `The requester has asked to cancel`, `\`cancelled\`, or back to \`approved\``],
-        [`Cancel outright`, `**Cancel with reason**`, `The request is \`approved\` and nobody has asked`, `\`cancelled\``],
-        [`Review a shortfall`, `**Decide the partial payment**`, `Accounts paid less than you approved`, `Returned to Approved to keep the balance payable, closed as \`completed_partial\`, or left under review with your concern recorded`],
+        [`Decide a cancellation`, `**Decide the cancellation**`, `The requester has asked to cancel (\`cancellation_requested\`)`, `\`cancelled\`, or back to \`approved\``],
+        [`Cancel outright`, `**Cancel with reason**`, `The request is \`approved\`, nothing has been paid against it, and nobody has asked`, `\`cancelled\``],
+        [`Review a shortfall`, `**Decide the partial payment**`, `Accounts paid less than you approved (\`partial_review\`)`, `Returned to Approved to keep the balance payable, closed as \`completed_partial\`, or left under review with your concern recorded`],
+        [`Reassign (not a decision)`, `**Reassign approval**`, `The request is waiting on you: \`pending\`, returned for correction, awaiting a cancellation decision, or in partial review`, `Status unchanged, but routed to a different approver`],
       ],
-      `The seven controls an approver can be offered, and what each one does.`,
+      `The seven controls an approver can be offered: six carry the five decisions, and the seventh hands the decision to somebody else.`,
     ),
 
     note(`Every one of these is a two-press action. The control in the bar along the bottom opens a
-       panel; nothing is written until you press the button inside that panel. Closing the panel
-       changes nothing.`),
+       panel or a screen of its own; nothing is written until you press the button inside it.
+       Closing the panel, or leaving the screen, changes nothing.`),
 
     section(`Whose decision it is`),
 
@@ -45,9 +51,11 @@ export default page({
        role is not enough: if you open somebody else's request you see the whole thing — the
        amounts, the purpose, the conversation — with no action bar at the bottom.
 
-       Reassignment is the one exception, and it is deliberate. It is offered to anybody who holds
-       the reassign permission, because it is the way out when the routed approver has left or can
-       no longer act. [Reassigning an approval](page:manager/reassigning) explains it.`),
+       Reassignment works the same way, with one deliberate exception. It is offered to the
+       approver the request was routed to and to an administrator — nobody else. Another approver
+       who opens the request does not see it. The administrator's version is the way out when the
+       routed approver has left or can no longer act.
+       [Reassigning an approval](page:manager/reassigning) explains it.`),
 
     shot('manager/request-pending', 'A request routed to you. The four controls sit along the bottom.'),
 
@@ -65,10 +73,12 @@ export default page({
 
     section(`What the role does not carry`),
 
-    prose(`You cannot raise a request, record a payment, open the payments ledger, see the vendor
-       master or the recoverables register, or download the documents attached to a request. None
-       of that is a fault or a setting on your own account — the approver role does not hold those
-       permissions. [What an approver cannot see](page:manager/limits-of-the-role) sets out each
+    prose(`You can open and download the documents attached to any request you can see — the
+       **Download** button sits beside each one in the Attachments section.
+
+       You cannot raise a request, record a payment, open the payments ledger, see the vendor
+       master or the recoverables register, or export the reports. None of that is a fault or a
+       setting on your own account — the approver role does not hold those permissions. [What an approver cannot see](page:manager/limits-of-the-role) sets out each
        one and what to do instead.`),
 
     tip(`If a request is fixable, return it. Returning keeps the number, the history and the thread,
@@ -77,7 +87,7 @@ export default page({
     faq([
       { q: `I can see a request but there are no buttons at the bottom.`, a: `Then you are not its approver. Look at the **Approver** field in the Details block — that names the person who has to decide. If they cannot, [reassign it](page:manager/reassigning).` },
       { q: `Can I approve a request I raised myself?`, a: `No. The product refuses a self-approval outright, and the approver list a requester chooses from never contains their own name.` },
-      { q: `Where do I find a request that has already been paid?`, a: `In **My requests**, which reaches every request. The approvals queue stops at approved, rejected and cancelled — see [The approvals queue](page:manager/the-approvals-queue).` },
+      { q: `Where do I find a request that has already been paid?`, a: `In **My requests**, which reaches every request. The approvals queue's **Decided** tab stops at approved, rejected and cancelled — see [The approvals queue](page:manager/the-approvals-queue).` },
     ]),
   ],
 });

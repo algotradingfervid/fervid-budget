@@ -7,14 +7,15 @@ export default page({
   summary: 'The screens the approver role does not reach, and what to do when you need them.',
   blocks: [
     prose(
-      `The approver role is deliberately narrow. It carries the decisions on a request, the variance
-       grid and the reports — and nothing else. This page sets out what it does not reach, so you can
+      `The approver role is deliberately narrow. It carries the decisions on a request, the documents
+       attached to requests, the variance grid and the reports — and nothing else. This page sets out what it does not reach, so you can
        tell a permission from a fault and know who to ask.`,
     ),
 
     section('The whole of the role'),
     prose(
-      `Taken from the running system, these are every permission the approver role holds:`,
+      `These are every permission the built-in approver role holds, as the product sets it up.
+       An administrator can change the role, so yours may differ:`,
     ),
     table(
       ['Permission', 'What it lets you do'],
@@ -27,6 +28,7 @@ export default page({
         ['`approval:accept_partial`', 'Close a shortfall review, or raise a concern about one'],
         ['`request:view`', 'Read any request in the organisation'],
         ['`request:comment`', 'Post in a request’s conversation'],
+        ['`attachment:view`', 'Download the documents attached to a request, and the proof on a payment you are reviewing'],
         ['`grid:view`', 'Open the variance grid'],
         ['`report:view`', 'Open the reports'],
       ],
@@ -41,8 +43,8 @@ export default page({
 
     section('The payments ledger'),
     prose(
-      `The approver role holds no payment permission of any kind. There is no **Payments** entry in
-       your sidebar, and following a link to the payments ledger — or to any single payment — answers
+      `The approver role holds no payment permission of any kind. There is no **Payments ledger** entry
+       in your sidebar, and following a link to the payments ledger — or to any single payment — answers
        with the Forbidden screen.`,
     ),
     shot('manager/payments-refused', 'An approver opening the payments ledger. The role does not carry that permission.'),
@@ -51,39 +53,32 @@ export default page({
        — and a request ID worth quoting if you report it. **Return to dashboard** and **Go back** are
        the only two ways on.
 
-       You will meet it if you follow the payment link from the recent-payments list under
-       [the variance grid](page:manager/the-variance-grid), or the **Export CSV** control on
-       [Reports](page:manager/reports).`,
+       The screens you use do not link you there — payment numbers on a request are plain text for
+       you, and the grid and the reports leave out their payment lists — so you meet it only by
+       following a bookmarked or pasted link to a payment.`,
     ),
     note(
       `You are not cut off from payment facts entirely. A request that has been paid shows its
-       **Payment outcome** on the request itself — approved against paid, and the difference — and a
-       shortfall review shows the payment in detail, including its mode and reference. What you cannot
-       open is the ledger of all payments.`,
+       **Payment outcome** on the request itself — approved against paid, and the difference — and
+       lists each payment's number, date, amount and reference under **Payment history**. A
+       shortfall review shows the payment in detail, including its mode and reference, and any
+       proof of payment Accounts attached. What you cannot open is the ledger of all payments.`,
     ),
 
     section('The documents on a request you are approving'),
-    warning(
-      `The approver role does not carry the attachment permission. On a request you are being asked
-       to approve, the Attachments section lists each document by name, size and date, and the count
-       sits beside the heading — but no **Download** control is drawn beside them, and the download
-       address refuses you. You can see that an invoice exists. You cannot read it in Fervid Budget.`,
-      'You cannot open the attachments',
-    ),
     prose(
-      `What to do instead, in order of how much trouble it is for everybody:`,
-    ),
-    table(
-      ['Option', 'How'],
-      [
-        ['Ask the requester for the document', 'Post in the request’s conversation. They get the message and everybody can see it was asked.'],
-        ['Ask an administrator to open it', 'The administrator role carries the attachment permission and can read anything on the request.'],
-        ['Return the request', 'If the paperwork is missing rather than unreadable, [return it](page:manager/returning-for-correction) and say what you need.'],
-      ],
+      `You can read them. On any request you can see, the Attachments section lists each document
+       by name, size and date with a **Download** button beside it. The same holds for the proof of
+       payment on a shortfall review.
+
+       If there is nothing to download, no document was attached. Ask for it in the request’s
+       conversation, or [return the request](page:manager/returning-for-correction) and say what you
+       need.`,
     ),
     note(
-      `If your organisation needs approvers to read invoices, that is a change to the role rather
-       than to your account. An administrator can add the permission from
+      `If you see no **Download** button beside a document, your account's roles do not carry the
+       attachment permission — for example because your organisation changed the approver role or
+       gave you a custom one. An administrator can check it in
        [Roles and permissions](page:admin/roles-and-permissions).`,
     ),
 
@@ -105,9 +100,10 @@ export default page({
       [
         ['Raise a request of your own', 'The approver role carries no create permission. If you also need to raise requests, ask for the requester role to be added to your account.'],
         ['Record a payment', 'Settlement belongs to the accounts team. Approving is where your part ends.'],
+        ['Export the reports or the variance grid', 'Both exports need their own permission, which the approver role does not hold, so no export control is drawn on either screen. The approvals queue and **My requests** do offer **Export CSV**.'],
         ['Change a request’s project, head or amount before approving', 'An approver changes only the amount approved, and only downwards. For anything else, return the request.'],
         ['Undo a rejection', 'Rejection is final by design. A new request has to be raised.'],
-        ['Approve on somebody else’s behalf', 'Only the approver named on the request can decide it. [Reassign it](page:manager/reassigning) instead.'],
+        ['Approve on somebody else’s behalf', 'Only the approver named on the request can decide it. If they cannot act, they or an administrator can [reassign it](page:manager/reassigning).'],
         ['Approve your own request', 'Refused outright, and a requester is never offered their own name as approver.'],
       ],
     ),
@@ -120,9 +116,9 @@ export default page({
     table(
       ['What you see', 'What it means'],
       [
-        ['The **Forbidden** screen', 'Your role does not reach that screen at all. Nothing about the record is the problem.'],
-        ['*You do not have permission to perform this action.* on a request', 'You reached the request, but you are not the person entitled to take that action on it — usually because you are not its approver.'],
-        ['*The requested record was not found.*', 'The record is outside what your account may see, or it does not exist.'],
+        ['The **Forbidden** screen after following a link to a screen', 'Your role does not reach that screen at all. Nothing about the record is the problem.'],
+        ['The **Forbidden** screen after pressing a button on a request', 'You reached the request, but you are not the person entitled to take that action on it — usually because you are not its approver. The sentence is usually *You do not have permission to perform this action.*; some actions name the reason, such as *Only the approver this request was sent to can decide its cancellation.*'],
+        ['*The requested record was not found.*', 'The record is outside what your account may see, or it does not exist. Approving a request that is not routed to you also answers this way.'],
       ],
     ),
     prose(
@@ -139,7 +135,7 @@ export default page({
             account carries.`,
       },
       {
-        q: 'I am being asked to approve an invoice I cannot read.',
+        q: 'I am being asked to approve an invoice that is not attached.',
         a: `Ask for it in the request’s conversation, or return the request. Approving a figure you
             have not been able to check is a decision to make deliberately, not by default.`,
       },
