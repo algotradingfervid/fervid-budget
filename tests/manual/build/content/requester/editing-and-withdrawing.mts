@@ -48,11 +48,12 @@ export default page({
 
     subsection('What the edit form lets you change'),
     prose(
-      `Nearly everything: the short title, the project and head, the amount, the needed-by date, the
-       urgency flag and its reason, the type's own fields — vendor, invoice number, invoice date,
-       expense date, reason for the advance — the purpose, and the approver. You can also add another
-       document; the uploader is labelled **Add another document** and lists whatever is already
-       attached above it.`,
+      `Nearly everything: the short title, the project and head (or, on a recoverable, the recoverable
+       details), the amount, the needed-by date, the urgency flag — labelled **Marked urgent** here —
+       and its reason, the type's own fields — vendor, invoice number, invoice date, expense date,
+       reason for the advance, or the payee of a deposit — the purpose, and the approver. You can
+       also add another document; the uploader is labelled **Add another document** and lists
+       whatever is already attached above it.`,
     ),
     warning(
       `Two things you cannot change: the request **type** and the **treatment**. Neither control is on
@@ -69,7 +70,9 @@ export default page({
     ),
     note(
       `On a request your approver returned to you, the primary screen is the correction form rather
-       than this one, and its buttons are **Save corrections** and **Resubmit for approval**. See
+       than this one, and its buttons are **Edit every field**, **Save corrections** and **Resubmit
+       for approval**. **Edit every field** brings you to this form; here, on a returned request,
+       **Save and notify** saves your changes and sends the request back for approval in one step. See
        [When a request comes back to you](page:requester/when-a-request-is-returned).`,
     ),
 
@@ -90,8 +93,8 @@ export default page({
     prose(
       `The status becomes **Withdrawn** and the waiting sentence reads *Withdrawn by the requester*.
        The request moves to the **Closed** tab, the withdrawal is written into the history, and your
-       approver is told — their queue item has disappeared without a decision, so they are owed
-       the reason it went.`,
+       approver is told — their queue item has disappeared without a decision. No reason is asked
+       for; if one would help them, add a comment first.`,
     ),
     warning(
       `A withdrawal cannot be undone. There is no route back from \`withdrawn\` to any other state:

@@ -24,7 +24,7 @@ export default page({
 
     fields([
       { name: `Short title`, required: true, note: `One line naming the spend. The hint says what it is for: *What your approver will see in their approval list.*` },
-      { name: `How this is treated`, required: false, note: `On most types this is not a choice but a fixed line. A vendor invoice payment, a vendor advance and a reimbursement read *Budget expense. Money spent and gone. It counts against a project and head.*; a deposit or guarantee reads *Refundable or recoverable.*` },
+      { name: `How this is treated`, required: false, note: `On most types this is not a choice but a fixed line. A vendor invoice payment, a vendor advance and a reimbursement read *Budget expense. Money spent and gone. It counts against a project and head.*; a **Deposit or guarantee** reads *Refundable or recoverable. A deposit, guarantee or loan the company expects back. Kept out of budget actuals.*` },
       { name: `How should this be treated`, required: true, note: `Only on an **Employee advance**, which offers two choices — **Budget expense** or **Refundable or recoverable** — and opens on the recoverable one. Changing it changes the next fieldset. See [Budget spend or money you expect back](page:requester/budget-and-recoverable).` },
     ]),
 
@@ -37,7 +37,10 @@ export default page({
 
     note(`This fieldset only appears on a budget expense. On a deposit or guarantee, and on an employee
        advance treated as recoverable, it is replaced by **Recoverable details** — a category, an
-       expected return date and the repayment or refund terms.`),
+       expected return date, the repayment or refund terms, a **Related project** and, for some
+       categories, a **Counterparty company**. On an employee advance the category is fixed at
+       **Employee advance**; on a deposit or guarantee you choose it. See
+       [Budget spend or money you expect back](page:requester/budget-and-recoverable).`),
 
     subsection(`Amount and timing`),
 
@@ -75,8 +78,13 @@ export default page({
     subsection(`Who approves it`),
 
     fields([
-      { name: `Approver`, required: true, note: `The person who will decide. Your own default is already selected and marked *(your default)*. The hint says *You cannot approve your own request. Your own name is never in this list.*` },
+      { name: `Approver`, required: true, note: `The person who will decide. If an administrator has set a default approver on your user record, that person is already selected and marked *(your default)*; otherwise the list opens on *Choose an approver*. The hint says *You cannot approve your own request. Your own name is never in this list.*` },
     ]),
+
+    note(`Your organisation may require everyone to use their assigned approver. The **Approver** list is
+       then greyed out and cannot be changed. If your default approver is missing or can no longer
+       approve, a banner reads **Your default approver is unavailable.** and **Submit request** is
+       switched off until an administrator sets an active default approver on your user record.`),
 
     prose(`Beside it sits **Reminders**, which is not a control but a statement of what happens if
        nobody acts: *If nothing happens for 3 days, this request starts sending a reminder every
@@ -106,8 +114,11 @@ export default page({
     shot('requester/form-validation', 'A refused reimbursement. The red band at the top reads enter the amount you are requesting; beneath it, Check the highlighted fields lists every problem, and each field repeats its own message.'),
 
     prose(`If something is missing or contradictory, the form returns with a red band across the top
-       carrying one sentence — the first problem it found. Everything you had already typed is
-       still there; you are never made to fill the page in twice.`),
+       carrying one sentence — the first problem it found. Beneath it, a box headed **Check the
+       highlighted fields** lists the basic problems it can see at once, each linking to its field,
+       and each of those fields repeats its own message. Everything you had already typed is still
+       there; you are never made to fill the page in twice. A file you chose is not kept, so choose
+       it again before you resubmit.`),
 
     table(
       [`What the band says`, `What to do`],
@@ -127,6 +138,13 @@ export default page({
         [`\`that budget head has been retired — choose a head that is still open\``, `An administrator has closed that head. Pick another.`],
         [`\`that vendor is no longer active — choose an active vendor\``, `The vendor has been deactivated in the vendor master.`],
         [`\`say why this is urgent\``, `You ticked **Mark this urgent** and left the reason empty.`],
+        [`\`choose a recoverable category\``, `Pick a **Category** on a deposit or guarantee.`],
+        [`\`expected return date is required for recoverables\``, `Fill in **Expected return date**.`],
+        [`\`repayment or refund terms are required for recoverables\``, `Fill in **Repayment or refund terms**.`],
+        [`\`this recoverable category always belongs to a project\``, `Choose a **Related project** — the category you picked needs one.`],
+        [`\`this recoverable category needs a counterparty company\``, `Fill in **Counterparty company**.`],
+        [`\`say who receives the money — the counterparty company or the authority holding the deposit\``, `Fill in **Paid to** on a deposit or guarantee.`],
+        [`\`attach a supporting document, or say why you cannot\``, `Only where documents are compulsory: attach a file or fill in the reason field.`],
       ],
       `The wording is the product’s own, taken from the running system.`,
     ),
@@ -137,10 +155,15 @@ export default page({
     section(`The duplicate warning`),
 
     prose(`A vendor invoice matching the same vendor, normalised invoice number and invoice year
-       requires review before it can be submitted again. The warning links to matching requests
-       your access permits. For a legitimate separate request, provide an override explanation of
-       at least 10 characters; that reason is retained in the audit history. A different invoice
-       year is not treated as the same invoice.
+       requires review before it can be submitted again. When you leave the amount, invoice number
+       or payee field, the form checks for similar requests and shows a warning headed **A similar
+       request already exists** (or how many exist), linking to the matches your access permits.
+       For a legitimate separate request, fill in **Duplicate invoice override reason** — it sits
+       above the buttons on every vendor invoice form, marked *only if a match is found* — with at
+       least 10 characters; that reason is retained in the audit history. Without it the form is
+       refused with \`this vendor invoice already exists; review the matching request and give an
+       override reason of at least 10 characters\`. A different invoice year is not treated as the
+       same invoice.
 
        For a remaining balance on an already approved invoice, ask Accounts to use the existing
        request's installment workflow instead of raising the invoice again. Similar-payment

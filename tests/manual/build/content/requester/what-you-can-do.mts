@@ -13,16 +13,22 @@ export default page({
 
     section(`Your home screen`),
 
-    shot('shared/dashboard-requester', `The dashboard as a requester sees it: two panels, both about your own work.`),
+    shot('shared/dashboard-requester', `The dashboard as a requester sees it: two tiles at the top, and below them panels about your own work.`),
 
     prose(`The line under your name says it plainly — *Everything below is waiting on someone. The ones
-       marked you are yours.* **Needs my action** counts the requests that cannot move until you do
-       something; **My open requests** counts everything of yours that is still live, including
-       With Accounts, manager shortfall review and approved installment balances. Completed
-       requests, accepted shortfalls, rejections, withdrawals and cancellations are in the Closed
-       tab. The two panels below list those same sets as cards — **Needs your action**, ending in
-       **Open my requests →**, and **In progress**, ending in **See all my requests →**. Both tiles
-       are links to the matching tab of [My requests](page:requester/tracking-your-requests).
+       marked you are yours.* Two tiles sit across the top. **Needs my action** counts the requests
+       that cannot move until you do something; **My open requests** counts everything of yours that
+       is still live, including With Accounts, manager shortfall review and approved installment
+       balances. Completed requests, accepted shortfalls, rejections, withdrawals and cancellations
+       are in the Closed tab. Both tiles are links to the matching tab of
+       [My requests](page:requester/tracking-your-requests).
+
+       Below the tiles, panels list the first few of those same requests. The panel for the first
+       tile is headed **Needs your action** — the tile says *my*, the panel says *your*, but they
+       count the same requests — and ends in **Open my requests →**; the panel for the second is
+       headed **In progress** and ends in **See all my requests →**. A panel appears only when it has
+       something in it; when neither does, a single panel reads **Nothing is waiting on you** —
+       *When something needs you, it appears here.*
 
        The sidebar is short: **Home**, **Notifications**, and **My requests** under the *Requests*
        heading. Below that sits a *Coming soon* group — **Invoices**, **Payments received**,
@@ -40,7 +46,7 @@ export default page({
         [`Ask for a cancellation`, `Once it is \`approved\` — you ask, you do not act`, `[Asking to cancel](page:requester/asking-to-cancel)`],
         [`Raise a rejected request again`, `On a \`rejected\` request, as a brand-new request`, `[After a rejection](page:requester/after-a-rejection)`],
         [`Comment`, `The conversation box on any request you can see`, `[Anatomy of a request](page:getting-started/a-request-in-detail)`],
-        [`Attach a document`, `On the new-request form and on the edit form`, `[Attaching documents](page:requester/attachments)`],
+        [`Attach a document`, `On the new-request form, the edit form and the correction screen — and, once approved, only when Accounts has put the request on hold`, `[Attaching documents](page:requester/attachments)`],
         [`Download a document`, `From the Attachments list on a request`, `[Attaching documents](page:requester/attachments)`],
       ],
       `Taken from the permissions the Requester role actually carries in the running system.`,

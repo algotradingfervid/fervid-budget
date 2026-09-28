@@ -19,9 +19,9 @@ export default page({
     section('Finding it'),
     prose(
       `A returned request turns up in three places at once: the **Needs your action** panel on your
-       home screen, the **Needs me** tab of [My requests](page:requester/tracking-your-requests), and
-       your notifications. On every card it carries the amber **Returned for correction** pill and the
-       words **Waiting on you**.`,
+       home screen (counted in the **Needs my action** tile above it), the **Needs me** tab of
+       [My requests](page:requester/tracking-your-requests), and your notifications. On every card it
+       carries the amber **Returned for correction** pill and the words **Waiting on you**.`,
     ),
 
     section('The correction screen'),
@@ -37,7 +37,8 @@ export default page({
     section('What you can change here'),
     prose(
       `The fieldset is headed **Correct and resubmit** and holds the fields an approver usually asks
-       about. Which ones appear depends on the request type.`,
+       about. Which ones appear depends on the request type; a deposit or guarantee shows only the
+       fields in the first column.`,
     ),
     table(
       ['Always', 'On a vendor invoice', 'On a reimbursement', 'On either advance'],
@@ -47,13 +48,17 @@ export default page({
     ),
     prose(
       `The uploader at the foot is labelled **Attach the corrected document**, and any documents
-       already on the request are listed above it with their own **Download** buttons.`,
+       already on the request are listed above it with their own **Download** buttons. On a vendor
+       invoice, a **Duplicate invoice override reason** box sits below the buttons. Leave it empty
+       unless the invoice matches another request from the same vendor in the same year — see
+       [the duplicate warning](page:requester/raising-a-request#the-duplicate-warning).`,
     ),
     note(
-      `The project, the head, the needed-by date, the approver, the urgency flag and the vendor are not
-       on this screen, and they keep the values they already had. To change one of those, open the full
-       edit form — it is the same address with \`/edit\` on the end. There is no button to it from the
-       correction screen.`,
+      `The project, the head, the needed-by date, the approver, the urgency flag, the vendor, the payee
+       of a deposit and the recoverable details are not on this screen, and they keep the values they
+       already had. To change one of those, select **Edit every field** in the action bar. It opens the
+       full edit form, whose main button — **Save and notify** followed by your approver's name — saves
+       your changes *and* sends the request back for approval in one step.`,
     ),
 
     section('Sending it back'),
@@ -71,7 +76,8 @@ export default page({
     ]),
     prose(
       `The note beside the buttons spells out the difference between them: *Saving keeps it with you;
-       resubmitting sends it back to your approver.* **Save corrections** writes your changes and
+       resubmitting sends it back to* — followed by your approver's name. The bar carries three
+       buttons: **Edit every field**, **Save corrections** and **Resubmit for approval**. **Save corrections** writes your changes and
        leaves the request sitting with you, still returned and still nobody else's to act on.
        **Resubmit for approval** does both.`,
     ),

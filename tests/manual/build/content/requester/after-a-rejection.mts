@@ -79,8 +79,9 @@ export default page({
        See [Attaching documents](page:requester/attachments).`,
     ),
     prose(
-      `The two requests are linked in the record: the new one's history opens with a line saying it was
-       re-raised from the old number, so anybody reading either can find the other.`,
+      `The new request's history opens with a line naming both numbers — who re-raised which request
+       as which — so anybody reading the new one can find the old. The rejected request gains no
+       such line; nothing about it changes.`,
     ),
 
     section('Should you raise it again at all?'),

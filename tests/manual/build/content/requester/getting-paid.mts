@@ -36,7 +36,7 @@ export default page({
 
     prose(`When an accountant takes the request, the status pill becomes **With Accounts — taken by**
        and their name, the sentence beside it reads *Waiting on* followed by their name and *(Accounts)*, and the history
-       gains the line *Reserved request for processing*. That claim is exclusive — it exists so two
+       gains a line recording that the request was reserved for processing. That claim is exclusive — it exists so two
        people cannot pay the same request twice. If they hold it for too long without paying, the
        history also records each *Stale-reservation reminder sent to* them.`),
 
@@ -57,7 +57,9 @@ export default page({
 
     prose(`Payments can fully settle the request, keep an installment balance payable, or ask the
        manager to decide a shortfall. The request shows cumulative payments and the remaining
-       balance. An installment returns it to Approved for another payment under the same approval.`),
+       balance. An installment returns it to **Approved — awaiting payment** for another payment
+       under the same approval, and while any money has been paid the request can no longer be
+       cancelled.`),
 
     table(
       [`The third row says`, `What it means`],
@@ -70,35 +72,51 @@ export default page({
       ],
     ),
 
-    prose(`A partial payment always carries a written reason, and it appears on your request under the
-       payment outcome as a banner headed with the accountant's name and the words **provided this
-       settlement reason**, their sentence beneath it. The status becomes **Partial — manager review**, and
-       the request goes back to your approver, who can Keep balance payable for another
-       installment, accept the shortfall and close as **Completed — partial accepted**, or raise a
-       concern with Accounts.`),
+    prose(`A payment sent for shortfall review, or closed short as fully settled, always carries a
+       written reason. It appears on your request under the payment outcome as a banner headed with
+       the accountant's name and the words **provided this settlement reason**, their sentence
+       beneath it. A shortfall review turns the status to **Partial — manager review** and sends the
+       request to your approver, who can choose **Keep balance payable** so the rest can be paid in
+       another installment, **Accept and close** so the request ends as **Completed — partial
+       accepted**, or **Raise a concern** with Accounts. While a concern is open the pill reads
+       **Partial — under discussion**.`),
 
     warning(`Nobody can pay more than was approved. An attempt to is refused outright, with a message
        saying the amount *is more than the approved* figure, and *to pay more, cancel this request
-       and raise a new one*. If the true cost has risen, that is a new request, not a bigger
+       and raise a new one*. Once an installment has been paid, the refusal instead says the amount
+       *exceeds the remaining approved balance* and that *additional spending needs a separately
+       approved request*. If the true cost has risen, that is a new request, not a bigger
        payment.`),
 
     section(`If Accounts put it on hold`),
 
-    prose(`An accountant who cannot pay a request as it stands can park it and ask you something. The
-       request then shows an amber banner headed **This request is on hold**, quoting their
-       question, and adds *Payment is blocked until Accounts lifts the hold.* The status pill reads
-       **On hold** and the waiting sentence becomes **Waiting on you**.
+    prose(`An accountant who cannot pay a request as it stands can park it and ask you something. When
+       you open the request it shows an amber banner headed **This request is on hold**, quoting their
+       question, and adds *Payment is blocked until Accounts lifts the hold.* The status pill at the
+       top reads **On hold** and the waiting sentence becomes **Waiting on you**. The action bar says
+       *Only Accounts can take this off hold.*
+
+       On the card in **My requests** and on your home screen, a hold is not a status of its own: the
+       pill still reads **Approved — awaiting payment**, and only the sentence beside it changes to
+       **Waiting on you**.
 
        Answer in the comment box at the foot of the request — that is where the hold expects to be
-       answered. Only Accounts can lift a hold; the button to do it is not yours, and neither an
-       approval nor an edit removes it.`),
+       answered. If Accounts asked for a document, the banner also carries an **Add a document**
+       control and an **Attach it** button; this is the only way to add a file to a request once it
+       is approved. Only Accounts can lift a hold; the button to do it is not yours, and editing is
+       closed on an approved request.`),
 
     section(`What you are told, and when`),
 
-    prose(`Every step writes you a notification. The ones addressed to the person who raised the
-       request are the approval, the payment being settled, a hold going on and coming off, a
-       reservation being released or handed to somebody else, a shortfall being accepted, and any
-       cancellation decision.`),
+    prose(`Most steps write you a notification. As the product is set up, the ones addressed to the
+       person who raised the request are a return, a rejection, the approval, the payment being
+       settled, a hold going on and coming off, a reservation being released or handed to somebody
+       else, a shortfall being accepted, and any cancellation decision — including a cancellation
+       your approver made without your asking.
+
+       Two payment steps do not notify you: an installment that leaves a balance payable, and a
+       payment sent for shortfall review (that one goes to your approver). You see both on the
+       request itself. An administrator can change who receives each notification.`),
 
     note(`Those notifications always appear in the product, on the
        [Notifications](page:getting-started/notifications) screen. Whether they also arrive by
@@ -112,8 +130,9 @@ export default page({
        the approved figure, the amount paid, the date, and the difference named for what it is.`),
 
     tip(`If you need the payment reference — a transaction number for a supplier chasing you, say —
-       ask Accounts and quote your request number. They can read it straight off the payment
-       record.`),
+       it is the last item on each line of **Payment history** on your request. The payment number
+       there is plain text for you, not a link, because the payment record itself is an accounts
+       screen.`),
 
     section(`The end of the story`),
 
@@ -122,9 +141,9 @@ export default page({
        for good, with its whole history — submission, approval, reservation, payment — in one
        stream.`),
 
-    note(`A completed request is not in the **Open** tab or the **Closed** tab of [My
-       requests](page:requester/tracking-your-requests). Look for it on **All**, or search for its
-       number.`),
+    note(`A completed request — paid in full or closed with a shortfall accepted — moves to the
+       **Closed** tab of [My requests](page:requester/tracking-your-requests), alongside rejected,
+       withdrawn and cancelled requests. It is also on **All**, or search for its number.`),
 
     faq([
       { q: `It has been approved for a week and nothing has happened.`, a: `It is sitting in the accounts queue. Reminders go out to whoever a request is waiting on after the number of days your organisation has configured; if it is genuinely urgent, talk to Accounts.` },
