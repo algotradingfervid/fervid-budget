@@ -118,6 +118,14 @@
   <figcaption>An approved request. The banner says what has changed, and the only control left to you is Request cancellation. </figcaption>
 </figure>
 <p>Open an approved request of your own and a banner sits under the heading: <strong>Approved requests are locked</strong> — <em>You can no longer edit this. If it should not be paid, ask for it to be cancelled — payment freezes while your approver decides.</em> The action bar carries one button, <strong>Request cancellation</strong>.</p>
+<h2 id="when-you-can-ask">When you can ask</h2>
+<p><strong>Request cancellation</strong> appears only while all of these are true:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Condition</th><th scope="col">Why</th></tr></thead><tbody>
+<tr><td>You raised the request.</td><td>Only the person who raised a request may ask for it to be cancelled.</td></tr>
+<tr><td>It reads <strong>Approved — awaiting payment</strong>.</td><td>Before approval you withdraw instead; after Accounts reserve it, it reads <strong>With Accounts</strong> and the button is gone.</td></tr>
+<tr><td>Nothing has been paid against it.</td><td>Once an installment has been paid the request can come back to <strong>Approved — awaiting payment</strong>, but it can no longer be cancelled.</td></tr>
+</tbody></table></div>
+<p>If Accounts has already reserved the request, ask them to release it first — the screen says so too. A request on hold still shows the button: asking suspends the hold while your approver decides, and if they decline, the hold comes back with the accountant's question still unanswered.</p>
 <h2 id="asking">Asking</h2>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/requester/cancel-form.png" aria-label="Enlarge: The cancellation request. It says what asking costs before you ask.">
@@ -127,7 +135,7 @@
 </figure>
 <ol class="steps">
 <li>Open the approved request and select <strong>Request cancellation</strong>.</li>
-<li>Read the amber banner.<p class="step-note"><strong>Payment freezes the moment you ask</strong> — <em>Accounts cannot reserve or pay this request while a cancellation is pending. If an accountant has already reserved it, they are told immediately.</em></p></li>
+<li>Read the amber banner.<p class="step-note"><strong>Payment freezes the moment you ask</strong> — <em>Accounts cannot reserve or pay this request while a cancellation is pending. If Accounts has already reserved a request, ask them to release it before requesting cancellation.</em></p></li>
 <li>Write the <strong>Reason</strong>.<p class="step-note">It is required, and the placeholder tells you who reads it: <em>Say what changed</em>, followed by your approver’s name and <em>sees exactly this</em>.</p></li>
 <li>Select <strong>Send cancellation request</strong>.<p class="step-note"><strong>Never mind</strong> takes you back to the request and changes nothing.</p></li>
 </ol>
@@ -156,7 +164,7 @@
 <p>Either way you are told, and the answer joins the request's history. A decline always carries a reason — the approver is refused an empty one — because you and Accounts both have to read it.</p>
 <h2 id="cancellation-you-did-not-ask-for">Cancellation you did not ask for</h2>
 <p>An approver can also cancel an approved request outright, without your having asked, and must give a reason for that too. You are notified when it happens; the request shows <strong>Cancelled</strong> and the waiting sentence reads <em>Cancelled. Nothing can be paid against it.</em> See <a href="../manager/cancellation-requests.html">Deciding a cancellation request</a> for the approver's side.</p>
-<dl class="faq"><dt>Accounts have already paid it. Can I still cancel?</dt><dd><p>No. Once a payment has been recorded the request is settled, and cancelling it would contradict a payment that exists. Talk to Accounts about a refund instead.</p></dd>
+<dl class="faq"><dt>Accounts have already paid it. Can I still cancel?</dt><dd><p>No. Once any payment has been recorded — even one installment — the request cannot be cancelled, and the button does not appear. An attempt is refused with <code>a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling</code>. Talk to Accounts or your approver about the balance, or about a refund.</p></dd>
 <dt>How long does a cancellation take to decide?</dt><dd><p>As long as your approver takes. The payment stays frozen throughout, so a request nobody answers is a request nobody can pay — chase it if it matters.</p></dd>
 <dt>My approver declined. Can I ask again?</dt><dd><p>The request is approved again, so yes, the control comes back. Asking a second time with the same reason is unlikely to get a different answer — say what has changed.</p></dd>
 <dt>Can I cancel a request that is still awaiting approval?</dt><dd><p>That is a withdrawal, not a cancellation, and it needs nobody’s permission. See <a href="../requester/editing-and-withdrawing.html">Changing or withdrawing a request</a>.</p></dd></dl>

@@ -209,7 +209,7 @@ export const SHOTS: Shot[] = [
     id: 'requester/choose-type',
     role: 'requester',
     title: 'Choosing what kind of request to raise',
-    shows: 'Step one of raising a request: the four type cards and what each is for.',
+    shows: 'Step one of raising a request: the five type cards and what each is for.',
     url: '/requests/new',
   },
   {
@@ -268,8 +268,8 @@ export const SHOTS: Shot[] = [
     shows: 'The refusal shown when a request is submitted without the details it requires.',
     url: '/requests/new?type=reimbursement',
     skipAxe: true,
-    // The new-request form carries no inline error banner: a refused submission
-    // renders the error page instead. Reaching it needs a real POST that the
+    // A refused submission redraws the form with its error band and field
+    // messages. Reaching it needs a real POST that the
     // browser will not block, and every field is marked `required` — so this
     // builds a deliberately incomplete submission and posts it, rather than
     // trying to drive the form and quietly capturing a pristine one, which is

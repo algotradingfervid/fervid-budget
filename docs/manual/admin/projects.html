@@ -110,7 +110,7 @@
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Administration</p>
 <header class="page-head"><h1>Projects</h1><p class="lede">The top level of the budget structure, and what happens when you retire one.</p></header>
 <p>The budget has three levels, and a project is the first of them: projects hold expense heads, and heads hold a budget figure for each month. Everything downstream depends on this list — the variance grid groups by project, the reports break down by project, and every payment is booked against a head that belongs to one.</p>
-<p>The dataset behind these captures has 24 projects and 229 heads.</p>
+<p>The dataset behind these captures has 25 projects and 230 heads.</p>
 <h2 id="the-screen">The screen</h2>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/admin/projects.png" aria-label="Enlarge: The projects list. Every row is editable in place, and the form at the top adds a new one.">
@@ -119,15 +119,16 @@
   <figcaption>The projects list. Every row is editable in place, and the form at the top adds a new one. </figcaption>
 </figure>
 <p>There is no separate detail page. The name and the sort order are text boxes on the row itself, the status is a tick box, and each row has its own <strong>Save</strong>. Change one row and save it; the others are untouched.</p>
+<p>Without permission to edit projects, the boxes are greyed out and the last column reads <code>Read only</code> instead of <strong>Save</strong>. The add form appears only for someone allowed to create projects.</p>
 <h2 id="adding-a-project">Adding a project</h2>
 <ol class="steps">
 <li>Type a <strong>Project name</strong> in the form at the top.</li>
-<li>Set <strong>Order</strong> if you want the project to sit somewhere particular in the lists.<p class="step-note">It is a plain number and it sorts ascending. Rows sharing a number fall back to alphabetical order, which is why the seeded projects all carry <code>0</code> and read alphabetically.</p></li>
+<li>Set <strong>Order</strong> if you want the project to sit somewhere particular in the lists.<p class="step-note">It is a plain number and it sorts ascending, so <code>0</code> comes first. Rows sharing a number fall back to alphabetical order, which is why most projects in the capture carry <code>0</code> and read alphabetically, with the few numbered <code>1</code> to <code>4</code> at the bottom.</p></li>
 <li>Leave <strong>Active</strong> ticked.</li>
 <li>Select <strong>Add Project</strong>.<p class="step-note">The project appears in the table below and is written to the audit trail. It has no expense heads yet, so nothing can be booked against it.</p></li>
 </ol>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
-<tr><td><strong>Project name</strong></td><td><span class="req">Required</span></td><td>Required. An empty name is refused with <code>project name is required</code>.</td></tr>
+<tr><td><strong>Project name</strong></td><td><span class="req">Required</span></td><td>Required. A name of only spaces is refused with <code>project name is required</code>. Names must be unique: a name another project already uses is refused with <code>A record with this name already exists.</code></td></tr>
 <tr><td><strong>Order</strong></td><td><span class="opt">Optional</span></td><td>Where the project sits in every list that shows projects. Lower first.</td></tr>
 <tr><td><strong>Active</strong></td><td><span class="opt">Optional</span></td><td>Ticked means the project can be used. See below for what unticking does.</td></tr>
 </tbody></table></div>
@@ -140,19 +141,21 @@
 <p>Renaming is safe. The project keeps its identity, so every head, budget and payment already filed under it stays where it is, and reads under the new name from that moment on.</p>
 <h2 id="retiring-a-project">Retiring a project</h2>
 <p>There is no delete. A project that is no longer used is retired by unticking <strong>Active</strong> and saving the row, and the history stays intact.</p>
+<p>Unlike retiring a head or a user, retiring a project shows no warning page, even when requests are still open under its heads. The row saves straight away.</p>
 <ol class="steps">
 <li>Untick <strong>Active</strong> on the row.</li>
 <li>Select <strong>Save</strong>.</li>
 </ol>
-<p>Retiring a project has four consequences worth knowing before you do it.</p>
+<p>Retiring a project has five consequences worth knowing before you do it.</p>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>New heads</strong></td><td><span class="opt">Optional</span></td><td>The <strong>Add Head</strong> form on the heads screen lists active projects only, so no new head can be filed under a retired project.</td></tr>
 <tr><td><strong>Existing heads</strong></td><td><span class="opt">Optional</span></td><td>They stay, and they still appear on the heads screen. Their project select shows the retired project marked <code>(retired)</code> so the row can be saved without silently moving.</td></tr>
+<tr><td><strong>New requests</strong></td><td><span class="opt">Optional</span></td><td>The request form offers only heads that are active in an active project. A request that still names one of the retired project's heads is refused with <code>that budget head has been retired — choose a head that is still open</code>.</td></tr>
 <tr><td><strong>New payments</strong></td><td><span class="opt">Optional</span></td><td>A payment against a head whose project is retired is refused with <code>This project/head is inactive.</code> The check is on both the head and its project.</td></tr>
 <tr><td><strong>History</strong></td><td><span class="opt">Optional</span></td><td>Untouched. Every payment already recorded keeps counting towards the actuals it always did, and the reports still show it.</td></tr>
 </tbody></table></div>
-<aside class="callout callout-warning"><p class="callout-title">Work already in flight</p><p>Retiring a project stops money being booked against it, but it does not close anything that is already in flight. A request approved against one of its heads will be refused at the payment stage, and the accountant will find out only when they try to record it. Check the queue before you retire a project mid-month.</p></aside>
-<aside class="callout callout-note"><p>A retired project cannot be brought back through some separate route — tick <strong>Active</strong> again and save. Nothing was thrown away.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">Work already in flight</p><p>Retiring a project stops money being booked against it, but it does not close anything that is already in flight, and no warning page lists what is still open. A request approved against one of its heads will be refused at the payment stage, and the accountant will find out only when they try to record it. Check the queue before you retire a project mid-month.</p></aside>
+<aside class="callout callout-note"><p>To bring a retired project back, tick <strong>Active</strong> again on its row and save. There is no separate route, and nothing was thrown away.</p></aside>
 <dl class="faq"><dt>Can I delete a project?</dt><dd><p>No. Untick <strong>Active</strong> instead. Deleting would orphan every payment ever booked under it.</p></dd>
 <dt>The order numbers are all zero and nothing moves.</dt><dd><p>Rows that share a number sort alphabetically. Give the ones you want at the top a <code>1</code>, <code>2</code>, <code>3</code> and leave the rest at <code>0</code>.</p></dd>
 <dt>I renamed a project and the grid still shows the old name.</dt><dd><p>Reload the screen. Nothing is cached beyond the page you are looking at.</p></dd>

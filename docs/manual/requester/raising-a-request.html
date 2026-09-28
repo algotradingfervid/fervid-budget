@@ -121,7 +121,7 @@
 <h3 id="what-is-this-for">What is this for</h3>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Short title</strong></td><td><span class="req">Required</span></td><td>One line naming the spend. The hint says what it is for: <em>What your approver will see in their approval list.</em></td></tr>
-<tr><td><strong>How this is treated</strong></td><td><span class="opt">Optional</span></td><td>On most types this is not a choice but a fixed line. A vendor invoice payment, a vendor advance and a reimbursement read <em>Budget expense. Money spent and gone. It counts against a project and head.</em>; a deposit or guarantee reads <em>Refundable or recoverable.</em></td></tr>
+<tr><td><strong>How this is treated</strong></td><td><span class="opt">Optional</span></td><td>On most types this is not a choice but a fixed line. A vendor invoice payment, a vendor advance and a reimbursement read <em>Budget expense. Money spent and gone. It counts against a project and head.</em>; a <strong>Deposit or guarantee</strong> reads <em>Refundable or recoverable. A deposit, guarantee or loan the company expects back. Kept out of budget actuals.</em></td></tr>
 <tr><td><strong>How should this be treated</strong></td><td><span class="req">Required</span></td><td>Only on an <strong>Employee advance</strong>, which offers two choices — <strong>Budget expense</strong> or <strong>Refundable or recoverable</strong> — and opens on the recoverable one. Changing it changes the next fieldset. See <a href="../requester/budget-and-recoverable.html">Budget spend or money you expect back</a>.</td></tr>
 </tbody></table></div>
 <h3 id="charge-it-to">Charge it to</h3>
@@ -129,7 +129,7 @@
 <tr><td><strong>Project</strong></td><td><span class="req">Required</span></td><td>The project the spend belongs to. Choosing one narrows the <strong>Head</strong> list below to that project’s own heads.</td></tr>
 <tr><td><strong>Head</strong></td><td><span class="req">Required</span></td><td>The budget line the spend is booked against. Options read <em>Project / Head</em>, so you can see which project a head belongs to.</td></tr>
 </tbody></table></div>
-<aside class="callout callout-note"><p>This fieldset only appears on a budget expense. On a deposit or guarantee, and on an employee advance treated as recoverable, it is replaced by <strong>Recoverable details</strong> — a category, an expected return date and the repayment or refund terms.</p></aside>
+<aside class="callout callout-note"><p>This fieldset only appears on a budget expense. On a deposit or guarantee, and on an employee advance treated as recoverable, it is replaced by <strong>Recoverable details</strong> — a category, an expected return date, the repayment or refund terms, a <strong>Related project</strong> and, for some categories, a <strong>Counterparty company</strong>. On an employee advance the category is fixed at <strong>Employee advance</strong>; on a deposit or guarantee you choose it. See <a href="../requester/budget-and-recoverable.html">Budget spend or money you expect back</a>.</p></aside>
 <h3 id="amount-and-timing">Amount and timing</h3>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Amount</strong></td><td><span class="req">Required</span></td><td>The figure you are asking for, typed without the ₹ — the field draws its own. Before you type, the line beneath reads <em>Enter the amount you are requesting</em>; once you do, it spells the figure out in words.</td></tr>
@@ -152,8 +152,9 @@
 <aside class="callout callout-note"><p><strong>Supporting document</strong> is marked <em>optional</em> here because this organisation has not made documents compulsory. Where an administrator has switched that on, the label carries a red asterisk instead and a further field appears asking you to say why, if you cannot attach one.</p></aside>
 <h3 id="who-approves-it">Who approves it</h3>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
-<tr><td><strong>Approver</strong></td><td><span class="req">Required</span></td><td>The person who will decide. Your own default is already selected and marked <em>(your default)</em>. The hint says <em>You cannot approve your own request. Your own name is never in this list.</em></td></tr>
+<tr><td><strong>Approver</strong></td><td><span class="req">Required</span></td><td>The person who will decide. If an administrator has set a default approver on your user record, that person is already selected and marked <em>(your default)</em>; otherwise the list opens on <em>Choose an approver</em>. The hint says <em>You cannot approve your own request. Your own name is never in this list.</em></td></tr>
 </tbody></table></div>
+<aside class="callout callout-note"><p>Your organisation may require everyone to use their assigned approver. The <strong>Approver</strong> list is then greyed out and cannot be changed. If your default approver is missing or can no longer approve, a banner reads <strong>Your default approver is unavailable.</strong> and <strong>Submit request</strong> is switched off until an administrator sets an active default approver on your user record.</p></aside>
 <p>Beside it sits <strong>Reminders</strong>, which is not a control but a statement of what happens if nobody acts: <em>If nothing happens for 3 days, this request starts sending a reminder every day to whoever it is waiting on.</em> Both numbers are settings, so yours may read differently.</p>
 <h2 id="submitting">Submitting</h2>
 <ol class="steps">
@@ -171,7 +172,7 @@
   </button>
   <figcaption>A refused reimbursement. The red band at the top reads enter the amount you are requesting; beneath it, Check the highlighted fields lists every problem, and each field repeats its own message. </figcaption>
 </figure>
-<p>If something is missing or contradictory, the form returns with a red band across the top carrying one sentence — the first problem it found. Everything you had already typed is still there; you are never made to fill the page in twice.</p>
+<p>If something is missing or contradictory, the form returns with a red band across the top carrying one sentence — the first problem it found. Beneath it, a box headed <strong>Check the highlighted fields</strong> lists the basic problems it can see at once, each linking to its field, and each of those fields repeats its own message. Everything you had already typed is still there; you are never made to fill the page in twice. A file you chose is not kept, so choose it again before you resubmit.</p>
 <div class="table-wrap"><table><caption>The wording is the product’s own, taken from the running system.</caption><thead><tr><th scope="col">What the band says</th><th scope="col">What to do</th></tr></thead><tbody>
 <tr><td><code>a short title is required — it is what your approver sees in their list</code></td><td>Type a <strong>Short title</strong>.</td></tr>
 <tr><td><code>enter the amount you are requesting</code></td><td>The <strong>Amount</strong> was empty, zero, negative or not a number. This is the message in the screenshot above.</td></tr>
@@ -188,10 +189,17 @@
 <tr><td><code>that budget head has been retired — choose a head that is still open</code></td><td>An administrator has closed that head. Pick another.</td></tr>
 <tr><td><code>that vendor is no longer active — choose an active vendor</code></td><td>The vendor has been deactivated in the vendor master.</td></tr>
 <tr><td><code>say why this is urgent</code></td><td>You ticked <strong>Mark this urgent</strong> and left the reason empty.</td></tr>
+<tr><td><code>choose a recoverable category</code></td><td>Pick a <strong>Category</strong> on a deposit or guarantee.</td></tr>
+<tr><td><code>expected return date is required for recoverables</code></td><td>Fill in <strong>Expected return date</strong>.</td></tr>
+<tr><td><code>repayment or refund terms are required for recoverables</code></td><td>Fill in <strong>Repayment or refund terms</strong>.</td></tr>
+<tr><td><code>this recoverable category always belongs to a project</code></td><td>Choose a <strong>Related project</strong> — the category you picked needs one.</td></tr>
+<tr><td><code>this recoverable category needs a counterparty company</code></td><td>Fill in <strong>Counterparty company</strong>.</td></tr>
+<tr><td><code>say who receives the money — the counterparty company or the authority holding the deposit</code></td><td>Fill in <strong>Paid to</strong> on a deposit or guarantee.</td></tr>
+<tr><td><code>attach a supporting document, or say why you cannot</code></td><td>Only where documents are compulsory: attach a file or fill in the reason field.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-note"><p>Every one of these rules is enforced on the server, not only in the browser. Hiding a field or switching one off in the page does not get a request past them.</p></aside>
 <h2 id="the-duplicate-warning">The duplicate warning</h2>
-<p>A vendor invoice matching the same vendor, normalised invoice number and invoice year requires review before it can be submitted again. The warning links to matching requests your access permits. For a legitimate separate request, provide an override explanation of at least 10 characters; that reason is retained in the audit history. A different invoice year is not treated as the same invoice.</p>
+<p>A vendor invoice matching the same vendor, normalised invoice number and invoice year requires review before it can be submitted again. When you leave the amount, invoice number or payee field, the form checks for similar requests and shows a warning headed <strong>A similar request already exists</strong> (or how many exist), linking to the matches your access permits. For a legitimate separate request, fill in <strong>Duplicate invoice override reason</strong> — it sits above the buttons on every vendor invoice form, marked <em>only if a match is found</em> — with at least 10 characters; that reason is retained in the audit history. Without it the form is refused with <code>this vendor invoice already exists; review the matching request and give an override reason of at least 10 characters</code>. A different invoice year is not treated as the same invoice.</p>
 <p>For a remaining balance on an already approved invoice, ask Accounts to use the existing request's installment workflow instead of raising the invoice again. Similar-payment advisory warnings may also help identify repeats; always compare the source invoice and current request.</p>
 <h2 id="the-request-number">The request number</h2>
 <p>The number is issued at submission and never changes afterwards. In this organisation it is shaped <code>PR-2026-000426</code>: a prefix, the year, and a running count. Editing a request keeps its number; withdrawing it keeps it; only raising a brand-new request produces a new one.</p>

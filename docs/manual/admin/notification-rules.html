@@ -110,7 +110,7 @@
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Administration</p>
 <header class="page-head"><h1>Notification rules and email</h1><p class="lede">Deciding who is told what, and pointing the product at a mail server.</p></header>
 <p>The product announces 23 things that can happen to a request. Each announcement has a rule behind it saying who is told and what the message says, and this screen is where those rules live.</p>
-<p>The sub-line states the split the whole screen is built on: in-app notifications always fire; email is opt-in per event. Nobody can be cut out of the in-app notification centre, and nobody gets an email until you switch that event on.</p>
+<p>The sub-line states the split the whole screen is built on: in-app notifications always fire; email is opt-in per event. There is no switch that turns the in-app notification off, and nobody gets an email until you switch that event on. Who is told — in the app and by email alike — is the audience you tick on each rule.</p>
 <aside class="callout callout-note"><p class="callout-title">Two different screens</p><p>This is not the same screen as the bell in your own sidebar. <strong>Notification rules</strong> is the editor; <a href="../getting-started/notifications.html">Notifications</a> is your own centre, showing what the product has told you.</p></aside>
 <h2 id="email-delivery">Email delivery</h2>
 <figure class="shot">
@@ -121,7 +121,7 @@
 </figure>
 <p>Nothing is emailed anywhere until the product knows about a mail server. The <strong>Email delivery</strong> block at the top is where you tell it.</p>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
-<tr><td><strong>SMTP host</strong></td><td><span class="opt">Optional</span></td><td>The mail server. The placeholder shows the shape — <code>smtp.example.com</code>.</td></tr>
+<tr><td><strong>SMTP host</strong></td><td><span class="opt">Optional</span></td><td>The mail server. The placeholder shows the shape — <code>smtp.example.com</code>. The host must be one the person who runs the server has allowed; any other is refused with &quot;SMTP host must be authorized in FERVID_SMTP_ALLOWED_HOSTS by the server operator.&quot;</td></tr>
 <tr><td><strong>Port</strong></td><td><span class="opt">Optional</span></td><td>The port the server listens on.</td></tr>
 <tr><td><strong>Username</strong></td><td><span class="opt">Optional</span></td><td>The account the product authenticates as.</td></tr>
 <tr><td><strong>From name</strong></td><td><span class="opt">Optional</span></td><td>The display name on the messages the product sends.</td></tr>
@@ -133,7 +133,7 @@
 <ol class="steps">
 <li>Fill in the mail server fields.</li>
 <li>Select <strong>Save email settings</strong>.</li>
-<li>Type an address in <strong>Send a test email to</strong> and select <strong>Send a test email</strong>.<p class="step-note">Your own address is filled in already. A successful send reports &quot;Test email sent to …&quot;; a failure reports the transport error rather than pretending it worked.</p></li>
+<li>Type an address in <strong>Send a test email to</strong> and select <strong>Send a test email</strong>.<p class="step-note">Your own address is filled in already. A successful send reports &quot;Test email sent to …&quot; with the address. A failure reports &quot;The test email could not be sent. Check the operator SMTP configuration and server logs.&quot; rather than pretending it worked; the mail server's own error goes to the server log, not to the screen.</p></li>
 </ol>
 <aside class="callout callout-tip"><p>Send the test before you enable email on any event. A test that fails costs you nothing; twenty-three events quietly failing to deliver costs you a week of people saying they were never told.</p></aside>
 <h2 id="the-events">The events</h2>
@@ -143,8 +143,8 @@
 <tr><td>In-app</td><td>Always <code>On</code>. It is a fixed pill, not a control, because in-app delivery always fires and a switch that did nothing would be a lie.</td></tr>
 <tr><td>Email</td><td><code>On</code> or <code>Off</code> for this event.</td></tr>
 <tr><td>Goes to</td><td>Who is told, in words: <code>Approver</code>, <code>Requester</code>, <code>Requester + approver</code>, <code>Approver + assigned accountant</code>, and so on.</td></tr>
-<tr><td>Fixed To / CC</td><td>Any addresses this event always goes to on top of the audience, or an em dash.</td></tr>
-<tr><td>Edit</td><td>Opens the rule editor for that event.</td></tr>
+<tr><td>Fixed To / CC</td><td>Any addresses this event always emails on top of the audience, To and Cc separated by a slash, or an em dash.</td></tr>
+<tr><td>Edit</td><td>Opens the rule editor for that event. Without permission to edit notification rules, this cell shows an em dash.</td></tr>
 </tbody></table></div>
 <h3 id="what-the-23-events-are">What the 23 events are</h3>
 <div class="table-wrap"><table><caption>The event catalogue, in the order the screen lists it. The &quot;Goes to&quot; column is the seeded audience — you can change it.</caption><thead><tr><th scope="col">Event</th><th scope="col">Internal name</th><th scope="col">Goes to</th></tr></thead><tbody>
@@ -182,13 +182,13 @@
 <ol class="steps">
 <li>Select <strong>Edit</strong> on the event’s row.</li>
 <li>Tick <strong>Also send an email for this event</strong> if you want mail as well as the in-app notification.<p class="step-note">Leaving it clear does not silence the event. The in-app notification still fires.</p></li>
-<li>Choose the audience under <strong>Who it goes to</strong>.<p class="step-note">Three tick boxes: <strong>The requester</strong>, <strong>The approver</strong> and <strong>The Accounts group</strong>. They are resolved per request, so &quot;the approver&quot; means whoever is actually approving that one.</p></li>
-<li>Add fixed addresses in <strong>Always also send To</strong> and <strong>Always copy (Cc)</strong> if the event has a standing audience.<p class="step-note">Comma-separated. These are added to the audience above rather than replacing it.</p></li>
+<li>Choose the audience under <strong>Who it goes to</strong>.<p class="step-note">Three tick boxes: <strong>The requester</strong>, <strong>The approver</strong> and <strong>The Accounts group</strong>. They are resolved per request, so &quot;the approver&quot; means whoever is actually approving that one. They decide who gets the in-app notification as well as the email, so clearing all three leaves nobody told.</p></li>
+<li>Add fixed addresses in <strong>Always also send To</strong> and <strong>Always copy (Cc)</strong> if the event has a standing audience.<p class="step-note">Email addresses separated by commas, with no display names. These are added to the email audience above rather than replacing it; they get no in-app notification. A malformed address is refused, for example &quot;Always copy (Cc) contains an invalid email address; enter addresses such as name@example.com separated by commas&quot;.</p></li>
 <li>Edit the <strong>Subject</strong> and the <strong>Message</strong>.</li>
 <li>Select <strong>Save rule</strong>.<p class="step-note">The panel closes and the row updates. <strong>Cancel</strong> abandons the change.</p></li>
 </ol>
 <h3 id="writing-the-subject-and-message">Writing the subject and message</h3>
-<p>The wording is yours. Placeholders in double braces are replaced with the request’s own values when the message goes out. The fourteen available are listed under the message box on the screen itself:</p>
+<p>The wording is yours. Placeholders in double braces are replaced with the request’s own values when the message goes out. The sixteen available are listed under the message box on the screen itself:</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Placeholder</th><th scope="col">What it becomes</th></tr></thead><tbody>
 <tr><td><code>{{number}}</code></td><td>The request number.</td></tr>
 <tr><td><code>{{amount}}</code></td><td>The amount asked for.</td></tr>
@@ -207,15 +207,15 @@
 <tr><td><code>{{paid_on}}</code></td><td>The date of the most recent payment recorded against it.</td></tr>
 <tr><td><code>{{link}}</code></td><td>A link straight to the request, built from the Base URL above.</td></tr>
 </tbody></table></div>
-<aside class="callout callout-note"><p class="callout-title">A typo fails on save</p><p>Anything else in double braces is rejected when you save, and the screen tells you so. A typo cannot reach an inbox as an empty gap that nobody can debug afterwards — it fails here, while you are looking at it.</p></aside>
+<aside class="callout callout-note"><p class="callout-title">A typo fails on save</p><p>Anything else in double braces is rejected when you save. The editor reopens with what you typed and a &quot;That did not save&quot; banner naming the bad field, for example <code>unknown template field(s): amout</code>. A typo cannot reach an inbox as an empty gap that nobody can debug afterwards — it fails here, while you are looking at it.</p></aside>
 <aside class="callout callout-tip"><p>Always put <code>{{link}}</code> in the message. An email telling somebody a request needs them, with no way to open it, is an email that generates a reply asking where it is.</p></aside>
 <dl class="faq"><dt>Can I turn off in-app notifications for an event?</dt><dd><p>No. The In-app column is a fixed <code>On</code> pill rather than a switch. Email is the only per-event delivery choice.</p></dd>
 <dt>Nothing is arriving by email.</dt><dd><p>Check three things in order: the mail server settings save, the <strong>Send a test email</strong> result, and whether the event itself has <strong>Email</strong> switched on.</p></dd>
-<dt>The test email failed with a message I do not understand.</dt><dd><p>It is the error the mail server gave back, passed on rather than swallowed. Hand it to whoever runs your mail — it is the fastest thing they can act on.</p></dd>
+<dt>The test email failed and the message does not say why.</dt><dd><p>The screen only reports that the send failed. The mail server's actual error is written to the server log, so ask whoever runs the server to look there, and to check the <code>FERVID_SMTP_PASSWORD</code> variable at the same time.</p></dd>
 <dt>A workflow action happened but nobody was told.</dt><dd><p>Delivery failures never fail the action itself — an approval succeeds whether or not the email goes. The in-app notification is written before any email is attempted, so check the recipient’s notification centre before you conclude nothing fired.</p></dd>
-<dt>Who is in &quot;the Accounts group&quot;?</dt><dd><p>Everybody whose roles carry the payment <strong>Process</strong> permission. It is not a list you maintain here — you change it by changing roles on <a href="../admin/roles-and-permissions.html">Roles and permissions</a> or by changing who holds them on <a href="../admin/people.html">People and accounts</a>.</p></dd></dl>
+<dt>Who is in &quot;the Accounts group&quot;?</dt><dd><p>Everybody whose roles carry the payment <strong>Process</strong> permission and who is allowed to see the request. For events about one accountant's work — a cancellation request, a stale reservation, a reservation handed over, a partial payment accepted or queried, a cancellation accepted or declined — it means the accountant holding the request instead, and falls back to the whole group only when nobody holds it. It is not a list you maintain here — you change it by changing roles on <a href="../admin/roles-and-permissions.html">Roles and permissions</a> or by changing who holds them on <a href="../admin/people.html">People and accounts</a>.</p></dd></dl>
 <h2 id="password-recovery-delivery">Password recovery delivery</h2>
-<p>Email reset needs an SMTP host, from address, and trusted Base URL (HTTPS, or loopback HTTP for local development). The login help page enables email recovery when this is configured; otherwise it points users to their administrator/operator. Reset links are single-use, expire after 30 minutes, and replacing the password revokes existing sessions. Keep the Base URL correct so recovery links reach the intended deployment.</p>
+<p>Email reset needs an SMTP host, from address, and trusted Base URL (HTTPS, or loopback HTTP for local development). The <strong>Sign-in help</strong> page offers email recovery when all three are set; otherwise it points users to their administrator. Reset links are single-use, expire after 30 minutes, and replacing the password revokes existing sessions. Keep the Base URL correct so recovery links reach the intended deployment.</p>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../admin/recoverable-categories.html"><span>Previous</span>Recoverable categories</a><a class="pager-next" href="../admin/configuration.html"><span>Next</span>Configuration</a></nav>
 </div>
 </main>

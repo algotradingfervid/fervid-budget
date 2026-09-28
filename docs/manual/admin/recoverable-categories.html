@@ -122,11 +122,11 @@
 </figure>
 <h2 id="reading-the-table">Reading the table</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What it shows</th></tr></thead><tbody>
-<tr><td>Category</td><td>The name the requester sees.</td></tr>
-<tr><td>Requires</td><td>What the category asks for on top of the standard recoverable fields, in words.</td></tr>
+<tr><td>Category</td><td>The name the requester sees. With the edit grant it is a text box you can type over.</td></tr>
+<tr><td>Requires</td><td>What the category asks for on top of the standard recoverable fields. With the edit grant it is a select holding the same four choices as the add form; without it, the words alone.</td></tr>
 <tr><td>Active</td><td>A tick box. Unticking it retires the category — see below.</td></tr>
 <tr><td>In use</td><td>How many requests already point at this category.</td></tr>
-<tr><td>Actions</td><td>A <strong>Delete</strong> button, shown only to a role holding the delete grant.</td></tr>
+<tr><td>Actions</td><td>A <strong>Save</strong> button for the row, shown to a role holding the edit grant, and a <strong>Delete</strong> button, shown to a role holding the delete grant. A role with neither does not see this column.</td></tr>
 </tbody></table></div>
 <p>The seeded list is six categories:</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Category</th><th scope="col">Requires</th></tr></thead><tbody>
@@ -137,32 +137,39 @@
 <tr><td>Security deposit</td><td><code>Counterparty company</code></td></tr>
 <tr><td>Other</td><td><code>Nothing extra</code></td></tr>
 </tbody></table></div>
-<aside class="callout callout-note"><p class="callout-title">What every recoverable captures anyway</p><p>Every recoverable always captures the reason, an expected return date and the refund terms, whatever its category. The <strong>Requires</strong> setting only adds what a particular category needs on top of that. The hint under the block says so, and adds one thing worth knowing: an employee advance fills the payee in from the requester automatically, and that is a rule about the request type rather than a category setting — it does not fill in the counterparty.</p></aside>
+<aside class="callout callout-note"><p class="callout-title">What every recoverable captures anyway</p><p>Every recoverable always captures the reason, an expected return date and the refund terms, whatever its category. The <strong>Requires</strong> setting only adds what a particular category needs on top of that. The hint under the block says so, and adds one thing worth knowing: an employee advance fills the payee in from the requester automatically, and that is a rule about the request type rather than a category setting — it does not fill in the counterparty.</p>
+<p>The <strong>Employee advance</strong> category is also tied to its request type. An employee advance raised as a recoverable is always filed under it, and a deposit or guarantee request cannot use it; the request form offers each type only the categories it may use.</p></aside>
 <h2 id="adding-a-category">Adding a category</h2>
 <ol class="steps">
 <li>Open <strong>Configuration</strong> and scroll to <strong>Recoverable categories</strong>.</li>
-<li>Type a <strong>New category</strong> name.<p class="step-note">The placeholder shows the sort of thing expected — &quot;e.g. Retention deposit&quot;. The name must contain at least one letter or digit.</p></li>
+<li>Type a <strong>New category</strong> name.<p class="step-note">The placeholder shows the sort of thing expected — &quot;e.g. Retention deposit&quot;. A name of only spaces is refused with <code>recoverable category name is required</code>, and a new name must contain at least one letter or digit, or it is refused with <code>recoverable category name must contain a letter or digit</code>.</p></li>
 <li>Choose what it <strong>Must also capture</strong>.<p class="step-note">One of <code>Nothing extra</code>, <code>Related project</code>, <code>Counterparty company</code> or <code>Related project and counterparty company</code>.</p></li>
 <li>Select <strong>Add category</strong>.<p class="step-note">It appears in the table above, active, and is written to the audit trail. Requesters can pick it immediately.</p></li>
 </ol>
 <aside class="callout callout-tip"><p>Pick <strong>Must also capture</strong> by asking what you would need to chase the money later. A deposit with another company is useless without knowing which company; a bid deposit is useless without knowing which project it was against.</p></aside>
 <h2 id="changing-a-category">Changing a category</h2>
+<ol class="steps">
+<li>Type over the name in the row, or choose a different <strong>Requires</strong> value.</li>
+<li>Select <strong>Save</strong> in that row's <strong>Actions</strong> cell.</li>
+</ol>
 <p>Renaming is safe. A category keeps its underlying identity when the name changes, so every request already filed under it follows the new name rather than being orphaned.</p>
-<aside class="callout callout-warning"><p class="callout-title">A rule change is not retrospective</p><p>Changing what a category must capture changes the form for future requests only. It cannot go back and collect a counterparty for the requests raised before you changed it — those records keep whatever they were asked for at the time.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">A rule change is not retrospective</p><p>Changing what a category must capture changes the form for future requests. It cannot go back and collect a counterparty for the requests raised before you changed it — those records keep whatever they were asked for at the time. The new rule does apply the next time one of those requests is edited and saved, for example when a returned request is corrected.</p></aside>
 <h2 id="retiring-a-category">Retiring a category</h2>
 <ol class="steps">
 <li>Untick <strong>Active</strong> on the row.</li>
-<li>The change saves as soon as you untick it.</li>
+<li>The change saves as soon as you untick it, together with whatever name and <strong>Requires</strong> value the row shows.</li>
 </ol>
-<p>The category stops being offered on new requests. Every request already using it keeps it, and the recoverables register still groups by it. This is the ordinary way to take a category out of use.</p>
+<p>The category stops being offered on new requests. Every request already using it keeps it, and the recoverables register still groups by it. This is the ordinary way to take a category out of use. A request filed under a retired category that is later edited and saved — a returned request being corrected, say — is refused with <code>choose a recoverable category</code>, and the requester has to pick an active one.</p>
+<aside class="callout callout-warning"><p class="callout-title">The one category to keep active</p><p>Do not retire <strong>Employee advance</strong>. An employee advance raised as a recoverable must use that category, so while it is retired no such request can be saved.</p></aside>
 <h2 id="deleting-a-category">Deleting a category</h2>
 <p>Deleting is the other option, and it exists only for a category nothing points at. Select <strong>Delete</strong> on the row. There is no confirmation dialog — the guard is on the server rather than in the browser.</p>
-<aside class="callout callout-warning"><p class="callout-title">In use means it stays</p><p>A category that is in use cannot be deleted. The refusal names the number and the remedy: &quot;<em>Name</em> is used by N requests — deactivate it instead, so those requests keep their category.&quot; You land back on Configuration with the sentence at the top and the <strong>In use</strong> count on the row beside it.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">In use means it stays</p><p>A category that is in use cannot be deleted. The refusal names the number and the remedy, for example <code>EMD is used by 3 requests — deactivate it instead, so those requests keep their category</code> (or <code>1 request</code> when there is one). You land back on Configuration with the sentence at the top and the <strong>In use</strong> count on the row beside it.</p></aside>
 <aside class="callout callout-note"><p>The <strong>In use</strong> column is a forecast of that answer, not the gate. The count is re-checked inside the delete itself, so a category that gained a request between your reading the number and pressing the button is still refused.</p></aside>
 <h2 id="who-can-change-this-block">Who can change this block</h2>
-<p>The controls here follow the <strong>Recoverables</strong> row of <a href="../admin/roles-and-permissions.html">Roles and permissions</a>, not the Administration row. The <strong>Edit</strong> column governs the Active toggle and the <strong>Add category</strong> form; the <strong>Cancel</strong> column governs the <strong>Delete</strong> button. A role without the edit grant sees the categories as plain <code>On</code> and <code>Off</code> pills with no form beneath them.</p>
+<p>The controls here follow the <strong>Recoverables</strong> row of <a href="../admin/roles-and-permissions.html">Roles and permissions</a>, not the Administration row. The <strong>Edit</strong> column governs the name boxes, the <strong>Requires</strong> selects, the Active toggle, the row <strong>Save</strong> and the <strong>Add category</strong> form; the <strong>Cancel</strong> column governs the <strong>Delete</strong> button. The <strong>Create</strong> column does not open the add form on its own — adding needs <strong>Edit</strong>. A role without the edit grant sees the categories as plain text with <code>On</code> and <code>Off</code> pills and no form beneath them.</p>
+<p>The block sits on the Configuration screen, so a role also needs to be able to view Configuration to reach it at all.</p>
 <dl class="faq"><dt>I cannot find a Recoverable categories screen in the menu.</dt><dd><p>There is not one. The block is at the foot of <a href="../admin/configuration.html">Configuration</a>, below the <strong>Save configuration</strong> bar.</p></dd>
-<dt>I ticked Active and there was no Save button.</dt><dd><p>The toggle saves itself. That is why it is its own little form rather than part of the main configuration save.</p></dd>
+<dt>I ticked Active and nothing else happened. Do I need to press Save?</dt><dd><p>No. The toggle saves itself as soon as you change it. The row's <strong>Save</strong> is for a changed name or <strong>Requires</strong> value.</p></dd>
 <dt>Delete refused and told me a number.</dt><dd><p>That number is how many requests point at the category. Untick <strong>Active</strong> instead — the category stops being offered and those requests keep it.</p></dd>
 <dt>Can a requester add a category while raising a request?</dt><dd><p>No. The list is fixed by whoever administers it, which is the point of having one.</p></dd>
 <dt>Where do I see the money that is actually outstanding?</dt><dd><p>The <a href="../accounts/the-recoverables-register.html">recoverables register</a>, which groups by these categories.</p></dd></dl>

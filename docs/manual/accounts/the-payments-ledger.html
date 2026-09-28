@@ -120,7 +120,7 @@
 <p>The subtitle under <strong>Payments</strong> is a summary of what is on screen: the month, how many entries matched, and the total of the active ones. Voided rows are counted in the entries and left out of the total.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What is in it</th></tr></thead><tbody>
 <tr><td>Date</td><td>The date the money left the bank, not the date it was typed in</td></tr>
-<tr><td>Project / Head</td><td>What the spend was booked against. The cell is the link to the payment.</td></tr>
+<tr><td>Project / Head</td><td>What the spend was booked against, or a <code>Recoverable</code> pill for money expected back. The cell is the link to the payment.</td></tr>
 <tr><td>Amount</td><td>What was paid</td></tr>
 <tr><td>Payee</td><td>The vendor or person the money went to</td></tr>
 <tr><td>Mode</td><td>How it was paid, such as <code>NEFT</code>, <code>UPI</code> or <code>Cheque</code></td></tr>
@@ -129,7 +129,7 @@
 <tr><td>Status</td><td><code>Active</code>, or <code>Removed</code> for a voided payment</td></tr>
 <tr><td>Actions</td><td><strong>View</strong> on every row, plus <strong>Edit</strong> and <strong>Remove</strong> on the few that still allow them</td></tr>
 </tbody></table></div>
-<aside class="callout callout-note"><p>A payment against a recoverable request has no budget head, so its Project / Head cell is thin. Those payments are deliberately outside budget spend — see <a href="../accounts/the-recoverables-register.html">the recoverables register</a>.</p></aside>
+<aside class="callout callout-note"><p>A payment against a recoverable request has no budget head, so its Project / Head cell shows a <code>Recoverable</code> pill instead. Those payments are deliberately outside budget spend — see <a href="../accounts/the-recoverables-register.html">the recoverables register</a>.</p></aside>
 <h2 id="filtering">Filtering</h2>
 <p>Three controls sit above the table, and <strong>Filter</strong> applies all three at once. <strong>Reset</strong> clears them back to the current month.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Control</th><th scope="col">What it does</th></tr></thead><tbody>
@@ -156,17 +156,24 @@
   <figcaption>A payment settled against a request: the comparison, the payment itself, and the whole story behind it. </figcaption>
 </figure>
 <h3 id="the-comparison">The comparison</h3>
-<p>Approved against paid, and the difference between them. On a clean settlement the difference line reads <strong>Difference · confirmed settled by Accounts</strong>. On a partial one it reads <strong>Still owed to the payee</strong>.</p>
+<p><strong>Approved</strong>, <strong>Paid</strong> (this payment) and <strong>Total paid on this request</strong>, then one line for the balance. It depends on where the request has got to:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">The request is</th><th scope="col">The balance line reads</th></tr></thead><tbody>
+<tr><td>Completed, paid in full</td><td><strong>Difference · confirmed settled by Accounts</strong></td></tr>
+<tr><td>Completed, but paid short with an explanation</td><td><strong>Difference · agreed deduction or adjustment · confirmed settled by Accounts</strong></td></tr>
+<tr><td>Approved again after an installment</td><td><strong>Still owed to the payee · remaining approved balance</strong></td></tr>
+<tr><td>Waiting on the approver’s shortfall decision</td><td><strong>Still owed to the payee · awaiting manager decision</strong></td></tr>
+<tr><td>Closed with the shortfall accepted</td><td><strong>Balance written off · shortfall accepted by</strong> the approver’s name</td></tr>
+</tbody></table></div>
 <h3 id="the-payment">The payment</h3>
-<p>Marked <strong>Read-only</strong>, because it is: the date, the mode, the reference, who recorded it and when, the payee, and its disposition: full settlement, an installment with balance remaining, or a shortfall sent for manager review. Recorded explanations remain with the payment.</p>
+<p>Marked <strong>Read-only</strong>, because it is: the date, the mode, the reference, who recorded it and when, the payee and the invoice number. <strong>Recorded settlement</strong> reads either <code>Fully settled — deductions handled outside this system</code> or <code>Partial payment recorded</code>; the second covers both an installment and a shortfall sent for review, so read the balance line above to tell them apart. Any explanation you gave shows as <strong>Settlement reason</strong>, and your note as <strong>Processing note</strong>.</p>
 <h3 id="the-proof">The proof</h3>
-<p>Both halves of it, when there is any: the bank advice Accounts attached at settlement, and the invoice the request came in with. Each has a <strong>Download</strong> control.</p>
+<p>Both halves of it, when there is any: the bank advice Accounts attached at settlement, and the invoice the request came in with, marked <em>Invoice from the request</em>. Each has a <strong>Download</strong> control.</p>
 <h3 id="the-trail">The trail</h3>
 <p><strong>Full trail, request to payment</strong> merges the request’s history with the payment’s, oldest first — submitted, approved, reserved, paid, settled. It is the same story anybody else reading the request sees.</p>
 <p>At the foot, <strong>Open the request</strong> and <strong>Back to ledger</strong>, beside a note stating the limit of this version: refunds and reversals are outside it.</p>
 <dl class="faq"><dt>A payment I can see in the ledger opens as “not found”.</dt><dd><p>The payment is real, but the request behind it is outside the records your role is allowed to read. The product answers the same way for a record that does not exist and one that is not yours, on purpose.</p></dd>
 <dt>The total does not match the sum of the amounts on screen.</dt><dd><p>The total counts active payments only. Switch <strong>Status</strong> to <code>All</code> and the removed rows appear, marked <code>Removed</code>, still outside the total.</p></dd>
-<dt>Can I export the ledger?</dt><dd><p>Not from this screen. The reports and the recoverables register both offer CSV downloads.</p></dd>
+<dt>Can I export the ledger?</dt><dd><p>Not from this screen. The reports and the recoverables register both offer <strong>Export CSV</strong>.</p></dd>
 <dt>Why can I not edit a payment I recorded five minutes ago?</dt><dd><p>Because it settled a request, and what the requester and the approver were told was paid cannot be quietly rewritten. <a href="../accounts/correcting-a-payment.html">Correcting or voiding a payment</a> explains what is still possible.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/reservations-and-conflicts.html"><span>Previous</span>Reservations and conflicts</a><a class="pager-next" href="../accounts/correcting-a-payment.html"><span>Next</span>Correcting or voiding a payment</a></nav>
 </div>

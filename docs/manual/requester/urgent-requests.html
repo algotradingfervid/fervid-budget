@@ -128,7 +128,7 @@
 <tr><td><strong>My requests</strong>, and the approver’s queue</td><td>Urgent requests sort to the top of the list, ahead of everything else, whatever their age.</td></tr>
 <tr><td>Each card in a list</td><td>A red <strong>Urgent</strong> pill appears in front of the status pill.</td></tr>
 <tr><td>The request itself</td><td>The same red <strong>Urgent</strong> pill sits before the status, and <strong>Urgency</strong> reads <em>Urgent —</em> followed by your reason, instead of <em>Normal</em>.</td></tr>
-<tr><td>Notifications</td><td>The urgent event has its own notification, addressed to the approver at once and to Accounts once the request is approved.</td></tr>
+<tr><td>Notifications</td><td>The urgent event has its own notification, addressed to the approver when you submit and to Accounts when the request is approved. Ticking the box later, on the edit form, sends your approver no urgent notification — only the ordinary one about the edit — though Accounts are still told when it is approved.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-note"><p>Whether that notification also arrives as an email depends on your administrator: every event writes an in-app notification unconditionally, and sends email only if that event has been switched on and a mail server is configured. See <a href="../admin/notification-rules.html">Notification rules and email</a>.</p></aside>
 <h2 id="what-it-does-not-change">What it does not change</h2>
@@ -138,10 +138,10 @@
 <p>While the request is still yours to edit, the edit form carries the same checkbox — labelled <strong>Marked urgent</strong> there — and the reason field beneath it. Untick it to drop the flag, or tick it to add one. The change is recorded in the request's history as <em>Urgency</em> moving between <code>Urgent</code> and <code>Normal</code>, so nobody has to guess whether it was always flagged.</p>
 <h2 id="when-urgency-is-switched-off">When urgency is switched off</h2>
 <p>Urgency is configurable, and an administrator can set it three ways. You will only ever see one of them, so it is worth knowing which you are looking at.</p>
-<div class="table-wrap"><table><caption>Set on the <a href="../admin/configuration.html">Configuration</a> screen, under <strong>Urgency</strong>.</caption><thead><tr><th scope="col">Setting</th><th scope="col">What you see on the form</th></tr></thead><tbody>
-<tr><td>Reason required — the default</td><td><strong>Mark this urgent</strong>, and a required <strong>Why is it urgent</strong> field once ticked.</td></tr>
-<tr><td>No reason required</td><td><strong>Mark this urgent</strong> on its own, with no reason field.</td></tr>
-<tr><td>Urgency switched off</td><td>No checkbox at all. A request submitted as urgent anyway is refused with <code>urgent requests are switched off</code>.</td></tr>
+<div class="table-wrap"><table><caption>Set on the <a href="../admin/configuration.html">Configuration</a> screen, under <strong>Urgency</strong> → <strong>Marking a request urgent</strong>.</caption><thead><tr><th scope="col">Setting</th><th scope="col">What you see on the form</th></tr></thead><tbody>
+<tr><td><strong>Requires a reason</strong> — the default</td><td><strong>Mark this urgent</strong>, and a required <strong>Why is it urgent</strong> field once ticked.</td></tr>
+<tr><td><strong>Free to mark, no reason</strong></td><td><strong>Mark this urgent</strong> on its own, with no reason field.</td></tr>
+<tr><td><strong>Disabled</strong></td><td>No checkbox at all. A request submitted as urgent anyway is refused with <code>urgent requests are switched off</code>.</td></tr>
 </tbody></table></div>
 <dl class="faq"><dt>Everything I raise is urgent. Should I tick it every time?</dt><dd><p>No. Urgency works by contrast — when every request carries the flag, the flag stops telling anybody anything, and the approver is back to reading dates.</p></dd>
 <dt>I forgot to mark it urgent.</dt><dd><p>Edit the request while it is still awaiting approval and tick the box. If it has already been approved, it is locked — talk to Accounts instead.</p></dd>

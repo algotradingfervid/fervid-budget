@@ -112,7 +112,7 @@
 <p>A reservation is the claim you take on a request before you pay it. Its only job is to stop one invoice being paid twice: while a request is reserved, the payment form opens for the holder and for nobody else.</p>
 <p>Because it does that job properly, it will sometimes get in your way. When it does, the product does not answer with an error page — it answers with a screen naming what actually happened and what you may do about it.</p>
 <h2 id="the-three-refusals">The three refusals</h2>
-<p>Opening the payment form for a request you cannot take gives you one of three screens. All three are the same shape: a banner saying what is wrong, the request itself, a list headed <strong>What you can do</strong>, and <strong>Pick another request</strong> and <strong>Back to queue</strong> at the foot. All three end their banner with the same reassurance — nothing you typed has been saved, and no payment was created.</p>
+<p>Taking a request you cannot take, or opening the payment form for one, gives you one of three screens. All three are the same shape: a banner saying what is wrong, the request itself, a list headed <strong>What you can do</strong> (<strong>Go back to the queue</strong> and <strong>Open the request read-only</strong>), and <strong>Pick another request</strong> and <strong>Back to queue</strong> at the foot. All three end their banner with the same reassurance — nothing you typed has been saved, and no payment was created.</p>
 <h3 id="somebody-else-took-it-first">Somebody else took it first</h3>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/accounts/conflict-taken.png" aria-label="Enlarge: The reservation race, lost. The banner names the colleague who now holds the request.">
@@ -137,6 +137,7 @@
   <figcaption>A request that has already been settled. Only an approved request can be taken for processing. </figcaption>
 </figure>
 <p>Only an approved request can be taken. This screen names the status the request actually holds — in the shot above, <code>Completed</code> — and it is the one you meet when a request has already been paid, cancelled or frozen while a cancellation is decided.</p>
+<aside class="callout callout-note"><p>A fourth screen looks the same but is not a refusal. If you open the payment form for a request nobody holds — after releasing it yourself, or from an old link — the banner reads <strong>Nobody holds</strong> the request and says it is approved and unclaimed. The payment form opens only for the person holding the claim, so the foot of that screen offers <strong>Take it for processing</strong> beside <strong>Back to queue</strong>.</p></aside>
 <div class="table-wrap"><table><thead><tr><th scope="col">The banner says</th><th scope="col">What is true</th><th scope="col">What to do</th></tr></thead><tbody>
 <tr><td><code>… took this request before you</code></td><td>A colleague holds the reservation</td><td>Take another request, or ask them</td></tr>
 <tr><td><code>… is on hold, so it cannot be taken for processing</code></td><td>Nobody holds it; Accounts is waiting on the requester</td><td>Read the reply and lift the hold, then take it</td></tr>
@@ -149,7 +150,7 @@
   </button>
   <figcaption>The release screen. A reason and the confirmation are both required. </figcaption>
 </figure>
-<p>You reach this from <strong>Release</strong> in the reserved bar on the payment form, from <strong>Cancel and release</strong> at the foot of it, or from the queue. It asks for two things and refuses without either: a reason, which is recorded in the history and visible to everybody who can see the request, and the tick confirming no payment has been initiated.</p>
+<p>You reach this from <strong>Release</strong> in the reserved bar on the payment form, from <strong>Cancel and release</strong> at the foot of it, or from <strong>Release it</strong> on the stale-reservation screen described below. If you change your mind, <strong>Keep working on it</strong> takes you back to the payment form. It asks for two things and refuses without either: a reason, which is recorded in the history and visible to everybody who can see the request, and the tick confirming no payment has been initiated.</p>
 <ol class="steps">
 <li>Choose <strong>Release it</strong> — the request goes back to <code>approved</code> for anybody in Accounts to pick up.</li>
 <li>Type the reason.</li>
@@ -165,20 +166,20 @@
   </button>
   <figcaption>The nudge. It names how long the claim has been open, and lists what may be done about it. </figcaption>
 </figure>
-<p>Once a reservation has been open longer than the configured number of days, the holder is reminded and the queue starts sending <strong>Resume</strong> here rather than back to the payment form. Nothing is released automatically, and the banner explains why: a transfer may already be under way, so a person decides.</p>
+<p>Once a reservation has been open for the number of days an administrator has configured (one, unless they changed it), the holder is sent a reminder. Separately, once it has been open more than a day, the queue flags it and starts sending <strong>Resume</strong> here rather than back to the payment form. Nothing is released automatically, and the banner explains why: a transfer may already be under way, so a person decides.</p>
 <p>The list under <strong>Pick one</strong> shows only the choices the person reading it can actually take. Holding your own stale reservation, they are:</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Choice</th><th scope="col">What it does</th></tr></thead><tbody>
 <tr><td><strong>Carry on and record the payment</strong></td><td>Opens the payment form with your reservation intact</td></tr>
 <tr><td><strong>Release it</strong></td><td>Goes to the release screen, which needs a reason and the confirmation</td></tr>
-<tr><td><strong>Put it on hold</strong></td><td>Also goes to the release screen — a hold works on an unclaimed request, so the claim comes off first</td></tr>
+<tr><td><strong>Put it on hold</strong></td><td>Also goes to the release screen. A hold can only be placed on an approved request nobody has claimed, so you release the claim first, then open the request and select <strong>Put on hold</strong>. Between the two steps the request is in the open queue, so do it straight away.</td></tr>
 </tbody></table></div>
 <p>Below the list, <strong>Who has been told</strong> is the request’s history to date: who submitted it, who approved it and who reserved it.</p>
 <h2 id="somebody-else-s-stale-claim">Somebody else’s stale claim</h2>
-<p>You cannot take a reservation off a colleague. Handing one on is an administrator’s permission, and the accounts role does not carry it. If a request is stuck with somebody who is away, ask an administrator to reassign it; the reassignment demands a reason and the same confirmation, and the requester, the approver and the new holder are all told.</p>
+<p>You cannot take a reservation off a colleague. Handing one on is an administrator’s permission, and the accounts role does not carry it. Opening a colleague’s stale reservation shows a banner headed <strong>You cannot act on this reservation</strong> instead of the list of choices. If a request is stuck with somebody who is away, ask an administrator to reassign it; the reassignment demands a reason and the same confirmation, and the requester, the approver and the new holder are all told.</p>
 <dl class="faq"><dt>Does a reservation expire?</dt><dd><p>No. It is nudged, never expired. An expiring reservation would let a second accountant pay an invoice already moving through a bank portal, which is the one thing the whole mechanism exists to prevent.</p></dd>
 <dt>I closed my browser with the payment form open. Have I lost anything?</dt><dd><p>No. The form writes nothing until you confirm, and the reservation survives. Go to the queue’s <strong>Processing</strong> tab and select <strong>Resume</strong>.</p></dd>
-<dt>The conflict screen names a colleague who says they never took it.</dt><dd><p>The reservation history on the release screen lists every claim, release and reassignment on that request with a timestamp and a name. So does <a href="../admin/the-audit-trail.html">the audit trail</a>, which an administrator can read.</p></dd>
-<dt>Why did I get a conflict screen rather than a plain error?</dt><dd><p>Because the useful information is not “that failed” but who has it now and what to do instead. Every path that meets a refused reservation — the queue, the picker and the payment form — ends on the same three screens.</p></dd></dl>
+<dt>The conflict screen names a colleague who says they never took it.</dt><dd><p>Open the request. Its <strong>History and conversation</strong> lists every claim, release and reassignment with the name of the person and the time. So does <a href="../admin/the-audit-trail.html">the audit trail</a>, which an administrator can read.</p></dd>
+<dt>Why did I get a conflict screen rather than a plain error?</dt><dd><p>Because the useful information is not “that failed” but who has it now and what to do instead. Every path that meets a refused reservation — the queue, the picker, the request’s own <strong>Record payment</strong> and the payment form — ends on the same three screens.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/raising-a-concern.html"><span>Previous</span>Raising a concern</a><a class="pager-next" href="../accounts/the-payments-ledger.html"><span>Next</span>The payments ledger</a></nav>
 </div>
 </main>

@@ -4,7 +4,7 @@ export default page({
   section: 'requester',
   slug: 'choosing-a-request-type',
   title: 'Choosing a request type',
-  summary: 'Vendor invoice, reimbursement, employee advance or vendor advance — which one you want, and why it matters.',
+  summary: 'Vendor invoice, vendor advance, reimbursement, employee advance or deposit or guarantee — which one you want, and why it matters.',
   blocks: [
     prose(
       `Raising a request is two screens. The first asks one question — what kind of payment is this —

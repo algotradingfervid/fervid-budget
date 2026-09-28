@@ -114,7 +114,7 @@
 <p>Whatever your role, the screen is built from the same three pieces, top to bottom.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Part</th><th scope="col">What it does</th></tr></thead><tbody>
 <tr><td>The greeting band</td><td>Reads <em>Home</em>, then <strong>Good day</strong> and your name, then &quot;Everything below is waiting on someone. The ones marked <em>you</em> are yours.&quot; <strong>+ New request</strong> sits on the right if you are allowed to raise requests.</td></tr>
-<tr><td>The strip of tiles</td><td>One tile per queue that concerns you, each a label and a number. Every tile is a link to the full screen behind it. A tile with work outstanding is tinted.</td></tr>
+<tr><td>The strip of tiles</td><td>One tile per queue that concerns you, each a label and a number. Every tile is a link to the full screen behind it. The three tiles that count work waiting on you — <strong>Needs my action</strong>, <strong>Awaiting my approval</strong> and <strong>Partial payments to review</strong> — are tinted while they are above zero.</td></tr>
 <tr><td>The panels</td><td>One panel per queue, listing at most four rows, with a link at the foot to the whole queue.</td></tr>
 </tbody></table></div>
 <p>A panel is only drawn when it has something in it, so an empty queue costs you no space — its tile still shows the zero. If nothing anywhere is waiting on you, you get a single panel reading &quot;Nothing is waiting on you&quot;.</p>
@@ -125,8 +125,9 @@
   </button>
   <figcaption>Somebody who only raises requests. Two tiles, two panels, and the button to start a new one. </figcaption>
 </figure>
-<p>Two tiles: <strong>Needs my action</strong>, tinted because it is not zero, and <strong>My open requests</strong>. Under them, <strong>Needs your action</strong> collects the requests that are stuck on you, and <strong>In progress</strong> everything of yours still moving.</p>
+<p>Two tiles: <strong>Needs my action</strong>, tinted because it is not zero, and <strong>My open requests</strong>. Under them sit two panels. Note that the tile says <em>my</em> and the panel below it says <em>your</em> — they are the same queue. <strong>Needs your action</strong> lists your own requests that were returned to you for correction, and <strong>In progress</strong> lists everything of yours that is not finished.</p>
 <p>Read one row across. The number and the title come first, then the status badge, then a plain sentence naming whoever owes the next move — &quot;Waiting on you&quot; in brand colour when it is you, &quot;Waiting on Manish Patel&quot; or &quot;Waiting on Accounts&quot; when it is not. The amount sits on the right. In this screenshot two requests were returned for correction, so they appear in both panels: they are in progress, and they are also waiting on their raiser.</p>
+<aside class="callout callout-note"><p>A request of yours that Accounts has put on hold reads &quot;Waiting on you&quot; in the <strong>In progress</strong> panel, because Accounts is waiting for your answer. It is not counted under <strong>Needs my action</strong>, which counts returned requests only, so look down the <strong>In progress</strong> panel as well.</p></aside>
 <p>The foot of each panel opens the list behind it — <strong>Open my requests →</strong> and <strong>See all my requests →</strong>. Both land on <a href="../requester/tracking-your-requests.html">Tracking your requests</a>.</p>
 <h2 id="an-approver">An approver</h2>
 <figure class="shot">
@@ -135,8 +136,8 @@
   </button>
   <figcaption>An approver. The work is other people’s requests, so there is no button for raising one. </figcaption>
 </figure>
-<p>Three tiles here: <strong>Awaiting my approval</strong>, tinted; <strong>Cancellation requests</strong>; and <strong>Budget</strong>, whose value is the words <strong>Variance grid</strong> rather than a count, because it is a way through to that screen rather than a queue. There is no <strong>+ New request</strong> button, because the approver role does not carry permission to raise requests.</p>
-<p><strong>Awaiting your approval</strong> lists what is sitting with you; the first row in the screenshot also carries an <strong>Urgent</strong> flag before its status. <strong>Decisions only you can make</strong> holds the requests whose raisers have asked to cancel something you already approved — those cannot be handed to anybody else. The feet lead to <strong>Open the approvals queue →</strong> and <strong>Review all →</strong>, both covered in <a href="../manager/the-approvals-queue.html">The approvals queue</a>.</p>
+<p>Four tiles here: <strong>Awaiting my approval</strong> and <strong>Partial payments to review</strong>, both tinted; <strong>Cancellation requests</strong>; and <strong>Budget</strong>, whose value is the words <strong>Variance grid</strong> rather than a count, because it is a way through to that screen rather than a queue. There is no <strong>+ New request</strong> button, because the Manager role does not carry permission to raise requests.</p>
+<p><strong>Awaiting your approval</strong> lists what is sitting with you; the first row in the screenshot also carries an <strong>Urgent</strong> flag before its status. <strong>Decisions only you can make</strong> holds the requests whose raisers have asked to cancel something you already approved. <strong>Partial payments to review</strong> holds the requests Accounts paid short and sent back for you to decide. The feet lead to <strong>Open the approvals queue →</strong>, <strong>Review all →</strong> and <strong>Open the partial reviews →</strong>, all covered in <a href="../manager/the-approvals-queue.html">The approvals queue</a>.</p>
 <h2 id="the-accounts-team">The accounts team</h2>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/shared/dashboard-accounts.png" aria-label="Enlarge: The accounts team. One queue matters at the start of the day: what is approved and unclaimed.">
@@ -144,8 +145,9 @@
   </button>
   <figcaption>The accounts team. One queue matters at the start of the day: what is approved and unclaimed. </figcaption>
 </figure>
-<p>One count and one panel. <strong>Approved, unclaimed</strong> is the number of approved requests that nobody has taken and that are not on hold — the same number the accounts queue itself shows, drawn from the same query, so the two can never disagree. <strong>Budget</strong> appears again as a way through to the variance grid.</p>
-<aside class="callout callout-note"><p>The rows in this panel carry the request number, the status and the amount, but no title. Open a row to see what the money is for. <strong>Open the payment queue →</strong> at the foot leads to <a href="../accounts/the-payment-queue.html">The payment queue</a>.</p></aside>
+<p>Two tiles and, in the screenshot, one panel. The <strong>Approved, unclaimed</strong> tile is the number of approved requests that nobody has taken and that are not on hold — the same number the accounts queue itself shows, drawn from the same query, so the two can never disagree. The panel under it is headed <strong>Approved and unclaimed</strong> and lists the first four of them, urgent ones first. <strong>Budget</strong> appears again as a way through to the variance grid.</p>
+<p>A second panel, <strong>Concerns to answer</strong>, appears when an approver has raised a concern about a partial payment you recorded and still hold. It has no tile of its own. Its foot, <strong>Open the partial review tab →</strong>, leads to that tab of the queue.</p>
+<aside class="callout callout-note"><p>Each row carries the request number and title, the status, the waiting line and the amount. <strong>Open the payment queue →</strong> at the foot leads to <a href="../accounts/the-payment-queue.html">The payment queue</a>.</p></aside>
 <h2 id="an-administrator">An administrator</h2>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/shared/dashboard-admin.png" aria-label="Enlarge: An administrator sees every tile the product has, and an extra panel of destinations.">
@@ -153,14 +155,15 @@
   </button>
   <figcaption>An administrator sees every tile the product has, and an extra panel of destinations. </figcaption>
 </figure>
-<p>An administrator holds every permission, so every tile is drawn: all six, wrapping onto a second line. Four of them read zero in this screenshot — the administrator account had raised nothing and was nobody's approver — and because those queues are empty, no panels are drawn for them. The counts are still true; there is just nothing to list.</p>
-<p>The second panel, <strong>Administration</strong>, is the one nobody else gets. Instead of requests it holds four destinations, each with a line saying what it is for: <strong>Configuration</strong> (&quot;Numbering, attachments, urgency, approvals&quot;), <strong>Roles &amp; permissions</strong> (&quot;Who can do what&quot;), <strong>Users</strong> (&quot;People and their default approvers&quot;) and <strong>Vendors</strong> (&quot;The vendor master&quot;). Each one appears only if you may open it, so a role holding some of those permissions and not others gets a shorter list.</p>
+<p>An administrator holds every permission, so every tile is drawn: all seven, wrapping onto a second line. Five of them read zero in this screenshot — the administrator account had raised nothing and was nobody's approver — and because those queues are empty, no panels are drawn for them. The counts are still true; there is just nothing to list.</p>
+<p>The <strong>Administration</strong> panel is the one the other built-in roles do not get. Instead of requests it holds four destinations, each with a line saying what it is for: <strong>Configuration</strong> (&quot;Numbering, attachments, urgency, approvals&quot;), <strong>Roles &amp; permissions</strong> (&quot;Who can do what&quot;), <strong>Users</strong> (&quot;People and their default approvers&quot;) and <strong>Vendors</strong> (&quot;The vendor master&quot;). Each one appears only if you may open it, so a role holding some of those permissions and not others gets a shorter list.</p>
 <h2 id="the-tiles-side-by-side">The tiles, side by side</h2>
-<div class="table-wrap"><table><caption>Every tile the home screen can draw. You get the ones your permissions reach.</caption><thead><tr><th scope="col">Tile</th><th scope="col">Who sees it</th><th scope="col">What it counts</th></tr></thead><tbody>
+<div class="table-wrap"><table><caption>Every tile the home screen can draw. You get the ones your permissions reach. The Concerns to answer panel has no tile.</caption><thead><tr><th scope="col">Tile</th><th scope="col">Who sees it</th><th scope="col">What it counts</th></tr></thead><tbody>
 <tr><td>Needs my action</td><td>Anybody who may raise requests</td><td>Your own requests that are stuck on you</td></tr>
 <tr><td>My open requests</td><td>Anybody who may raise requests</td><td>Your own requests that are not finished</td></tr>
 <tr><td>Awaiting my approval</td><td>Approvers</td><td>Requests sent to you and not yet decided</td></tr>
-<tr><td>Cancellation requests</td><td>Approvers</td><td>Approved requests whose raisers have asked to cancel</td></tr>
+<tr><td>Cancellation requests</td><td>Approvers</td><td>Requests sent to you whose raisers have asked to cancel them after approval</td></tr>
+<tr><td>Partial payments to review</td><td>Approvers who may decide shortfalls</td><td>Requests sent to you that Accounts paid short and sent back for your decision</td></tr>
 <tr><td>Approved, unclaimed</td><td>The accounts team</td><td>Approved requests nobody has claimed and that are not on hold</td></tr>
 <tr><td>Budget</td><td>Anybody who may open the variance grid</td><td>Nothing — it is a link to the grid</td></tr>
 </tbody></table></div>
@@ -170,7 +173,7 @@
 <h3 id="the-status-badge">The status badge</h3>
 <p>The badge is the request's state in words — &quot;Awaiting approval&quot;, &quot;Returned for correction&quot;, &quot;Approved — awaiting payment&quot;, &quot;Cancellation requested&quot;, &quot;Completed&quot;. <a href="../reference/statuses-and-badges.html">Statuses and badges</a> has the full set with the colours the product uses, and <a href="../reference/request-lifecycle.html">The request lifecycle</a> shows how one becomes another.</p>
 <h3 id="the-waiting-line">The waiting line</h3>
-<p>Next to the badge is a sentence naming who owes the next action. It is worked out once, in one place, so the home screen, the lists and the request itself always give the same answer. &quot;Waiting on you&quot; is drawn in brand colour; a finished request reads &quot;Nothing pending&quot;.</p>
+<p>Next to the badge is a sentence naming who owes the next action. It is worked out once, in one place, so the home screen, the lists and the request itself always give the same answer. &quot;Waiting on you&quot; is drawn in brand colour; a finished request reads &quot;Nothing pending&quot;. <a href="../reference/statuses-and-badges.html#the-waiting-line">Statuses and badges</a> lists every form it takes.</p>
 <dl class="faq"><dt>A tile shows a number but there is no panel for it.</dt><dd><p>Panels are only drawn for queues that have something in them, so this should not happen for a tile above zero. It does happen the other way round: a tile reading zero has no panel, which is the intended behaviour.</p></dd>
 <dt>My colleague has a queue on their home screen that I do not have.</dt><dd><p>Every tile and every panel is gated on the same permission as the screen it leads to, so you are never shown work behind a door you cannot open. See <a href="../getting-started/finding-your-way.html">Finding your way around</a>.</p></dd>
 <dt>The screen says &quot;Nothing is waiting on you&quot; but I know I have requests open.</dt><dd><p>That panel appears when no queue you can act on has anything in it. Requests of yours that are sitting with somebody else are counted on the <strong>My open requests</strong> tile, and the tile links to the full list.</p></dd>

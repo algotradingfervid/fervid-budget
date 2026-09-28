@@ -109,19 +109,20 @@
 <div class="wrap">
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Approving</p>
 <header class="page-head"><h1>The approvals queue</h1><p class="lede">Everything waiting on you, split by the kind of decision it needs.</p></header>
-<p><strong>Approvals</strong> in the sidebar opens your queue. The number beside it is the count of requests sitting at <code>pending</code> with your name on them, so the sidebar tells you whether there is anything to do without your opening the screen.</p>
-<p>The queue is headed <em>Waiting on you</em>, and the line under the heading counts the two kinds of work separately — how many there are to approve, and how many cancellations there are to decide.</p>
+<p><strong>Approvals</strong> in the sidebar opens your queue. The number beside it counts the requests with your name on them that are waiting at <code>pending</code> or in partial review, so the sidebar tells you whether there is anything to do without your opening the screen.</p>
+<p>The queue is headed <em>Waiting on you</em>, and the line under the heading counts three kinds of work separately — how many there are to approve, how many cancellations there are to decide, and how many partial payments there are to review.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/manager/approvals-to-approve.png" aria-label="Enlarge: The queue on its first tab. Each row is one request, urgent ones first.">
     <img src="../assets/shots/manager/approvals-to-approve.png" alt="Everything waiting on this approver’s decision." loading="lazy" width="1440">
   </button>
   <figcaption>The queue on its first tab. Each row is one request, urgent ones first. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
 </figure>
-<h2 id="the-three-tabs">The three tabs</h2>
+<h2 id="the-four-tabs">The four tabs</h2>
 <p>The tabs divide the queue by what has already happened to the request, not by project or amount. The count beside each tab is live and honours whatever you have typed into the search box.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Tab</th><th scope="col">What it holds</th><th scope="col">The statuses behind it</th></tr></thead><tbody>
 <tr><td><strong>To approve</strong></td><td>Requests waiting on your decision. This is where the work is.</td><td><code>pending</code></td></tr>
 <tr><td><strong>Cancellations</strong></td><td>Approved requests whose raiser has asked you to cancel them.</td><td><code>cancellation_requested</code></td></tr>
+<tr><td><strong>Partial review</strong></td><td>Requests Accounts paid less than you approved, waiting for your decision on the balance.</td><td><code>partial_review</code></td></tr>
 <tr><td><strong>Decided</strong></td><td>The record of what you have already settled one way or the other.</td><td><code>approved</code>, <code>rejected</code>, <code>cancelled</code></td></tr>
 </tbody></table></div>
 <figure class="shot">
@@ -137,8 +138,8 @@
   <figcaption>The Decided tab: what you approved, what you rejected, what was cancelled. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
 </figure>
 <aside class="callout callout-note"><p><strong>Decided</strong> is narrower than it sounds. A request you <em>returned</em> is not in it, because a returned request is back with its requester and may yet come round again. Nor are requests that have since been paid and closed. For those, use <strong>My requests</strong>, which reaches every request in the product.</p></aside>
-<h2 id="what-is-not-in-the-queue">What is not in the queue</h2>
-<p>One decision that is genuinely yours never appears here: the shortfall review, which arrives when Accounts pays less than you approved. It has no tab. You reach it from the request itself, where the control reads <strong>Decide the partial payment</strong>, or by following the notification the product sends you. <a href="../manager/shortfall-review.html">Reviewing a shortfall</a> covers it.</p>
+<h2 id="partial-reviews">Partial reviews</h2>
+<p>When Accounts pays less than you approved, the request lands on the <strong>Partial review</strong> tab. Selecting the row opens the request; the control there reads <strong>Decide the partial payment</strong>. You can also follow the notification the product sends you. <a href="../manager/shortfall-review.html">Reviewing a shortfall</a> covers the decision.</p>
 <h2 id="only-your-rows">Only your rows</h2>
 <p>The queue is scoped to you by name — it lists requests whose approver is you, and nothing else. This is not a matter of how much of the product your account can otherwise see: an administrator with the run of every screen still sees only their own rows on this one.</p>
 <p>If a colleague says a request is waiting and it is not in your queue, it was routed to somebody else. Open it from <strong>My requests</strong> and read the <strong>Approver</strong> field.</p>
@@ -149,19 +150,20 @@
 <tr><td>The amount on the right</td><td>The amount that was <em>asked for</em>. Once you approve a smaller figure the card still shows what was requested.</td></tr>
 <tr><td>The bold line</td><td>The short title the requester gave it.</td></tr>
 <tr><td><strong>! Urgent</strong></td><td>Present only when the requester flagged it. Urgent rows sort to the top.</td></tr>
+<tr><td><strong>Recoverable</strong></td><td>Present only when the money is expected back, followed by the category where there is one.</td></tr>
 <tr><td>The grey line</td><td>The request type, then project and head, then the invoice number where there is one.</td></tr>
-<tr><td>The status pill</td><td>Where the request stands: <strong>Awaiting approval</strong>, <strong>Cancellation requested</strong>, <strong>Approved — awaiting payment</strong>, <strong>Rejected — final</strong>.</td></tr>
-<tr><td>The line on the right</td><td>Who is holding it up. On your own queue that reads <strong>Waiting on you</strong>.</td></tr>
+<tr><td>The status pill</td><td>Where the request stands: <strong>Awaiting approval</strong>, <strong>Cancellation requested</strong>, <strong>Partial — manager review</strong> (or <strong>Partial — under discussion</strong> once you have raised a concern), <strong>Approved — awaiting payment</strong>, <strong>Rejected — final</strong> or <strong>Cancelled</strong>. An approved request Accounts has put on hold still shows <strong>Approved — awaiting payment</strong> here.</td></tr>
+<tr><td>The line on the right</td><td>Who is holding it up. On the first three tabs that reads <strong>Waiting on you</strong> (or <em>Waiting on you and Accounts</em> while a concern you raised is unanswered); on <strong>Decided</strong> it names whoever acts next.</td></tr>
 </tbody></table></div>
 <p>Within a tab, urgent requests come first and then the oldest, so the row at the top is the one that has been waiting longest. Select any row to open the request in full.</p>
 <h2 id="searching-and-exporting">Searching and exporting</h2>
 <p>The <strong>Search</strong> box matches the request number, the payee, the invoice number, the purpose and the requester's name. Type and select <strong>Apply</strong>; the tab counts change with it, so you can see at a glance how many of each kind match.</p>
-<p><strong>Export CSV</strong> at the top right downloads the same set as a spreadsheet, honouring your search. It is the only export on this screen that the approver role can use.</p>
+<p><strong>Export CSV</strong> at the top right downloads a spreadsheet of the open requests routed to you — every open status, not only the tab you are on — narrowed by your search. It also includes any open requests you raised yourself. The columns are Number, Status, Type, Title, Amount, Approved amount, Payee, Requester, Approver and Created.</p>
 <aside class="callout callout-note"><p>The list draws at most 200 rows, while the counts beside the tabs are not capped. If a tab claims more than the page shows, narrow it with the search box.</p></aside>
 <h2 id="when-there-is-nothing-to-do">When there is nothing to do</h2>
-<p>An empty tab says <em>Nothing is waiting on you here.</em> — which is the whole message. Check the other two tabs before you conclude your day is clear.</p>
+<p>An empty tab says <em>Nothing is waiting on you here.</em> — which is the whole message. Check the other tabs before you conclude your day is clear.</p>
 <aside class="callout callout-tip"><p>The foot of the queue reads <em>Every approval is a decision made after opening the request. There is no bulk approval, by design.</em> There is no tick-box column and no <strong>Approve selected</strong> button to look for; every decision starts by opening the request.</p></aside>
-<dl class="faq"><dt>The sidebar badge says 14 but the Cancellations tab has 2 more. Which is right?</dt><dd><p>Both. The sidebar badge counts only requests at <code>pending</code> — the <strong>To approve</strong> tab. Cancellations are counted separately, on the line under the heading and on the tab itself.</p></dd>
+<dl class="faq"><dt>The sidebar badge says 19 but the To approve tab says 14. Which is right?</dt><dd><p>Both. The sidebar badge adds the <strong>To approve</strong> and <strong>Partial review</strong> tabs together. Cancellations are not in the badge; they are counted on the line under the heading and on their own tab.</p></dd>
 <dt>A request I approved has vanished from Decided.</dt><dd><p>It has not been removed, but the tab only holds <code>approved</code>, <code>rejected</code> and <code>cancelled</code>. Once Accounts pays it the status moves on to <code>completed</code>, and it is then found through <strong>My requests</strong>.</p></dd>
 <dt>Can I approve several requests at once?</dt><dd><p>No. Each decision is taken on the request itself, after you have read it.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../manager/what-you-can-do.html"><span>Previous</span>What an approver can do</a><a class="pager-next" href="../manager/reviewing-a-request.html"><span>Next</span>Reviewing a request</a></nav>

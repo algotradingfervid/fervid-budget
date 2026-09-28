@@ -122,19 +122,20 @@
 <tr><td>Email</td><td>What they sign in with. Stored lower-case, and it must contain an <code>@</code>.</td></tr>
 <tr><td>Roles</td><td>Every role they hold, as a pill each. A person can hold several at once.</td></tr>
 <tr><td>Default approver</td><td>Who their own requests go to. An em dash means none is set.</td></tr>
-<tr><td>Status</td><td><code>Active</code> or <code>Inactive</code>. Only active people can be chosen as an approver.</td></tr>
-<tr><td>Edit</td><td>Opens the panel for that person.</td></tr>
+<tr><td>Status</td><td><code>Active</code> or <code>Inactive</code>. Only active people whose roles let them approve can be chosen as an approver.</td></tr>
+<tr><td>Edit</td><td>An <strong>Edit</strong> button that opens the panel for that person. It appears only if your role may edit users.</td></tr>
 </tbody></table></div>
 <p>The sub-line under the heading — &quot;A person can hold several roles at once&quot; — is the thing to hold on to. Roles add up. Somebody who holds both Requester and Manager can raise requests and decide other people's, and their menu is the union of the two.</p>
 <h2 id="adding-somebody">Adding somebody</h2>
 <ol class="steps">
-<li>Select <strong>＋ Add user</strong> at the top right.</li>
+<li>Select <strong>＋ Add user</strong> at the top right.<p class="step-note">The button appears only if your role may create users.</p></li>
 <li>Type their <strong>Email</strong>. This is what they will sign in with.</li>
 <li>Type their <strong>Name</strong>.</li>
 <li>Tick one or more <strong>Roles</strong>.<p class="step-note">One tick box per role, each followed by its description. At least one is required; a new account with no role ticked is refused with <code>Choose at least one role for the new user.</code></p></li>
-<li>Type a starting <strong>Password</strong>.<p class="step-note">12 to 72 characters, and it must contain a letter and a number. Anything else is refused.</p></li>
+<li>Type a starting <strong>Password</strong>.<p class="step-note">At least 12 characters (and no more than 72 bytes, which is fewer characters if it contains symbols or non-English letters), with at least one letter and one number. Anything else is refused with a reason such as <code>password must be at least 12 characters</code> or <code>password must include a letter and a number</code>.</p></li>
 <li>Leave <strong>Active</strong> ticked unless you are creating an account that should not be usable yet.</li>
 <li>Select <strong>Add User</strong>.<p class="step-note">The new account appears in the list, and the creation is written to the audit trail.</p></li>
+<li>If the new person will raise requests, select <strong>Edit</strong> on their row and choose their <strong>Default approver for their own requests</strong>, then select <strong>Save user</strong>.<p class="step-note">The Add user panel has no default approver field, so a new account always starts with none (an em dash in the list). The edit panel is the only place to set it.</p></li>
 </ol>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/admin/user-new-sheet.png" aria-label="Enlarge: The Add user panel: Email, Name, a tick box for each role, Password and Active.">
@@ -142,14 +143,14 @@
   </button>
   <figcaption>The Add user panel: Email, Name, a tick box for each role, Password and Active. </figcaption>
 </figure>
-<aside class="callout callout-note"><p class="callout-title">When adding is refused</p><p>If the save is refused, the panel opens again with the reason at the top and the email, name and roles you entered still filled in. The password is never kept, so type it again. An email address that already belongs to an account is refused with <code>A user with this email address already exists.</code></p></aside>
+<aside class="callout callout-note"><p class="callout-title">When adding is refused</p><p>If the save is refused, the panel opens again with the reason at the top and the email, name and roles you entered still filled in. The password is never kept, so type it again. An email address that already belongs to an account is refused with <code>A user with this email address already exists. Use a different email or edit the existing user.</code>, followed by <code>The password is never kept, so enter it again.</code></p></aside>
 <aside class="callout callout-warning"><p class="callout-title">The starting password</p><p>Give the starting password over a trusted channel. <strong>Can’t sign in?</strong> offers email reset when configured, or an administrator/operator route when it is not. Administrators can set a new password here; see <a href="../getting-started/signing-in.html">Signing in</a>.</p></aside>
 <h2 id="changing-somebody">Changing somebody</h2>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Name</strong></td><td><span class="req">Required</span></td><td>How they appear on every request, approval and payment.</td></tr>
 <tr><td><strong>Roles</strong></td><td><span class="opt">Optional</span></td><td>One tick box per role, each with its description: <code>Accounts — Process approved requests and record payments.</code>, <code>Admin — Full administrative access.</code>, <code>Manager — Review and decide on payment requests.</code>, <code>Requester — Raise and manage your own payment requests.</code> Tick as many as apply.</td></tr>
-<tr><td><strong>Default approver for their own requests</strong></td><td><span class="opt">Optional</span></td><td>Who their requests go to by default. Only active people allowed to approve are offered, and never the person themselves. The hint under the field reads <em>Only active users with permission to approve requests are offered. Self-approval is not allowed.</em>, and the save refuses self-approval again on the server. <code>None</code> is a valid answer for somebody who raises nothing.</td></tr>
-<tr><td><strong>Reset password</strong></td><td><span class="opt">Optional</span></td><td>Leave blank to keep the current one. Anything you type replaces it immediately, with the same 12-character, letter-and-number rule as a new account.</td></tr>
+<tr><td><strong>Default approver for their own requests</strong></td><td><span class="opt">Optional</span></td><td>Who their requests go to by default. Only active people allowed to approve are offered, and never the person themselves. The hint under the field reads <em>Only active users with permission to approve requests are offered. Self-approval is not allowed.</em>, and the save refuses self-approval again on the server. If the approver saved earlier can no longer approve (deactivated, or their role changed), the panel says <code>The saved default approver can no longer approve requests. Choose an eligible approver before saving.</code> <code>None</code> is a valid answer for somebody who raises nothing.</td></tr>
+<tr><td><strong>Reset password</strong></td><td><span class="opt">Optional</span></td><td>Leave blank to keep the current one. Anything you type replaces it immediately, with the same rules as a new account, and signs the person out of any session they have open.</td></tr>
 <tr><td><strong>Active</strong></td><td><span class="opt">Optional</span></td><td>Untick to switch the account off. See below.</td></tr>
 </tbody></table></div>
 <figure class="shot">
@@ -161,18 +162,19 @@
 <ol class="steps">
 <li>Select <strong>Edit</strong> on the person’s row.</li>
 <li>Change what needs changing.</li>
-<li>Select <strong>Save user</strong>.<p class="step-note">The name, the roles and the default approver are saved together in one go, so a save that is refused leaves none of them applied.</p></li>
+<li>Select <strong>Save user</strong>.<p class="step-note">The name, the roles and the default approver are saved together in one go, so a save that is refused leaves none of them applied. A refused save shows the reason on an error page; go back to the list and try again.</p></li>
 </ol>
-<aside class="callout callout-note"><p class="callout-title">Opening the panel and saving from it</p><p>The <strong>Edit</strong> control on this screen carries no permission check of its own, so anybody who can open the people screen can open the panel. Saving is a separate matter: the save is refused unless you hold the create or edit grant for users. Opening the panel is not the same as being allowed to save from it. In practice only administrators can view this screen at all.</p></aside>
+<aside class="callout callout-note"><p class="callout-title">Who sees which controls</p><p>What you see depends on your role. Opening the screen needs the users view grant; the <strong>＋ Add user</strong> button appears only with the create grant, and the <strong>Edit</strong> buttons only with the edit grant. The server checks again when you save, so a save without the matching grant is refused with <code>You do not have permission to perform this action.</code> In the seeded roles only administrators can reach this screen at all.</p></aside>
 <h2 id="deactivating-a-leaver">Deactivating a leaver</h2>
 <ol class="steps">
 <li>Select <strong>Edit</strong> on their row.</li>
 <li>Untick <strong>Active</strong>.</li>
 <li>Select <strong>Save user</strong>.</li>
+<li>If requests are still waiting for this person's decision, a confirmation page opens instead of saving.<p class="step-note">It is headed <em>Deactivate Name?</em>, says <code>Nothing has been saved yet.</code>, and lists the waiting requests with the warning that they &quot;stay stuck until someone reassigns them&quot;. Tick <code>I will reassign these requests to another approver</code> and select <strong>Deactivate anyway</strong>, or select <strong>Cancel</strong> to go back without saving. If you typed a new password in the panel, the page asks for it again.</p></li>
 </ol>
-<p>Their status pill changes to <code>Inactive</code> and they can no longer sign in. Everything they raised, approved or paid stays exactly where it is, still carrying their name.</p>
-<aside class="callout callout-warning"><p class="callout-title">Check what was pointing at them</p><p>Deactivating somebody does not move the requests waiting on them. If they were an approver, reassign anything sitting in their queue first, and change the default approver on every person who pointed at them — an inactive user is refused as an approver with <code>the chosen approver is not an active user</code>, but only when that record is next saved.</p></aside>
-<aside class="callout callout-warning"><p class="callout-title">The last administrator</p><p>The product will not let the last active administrator be switched off, and it will not let you switch off or demote your own administrator account. The refusals read <code>at least one active administrator is required</code> and <code>You cannot deactivate or demote your own administrator account.</code> Create the replacement administrator before you retire the old one.</p></aside>
+<p>Their status pill changes to <code>Inactive</code>, any session they have open ends, and they can no longer sign in. Everything they raised, approved or paid stays exactly where it is, still carrying their name.</p>
+<aside class="callout callout-warning"><p class="callout-title">Check what was pointing at them</p><p>Deactivating somebody does not move the requests waiting on them. Open each request the confirmation page listed and use <strong>Reassign approval</strong>. Then change the default approver on every person who pointed at them: their edit panel flags the approver that can no longer approve, and saving that person is refused with <code>choose an active default approver with permission to approve requests</code> until you pick someone else. Where your organisation does not let requesters choose their approver, those people cannot submit a request until this is corrected.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">The last administrator</p><p>The product will not let the last active administrator be switched off, and it will not let you switch off or demote your own administrator account. The refusals read, exactly as the screen writes them, <code>at least one active administrator is required</code> and <code>you cannot deactivate or demote your own administrator account</code>. Create the replacement administrator before you retire the old one.</p></aside>
 <aside class="callout callout-tip"><p>Setting a default approver for everybody is worth the half hour it takes. It is what makes a request route itself, and the <a href="../admin/configuration.html">Configuration</a> screen can be set so that the default is the only choice a requester gets.</p></aside>
 <dl class="faq"><dt>Somebody has forgotten their password.</dt><dd><p>If email is set up, they can reset it themselves with <strong>Can't sign in?</strong> on the sign-in page. Otherwise open their <strong>Edit</strong> panel, type a new one in <strong>Reset password</strong>, and select <strong>Save user</strong>; it takes effect immediately.</p></dd>
 <dt>Why can I not pick a person as their own approver?</dt><dd><p>Self-approval is blocked throughout the product. The select leaves them out of their own list, and the save refuses it a second time with <code>a user cannot be their own default approver</code>.</p></dd>

@@ -109,7 +109,7 @@
 <div class="wrap">
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Paying</p>
 <header class="page-head"><h1>Paying part of a request</h1><p class="lede">Record the payment and make an explicit decision about the unpaid balance.</p></header>
-<p>Enter the amount that actually left the bank. The confirmation compares the approved amount, payments already recorded, this payment, and the remaining balance. A short payment has no settlement choice selected for you.</p>
+<p>Enter the amount that actually left the bank. The confirmation compares <strong>Remaining before this payment</strong> with <strong>Actually paid</strong> and shows the difference. A short payment has no settlement choice selected for you. A payment that clears the balance is offered only <strong>Fully settled</strong> and <strong>Ask manager to accept a shortfall</strong>, and the second of those is refused — there is no shortfall to review.</p>
 <h2 id="choose-what-happens-to-the-balance">Choose what happens to the balance</h2>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/accounts/settlement-sheet.png" aria-label="Enlarge: The confirmation for a payment short of the approved amount. The remaining balance is called out, and none of the three choices is selected yet.">
@@ -117,10 +117,11 @@
   </button>
   <figcaption>The confirmation for a payment short of the approved amount. The remaining balance is called out, and none of the three choices is selected yet. </figcaption>
 </figure>
+<p>The explanation for either short-payment choice goes in <strong>Reason for any deduction or shortfall</strong>, under the choices.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Choice</th><th scope="col">When to use it</th><th scope="col">Result</th></tr></thead><tbody>
-<tr><td><strong>Installment — pay the balance later</strong></td><td>Part has been paid and the rest remains payable under this approval.</td><td>The payment is recorded, the reservation is released, and the request returns to Approved. Accounts can claim it again for another installment.</td></tr>
-<tr><td><strong>Fully settled</strong></td><td>No further amount is owed. For a short payment, explain the agreed deduction or adjustment.</td><td>The request closes. The explanation is required when the paid total is short of the approval; the product does not calculate tax.</td></tr>
-<tr><td><strong>Ask manager to accept a shortfall</strong></td><td>You need the approver to decide whether to close an unpaid balance.</td><td>A reason is required. The request moves to Partial — manager review.</td></tr>
+<tr><td><strong>Installment — pay the balance later</strong></td><td>Part has been paid and the rest remains payable under this approval.</td><td>The payment is recorded, the reservation is released, and the request returns to Approved. Accounts can claim it again for another installment. No notification is sent.</td></tr>
+<tr><td><strong>Fully settled</strong></td><td>No further amount is owed. For a short payment, explain the agreed deduction or adjustment.</td><td>The request closes as Completed, and by default the requester and approver are notified. The explanation is required when the payment is short of the remaining balance; the product does not calculate tax. The unpaid difference is never paid against this request.</td></tr>
+<tr><td><strong>Ask manager to accept a shortfall</strong></td><td>You need the approver to decide whether to close an unpaid balance.</td><td>A reason is required. The request moves to Partial — manager review, and by default the approver is notified.</td></tr>
 </tbody></table></div>
 <h2 id="record-an-installment">Record an installment</h2>
 <ol class="steps">
@@ -147,8 +148,8 @@
   </button>
   <figcaption>The Partial review tab of the payment queue. Every row carries the Partial — manager review pill and a View button. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
 </figure>
-<p>While the approver decides, the request sits on the <strong>Partial review</strong> tab of <a href="../accounts/the-payment-queue.html">the payment queue</a>, its count on the tab. Each row shows the request number with the requester and approval time beneath it, the payee, the project and head (or a <strong>Recoverable</strong> pill), the approved amount, the needed-by date and the status pill <strong>Partial — manager review</strong>.</p>
-<p><strong>View</strong> opens the shortfall screen. It shows <strong>Approved</strong>, <strong>Total paid to date</strong> and <strong>Still owed to the payee</strong>; your reason under a banner reading <em>… marked this a genuine partial payment</em>; the recorded payment, marked <strong>Cannot be edited</strong>; and the history and conversation. The decision buttons are not yours — the foot of the screen says the approver <em>decides. You can still comment.</em> — so use <strong>Add a comment</strong> to answer any question they raise there.</p>
+<p>While the approver decides, the request sits on the <strong>Partial review</strong> tab of <a href="../accounts/the-payment-queue.html">the payment queue</a>, its count on the tab. Each row shows the request number with the requester and approval time beneath it, the payee, the project and head (or a <strong>Recoverable</strong> pill), the approved amount, the needed-by date and the status pill <strong>Partial — manager review</strong>, which reads <strong>Partial — under discussion</strong> while the approver has a concern open.</p>
+<p><strong>View</strong> opens the shortfall screen. It shows <strong>Approved</strong>, <strong>Total paid to date</strong> and <strong>Still owed to the payee</strong>; your reason under a banner reading <em>… marked this a genuine partial payment</em>; the recorded payment, marked <strong>Cannot be edited</strong>; and the history and conversation. The decision buttons are not yours — the foot of the screen says the approver <em>decides. You can still comment.</em> — so answer any question they raise in the comment box there. When they have raised a concern and you recorded the payment, the box’s label changes to “Answer <em>approver’s name</em>’s concern”, and posting your reply hands the decision back to them.</p>
 <h2 id="following-the-balance">Following the balance</h2>
 <p>The request shows cumulative payments and what remains. Installments awaiting payment return to the Accounts queue. Closed full settlements and accepted shortfalls remain closed; correcting a mistaken closure needs an agreed accounting process, not rewriting a saved payment.</p>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/recording-a-payment.html"><span>Previous</span>Recording a payment</a><a class="pager-next" href="../accounts/holding-a-request.html"><span>Next</span>Putting a request on hold</a></nav>

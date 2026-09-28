@@ -118,7 +118,7 @@
   </button>
   <figcaption>The Configuration screen: six blocks of settings, one save, and the recoverable categories at the foot. </figcaption>
 </figure>
-<p>Six fieldsets, top to bottom: <strong>Request numbering</strong>, <strong>Attachments</strong>, <strong>Urgency</strong>, <strong>Approvals</strong>, <strong>Payments</strong>, and <strong>Reminders and ageing</strong>. One <strong>Save configuration</strong> button at the foot covers all six. <strong>Discard</strong> leaves without saving.</p>
+<p>Six fieldsets, top to bottom: <strong>Request numbering</strong>, <strong>Attachments</strong>, <strong>Urgency</strong>, <strong>Approvals</strong>, <strong>Payments</strong>, and <strong>Reminders and ageing</strong>. One <strong>Save configuration</strong> button at the foot covers all six. <strong>Discard</strong> leaves without saving and takes you back to Home.</p>
 <p>Below the save bar sits a seventh block, <strong>Recoverable categories</strong>, which is not part of the same form and has its own page: <a href="../admin/recoverable-categories.html">Recoverable categories</a>.</p>
 <aside class="callout callout-note"><p>The note beside the buttons is worth taking at face value: &quot;Every change here is written to the audit log.&quot; Anything you change is attributable, with a before and an after — see <a href="../admin/the-audit-trail.html">The audit trail</a>.</p></aside>
 <h2 id="request-numbering">Request numbering</h2>
@@ -126,13 +126,13 @@
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Prefix</strong></td><td><span class="opt">Optional</span></td><td>The letters at the front. Seeded as <code>PR</code>.</td></tr>
 <tr><td><strong>Year segment</strong></td><td><span class="opt">Optional</span></td><td><code>Calendar year</code>, <code>Financial year</code> or <code>None</code>.</td></tr>
-<tr><td><strong>Number width</strong></td><td><span class="opt">Optional</span></td><td>How many digits the running number is padded to. Seeded as <code>6</code>.</td></tr>
+<tr><td><strong>Number width</strong></td><td><span class="req">Required</span></td><td>How many digits the running number is padded to. Whole numbers from 1 to 12; seeded as <code>6</code>. Anything outside that range is refused with &quot;Number width must be a whole number from 1 to 12.&quot; and nothing on the screen is saved.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-warning"><p class="callout-title">Existing numbers are not reissued</p><p>Changing the numbering changes new requests only. Everything already numbered keeps the number it was given, so a change mid-year leaves two shapes of number in the system. Change it at a year boundary if you can.</p></aside>
 <h2 id="attachments">Attachments</h2>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Require a supporting document on every request</strong></td><td><span class="opt">Optional</span></td><td>Turning it on does not block submission. The hint explains why: it asks for an exception reason when no document is attached, because legitimate documents are sometimes genuinely unavailable.</td></tr>
-<tr><td><strong>Maximum file size (MB)</strong></td><td><span class="opt">Optional</span></td><td>The largest file the product will accept. Seeded as <code>10</code>.</td></tr>
+<tr><td><strong>Maximum file size (MiB)</strong></td><td><span class="opt">Optional</span></td><td>The largest file the product will accept. Whole numbers from 1 to 20 — the hint adds that one MiB is 1,048,576 bytes. Seeded as <code>10</code>. Anything outside that range is refused with &quot;Maximum file size must be a whole number from 1 to 20 MiB.&quot; and nothing on the screen is saved.</td></tr>
 </tbody></table></div>
 <h2 id="urgency">Urgency</h2>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
@@ -145,12 +145,12 @@
 <tr><td><strong>Block self-approval</strong></td><td><span class="opt">Optional</span></td><td>Ticked and greyed out. It is always on: a person can never approve a request they raised, whatever roles they hold. There is nothing to change.</td></tr>
 <tr><td><strong>Second approval above a threshold</strong></td><td><span class="opt">Optional</span></td><td>Greyed out and unticked. The hint says it is reserved for a future version, and that the status model already has room for it. It does nothing today.</td></tr>
 </tbody></table></div>
+<p>The line under the block repeats the rule: &quot;Self-approval is blocked always. A person can never approve a request they raised, whatever roles they hold.&quot;</p>
 <h2 id="payments">Payments</h2>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
-<tr><td><strong>Allow direct payments without a request</strong></td><td><span class="opt">Optional</span></td><td>Off by default. The hint states what turning it on costs: every new payment normally starts from an approved request, and switching this on demands a written reason and is flagged in the audit log.</td></tr>
 <tr><td><strong>Payment modes offered</strong></td><td><span class="opt">Optional</span></td><td>Comma separated, in the order the payment form should offer them. Seeded as <code>NEFT, RTGS, UPI, Cheque, Cash, Card, DD</code>.</td></tr>
 </tbody></table></div>
-<aside class="callout callout-warning"><p class="callout-title">Direct payments</p><p>A payment without a request is a payment nobody approved. Leaving <strong>Allow direct payments without a request</strong> off is what keeps the approval trail unbroken, and it is off for that reason. Turn it on only if you have a process for reviewing what comes through it.</p></aside>
+<aside class="callout callout-note"><p class="callout-title">No direct payments</p><p>There is no switch for payments without a request. The note under the block says so plainly: &quot;Every payment starts from an approved request. There is no direct-entry path, and no setting that opens one.&quot; A payment nobody approved cannot be recorded, so the approval trail stays unbroken.</p></aside>
 <h2 id="reminders-and-ageing">Reminders and ageing</h2>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Remind after (days pending)</strong></td><td><span class="opt">Optional</span></td><td>How long a request may sit with an approver before the first reminder. Default 3.</td></tr>
@@ -166,7 +166,7 @@
 </ol>
 <aside class="callout callout-tip"><p>Change one setting at a time and watch what it does. These are company-wide switches, and a save that changes four of them at once leaves you guessing which one caused the phone calls.</p></aside>
 <h3 id="who-can-change-it">Who can change it</h3>
-<p>Opening this screen needs the configuration view grant and saving needs the edit grant; both sit in the <strong>Administration</strong> row of <a href="../admin/roles-and-permissions.html">Roles and permissions</a>. The <strong>Recoverable categories</strong> block at the foot follows the <strong>Recoverables</strong> row instead, which is why somebody can be able to see the settings and not touch the categories, or the reverse.</p>
+<p>Opening this screen needs the configuration view grant and saving needs the edit grant; both sit in the <strong>Administration</strong> row of <a href="../admin/roles-and-permissions.html">Roles and permissions</a>. The <strong>Recoverable categories</strong> block at the foot follows the <strong>Recoverables</strong> row instead: its <strong>Save</strong> and <strong>Delete</strong> buttons and the add form appear only for somebody whose role can edit or delete categories. That is why one person can save the settings and not touch the categories, and another the reverse — though both need the configuration view grant to open the screen at all.</p>
 <dl class="faq"><dt>I saved and nothing looks different.</dt><dd><p>Most of these settings show up on somebody else’s screen rather than yours — the request form, the payment form, the reminder that goes out tomorrow. Reload the screen the setting governs.</p></dd>
 <dt>Why is Block self-approval greyed out?</dt><dd><p>Because it is always on. It is drawn ticked and disabled so the screen is honest about the rule rather than silent about it.</p></dd>
 <dt>Can I set a different approval threshold for large amounts?</dt><dd><p>Not yet. <strong>Second approval above a threshold</strong> is drawn on the screen but marked as reserved for a future version, and it does nothing today.</p></dd>

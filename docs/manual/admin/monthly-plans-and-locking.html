@@ -125,7 +125,7 @@
 <tr><td>Actual</td><td>The total actually paid in the month.</td></tr>
 <tr><td>Remaining</td><td>Budget minus actual.</td></tr>
 <tr><td>Used</td><td>Actual as a percentage of budget, or No budget when actual spending is positive and budget is zero.</td></tr>
-<tr><td>Created</td><td>When the plan was opened.</td></tr>
+<tr><td>Created</td><td>When the plan was opened, or <code>Imported history</code> for a month that has no recorded creation date.</td></tr>
 <tr><td>Actions</td><td><strong>Grid</strong>, <strong>Budget</strong>, <strong>Payments</strong> and <strong>Report</strong> — the same month, on four different screens.</td></tr>
 </tbody></table></div>
 <h2 id="opening-a-month">Opening a month</h2>
@@ -163,11 +163,13 @@
 <tr><td>Saving budgets for that month</td><td>Refused. The screen disables every box and says so before you try.</td></tr>
 <tr><td>Recording a payment dated in that month</td><td>Refused, and the payment form warns before you fill it in.</td></tr>
 <tr><td>Editing a payment dated in that month</td><td>Refused.</td></tr>
+<tr><td>Adding an attachment to a payment dated in that month</td><td>Refused.</td></tr>
 <tr><td>Voiding a payment dated in that month</td><td>Refused.</td></tr>
 <tr><td>Opening a month plan for that month</td><td>Refused.</td></tr>
 <tr><td>Approving a request whose required-by date falls in that month</td><td>Refused, because an approval is a promise the request can be paid and it could not be.</td></tr>
+<tr><td>Recording a recovery dated in that month</td><td>Refused.</td></tr>
 </tbody></table></div>
-<p>The general refusal reads &quot;This month is locked. Unlock it with a reason before changing budgets or payments.&quot; The approval refusal is more specific: it names the month, and suggests either reopening it or changing the required-by date.</p>
+<p>The general refusal reads &quot;This month is locked. Unlock it with a reason before changing budgets or payments.&quot; The approval refusal is more specific, for example &quot;2026-03 is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.&quot;</p>
 <aside class="callout callout-note"><p>A lock stops writes, not reads. Every screen still shows the month, the grid still totals it, and the reports still cover it. The variance grid marks the month with a <code>Locked</code> pill and a bar naming who locked it and why.</p></aside>
 <h2 id="unlocking-a-month">Unlocking a month</h2>
 <ol class="steps">

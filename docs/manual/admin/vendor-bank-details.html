@@ -123,12 +123,12 @@
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Account name</strong></td><td><span class="opt">Optional</span></td><td>The name the account is held in. It will not always match the vendor name.</td></tr>
 <tr><td><strong>Account number</strong></td><td><span class="opt">Optional</span></td><td>Recorded as given.</td></tr>
-<tr><td><strong>IFSC</strong></td><td><span class="opt">Optional</span></td><td>Recorded as given.</td></tr>
+<tr><td><strong>IFSC</strong></td><td><span class="opt">Optional</span></td><td>Stored upper-case. It is not otherwise checked.</td></tr>
 <tr><td><strong>Bank</strong></td><td><span class="opt">Optional</span></td><td>The bank.</td></tr>
 <tr><td><strong>Branch</strong></td><td><span class="opt">Optional</span></td><td>The branch.</td></tr>
 <tr><td><strong>UPI ID</strong></td><td><span class="opt">Optional</span></td><td>Optional, and marked as such on the form.</td></tr>
 <tr><td><strong>Default mode</strong></td><td><span class="opt">Optional</span></td><td>The enabled payment modes from Configuration, or Not set. Existing legacy values remain visible. When Accounts has bank-detail access, an enabled vendor default is preselected on payment entry; a disabled legacy default is not automatically selected.</td></tr>
-<tr><td><strong>Payment terms (days)</strong></td><td><span class="opt">Optional</span></td><td>How many days the vendor is normally given. A number.</td></tr>
+<tr><td><strong>Payment terms (days)</strong></td><td><span class="opt">Optional</span></td><td>How many days the vendor is normally given. A whole number of 0 or more; left blank, it is saved as 0.</td></tr>
 </tbody></table></div>
 <ol class="steps">
 <li>Open the vendor from <a href="../admin/vendors.html">Vendors</a>.</li>
@@ -141,10 +141,11 @@
 <div class="table-wrap"><table><thead><tr><th scope="col">The role holds</th><th scope="col">What the person sees on a vendor</th></tr></thead><tbody>
 <tr><td>Neither grant</td><td>A block headed <strong>Payment details</strong> carrying a padlocked banner: &quot;You do not have permission to see bank details — Accounts maintains them. The record is hidden, not just the buttons.&quot;</td></tr>
 <tr><td>View only</td><td>The real block, filled in, with every field greyed out and unchangeable.</td></tr>
-<tr><td>View and edit</td><td>The real block, editable, saved along with the rest of the record.</td></tr>
+<tr><td>View and edit</td><td>The real block, editable, saved along with the rest of the record. The vendor edit permission is needed as well; without it the whole record, bank block included, is greyed out.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-note"><p class="callout-title">Why the block does not disappear instead</p><p>The refusal banner is deliberately shown instead of the block vanishing. A missing section leaves a reader wondering whether the vendor has no bank details or whether they are not allowed to see them; the banner answers that question.</p></aside>
 <aside class="callout callout-warning"><p class="callout-title">Hidden, not merely not shown</p><p>For somebody without the view grant, the bank columns are never read out of the database at all. It is not a hidden field on a page that quietly holds the number — there is nothing on the page to find. That is the guarantee worth understanding before you decide who gets the grant.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">Edit needs View</p><p>Give <strong>Edit</strong> on this row only together with <strong>View</strong>. A role holding Edit without View sees the padlocked banner instead of the fields, yet its vendor save still counts as a bank-details save: the fields it cannot see are sent empty, and the stored bank details are cleared.</p></aside>
 <aside class="callout callout-note"><p class="callout-title">View without edit</p><p>A field that is greyed out is not submitted by the browser, and the save ignores it in any case. Somebody with view but not edit cannot change a bank detail by any route the screen offers.</p></aside>
 <h2 id="where-the-details-deliberately-are-not">Where the details deliberately are not</h2>
 <p>The vendor picker on the request form returns no bank details to anybody, whatever their role. A requester choosing a vendor gets the name, the GSTIN and the city, and nothing else — the picker cannot become a side door onto the restricted block.</p>
@@ -155,7 +156,7 @@
 <dl class="faq"><dt>I can open a vendor but the Payment details block is padlocked.</dt><dd><p>Your role does not hold the vendor bank view grant. It is a different grant from the one that let you open the vendor.</p></dd>
 <dt>I can see the bank details but cannot type in them.</dt><dd><p>You hold view and not edit. Both are on the <strong>Vendor bank details</strong> row of <a href="../admin/roles-and-permissions.html">Roles and permissions</a>.</p></dd>
 <dt>Does the accounts team need this grant to record a payment?</dt><dd><p>Recording a payment does not require it. Bank account/UPI details and vendor defaults on payment entry are visible only when Accounts also has bank-detail access. Whether your accounts team needs to read the details to make the transfer is a question about how they bank, not about the product.</p></dd>
-<dt>Are bank details written into the audit trail?</dt><dd><p>No. A vendor save writes an audit row carrying the name, type, status, GSTIN and city, and for the bank block only a <code>bank_changed</code> flag saying whether it was touched. The trail records that somebody changed the details, not what they changed them to.</p></dd></dl>
+<dt>Are bank details written into the audit trail?</dt><dd><p>No. A vendor save writes an audit row carrying the rest of the record — identity, statutory, contact and notes fields — and for the bank block only a <code>bank_changed</code> flag saying whether its values changed. The trail records that somebody changed the details, not what they changed them to.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../admin/vendors.html"><span>Previous</span>Vendors</a><a class="pager-next" href="../admin/recoverable-categories.html"><span>Next</span>Recoverable categories</a></nav>
 </div>
 </main>
