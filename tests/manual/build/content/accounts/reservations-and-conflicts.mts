@@ -19,9 +19,10 @@ export default page({
 
     section('The three refusals'),
     prose(
-      `Opening the payment form for a request you cannot take gives you one of three screens. All
-       three are the same shape: a banner saying what is wrong, the request itself, a list headed
-       **What you can do**, and **Pick another request** and **Back to queue** at the foot. All
+      `Taking a request you cannot take, or opening the payment form for one, gives you one of
+       three screens. All three are the same shape: a banner saying what is wrong, the request
+       itself, a list headed **What you can do** (**Go back to the queue** and **Open the request
+       read-only**), and **Pick another request** and **Back to queue** at the foot. All
        three end their banner with the same reassurance — nothing you typed has been saved, and no
        payment was created.`,
     ),
@@ -51,6 +52,13 @@ export default page({
        holds — in the shot above, \`Completed\` — and it is the one you meet when a request has
        already been paid, cancelled or frozen while a cancellation is decided.`,
     ),
+    note(
+      `A fourth screen looks the same but is not a refusal. If you open the payment form for a
+       request nobody holds — after releasing it yourself, or from an old link — the banner reads
+       **Nobody holds** the request and says it is approved and unclaimed. The payment form opens
+       only for the person holding the claim, so the foot of that screen offers **Take it for
+       processing** beside **Back to queue**.`,
+    ),
     table(
       ['The banner says', 'What is true', 'What to do'],
       [
@@ -64,7 +72,9 @@ export default page({
     shot('accounts/reservation-release', 'The release screen. A reason and the confirmation are both required.'),
     prose(
       `You reach this from **Release** in the reserved bar on the payment form, from **Cancel and
-       release** at the foot of it, or from the queue. It asks for two things and refuses without
+       release** at the foot of it, or from **Release it** on the stale-reservation screen described
+       below. If you change your mind, **Keep working on it** takes you back to the payment form.
+       It asks for two things and refuses without
        either: a reason, which is recorded in the history and visible to everybody who can see the
        request, and the tick confirming no payment has been initiated.`,
     ),
@@ -92,8 +102,10 @@ export default page({
     section('A claim that has been open too long'),
     shot('accounts/reservation-stale', 'The nudge. It names how long the claim has been open, and lists what may be done about it.'),
     prose(
-      `Once a reservation has been open longer than the configured number of days, the holder is
-       reminded and the queue starts sending **Resume** here rather than back to the payment form.
+      `Once a reservation has been open for the number of days an administrator has configured
+       (one, unless they changed it), the holder is sent a reminder. Separately, once it has been
+       open more than a day, the queue flags it and starts sending **Resume** here rather than back
+       to the payment form.
        Nothing is released automatically, and the banner explains why: a transfer may already be
        under way, so a person decides.`,
     ),
@@ -106,7 +118,7 @@ export default page({
       [
         ['**Carry on and record the payment**', 'Opens the payment form with your reservation intact'],
         ['**Release it**', 'Goes to the release screen, which needs a reason and the confirmation'],
-        ['**Put it on hold**', 'Also goes to the release screen — a hold works on an unclaimed request, so the claim comes off first'],
+        ['**Put it on hold**', 'Also goes to the release screen. A hold can only be placed on an approved request nobody has claimed, so you release the claim first, then open the request and select **Put on hold**. Between the two steps the request is in the open queue, so do it straight away.'],
       ],
     ),
     prose(
@@ -117,7 +129,8 @@ export default page({
     section('Somebody else’s stale claim'),
     prose(
       `You cannot take a reservation off a colleague. Handing one on is an administrator’s
-       permission, and the accounts role does not carry it. If a request is stuck with somebody who
+       permission, and the accounts role does not carry it. Opening a colleague’s stale reservation
+       shows a banner headed **You cannot act on this reservation** instead of the list of choices. If a request is stuck with somebody who
        is away, ask an administrator to reassign it; the reassignment demands a reason and the same
        confirmation, and the requester, the approver and the new holder are all told.`,
     ),
@@ -136,15 +149,15 @@ export default page({
       },
       {
         q: 'The conflict screen names a colleague who says they never took it.',
-        a: `The reservation history on the release screen lists every claim, release and
-            reassignment on that request with a timestamp and a name. So does [the audit
+        a: `Open the request. Its **History and conversation** lists every claim, release and
+            reassignment with the name of the person and the time. So does [the audit
             trail](page:admin/the-audit-trail), which an administrator can read.`,
       },
       {
         q: 'Why did I get a conflict screen rather than a plain error?',
         a: `Because the useful information is not “that failed” but who has it now and what to do
-            instead. Every path that meets a refused reservation — the queue, the picker and the
-            payment form — ends on the same three screens.`,
+            instead. Every path that meets a refused reservation — the queue, the picker, the
+            request’s own **Record payment** and the payment form — ends on the same three screens.`,
       },
     ]),
   ],

@@ -22,7 +22,7 @@ export default page({
       [`Column`, `What is in it`],
       [
         [`Date`, `The date the money left the bank, not the date it was typed in`],
-        [`Project / Head`, `What the spend was booked against. The cell is the link to the payment.`],
+        [`Project / Head`, `What the spend was booked against, or a \`Recoverable\` pill for money expected back. The cell is the link to the payment.`],
         [`Amount`, `What was paid`],
         [`Payee`, `The vendor or person the money went to`],
         [`Mode`, `How it was paid, such as \`NEFT\`, \`UPI\` or \`Cheque\``],
@@ -33,9 +33,9 @@ export default page({
       ],
     ),
 
-    note(`A payment against a recoverable request has no budget head, so its Project / Head cell is
-       thin. Those payments are deliberately outside budget spend — see [the recoverables
-       register](page:accounts/the-recoverables-register).`),
+    note(`A payment against a recoverable request has no budget head, so its Project / Head cell shows
+       a \`Recoverable\` pill instead. Those payments are deliberately outside budget spend — see
+       [the recoverables register](page:accounts/the-recoverables-register).`),
 
     section(`Filtering`),
 
@@ -79,21 +79,34 @@ export default page({
 
     subsection(`The comparison`),
 
-    prose(`Approved against paid, and the difference between them. On a clean settlement the difference
-       line reads **Difference · confirmed settled by Accounts**. On a partial one it reads **Still
-       owed to the payee**.`),
+    prose(`**Approved**, **Paid** (this payment) and **Total paid on this request**, then one line for
+       the balance. It depends on where the request has got to:`),
+
+    table(
+      [`The request is`, `The balance line reads`],
+      [
+        [`Completed, paid in full`, `**Difference · confirmed settled by Accounts**`],
+        [`Completed, but paid short with an explanation`, `**Difference · agreed deduction or adjustment · confirmed settled by Accounts**`],
+        [`Approved again after an installment`, `**Still owed to the payee · remaining approved balance**`],
+        [`Waiting on the approver’s shortfall decision`, `**Still owed to the payee · awaiting manager decision**`],
+        [`Closed with the shortfall accepted`, `**Balance written off · shortfall accepted by** the approver’s name`],
+      ],
+    ),
 
     subsection(`The payment`),
 
     prose(`Marked **Read-only**, because it is: the date, the mode, the reference, who recorded it and
-       when, the payee, and its disposition: full settlement, an installment with balance
-       remaining, or a shortfall sent for manager review. Recorded explanations remain with the
-       payment.`),
+       when, the payee and the invoice number. **Recorded settlement** reads either \`Fully settled —
+       deductions handled outside this system\` or \`Partial payment recorded\`; the second covers
+       both an installment and a shortfall sent for review, so read the balance line above to tell
+       them apart. Any explanation you gave shows as **Settlement reason**, and your note as
+       **Processing note**.`),
 
     subsection(`The proof`),
 
     prose(`Both halves of it, when there is any: the bank advice Accounts attached at settlement, and
-       the invoice the request came in with. Each has a **Download** control.`),
+       the invoice the request came in with, marked *Invoice from the request*. Each has a
+       **Download** control.`),
 
     subsection(`The trail`),
 
@@ -107,7 +120,7 @@ export default page({
     faq([
       { q: `A payment I can see in the ledger opens as “not found”.`, a: `The payment is real, but the request behind it is outside the records your role is allowed to read. The product answers the same way for a record that does not exist and one that is not yours, on purpose.` },
       { q: `The total does not match the sum of the amounts on screen.`, a: `The total counts active payments only. Switch **Status** to \`All\` and the removed rows appear, marked \`Removed\`, still outside the total.` },
-      { q: `Can I export the ledger?`, a: `Not from this screen. The reports and the recoverables register both offer CSV downloads.` },
+      { q: `Can I export the ledger?`, a: `Not from this screen. The reports and the recoverables register both offer **Export CSV**.` },
       { q: `Why can I not edit a payment I recorded five minutes ago?`, a: `Because it settled a request, and what the requester and the approver were told was paid cannot be quietly rewritten. [Correcting or voiding a payment](page:accounts/correcting-a-payment) explains what is still possible.` },
     ]),
   ],

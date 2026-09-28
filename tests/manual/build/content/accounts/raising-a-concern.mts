@@ -37,7 +37,7 @@ export default page({
     shot('accounts/request-on-hold', 'A request as Accounts sees it. **History and conversation** is one stream, and the **Add a comment** box under it warns that anyone who can see the request will see your comment.'),
 
     prose(`Every request has one conversation, shared by everybody who can see the request — the
-       requester, the approver and Accounts. The box under the history says so above the button:
+       requester, the approver and Accounts. The box under the history says so before you type:
        anyone who can see this request will see your comment.`),
 
     steps([
@@ -61,8 +61,9 @@ export default page({
        shortfall — and one of their decisions is **Raise a concern**.
 
        Their concern comes to the accountant who recorded the payment. You are notified, their
-       words land in the conversation on the request, and the request stays in \`partial_review\`
-       until the two of you agree what happens next.`),
+       words land in the conversation on the request, and the request shows as **Partial — under
+       discussion**, waiting on you. Your reply in the conversation answers it and hands the
+       decision back to the approver; the request stays in \`partial_review\` until they decide.`),
 
     shot('manager/partial-review', 'The approver’s review of a shortfall. **Raise a concern** is the decision that does not close the request.'),
 
