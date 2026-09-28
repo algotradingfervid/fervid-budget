@@ -11,8 +11,9 @@ export default page({
        live.
 
        The sub-line states the split the whole screen is built on: in-app notifications always
-       fire; email is opt-in per event. Nobody can be cut out of the in-app notification centre,
-       and nobody gets an email until you switch that event on.`),
+       fire; email is opt-in per event. There is no switch that turns the in-app notification off,
+       and nobody gets an email until you switch that event on. Who is told — in the app and by
+       email alike — is the audience you tick on each rule.`),
 
     note(`This is not the same screen as the bell in your own sidebar. **Notification rules** is the
        editor; [Notifications](page:getting-started/notifications) is your own centre, showing what
@@ -26,7 +27,7 @@ export default page({
        delivery** block at the top is where you tell it.`),
 
     fields([
-      { name: `SMTP host`, required: false, note: `The mail server. The placeholder shows the shape — \`smtp.example.com\`.` },
+      { name: `SMTP host`, required: false, note: `The mail server. The placeholder shows the shape — \`smtp.example.com\`. The host must be one the person who runs the server has allowed; any other is refused with "SMTP host must be authorized in FERVID_SMTP_ALLOWED_HOSTS by the server operator."` },
       { name: `Port`, required: false, note: `The port the server listens on.` },
       { name: `Username`, required: false, note: `The account the product authenticates as.` },
       { name: `From name`, required: false, note: `The display name on the messages the product sends.` },
@@ -43,7 +44,7 @@ export default page({
     steps([
       { text: `Fill in the mail server fields.` },
       { text: `Select **Save email settings**.` },
-      { text: `Type an address in **Send a test email to** and select **Send a test email**.`, note: `Your own address is filled in already. A successful send reports "Test email sent to …"; a failure reports the transport error rather than pretending it worked.` },
+      { text: `Type an address in **Send a test email to** and select **Send a test email**.`, note: `Your own address is filled in already. A successful send reports "Test email sent to …" with the address. A failure reports "The test email could not be sent. Check the operator SMTP configuration and server logs." rather than pretending it worked; the mail server's own error goes to the server log, not to the screen.` },
     ]),
 
     tip(`Send the test before you enable email on any event. A test that fails costs you nothing;
@@ -61,8 +62,8 @@ export default page({
         [`In-app`, `Always \`On\`. It is a fixed pill, not a control, because in-app delivery always fires and a switch that did nothing would be a lie.`],
         [`Email`, `\`On\` or \`Off\` for this event.`],
         [`Goes to`, `Who is told, in words: \`Approver\`, \`Requester\`, \`Requester + approver\`, \`Approver + assigned accountant\`, and so on.`],
-        [`Fixed To / CC`, `Any addresses this event always goes to on top of the audience, or an em dash.`],
-        [`Edit`, `Opens the rule editor for that event.`],
+        [`Fixed To / CC`, `Any addresses this event always emails on top of the audience, To and Cc separated by a slash, or an em dash.`],
+        [`Edit`, `Opens the rule editor for that event. Without permission to edit notification rules, this cell shows an em dash.`],
       ],
     ),
 
@@ -105,8 +106,8 @@ export default page({
     steps([
       { text: `Select **Edit** on the event’s row.` },
       { text: `Tick **Also send an email for this event** if you want mail as well as the in-app notification.`, note: `Leaving it clear does not silence the event. The in-app notification still fires.` },
-      { text: `Choose the audience under **Who it goes to**.`, note: `Three tick boxes: **The requester**, **The approver** and **The Accounts group**. They are resolved per request, so "the approver" means whoever is actually approving that one.` },
-      { text: `Add fixed addresses in **Always also send To** and **Always copy (Cc)** if the event has a standing audience.`, note: `Comma-separated. These are added to the audience above rather than replacing it.` },
+      { text: `Choose the audience under **Who it goes to**.`, note: `Three tick boxes: **The requester**, **The approver** and **The Accounts group**. They are resolved per request, so "the approver" means whoever is actually approving that one. They decide who gets the in-app notification as well as the email, so clearing all three leaves nobody told.` },
+      { text: `Add fixed addresses in **Always also send To** and **Always copy (Cc)** if the event has a standing audience.`, note: `Email addresses separated by commas, with no display names. These are added to the email audience above rather than replacing it; they get no in-app notification. A malformed address is refused, for example "Always copy (Cc) contains an invalid email address; enter addresses such as name@example.com separated by commas".` },
       { text: `Edit the **Subject** and the **Message**.` },
       { text: `Select **Save rule**.`, note: `The panel closes and the row updates. **Cancel** abandons the change.` },
     ]),
@@ -114,7 +115,7 @@ export default page({
     subsection(`Writing the subject and message`),
 
     prose(`The wording is yours. Placeholders in double braces are replaced with the request’s own
-       values when the message goes out. The fourteen available are listed under the message box on
+       values when the message goes out. The sixteen available are listed under the message box on
        the screen itself:`),
 
     table(
@@ -139,9 +140,10 @@ export default page({
       ],
     ),
 
-    note(`Anything else in double braces is rejected when you save, and the screen tells you so. A
-       typo cannot reach an inbox as an empty gap that nobody can debug afterwards — it fails here,
-       while you are looking at it.`, `A typo fails on save`),
+    note(`Anything else in double braces is rejected when you save. The editor reopens with what you
+       typed and a "That did not save" banner naming the bad field, for example
+       \`unknown template field(s): amout\`. A typo cannot reach an inbox as an empty gap that nobody
+       can debug afterwards — it fails here, while you are looking at it.`, `A typo fails on save`),
 
     tip(`Always put \`{{link}}\` in the message. An email telling somebody a request needs them, with
        no way to open it, is an email that generates a reply asking where it is.`),
@@ -149,16 +151,16 @@ export default page({
     faq([
       { q: `Can I turn off in-app notifications for an event?`, a: `No. The In-app column is a fixed \`On\` pill rather than a switch. Email is the only per-event delivery choice.` },
       { q: `Nothing is arriving by email.`, a: `Check three things in order: the mail server settings save, the **Send a test email** result, and whether the event itself has **Email** switched on.` },
-      { q: `The test email failed with a message I do not understand.`, a: `It is the error the mail server gave back, passed on rather than swallowed. Hand it to whoever runs your mail — it is the fastest thing they can act on.` },
+      { q: `The test email failed and the message does not say why.`, a: `The screen only reports that the send failed. The mail server's actual error is written to the server log, so ask whoever runs the server to look there, and to check the \`FERVID_SMTP_PASSWORD\` variable at the same time.` },
       { q: `A workflow action happened but nobody was told.`, a: `Delivery failures never fail the action itself — an approval succeeds whether or not the email goes. The in-app notification is written before any email is attempted, so check the recipient’s notification centre before you conclude nothing fired.` },
-      { q: `Who is in "the Accounts group"?`, a: `Everybody whose roles carry the payment **Process** permission. It is not a list you maintain here — you change it by changing roles on [Roles and permissions](page:admin/roles-and-permissions) or by changing who holds them on [People and accounts](page:admin/people).` },
+      { q: `Who is in "the Accounts group"?`, a: `Everybody whose roles carry the payment **Process** permission and who is allowed to see the request. For events about one accountant's work — a cancellation request, a stale reservation, a reservation handed over, a partial payment accepted or queried, a cancellation accepted or declined — it means the accountant holding the request instead, and falls back to the whole group only when nobody holds it. It is not a list you maintain here — you change it by changing roles on [Roles and permissions](page:admin/roles-and-permissions) or by changing who holds them on [People and accounts](page:admin/people).` },
     ]),
 
     section(`Password recovery delivery`),
 
     prose(`Email reset needs an SMTP host, from address, and trusted Base URL (HTTPS, or loopback HTTP
-       for local development). The login help page enables email recovery when this is configured;
-       otherwise it points users to their administrator/operator. Reset links are single-use,
+       for local development). The **Sign-in help** page offers email recovery when all three are set;
+       otherwise it points users to their administrator. Reset links are single-use,
        expire after 30 minutes, and replacing the password revokes existing sessions. Keep the Base
        URL correct so recovery links reach the intended deployment.`),
   ],

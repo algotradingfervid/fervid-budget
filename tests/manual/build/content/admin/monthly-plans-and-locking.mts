@@ -24,7 +24,7 @@ export default page({
         ['Actual', 'The total actually paid in the month.'],
         ['Remaining', 'Budget minus actual.'],
         ['Used', 'Actual as a percentage of budget, or No budget when actual spending is positive and budget is zero.'],
-        ['Created', 'When the plan was opened.'],
+        ['Created', 'When the plan was opened, or `Imported history` for a month that has no recorded creation date.'],
         ['Actions', '**Grid**, **Budget**, **Payments** and **Report** — the same month, on four different screens.'],
       ],
     ),
@@ -95,15 +95,18 @@ export default page({
         ['Saving budgets for that month', 'Refused. The screen disables every box and says so before you try.'],
         ['Recording a payment dated in that month', 'Refused, and the payment form warns before you fill it in.'],
         ['Editing a payment dated in that month', 'Refused.'],
+        ['Adding an attachment to a payment dated in that month', 'Refused.'],
         ['Voiding a payment dated in that month', 'Refused.'],
         ['Opening a month plan for that month', 'Refused.'],
         ['Approving a request whose required-by date falls in that month', 'Refused, because an approval is a promise the request can be paid and it could not be.'],
+        ['Recording a recovery dated in that month', 'Refused.'],
       ],
     ),
     prose(
       'The general refusal reads "This month is locked. Unlock it with a reason before changing ' +
-      'budgets or payments." The approval refusal is more specific: it names the month, and suggests ' +
-      'either reopening it or changing the required-by date.',
+      'budgets or payments." The approval refusal is more specific, for example "2026-03 is locked, so ' +
+      'this request cannot be approved for payment in it. Reopen the month, or ask for the required-by ' +
+      'date to be changed."',
     ),
     note(
       'A lock stops writes, not reads. Every screen still shows the month, the grid still totals it, ' +

@@ -19,6 +19,8 @@ export default page({
       'The tabs are the roles. Four are seeded and marked as system roles — Requester, Manager, ' +
       'Accounts and Admin — and any role you create yourself appears alongside them carrying a ' +
       '`custom` marker.\n\n' +
+      '**Copy this role** and **＋ New role** sit at the top right, and appear only if you may ' +
+      'create roles.\n\n' +
       'Under the tabs sits the selected role’s card: its name, its description, and a pill counting ' +
       'how many people hold it. The matrix below is that role’s permissions, and the bar at the foot ' +
       'warns you what a save costs — "Changes apply to all N users holding this role."',
@@ -121,7 +123,7 @@ export default page({
       { text: 'Type a **Description**. It is what people read beside the tick box on somebody’s user record, so make it a sentence.' },
       {
         text: 'Select **Create role**.',
-        note: 'You land on the new role’s own tab with an empty matrix. Nothing is granted until you tick something and save.',
+        note: 'You land on the new role’s own tab with an empty matrix. Nothing is granted until you tick something and save. A name that is already taken keeps the panel open with `A role with this name already exists. Choose a different name.`',
       },
     ]),
 
@@ -133,7 +135,7 @@ export default page({
       { text: 'Type a **New role name**.' },
       {
         text: 'Select **Copy role**.',
-        note: 'You land on the copy, already carrying everything the original had. Take away what it should not have, then save.',
+        note: 'You land on the copy, already carrying everything the original had — its permissions, its data scopes and its description. Take away what it should not have, then save.',
       },
     ]),
     tip(
@@ -144,13 +146,26 @@ export default page({
     section('Deleting a role'),
     prose(
       'A **Delete role** control appears in the role card, beside the holder count, only for a role ' +
-      'you created. The four system roles cannot be deleted; there is no control for them, and the ' +
-      'server refuses it a second time with `system roles cannot be deleted`.',
+      'you created and only if you may delete roles. The four system roles cannot be deleted; there ' +
+      'is no control for them, and the server refuses it a second time with ' +
+      '`System roles cannot be deleted`.',
     ),
+    steps([
+      { text: 'Select the role’s tab.' },
+      { text: 'Select **Delete role**.' },
+      {
+        text: 'Read the panel that opens, headed *Delete Name?*',
+        note: 'If nobody holds the role it says `Nobody holds this role. Deleting it cannot be undone.` Select **Delete role** to delete it, or **Cancel** to keep it.',
+      },
+    ]),
     warning(
-      `A role that somebody still holds cannot be deleted either. The refusal names the number:
-       "*Name* is assigned to N users — reassign them before deleting the role". Take the role off
-       everybody first, from [People and accounts](page:admin/people), and delete it afterwards.`,
+      `A role that somebody still holds cannot be deleted. In that case the panel offers no delete
+       button at all. It says how many people hold the role — for example "2 users hold this role,
+       so it cannot be deleted yet. Remove it from those users on the Users screen first; they
+       would otherwise lose everything it grants without warning." — and offers **Cancel** and
+       **Open Users**. Take the role off everybody from [People and accounts](page:admin/people),
+       then come back and delete it. (If a delete is forced through anyway, the server refuses it
+       with "*Name* is assigned to N users — reassign them before deleting the role".)`,
       'Reassign before you delete',
     ),
 
@@ -162,6 +177,17 @@ export default page({
       'reproduce a colleague’s missing button on your own account — see ' +
       '[What an administrator can do](page:admin/what-you-can-do).',
     ),
+    note(
+      `The Admin role must always keep every permission for managing users and roles. A save that
+       unticks any of them is refused with \`administrator management permissions cannot be
+       removed\`, so nobody can lock the organisation out of administration.
+
+       Somebody who manages roles without being an administrator has narrower limits: they cannot
+       change the permissions of the four system roles at all, and they can only hand out
+       permissions and scopes they hold themselves. Anything beyond that is refused with
+       \`You do not have permission to perform this action.\``,
+      'Limits on editing roles',
+    ),
 
     faq([
       {
@@ -170,7 +196,7 @@ export default page({
       },
       {
         q: 'Why can I not rename a system role?',
-        a: 'The **Role name** field is read-only for the four seeded roles. The **Description** is not, so you can still explain what your organisation uses the role for.',
+        a: 'The **Role name** field is read-only for the four seeded roles, and the server refuses a rename with `System roles cannot be renamed`. The **Description** is not locked, so you can still explain what your organisation uses the role for.',
       },
       {
         q: 'I ticked a cell and only some of the Advanced boxes came on.',
@@ -179,7 +205,7 @@ export default page({
       },
       {
         q: 'Does deleting a role delete the people who held it?',
-        a: 'No, and it cannot even be attempted: the delete refuses while anybody holds the role.',
+        a: 'No, and it cannot even be attempted: while anybody holds the role the delete panel offers only **Open Users**, and the server refuses the delete as well.',
       },
       {
         q: 'Where is the full list of what each built-in role holds?',

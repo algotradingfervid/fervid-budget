@@ -22,13 +22,15 @@ export default page({
     shot('shared/dashboard-admin', 'The dashboard as an administrator: every queue in the product, plus an Administration card.'),
     prose(
       `The tiles across the top count work, not records. **Needs my action** and **My open requests**
-       are your own requests; **Awaiting my approval** and **Cancellation requests** are decisions
-       routed to you; **Approved, unclaimed** is the accounts team's queue. An administrator who
-       raises nothing and approves nothing sees zeros in the first four and a large number in the
-       fifth, which is what the capture above shows.
+       are your own requests; **Awaiting my approval**, **Cancellation requests** and **Partial
+       payments to review** are decisions routed to you; **Approved, unclaimed** is the accounts
+       team's queue. The last tile, **Budget**, is not a count — it opens the **Variance grid**. An
+       administrator who raises nothing and approves nothing sees zeros in the first five and a large
+       number under **Approved, unclaimed**, which is what the capture above shows.
 
        Underneath, each area lists the first four rows you can act on and links to the queue behind
-       them. An area with nothing in it is not drawn at all.`,
+       them — in the capture, **Approved and unclaimed** with its **Open the payment queue →** link.
+       An area with nothing in it is not drawn at all; its tile still shows the zero.`,
     ),
 
     subsection('The Administration card'),
@@ -97,10 +99,11 @@ export default page({
       [
         ['You can never approve a request you raised.', 'Self-approval is blocked always, whatever roles you hold. The Configuration screen shows the control ticked and greyed out to say so.'],
         ['You cannot edit or remove a row of the audit trail.', 'There is no route that changes one. See [The audit trail](page:admin/the-audit-trail).'],
-        ['A payment tied to a request cannot be edited or voided.', 'It would silently rewrite what the requester and the approver were told was paid.'],
-        ['You cannot deactivate or demote your own administrator account.', 'The refusal reads `You cannot deactivate or demote your own administrator account.`'],
+        ['Every payment starts from an approved request.', 'There is no direct-entry path for a payment nobody approved, and no setting on the [Configuration](page:admin/configuration) screen that opens one — the **Payments** block says so in its note.'],
+        ['A payment tied to a request cannot be edited or voided.', 'It would silently rewrite what the requester and the approver were told was paid. The refusals read `a payment linked to a request cannot be edited` and `a payment linked to a request cannot be voided`.'],
+        ['You cannot deactivate or demote your own administrator account.', 'The refusal reads `you cannot deactivate or demote your own administrator account`.'],
         ['The last active administrator cannot be removed.', 'The refusal reads `at least one active administrator is required`.'],
-        ['A locked month refuses budget and payment changes until it is reopened.', 'Reopening is a control you hold, with a reason. See [Monthly plans and locking](page:admin/monthly-plans-and-locking).'],
+        ['A locked month refuses budget and payment changes until it is unlocked.', 'The refusal reads `This month is locked. Unlock it with a reason before changing budgets or payments.` **Unlock Month** is a control you hold, and it needs a reason. See [Monthly plans and locking](page:admin/monthly-plans-and-locking).'],
       ],
     ),
 

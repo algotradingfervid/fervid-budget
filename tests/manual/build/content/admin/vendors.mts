@@ -19,28 +19,29 @@ export default page({
     shot('admin/vendors', 'The vendor list. The sub-line under the heading counts what is there and what is missing.'),
 
     prose(`The line under the heading is a summary of the master itself: how many vendors are active,
-       how many are missing a GSTIN, and the reminder that bank details are visible only with
+       how many active vendors are missing a GSTIN, and the reminder that bank details are visible only with
        permission.`),
 
     table(
       [`Column`, `What it shows`],
       [
-        [`Vendor`, `The name, linking to the record. Its categories, if any, sit underneath.`],
+        [`Vendor`, `The short name if the vendor has one, otherwise the full name, linking to the record. When a short name is shown, the full name sits underneath, followed by the categories, if any.`],
         [`Type`, `\`Company\`, \`Proprietor\` or \`Individual\`.`],
         [`GSTIN`, `The number, or a \`Missing\` pill.`],
         [`City`, `From the contact block, or an em dash.`],
-        [`Paid this year`, `What has actually gone out to this vendor.`],
-        [`Open requests`, `How many requests naming this vendor are still in flight.`],
+        [`Paid this year`, `What has actually gone out to this vendor this calendar year, voided payments excluded. It reads \`Restricted\` unless your role can view every payment, not only some.`],
+        [`Open requests`, `How many requests naming this vendor are still in flight. It reads \`Restricted\` unless your role can view every request, not only some.`],
         [`Status`, `\`Active\` or \`Inactive\`.`],
       ],
     ),
 
     prose(`The row across the foot totals the two figures for whatever the filters left on screen, and
-       says how many of the whole master you are looking at.`),
+       says how many of the whole master you are looking at. The list is sorted by name and shows at
+       most 300 vendors; narrow the filters if the one you want is not there.`),
 
     subsection(`The GSTIN banner`),
 
-    prose(`When any vendor has no GSTIN, a banner appears above the filters counting them. It is a
+    prose(`When any active vendor has no GSTIN, a banner appears above the filters counting them. It is a
        nudge, not a block — the wording is explicit that "They can still be paid. The gap shows up
        in vendor reporting until someone fills it in." **Show them** filters the list down to
        exactly those vendors, and **Show all** puts it back.`),
@@ -48,7 +49,7 @@ export default page({
     subsection(`Finding a vendor`),
 
     fields([
-      { name: `Search`, required: false, note: `Matches on name, GSTIN, PAN or city.` },
+      { name: `Search`, required: false, note: `Matches any part of the name, short name, GSTIN, PAN or city.` },
       { name: `Type`, required: false, note: `\`All types\`, \`Company\`, \`Proprietor\` or \`Individual\`.` },
       { name: `Category`, required: false, note: `The categories that exist in the master, offered as a list.` },
       { name: `Status`, required: false, note: `\`Active\` by default, or \`Inactive\`, or \`All\`. An inactive vendor will not appear until you change this.` },
@@ -76,17 +77,17 @@ export default page({
     fields([
       { name: `Vendor name`, required: true, note: `The full legal name. Marked required on the form.` },
       { name: `Short name`, required: false, note: `Used in lists and dropdowns when the full name is unwieldy.` },
-      { name: `Type`, required: true, note: `\`Company\`, \`Proprietor\` or \`Individual\`.` },
+      { name: `Type`, required: true, note: `\`Company\`, \`Proprietor\` or \`Individual\`. A new vendor starts as \`Company\`.` },
       { name: `Categories`, required: false, note: `Comma separated. Used for vendor reporting, and it is what fills the Category filter on the list.` },
       { name: `Status`, required: false, note: `\`Active\` or \`Inactive\`. Inactive vendors disappear from new requests but stay on old ones.` },
       { name: `GSTIN`, required: false, note: `Exactly 15 characters, or blank. Anything else is refused with \`a GSTIN is 15 characters; leave it blank if the vendor has none\`. It is stored upper-case.` },
-      { name: `PAN`, required: false, note: `Recorded as given.` },
+      { name: `PAN`, required: false, note: `Stored upper-case. It is not otherwise checked.` },
       { name: `MSME / Udyam number`, required: false, note: `Recorded as given.` },
       { name: `TDS section`, required: false, note: `\`Not applicable\`, \`194C — contractors\`, \`194J — professional\` or \`194Q — purchase of goods\`.` },
       { name: `Default TDS rate`, required: false, note: `A rate for reference. The product never computes tax from it.` },
       { name: `Contact person`, required: false, note: `Who to speak to.` },
       { name: `Phone`, required: false, note: `Recorded as given.` },
-      { name: `Email`, required: false, note: `Recorded as given.` },
+      { name: `Email`, required: false, note: `The browser checks that it looks like an email address.` },
       { name: `Billing address`, required: false, note: `Free text.` },
       { name: `City`, required: false, note: `Shown on the vendor list and searchable.` },
       { name: `State`, required: false, note: `Free text.` },
@@ -138,7 +139,7 @@ export default page({
        it keep pointing at it.`),
 
     faq([
-      { q: `A requester says a vendor is missing from their picker.`, a: `The picker offers active vendors only. Check the record’s **Status**, and check the spelling — the picker matches on name, GSTIN and city.` },
+      { q: `A requester says a vendor is missing from their picker.`, a: `The picker offers active vendors only. Check the record’s **Status**, and check the spelling — the picker matches on name, short name, GSTIN and city, not PAN.` },
       { q: `Can a requester add a vendor themselves?`, a: `Only if their role carries the vendor create permission. The picker offers **＋ Add a new vendor** to somebody who could actually complete it, and to nobody else.` },
       { q: `Two vendors have the same name.`, a: `They cannot. The name is unique across the master and the check ignores case, so a duplicate save is refused with \`A record with this name already exists.\`` },
       { q: `Why can I not see the bank block on a vendor?`, a: `It is a separate permission from the rest of the record. See [Vendor bank details](page:admin/vendor-bank-details).` },
