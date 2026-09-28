@@ -33,11 +33,11 @@ export default page({
     table(
       ['Column', 'What it shows'],
       [
-        ['Category', 'The name the requester sees.'],
-        ['Requires', 'What the category asks for on top of the standard recoverable fields, in words.'],
+        ['Category', 'The name the requester sees. With the edit grant it is a text box you can type over.'],
+        ['Requires', 'What the category asks for on top of the standard recoverable fields. With the edit grant it is a select holding the same four choices as the add form; without it, the words alone.'],
         ['Active', 'A tick box. Unticking it retires the category — see below.'],
         ['In use', 'How many requests already point at this category.'],
-        ['Actions', 'A **Delete** button, shown only to a role holding the delete grant.'],
+        ['Actions', 'A **Save** button for the row, shown to a role holding the edit grant, and a **Delete** button, shown to a role holding the delete grant. A role with neither does not see this column.'],
       ],
     ),
     prose('The seeded list is six categories:'),
@@ -57,7 +57,10 @@ export default page({
       'whatever its category. The **Requires** setting only adds what a particular category needs on ' +
       'top of that. The hint under the block says so, and adds one thing worth knowing: an employee ' +
       'advance fills the payee in from the requester automatically, and that is a rule about the ' +
-      'request type rather than a category setting — it does not fill in the counterparty.',
+      'request type rather than a category setting — it does not fill in the counterparty.\n\n' +
+      'The **Employee advance** category is also tied to its request type. An employee advance ' +
+      'raised as a recoverable is always filed under it, and a deposit or guarantee request cannot ' +
+      'use it; the request form offers each type only the categories it may use.',
       'What every recoverable captures anyway',
     ),
 
@@ -66,7 +69,7 @@ export default page({
       { text: 'Open **Configuration** and scroll to **Recoverable categories**.' },
       {
         text: 'Type a **New category** name.',
-        note: 'The placeholder shows the sort of thing expected — "e.g. Retention deposit". The name must contain at least one letter or digit.',
+        note: 'The placeholder shows the sort of thing expected — "e.g. Retention deposit". A name of only spaces is refused with `recoverable category name is required`, and a new name must contain at least one letter or digit, or it is refused with `recoverable category name must contain a letter or digit`.',
       },
       {
         text: 'Choose what it **Must also capture**.',
@@ -84,26 +87,38 @@ export default page({
     ),
 
     section('Changing a category'),
+    steps([
+      { text: 'Type over the name in the row, or choose a different **Requires** value.' },
+      { text: 'Select **Save** in that row\'s **Actions** cell.' },
+    ]),
     prose(
       'Renaming is safe. A category keeps its underlying identity when the name changes, so every ' +
       'request already filed under it follows the new name rather than being orphaned.',
     ),
     warning(
-      'Changing what a category must capture changes the form for future requests only. It cannot go ' +
+      'Changing what a category must capture changes the form for future requests. It cannot go ' +
       'back and collect a counterparty for the requests raised before you changed it — those records ' +
-      'keep whatever they were asked for at the time.',
+      'keep whatever they were asked for at the time. The new rule does apply the next time one of ' +
+      'those requests is edited and saved, for example when a returned request is corrected.',
       'A rule change is not retrospective',
     ),
 
     section('Retiring a category'),
     steps([
       { text: 'Untick **Active** on the row.' },
-      { text: 'The change saves as soon as you untick it.' },
+      { text: 'The change saves as soon as you untick it, together with whatever name and **Requires** value the row shows.' },
     ]),
     prose(
       'The category stops being offered on new requests. Every request already using it keeps it, and ' +
       'the recoverables register still groups by it. This is the ordinary way to take a category out ' +
-      'of use.',
+      'of use. A request filed under a retired category that is later edited and saved — a returned ' +
+      'request being corrected, say — is refused with `choose a recoverable category`, and the ' +
+      'requester has to pick an active one.',
+    ),
+    warning(
+      'Do not retire **Employee advance**. An employee advance raised as a recoverable must use that ' +
+      'category, so while it is retired no such request can be saved.',
+      'The one category to keep active',
     ),
 
     section('Deleting a category'),
@@ -113,8 +128,9 @@ export default page({
       'than in the browser.',
     ),
     warning(
-      'A category that is in use cannot be deleted. The refusal names the number and the remedy: ' +
-      '"*Name* is used by N requests — deactivate it instead, so those requests keep their category." ' +
+      'A category that is in use cannot be deleted. The refusal names the number and the remedy, for ' +
+      'example `EMD is used by 3 requests — deactivate it instead, so those requests keep their category` ' +
+      '(or `1 request` when there is one). ' +
       'You land back on Configuration with the sentence at the top and the **In use** count on the row ' +
       'beside it.',
       'In use means it stays',
@@ -129,9 +145,13 @@ export default page({
     prose(
       'The controls here follow the **Recoverables** row of ' +
       '[Roles and permissions](page:admin/roles-and-permissions), not the Administration row. The ' +
-      '**Edit** column governs the Active toggle and the **Add category** form; the **Cancel** column ' +
-      'governs the **Delete** button. A role without the edit grant sees the categories as plain `On` ' +
-      'and `Off` pills with no form beneath them.',
+      '**Edit** column governs the name boxes, the **Requires** selects, the Active toggle, the ' +
+      'row **Save** and the **Add category** form; the **Cancel** column governs the **Delete** button. ' +
+      'The **Create** column does not open the add form on its own — adding needs **Edit**. A role ' +
+      'without the edit grant sees the categories as plain text with `On` and `Off` pills and no form ' +
+      'beneath them.\n\n' +
+      'The block sits on the Configuration screen, so a role also needs to be able to view ' +
+      'Configuration to reach it at all.',
     ),
 
     faq([
@@ -140,8 +160,8 @@ export default page({
         a: 'There is not one. The block is at the foot of [Configuration](page:admin/configuration), below the **Save configuration** bar.',
       },
       {
-        q: 'I ticked Active and there was no Save button.',
-        a: 'The toggle saves itself. That is why it is its own little form rather than part of the main configuration save.',
+        q: 'I ticked Active and nothing else happened. Do I need to press Save?',
+        a: 'No. The toggle saves itself as soon as you change it. The row\'s **Save** is for a changed name or **Requires** value.',
       },
       {
         q: 'Delete refused and told me a number.',

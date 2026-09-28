@@ -28,12 +28,12 @@ export default page({
     fields([
       { name: `Account name`, required: false, note: `The name the account is held in. It will not always match the vendor name.` },
       { name: `Account number`, required: false, note: `Recorded as given.` },
-      { name: `IFSC`, required: false, note: `Recorded as given.` },
+      { name: `IFSC`, required: false, note: `Stored upper-case. It is not otherwise checked.` },
       { name: `Bank`, required: false, note: `The bank.` },
       { name: `Branch`, required: false, note: `The branch.` },
       { name: `UPI ID`, required: false, note: `Optional, and marked as such on the form.` },
       { name: `Default mode`, required: false, note: `The enabled payment modes from Configuration, or Not set. Existing legacy values remain visible. When Accounts has bank-detail access, an enabled vendor default is preselected on payment entry; a disabled legacy default is not automatically selected.` },
-      { name: `Payment terms (days)`, required: false, note: `How many days the vendor is normally given. A number.` },
+      { name: `Payment terms (days)`, required: false, note: `How many days the vendor is normally given. A whole number of 0 or more; left blank, it is saved as 0.` },
     ]),
 
     steps([
@@ -54,7 +54,7 @@ export default page({
       [
         [`Neither grant`, `A block headed **Payment details** carrying a padlocked banner: "You do not have permission to see bank details — Accounts maintains them. The record is hidden, not just the buttons."`],
         [`View only`, `The real block, filled in, with every field greyed out and unchangeable.`],
-        [`View and edit`, `The real block, editable, saved along with the rest of the record.`],
+        [`View and edit`, `The real block, editable, saved along with the rest of the record. The vendor edit permission is needed as well; without it the whole record, bank block included, is greyed out.`],
       ],
     ),
 
@@ -66,6 +66,10 @@ export default page({
        all. It is not a hidden field on a page that quietly holds the number — there is nothing on
        the page to find. That is the guarantee worth understanding before you decide who gets the
        grant.`, `Hidden, not merely not shown`),
+
+    warning(`Give **Edit** on this row only together with **View**. A role holding Edit without View sees
+       the padlocked banner instead of the fields, yet its vendor save still counts as a bank-details
+       save: the fields it cannot see are sent empty, and the stored bank details are cleared.`, `Edit needs View`),
 
     note(`A field that is greyed out is not submitted by the browser, and the save ignores it in any
        case. Somebody with view but not edit cannot change a bank detail by any route the screen
@@ -97,7 +101,7 @@ export default page({
       { q: `I can open a vendor but the Payment details block is padlocked.`, a: `Your role does not hold the vendor bank view grant. It is a different grant from the one that let you open the vendor.` },
       { q: `I can see the bank details but cannot type in them.`, a: `You hold view and not edit. Both are on the **Vendor bank details** row of [Roles and permissions](page:admin/roles-and-permissions).` },
       { q: `Does the accounts team need this grant to record a payment?`, a: `Recording a payment does not require it. Bank account/UPI details and vendor defaults on payment entry are visible only when Accounts also has bank-detail access. Whether your accounts team needs to read the details to make the transfer is a question about how they bank, not about the product.` },
-      { q: `Are bank details written into the audit trail?`, a: `No. A vendor save writes an audit row carrying the name, type, status, GSTIN and city, and for the bank block only a \`bank_changed\` flag saying whether it was touched. The trail records that somebody changed the details, not what they changed them to.` },
+      { q: `Are bank details written into the audit trail?`, a: `No. A vendor save writes an audit row carrying the rest of the record — identity, statutory, contact and notes fields — and for the bank block only a \`bank_changed\` flag saying whether its values changed. The trail records that somebody changed the details, not what they changed them to.` },
     ]),
   ],
 });
