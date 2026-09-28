@@ -93,7 +93,7 @@ export default page({
     table(
       [`What is wrong`, `What to do`],
       [
-        [`You paid less than approved and marked it fully settled`, `Nothing changes the payment. Say so in the conversation on the request; the balance needs a fresh request.`],
+        [`You paid less than approved and chose **Fully settled** when the rest is still owed`, `The request is closed as Completed, and the explanation you gave for the deduction is on the payment as its **Settlement reason**. Nothing reopens the request or changes the payment. Say what happened in the conversation on the request; the rest of the money needs a new request, approved in the usual way.`],
         [`The reference or the note is wrong`, `Post a comment on the request with the correct detail. The trail then carries both, in order.`],
         [`The approver disputes the shortfall`, `They raise a concern and the request stays in review — see [raising a concern](page:accounts/raising-a-concern).`],
         [`The money went to the wrong payee`, `That is an accounting adjustment outside this product. Record what happened in the conversation so the trail explains it.`],

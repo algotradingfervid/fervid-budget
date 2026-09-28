@@ -13,18 +13,19 @@ export default page({
        asks the requester a question.`,
     ),
     prose(
-      `Only Accounts can place a hold, and only Accounts can lift one. While a request is held,
-       nobody in Accounts — including you — can claim or pay it.`,
+      `Only Accounts can place a hold, and only Accounts can lift one (an administrator can do
+       both too). While a request is held, nobody in Accounts — including you — can claim or pay
+       it.`,
     ),
 
     section('Placing a hold'),
     steps([
       {
         text: 'Open the request. Select **Put on hold** at the foot of the screen.',
-        note: 'The control appears only on an approved request that is not already held. A request somebody has claimed has to be released first.',
+        note: 'The control appears only on an approved request that nobody has claimed and that is not already held. If you hold the claim yourself, release it first — the first question at the end of this page explains how.',
       },
       {
-        text: 'Write what you need from the requester.',
+        text: 'Under **What do you need from the requester**, write your question.',
         note: 'It is required, and the placeholder is the point: they see this exactly as you write it.',
         shot: 'accounts/hold-sheet',
       },
@@ -44,15 +45,17 @@ export default page({
       ['What', 'While the hold is on'],
       [
         ['The status', 'Unchanged underneath — the request is still approved — but every screen shows an `On hold` badge instead, because the request cannot be paid.'],
-        ['Who it waits on', 'The requester. The line beside the badge names them.'],
+        ['Who it waits on', 'The requester. The line beside the badge reads “Waiting on” with their name and “to clarify”.'],
         ['The payment queue', 'The request leaves the takeable set and appears on the **On hold** tab instead.'],
-        ['The reason', 'Quoted in a banner on the request, and written into the history as a line beginning “On hold:”.'],
+        ['The reason', 'Quoted in a banner headed **This request is on hold**, and written into the history as a line with your name, “put the request on hold:” and the reason.'],
       ],
     ),
     shot('accounts/queue-hold', 'The On hold tab of the payment queue. **Read reply** on a row opens the request.'),
     note(
       `The requester answers in the conversation on the request, in the same comment box everybody
-       else uses. Nothing about their reply lifts the hold — you read it and decide.`,
+       else uses, or with a file: while the hold is on, the banner offers them **Add a document**
+       and **Attach it**, which is the only way to add a document to an approved request. Nothing
+       about their reply lifts the hold — you read it and decide.`,
     ),
 
     section('Taking a request off hold'),
@@ -69,7 +72,7 @@ export default page({
         note: 'No reason is asked for. The hold was the thing that needed explaining; lifting it is answering the question.',
       },
       {
-        text: 'The request returns to `approved` and reappears in the queue for anybody to claim.',
+        text: 'The `On hold` badge goes, the request shows as approved again, and it reappears on the queue’s first tab for anybody to claim.',
         note: 'The requester is told the hold is lifted and that nothing further is needed from them.',
       },
     ]),
@@ -91,8 +94,12 @@ export default page({
       {
         q: 'I cannot find **Put on hold** on a request.',
         a: `Either it is not approved, or it is already on hold, or somebody has it claimed. Placing
-            a hold works on an approved, unheld request. If you hold the claim yourself, release it
-            first — the stale-reservation screen says exactly that.`,
+            a hold works only on an approved request that is unclaimed and not already held. If you
+            hold the claim yourself, release it first — give the reason and tick the confirmation —
+            then open the request and select **Put on hold** straight away, because while it is
+            released a colleague could take it. The stale-reservation screen’s **Put it on hold**
+            choice takes you to the same release screen. A claim held by a colleague is theirs to
+            release; you cannot hold that request until they do.`,
       },
       {
         q: 'Can the requester take their own request off hold by replying?',
@@ -102,13 +109,17 @@ export default page({
       {
         q: 'Does a hold stop the approver doing anything?',
         a: `A hold is about payment: it takes the request out of the payment queue’s takeable set.
-            The approval has already been given by the time you can place one.`,
+            The approval has already been given by the time you can place one. The approver can
+            still cancel the request outright, and the requester can still ask for it to be
+            cancelled.`,
       },
       {
         q: 'The request needs to be cancelled, not held.',
         a: `Cancelling an approved request is not something Accounts can do. The requester asks for
             a cancellation and their approver decides it — see [asking to cancel an approved
-            request](page:requester/asking-to-cancel).`,
+            request](page:requester/asking-to-cancel). A held request can be sent for cancellation
+            too: the hold is set aside while the approver decides, and comes back with your
+            original question if they decline.`,
       },
     ]),
   ],

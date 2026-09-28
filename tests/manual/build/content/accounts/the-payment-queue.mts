@@ -7,7 +7,9 @@ export default page({
   summary: 'Approved requests waiting to be paid, and how the tabs divide the work.',
   blocks: [
     prose(`The payment queue is the accounts team’s starting point. It is the sidebar item **Accounts
-       queue**, and the number on it is the count of approved requests nobody has claimed yet.`),
+       queue**, and the number on it is the count of approved requests nobody has claimed yet and
+       nobody has put on hold. The screen itself is headed **Payment queue**, and **＋ Record a
+       payment** at the top right opens the payment picker.`),
 
     shot('accounts/queue-approved', 'The queue on its first tab. The four tiles sit above the tabs, and every row here offers **Take for processing**.'),
 
@@ -22,8 +24,8 @@ export default page({
       [
         [`**Approved, unclaimed**`, `Requests that are approved, unclaimed and not on hold — the only ones you may take. The figure underneath is their remaining approved balance after existing payments.`],
         [`**Reserved by you**`, `Requests you are holding. The line underneath reads \`All recent\` unless one has been open longer than a day, in which case it says how many.`],
-        [`**Reserved by others**`, `Requests a colleague is holding. You can see them; you cannot take them.`],
-        [`**On hold**`, `Approved requests parked with a question. They are waiting on the requester, not on you.`],
+        [`**Reserved by others**`, `Requests a colleague is holding. The line underneath reads \`Visible, not yours\`.`],
+        [`**On hold**`, `Approved requests parked with a question. The line underneath reads \`Waiting on the requester\`.`],
       ],
     ),
 
@@ -36,11 +38,11 @@ export default page({
     table(
       [`Tab`, `What is in it`, `The action on a row`],
       [
-        [`**Approved, unclaimed**`, `Approved requests, plus the ones somebody has already taken so you can see who has them`, `**Take for processing**`],
+        [`**Approved, unclaimed**`, `Approved requests nobody has claimed and nobody has put on hold — the same set its count and the tile count`, `**Take for processing**`],
         [`**Processing**`, `Requests somebody has claimed, and who is holding each one`, `**Resume** on your own; **View** on everybody else’s`],
         [`**On hold**`, `Approved requests parked with a reason, waiting on the requester`, `**Read reply**`],
         [`**Partial review**`, `Requests paid short, now waiting on the approver`, `**View**`],
-        [`**Paid**`, `Finished work, kept for reference`, `**View**, or **Resume** on a row you settled yourself`],
+        [`**Paid**`, `Finished work, kept for reference`, `**View**`],
       ],
     ),
 
@@ -55,7 +57,8 @@ export default page({
     shot('accounts/queue-processing', 'The Processing tab. Each row names its holder; your own rows say **Reserved by you** with how long the claim has been open, and offer **Resume**.'),
 
     prose(`A row you hold offers **Resume**. Everybody else’s names the holder and offers **View**
-       only. Once a claim has been open more than a day, **Resume** takes you to a screen about the
+       only; an administrator, who may hand claims on, sees **Reassign** there instead. Once a claim
+       has been open more than a day, **Resume** takes you to a screen about the
        claim itself rather than back to the payment form — [reservations and
        conflicts](page:accounts/reservations-and-conflicts) covers what to do there.`),
 
@@ -73,18 +76,16 @@ export default page({
     shot('accounts/queue-partial-review', 'The Partial review tab. Every row is a shortfall waiting on an approver’s decision.'),
 
     prose(`These are requests that were paid less than the approved amount. They are marked
-       \`partial_review\` — the screen writes it **Partial — manager review** — and the decision is
-       not yours: the approver can keep the balance payable, accept and close the difference, or
+       \`partial_review\` — the screen writes it **Partial — manager review**, or **Partial — under
+       discussion** while the approver has a concern open — and the decision is not yours: the approver can keep the balance payable, accept and close the difference, or
        raise a concern. See [paying part of a request](page:accounts/paying-part-of-a-request).`),
 
     subsection(`Paid`),
 
     shot('accounts/queue-paid', 'The Paid tab. `Completed` closed cleanly; `Completed — partial accepted` closed with a shortfall the approver wrote off.'),
 
-    prose(`A few rows here offer **Resume** rather than **View**. Those are the ones you settled
-       yourself, and following that control lands on a refusal, because the request has already
-       been paid. Open the request from its number in the first column instead — the payment is
-       linked from there.`),
+    prose(`Every row here offers **View**, which opens the request. Its payment is linked from there
+       under **View the payment**.`),
 
     section(`Finding one request`),
 
@@ -101,13 +102,15 @@ export default page({
 
     section(`When a claim of yours has gone stale`),
 
-    prose(`If any of the requests you are holding has been reserved for longer than the reminder
-       threshold, a banner appears above the table saying how many, with a **Review** button that
-       takes you to the Processing tab. Nothing is ever released for you: a transfer may already be
+    prose(`If any of the requests you are holding has been reserved for more than a day, a banner
+       appears above the table saying how many you hold and how many of them have been open that
+       long, with a **Review** button that takes you to the Processing tab. The one-day mark is
+       fixed; the reminder that goes out by notification follows the number of days an
+       administrator has configured. Nothing is ever released for you: a transfer may already be
        moving through a bank portal, so the product nudges and a person decides.`),
 
     faq([
-      { q: `The tile says 130 and the first tab lists more rows than that.`, a: `The tile counts only what you may take — approved, unclaimed and not on hold. The tab also lists the requests somebody has already claimed, so that you can see who holds the one you were about to pay rather than having it silently hidden from you.` },
+      { q: `The request I was about to pay has gone from the first tab.`, a: `The first tab lists only what you may take — approved, unclaimed and not on hold — so its rows always match its count and the tile. A request somebody has claimed moves to **Processing**, where the row names who holds it; one that has been held is on **On hold**.` },
       { q: `A request I expected is missing from every tab.`, a: `The queue only holds requests that reached approval. Anything still awaiting a decision, returned, rejected, withdrawn or cancelled never appears here. [The request lifecycle](page:reference/request-lifecycle) lists every status and the routes between them.` },
       { q: `Can I pay several requests at once?`, a: `No bulk payment entry is offered. Record one payment submission at a time. A request can have multiple installments, each within its remaining approval.` },
     ]),

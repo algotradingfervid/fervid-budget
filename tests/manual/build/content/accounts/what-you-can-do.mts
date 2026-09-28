@@ -20,9 +20,9 @@ export default page({
 
     steps([
       { text: `Open [the payment queue](page:accounts/the-payment-queue) and find the request.`, note: `The queue is also the sidebar item **Accounts queue**, and its badge is the number of approved requests nobody has claimed.` },
-      { text: `Select **Take for processing**, which [claims the request](page:accounts/claiming-a-request) for you.`, note: `From that moment nobody else can pay it. It shows as \`processing\` and the queue names you as the holder.` },
+      { text: `Select **Take for processing**, which [claims the request](page:accounts/claiming-a-request) for you and opens the payment form.`, note: `From that moment nobody else can pay it. It shows as \`processing\` and the queue names you as the holder.` },
       { text: `[Record the payment](page:accounts/recording-a-payment) — the amount, the date, the mode and the transaction reference.` },
-      { text: `Confirm on the second step whether to keep an installment balance payable, settle fully, or ask the manager to accept a shortfall.`, note: `A full settlement closes the request, an installment keeps its balance payable, and a shortfall request asks the approver to decide — see [paying part of a request](page:accounts/paying-part-of-a-request).` },
+      { text: `Select **Payment settled →** and, on the confirmation that opens, say whether to keep an installment balance payable, settle fully, or ask the manager to accept a shortfall.`, note: `A full settlement closes the request, an installment keeps its balance payable, and a shortfall request asks the approver to decide — see [paying part of a request](page:accounts/paying-part-of-a-request).` },
       { text: `The payment lands in [the payments ledger](page:accounts/the-payments-ledger), where it can be read but not changed.` },
     ]),
 
@@ -39,8 +39,8 @@ export default page({
         [`Comment on any request you can see`, `The request`, `[Raising a concern](page:accounts/raising-a-concern)`],
         [`Attach the bank advice as you settle a payment`, `The payment form`, `[Recording a payment](page:accounts/recording-a-payment)`],
         [`Read every payment ever recorded`, `Payments ledger`, `[The payments ledger](page:accounts/the-payments-ledger)`],
-        [`Track money expected back and record recoveries`, `Recoverables`, `[The recoverables register](page:accounts/the-recoverables-register)`],
-        [`Read the variance grid and the reports`, `Variance grid, Reports`, `—`],
+        [`Track money expected back, record recoveries and export the register as CSV`, `Recoverables`, `[The recoverables register](page:accounts/the-recoverables-register)`],
+        [`Read the variance grid and the reports, and export the reports as CSV`, `Variance grid, Reports`, `—`],
       ],
     ),
 
