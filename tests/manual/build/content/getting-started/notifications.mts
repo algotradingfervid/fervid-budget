@@ -30,7 +30,9 @@ export default page({
     prose(
       `The header band tells you where you stand: **Notifications**, and under it a count in the
        form "87 unread of 87". When you are up to date it reads "Everything here is read" instead.
-       **Mark all read** sits on the right, and only appears while something is unread.`,
+       When you have more rows than one page holds, the line starts with how many are shown — "100
+       of 480 shown ·" — before the unread count. **Mark all read** sits on the right, and only
+       appears while something is unread.`,
     ),
 
     section('What a row says'),
@@ -91,7 +93,10 @@ export default page({
     ),
     prose(
       `Everything else — an approval granted, a payment settled, a reservation released, a
-       withdrawal — is ordinary activity and appears under **All** and **Unread** only.`,
+       withdrawal — is ordinary activity and appears under **All** and **Unread** only. A payment
+       recorded as an installment, with the balance left to pay later, sends no notification at
+       all; the next notification about that money comes when a later payment settles it or sends
+       it to the approver for review.`,
     ),
 
     subsection('The two reminders'),

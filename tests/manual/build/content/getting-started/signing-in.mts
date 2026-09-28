@@ -16,9 +16,11 @@ export default page({
       { text: `Select **Login**.` },
     ]),
 
-    prose(`If you came from a protected page, successful sign-in returns you to that permitted
-       destination. Otherwise your role-based home screen opens. Invalid credentials use a general
-       error without identifying which field was wrong.`),
+    prose(`If you came from a protected page, successful sign-in returns you to that page when your
+       roles allow you to open it. Otherwise your home screen opens. If the page you were heading
+       for is one your account may not open, Home opens with the note "You’re signed in. The
+       requested page isn’t available to your account, so we’ve opened Home." Invalid credentials
+       use a general error without identifying which field was wrong.`),
 
     shot('shared/login-rejected', 'A refused sign-in. The message reads "Invalid email or password", whichever of the two was wrong.'),
 
@@ -44,7 +46,8 @@ export default page({
 
     section(`Shared computers`),
 
-    prose(`Use **Log out** when finished. Do not share reset links or leave a signed-in browser open
-       for other people.`),
+    prose(`Use **Log out** when finished. It signs you out on every device and browser you are signed
+       in on, not only the one in front of you. Do not share reset links or leave a signed-in
+       browser open for other people.`),
   ],
 });

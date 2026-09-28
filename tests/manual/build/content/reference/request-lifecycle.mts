@@ -29,10 +29,10 @@ export default page({
         [`\`pending\``, `\`returned\``, `**Return for correction**`, `The approver the request was sent to, holding \`approval:return\``, `A comment. It is shown to the requester as the reason.`],
         [`\`pending\``, `\`rejected\``, `**Reject**`, `The approver the request was sent to, holding \`approval:reject\``, `A reason.`],
         [`\`pending\``, `\`withdrawn\``, `**Withdraw**`, `The person who raised it, holding \`request:withdraw\``, `Nothing else. This is the only status a request can be withdrawn from.`],
-        [`\`pending\``, `\`pending\``, `**Reassign approval**`, `Anybody holding \`approval:reassign\` whose data scope reaches the request`, `A reason, and a new approver who holds \`approval:approve\` and is not the requester. Only a pending request can be reassigned.`],
-        [`\`returned\``, `\`pending\``, `**Resubmit for approval**`, `The person who raised it, holding \`request:edit\``, `The corrected request has to pass the same checks the first submission did. **Save corrections** saves without resending.`],
-        [`\`approved\``, `\`processing\``, `**Take for processing**`, `Anybody holding \`reservation:reserve\``, `The request must be approved, unclaimed and not on hold. Two people pressing at once: the first one wins and the second gets a conflict screen.`],
-        [`\`approved\``, `\`cancellation_requested\``, `**Request cancellation**`, `The person who raised it, holding \`request:cancel\``, `A reason and no payment already recorded. Payment freezes the moment it succeeds.`],
+        [`\`pending\`, \`returned\`, \`cancellation_requested\` or \`partial_review\``, `the same status`, `**Reassign approval**`, `Somebody holding \`approval:reassign\` who is either the approver the request was sent to or also holds \`user:edit\``, `A reason, and a new approver who holds \`approval:approve\` and is neither the requester nor you. Only a request waiting on its approver can be reassigned.`],
+        [`\`returned\``, `\`pending\``, `**Resubmit for approval**`, `The person who raised it, holding \`request:edit\``, `The corrected request has to pass the same checks the first submission did. **Save corrections** saves without resending, and **Edit every field** opens the full form.`],
+        [`\`approved\``, `\`processing\``, `**Take for processing** on the payment queue, or **Record payment** on the request`, `Anybody holding \`reservation:reserve\``, `The request must be approved, unclaimed and not on hold. Two people pressing at once: the first one wins and the second gets a conflict screen.`],
+        [`\`approved\``, `\`cancellation_requested\``, `**Request cancellation**`, `The person who raised it, holding \`request:cancel\``, `A reason and no payment already recorded. Payment freezes the moment it succeeds. It is allowed while the request is on hold; the hold is suspended meanwhile.`],
         [`\`approved\``, `\`cancelled\``, `**Cancel with reason**`, `The approver the request was sent to, holding \`approval:cancel\``, `A reason and no payment already recorded. Nobody needs to have asked first.`],
         [`\`cancellation_requested\``, `\`cancelled\``, `Accept the cancellation, from **Decide the cancellation**`, `The approver the request was sent to, holding \`approval:cancel\``, `A note is optional.`],
         [`\`cancellation_requested\``, `\`approved\``, `Decline the cancellation, from **Decide the cancellation**`, `The approver the request was sent to, holding \`approval:cancel\``, `A written reason. This is the only route back to \`approved\` from the frozen state — approving again will not do it.`],
@@ -40,8 +40,8 @@ export default page({
         [`\`processing\``, `\`processing\``, `**Reassign** the reservation`, `Anybody holding \`reservation:reassign\``, `A reason, the same confirmation, and an active colleague who holds \`payment:process\`. The request never returns to the open queue in between.`],
         [`\`processing\``, `\`completed\``, `Record the payment and confirm it as settled`, `The person holding the reservation, with \`payment:create\` and \`payment:settle\``, `An amount no greater than the remaining approved balance, with an explanation if a short amount is marked fully settled, a payment date that is not in the future, not before the day of approval and not in a locked month, and a live head unless the request is recoverable.`],
         [`\`processing\``, `\`partial_review\``, `Record the payment and mark it a partial settlement`, `The same person, and also \`payment:mark_partial\``, `Everything above, plus a written reason for paying short.`],
-        [`\`processing\``, `\`approved\``, `**Installment — pay the balance later**`, `The reservation holder with payment creation/settlement access`, `Record an amount below the remaining approval. The payment is permanent and the reservation is released; the balance remains payable.`],
-        [`\`partial_review\``, `\`approved\``, `**Keep balance payable**`, `The assigned approver with shortfall-decision access`, `A required plan note returns the unpaid balance to Accounts under the original approval.`],
+        [`\`processing\``, `\`approved\``, `Record the payment as **Installment — pay the balance later**`, `The person holding the reservation, with \`payment:create\` and \`payment:settle\``, `An amount below the remaining approved balance. The payment is permanent, the reservation is released and the balance stays payable under the same approval. No notification is sent for an installment.`],
+        [`\`partial_review\``, `\`approved\``, `**Keep balance payable**`, `The approver the request was sent to, holding \`approval:accept_partial\``, `A written **Payment plan or reason**, and some approved balance left to pay. The unpaid balance goes back to Accounts under the original approval.`],
         [`\`partial_review\``, `\`completed_partial\``, `**Accept and close**`, `The approver the request was sent to, holding \`approval:accept_partial\``, `A note is optional. The unpaid balance is written off for good.`],
         [`\`partial_review\``, `\`partial_review\``, `**Raise a concern**`, `The approver the request was sent to, holding \`approval:accept_partial\``, `A comment. It goes into the conversation and the request stays in review.`],
         [`\`rejected\``, `a new \`pending\` request`, `**Raise it again**`, `The person who raised it, holding \`request:reraise\``, `Only from \`rejected\`. It creates a fresh request with its own number; the rejected one stays rejected for ever.`],
@@ -87,10 +87,11 @@ export default page({
 
     subsection(`3. Taken for processing`),
 
-    prose(`Somebody in Accounts presses **Take for processing** from the payment queue. That claim is
-       the whole point of the \`processing\` status: while one person holds it, nobody else can
-       record a payment against it, so the same invoice cannot be paid twice. The badge the
-       requester sees changes to **With Accounts**.`),
+    prose(`Somebody in Accounts presses **Take for processing** from the payment queue, or **Record
+       payment** on the request itself. That claim is the whole point of the \`processing\` status:
+       while one person holds it, nobody else can record a payment against it, so the same invoice
+       cannot be paid twice. The badge the requester sees changes to **With Accounts — taken by**
+       and the accountant's name.`),
 
     shot('requester/detail-processing', 'A claimed request. The badge names who took it, and the history shows the reservation as its own line: "Reserved request for processing".'),
 
@@ -108,7 +109,8 @@ export default page({
     prose(`An installment returns the request to Approved for the remaining balance. If Accounts
        instead asks the manager to accept a shortfall, the request moves to Partial — manager
        review. The approver can Keep balance payable, Accept and close the permanent write-off, or
-       Raise a concern.`),
+       Raise a concern. While a concern waits for Accounts to answer, the badge reads **Partial —
+       under discussion**; the status is still \`partial_review\`.`),
 
     shot('manager/partial-review', 'A shortfall waiting on its approver: approved against paid, what is still owed, and the three decisions at the bottom — **Raise a concern**, **Accept and close** and **Keep balance payable**.'),
 
@@ -141,8 +143,8 @@ export default page({
     table(
       [`Move`, `Control`, `Who`, `What it requires`],
       [
-        [`Pause an approved request`, `**Put on hold**`, `Anybody holding \`payment:hold\``, `A written reason. The request must be approved and not already held.`],
-        [`Lift the pause`, `**Release hold**`, `Anybody holding \`payment:hold\``, `Nothing. Lifting the hold is the answer to the question, so it does not ask for a second one.`],
+        [`Pause an approved request`, `**Put on hold**`, `Anybody holding \`payment:hold\` — the accounts team, and administrators`, `A written reason. The request must be approved, not already held, and claimed by nobody: a request somebody has taken for processing has to be released first.`],
+        [`Lift the pause`, `**Release hold**`, `Anybody holding \`payment:hold\` — the accounts team, and administrators`, `Nothing. Lifting the hold is the answer to the question, so it does not ask for a second one.`],
       ],
       `The hold, and the one grant that governs both directions of it.`,
     ),
@@ -165,10 +167,11 @@ export default page({
        the requester and the approver are told why their money stopped moving — and both demand the
        tick confirming no payment was started.
 
-       A reservation held past the configured threshold is flagged as stale. Nothing is released
-       automatically when that happens: a transfer that has been open a day may well be moving
-       through a bank portal. The product only puts the choice in front of a person. Your
-       administrator sets the threshold on the [Configuration](page:admin/configuration) screen.`),
+       A reservation held for more than a day is flagged as stale on the payment queue. That one-day
+       mark is fixed. Nothing is released automatically when it passes: a transfer that has been
+       open a day may well be moving through a bank portal. The product only puts the choice in
+       front of a person. Separately, the stale-reservation reminder notification follows the number
+       of days your administrator sets on the [Configuration](page:admin/configuration) screen.`),
 
     faq([
       { q: `Can I withdraw a request that was returned to me?`, a: `No. Withdrawal is only possible from \`pending\`. A returned request can be corrected and resubmitted, or left where it is — there is no route from \`returned\` to \`withdrawn\`.` },

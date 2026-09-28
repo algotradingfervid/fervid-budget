@@ -34,12 +34,12 @@ export default page({
         [`\`withdrawn\``, `**Withdrawn**`, `The requester took it back before it was decided. Only a pending request can reach this state.`, `Nobody. The line reads "Withdrawn by the requester".`],
         [`\`cancellation_requested\``, `**Cancellation requested**`, `The requester has asked for an approved request to be cancelled. Payment is frozen while the ask stands.`, `The approver. The line names them.`],
         [`\`cancelled\``, `**Cancelled**`, `The request was cancelled, either because the approver accepted the ask or because they cancelled it outright with a reason.`, `Nobody. The line reads "Cancelled. Nothing can be paid against it".`],
-        [`\`processing\``, `**With Accounts**`, `Somebody in Accounts has claimed the request so that nobody else can pay it at the same time.`, `Accounts. If you are the person holding it, the line reads "Waiting on you".`],
-        [`\`partial_review\``, `**Partial — manager review**`, `Accounts paid less than was approved and gave a reason. The unpaid balance is under review: the approver can keep it payable, accept and close it, or raise a concern.`, `The approver. The line names them.`],
+        [`\`processing\``, `**With Accounts — taken by** and the holder's name`, `Somebody in Accounts has claimed the request so that nobody else can pay it at the same time. The badge names them, or reads "taken by you" if it is you.`, `Accounts. The line reads "Waiting on" the holder's name followed by "(Accounts)", or "Waiting on you" if you hold it.`],
+        [`\`partial_review\``, `**Partial — manager review**, or **Partial — under discussion**`, `Accounts paid less than was approved and asked the approver to decide about the rest. The approver can keep the balance payable, accept and close it, or raise a concern. While a concern is waiting for Accounts to answer, the badge reads **Partial — under discussion** instead.`, `The approver. The line names them. While a concern is open it reads "Waiting on" the approver's name "and Accounts" — or "Waiting on you and Accounts" for the approver, and "Waiting on you" for the accountant who has to answer.`],
         [`\`completed\``, `**Completed**`, `The request was paid and closed by Accounts.`, `Nobody. The line reads "Nothing pending".`],
         [`\`completed_partial\``, `**Completed — partial accepted**`, `Less was paid than was approved and the approver accepted the shortfall, writing the balance off. Deliberately distinct from a clean completion.`, `Nobody. The line reads "Nothing pending".`],
       ],
-      `Every status the product stores, and the words it shows for each.`,
+      `Every status the product stores, and the words it shows for each. The wording in bold is what the badge prints; where a badge has two forms, both are given.`,
     ),
 
     section(`On hold, which has no status of its own`),
@@ -57,11 +57,11 @@ export default page({
 
     section(`Where the accounts screens say it differently`),
 
-    prose(`\`processing\` is the one status the payment screens spell out rather than summarise,
-       because the person holding the claim is the whole point of it. On the request and in the
-       request list the badge reads **With Accounts**. On the payment queue and on the conflict
-       screen it names the holder instead: **Reserved by you** with the time you took it,
-       **Reserved by** a colleague’s name, or **Processing** followed by the holder’s name. The
+    prose(`\`processing\` is the one status the payment screens spell out differently, because the
+       person holding the claim is the whole point of it. On the request, in the request list and on
+       the conflict screen the badge reads **With Accounts — taken by** and the holder's name. On
+       the payment queue it reads **Reserved by you** with the time you took it, or **Reserved by**
+       a colleague’s name. The queue's own tab for these requests is called **Processing**. The
        stored status is \`processing\` in every case.`),
 
     section(`Reading the colours`),
@@ -73,7 +73,7 @@ export default page({
       [`Tone`, `Used for`, `What it is telling you`],
       [
         [`Blue`, `**Awaiting approval**`, `In the pipeline and behaving normally.`],
-        [`Amber`, `**Returned for correction**, **Cancellation requested**, **Partial — manager review**, **On hold**`, `Something is stuck and a named person has to unstick it.`],
+        [`Amber`, `**Returned for correction**, **Cancellation requested**, **Partial — manager review**, **Partial — under discussion**, **On hold**`, `Something is stuck and a named person has to unstick it. **Partial — under discussion** has a dashed outline, to mark that two people are talking it over.`],
         [`Terracotta`, `**Approved — awaiting payment**, **With Accounts**`, `Live, moving, and somebody is acting on it.`],
         [`Green`, `**Completed**, **Completed — partial accepted**`, `Finished. **Completed** is a filled green badge; **Completed — partial accepted** is drawn as a green outline on the plain background, so the two never read as the same outcome.`],
         [`Grey and faded brick`, `**Withdrawn**, **Cancelled**, **Rejected — final**`, `Closed without payment. These are drawn quieter than the live states on purpose.`],
@@ -111,17 +111,25 @@ export default page({
       [`What you see`, `What it means`],
       [
         [`→ Waiting on you`, `You are the person who owes the next action, whatever your role is.`],
-        [`→ Waiting on a name`, `That person owes it. On a pending or frozen request that is the approver; on a returned one it is the requester.`],
-        [`→ Waiting on Accounts`, `Approved or claimed, and the next move belongs to the accounts team.`],
+        [`→ Waiting on a name`, `That person owes it. On a pending, frozen or partially paid request that is the approver; on a returned one it is the requester.`],
+        [`→ Waiting on Accounts`, `Approved, and the next move belongs to the accounts team.`],
+        [`→ Waiting on a name (Accounts)`, `Claimed by that accountant, who is working on the payment.`],
+        [`→ Waiting on a name and Accounts`, `A short payment with an open concern: Accounts has to answer, then the approver decides.`],
         [`→ Waiting on a name to clarify`, `The request is on hold and Accounts is waiting for that person to answer the question.`],
         [`✓ Nothing pending`, `Completed, in either form. Nothing else will happen to it.`],
-        [`— Closed`, `Rejected, withdrawn or cancelled. The dash is used instead of a tick because these are closed, not achieved.`],
+        [`— Closed. Raise a new request if needed`, `Rejected.`],
+        [`— Withdrawn by the requester`, `Withdrawn.`],
+        [`— Cancelled. Nothing can be paid against it`, `Cancelled. The dash is used for these three instead of a tick because they are closed, not achieved.`],
       ],
       `The waiting line, and what each form of it is saying.`,
     ),
 
-    tip(`On the request list, the **Needs me** tab is built from exactly this calculation. If you
-       want the short answer to "what is mine to do", that tab is it.`),
+    tip(`On the request list, the **Needs me** tab is the short answer to "what is mine to do": your
+       own requests returned for correction, requests waiting on your decision as approver
+       (awaiting approval, cancellation requested, or paid short and back with you), and short
+       payments you hold where an approver's concern is waiting for your answer. One case reads
+       "Waiting on you" but is not in that tab: your own request while Accounts has it on hold.
+       Check the **Open** tab for those.`),
 
     faq([
       { q: `The badge says On hold but the filter says approved. Which is right?`, a: `Both. The hold is a flag on an approved request, not a status of its own, so filtering by \`approved\` includes held requests. The payment queue keeps them on their own **On hold** tab.` },
