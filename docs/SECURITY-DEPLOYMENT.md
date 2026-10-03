@@ -45,7 +45,14 @@ The detailed local issue-by-issue report is generated under `output/security-rem
 
 ## Known issues
 
-None open. The last one found while re-verifying the 2026-09-27 security review
-(one client could use up the shared login allowance and block everyone) is fixed:
-the per-client limit is now checked first, so a client's refused attempts never
-count against the shared limit.
+- **The shared sign-in limit can still be used up by several sources at once.**
+  One client alone can no longer block everyone: the per-client limit is checked
+  first, so a client's refused attempts never count against the shared limit.
+  But about ten addresses, each staying under its own 30 a minute, can still use
+  up the shared 300 a minute and refuse every sign-in for that minute. An IPv6
+  attacker has many addresses to hand. Grouping IPv6 addresses by /64 would make
+  this harder; until then, watch for bursts of 429 responses on `/login`.
+- **Reminder emails stop at the first failed send.** When reminder emails are on
+  and the mail server is down, the hourly pass stops at the first failure, before
+  that request is marked as reminded. That request gets another in-app reminder
+  every hour, and the requests after it in the batch get none until mail works.

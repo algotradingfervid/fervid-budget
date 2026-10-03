@@ -98,6 +98,26 @@ test.describe('design system behaviours', () => {
     await expect(page).toHaveURL(/\/$/);
   });
 
+  test('invalid text inputs get the red border and lose it once corrected', async ({ page }) => {
+    // The generic input border rule once outranked the invalid rule, so a
+    // flagged text field stayed grey while its error message was shown.
+    const red = 'rgb(180, 35, 24)'; // --bad
+    const grey = 'rgb(129, 118, 107)'; // --input-border
+    const border = (name: string) =>
+      page.getByLabel(name, { exact: true }).evaluate((el) => getComputedStyle(el).borderTopColor);
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Login', exact: true }).click();
+    await expect(page.locator('.client-error-summary')).toBeFocused();
+    for (const name of ['Email', 'Password']) {
+      await expect(page.getByLabel(name, { exact: true })).toHaveAttribute('aria-invalid', 'true');
+      await expect.poll(() => border(name)).toBe(red);
+    }
+    await page.getByLabel('Email', { exact: true }).fill('admin@fervid.local');
+    await page.getByLabel('Email', { exact: true }).blur();
+    await expect(page.getByLabel('Email', { exact: true })).not.toHaveAttribute('aria-invalid', 'true');
+    await expect.poll(() => border('Email')).toBe(grey);
+  });
+
   test('app validation describes bounds in real head creation without losing other input', async ({ adminPage, runId }) => {
     await adminPage.goto('/heads');
     const form = adminPage.locator('.heads-setup-form');
