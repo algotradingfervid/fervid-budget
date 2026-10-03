@@ -1,5 +1,9 @@
 package app
 
+// The web-facing security layer: browser security headers, the cross-origin
+// check on form posts, the sign-in rate limiter, request body size caps, the
+// client address used for rate limits and the public static-file allowlist.
+
 import (
 	"net"
 	"net/http"
@@ -10,18 +14,32 @@ import (
 	"time"
 )
 
+// maxRequestBodyBytes is the body cap for file uploads: the 20 MiB attachment
+// limit plus room for the other form fields.
+const maxRequestBodyBytes int64 = 21 << 20
+
+// dummyPasswordHash is checked against when no user matches the email typed
+// at sign-in, so a wrong email takes as long as a wrong password and the
+// response time does not reveal which accounts exist.
 const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
+// authWindow counts the attempts one key has made in its current minute.
 type authWindow struct {
 	started  time.Time
 	attempts int
 }
+
+// authLimiter is a fixed-window rate limiter: each key may make a set number
+// of attempts per minute. It is safe for concurrent use.
 type authLimiter struct {
 	mu      sync.Mutex
 	windows map[string]authWindow
 }
 
-// Bounded, short-lived state prevents unknown usernames becoming a memory sink.
+// allow records one attempt for key and reports whether it is within limit
+// for the current minute. Windows older than a minute are dropped on every
+// call, and at most 10,000 keys are tracked (new keys are refused beyond
+// that), so a flood of distinct keys cannot grow memory without bound.
 func (l *authLimiter) allow(key string, limit int, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -48,6 +66,9 @@ func (l *authLimiter) allow(key string, limit int, now time.Time) bool {
 	return true
 }
 
+// requestBodyLimit is how many bytes a request body may have: 8 KiB for the
+// sign-in pages, 3 MiB for the budget planner, maxRequestBodyBytes for file
+// uploads to requests and payments, and 64 KiB for every other form.
 func requestBodyLimit(r *http.Request) int64 {
 	if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/") {
 		return 8 << 10
@@ -62,6 +83,31 @@ func requestBodyLimit(r *http.Request) int64 {
 	return 64 << 10
 }
 
+// Default per-minute caps on POSTs to /login and its sub-pages.
+const (
+	defaultLoginLimitPerIP  = 30
+	defaultLoginLimitGlobal = 300
+)
+
+// loginLimits returns the per-client and global per-minute caps from the
+// configuration. A zero or negative value (a Config built by hand, as tests
+// do) means the production default, never "no limit".
+func (a *App) loginLimits() (perIP, global int) {
+	perIP, global = a.cfg.LoginLimitPerIP, a.cfg.LoginLimitGlobal
+	if perIP <= 0 {
+		perIP = defaultLoginLimitPerIP
+	}
+	if global <= 0 {
+		global = defaultLoginLimitGlobal
+	}
+	return perIP, global
+}
+
+// clientIP is the address rate limits are keyed on. It is the connection's
+// address, unless that address is a trusted proxy (FERVID_TRUSTED_PROXIES):
+// then it is the right-most X-Forwarded-For entry that is not itself a
+// trusted proxy. A malformed entry in that walk falls back to the connection
+// address, so a forged header cannot pick an arbitrary key.
 func (a *App) clientIP(r *http.Request) string {
 	host := remoteIP(r.RemoteAddr)
 	trusted := func(value string) bool {
@@ -96,6 +142,11 @@ func (a *App) clientIP(r *http.Request) string {
 	return host
 }
 
+// securityBoundary sets the browser security headers on every response. For
+// anything but GET, HEAD and OPTIONS it also refuses cross-site submissions
+// (by Sec-Fetch-Site and Origin; a forwarded Host is never trusted) with 403,
+// and rate-limits posts to /login and its sub-pages with 429: first per client
+// address, then against a shared global allowance.
 func (a *App) securityBoundary(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -127,7 +178,11 @@ func (a *App) securityBoundary(next http.Handler) http.Handler {
 			}
 			if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/") {
 				now := time.Now()
-				if !a.authLimits.allow("global", 300, now) || !a.authLimits.allow("ip:"+a.clientIP(r), 30, now) {
+				perIP, global := a.loginLimits()
+				// Per-client first: a client over its own limit is refused before its
+				// attempts count against the shared allowance, so one noisy client
+				// cannot lock everyone else out.
+				if !a.authLimits.allow("ip:"+a.clientIP(r), perIP, now) || !a.authLimits.allow("global", global, now) {
 					h.Set("Retry-After", "60")
 					http.Error(w, "Too many attempts. Try again later.", http.StatusTooManyRequests)
 					return
@@ -138,10 +193,17 @@ func (a *App) securityBoundary(next http.Handler) http.Handler {
 	})
 }
 
-// Only release assets are public. Files accidentally copied under web/static
-// cannot become a download or a directory listing.
-func publicStatic() http.Handler {
+// publicStatic serves only the named release assets from web/static, so a
+// file copied there by accident cannot be downloaded and no directory listing
+// is shown. The design-system reference page (_kitchensink.html) is a
+// development aid served only when devPages is set (FERVID_DEV_PAGES), which
+// the component test suite does and production never does.
+// The directory is relative, so the server must run from the repository root.
+func publicStatic(devPages bool) http.Handler {
 	allowed := map[string]bool{"fervid-ds.css": true, "fervid-app.js": true, "fervid-logo.svg": true, "budget-planner.css": true, "budget-ux.css": true, "budget-planner.js": true, "htmx.min.js": true}
+	if devPages {
+		allowed["_kitchensink.html"] = true
+	}
 	files := http.FileServer(http.Dir("web/static"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")
@@ -151,12 +213,4 @@ func publicStatic() http.Handler {
 		}
 		files.ServeHTTP(w, r)
 	})
-}
-
-func csvText(value string) string {
-	trimmed := strings.TrimLeft(value, " \t\r\n\uFEFF")
-	if strings.ContainsAny(value, "\t\r\n") || strings.HasPrefix(value, "\uFEFF") || (trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0]))) {
-		return "'" + value
-	}
-	return value
 }

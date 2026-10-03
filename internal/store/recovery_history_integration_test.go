@@ -10,7 +10,7 @@ func TestBackdatedRecoveryCannotSpendFutureInstallmentOrInvalidateLaterEvent(t *
 	ctx := context.Background()
 	s, u, headID, id := recoveryFixture(t)
 	// Initial ₹7,000 January payout plus ₹5,000 in March.
-	payRecoverable(t, s, ctx, u, headID, id, "2026-03-01", 500000)
+	payRecoverable(t, s, u, headID, id, "2026-03-01", 500000)
 	in := recoveryInput("history-before-later-installment", 800000)
 	if _, err := s.RecordRecovery(ctx, u, id, in); !errors.Is(err, ErrValidation) {
 		t.Fatalf("February recovery borrowed March payout: %v", err)

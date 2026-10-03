@@ -1,23 +1,24 @@
 package app
 
 import (
-	"fervidbudget/internal/auth"
-	"fervidbudget/internal/store"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+
+	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
 )
 
 func TestRecoveryHTTPWorkflowAndRefusedInputPreserved(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recovery lifecycle")
 	id := seedRecoverable(t, s, headID, "PR-REC-HTTP", "icd", "Beacon Infra", "2026-06-30", "2026-02-01", 700000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	path := fmt.Sprintf("/recoverables/%d", id)
-	body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	body := s.get(path)
 	if !strings.Contains(body, "Record recovery") {
 		t.Fatal("missing recovery form")
 	}
@@ -25,23 +26,15 @@ func TestRecoveryHTTPWorkflowAndRefusedInputPreserved(t *testing.T) {
 	resp := s.postForm(path+"/events", fields)
 	requireStatus(t, resp, http.StatusSeeOther)
 	_ = responseBody(t, resp)
-	body = responseBody(t, s.request(http.MethodGet, path, nil, ""))
-	for _, want := range []string{"₹5,000", "₹2,000", "UTR-2000", "2026-02-02", "Bank statement February row 42"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("detail missing %q", want)
-		}
-	}
+	body = s.get(path)
+	mustContain(t, "detail", body, "₹5,000", "₹2,000", "UTR-2000", "2026-02-02", "Bank statement February row 42")
 	fields.Set("token", "recovery-http-overage-token")
 	fields.Set("amount", "6000")
 	resp = s.postForm(path+"/events", fields)
 	requireStatus(t, resp, http.StatusUnprocessableEntity)
 	body = responseBody(t, resp)
-	for _, want := range []string{"Recovery was not saved", "outstanding balance", `value="6000"`, `value="UTR-2000"`, "Bank statement February row 42"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("refused form missing %q", want)
-		}
-	}
-	csv := responseBody(t, s.request(http.MethodGet, "/recoverables/list.csv", nil, ""))
+	mustContain(t, "refused form", body, "Recovery was not saved", "outstanding balance", `value="6000"`, `value="UTR-2000"`, "Bank statement February row 42")
+	csv := s.get("/recoverables/list.csv")
 	if !strings.Contains(csv, "5000.00,7000.00,2000.00") {
 		t.Fatalf("CSV balance columns %s", csv)
 	}
@@ -75,7 +68,7 @@ func TestRecoveryHTTPPermissionScopeAndCSRF(t *testing.T) {
 	}
 	s.login("recover-read@example.test", "ScopedPassword123")
 	path := fmt.Sprintf("/recoverables/%d", id)
-	body := responseBody(t, s.request(http.MethodGet, path, nil, ""))
+	body := s.get(path)
 	if strings.Contains(body, `id="record-recovery"`) {
 		t.Fatal("read-only user offered record form")
 	}
@@ -84,13 +77,15 @@ func TestRecoveryHTTPPermissionScopeAndCSRF(t *testing.T) {
 	requireStatus(t, resp, http.StatusForbidden)
 	_ = responseBody(t, resp)
 	// Grant the action but narrow the request scope: a valid CSRF POST still cannot
-	// mutate another requester's balance.
+	// mutate another requester's balance. A request outside the caller's scope
+	// answers 404, the same as a request that does not exist, so ids cannot be
+	// probed through this route either.
 	if err := s.st.UpdateRolePermissions(s.ctx, u, role, []store.Grant{{Resource: "recoverable_report", Action: "view"}, {Resource: "payment", Action: "create"}}, []store.ScopeGrant{{Resource: "request", Scope: "own"}}); err != nil {
 		t.Fatal(err)
 	}
 	s.login("recover-read@example.test", "ScopedPassword123")
 	resp = s.postForm(path+"/events", fields)
-	requireStatus(t, resp, http.StatusForbidden)
+	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
 	// Own request but missing CSRF is forbidden at the route boundary.
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET requester_id=? WHERE id=?`, uid, id); err != nil {
@@ -104,12 +99,12 @@ func TestRecoveryHTTPPermissionScopeAndCSRF(t *testing.T) {
 
 func TestRecoverableMobileFiltersExposeApplyResetAndSelectedState(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	cats, err := s.st.ListRecoverableCategories(s.ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := responseBody(t, s.request(http.MethodGet, "/recoverables/list?category="+strconv.FormatInt(cats[0].ID, 10)+"&ageing=overdue", nil, ""))
+	body := s.get("/recoverables/list?category=" + strconv.FormatInt(cats[0].ID, 10) + "&ageing=overdue")
 	start := strings.Index(body, `class="m-only recovery-filters"`)
 	if start < 0 {
 		t.Fatal("missing mobile filters")
@@ -118,9 +113,23 @@ func TestRecoverableMobileFiltersExposeApplyResetAndSelectedState(t *testing.T) 
 	if end := strings.Index(chunk, "</details>"); end >= 0 {
 		chunk = chunk[:end]
 	}
-	for _, want := range []string{`name="category"`, `name="ageing"`, `value="overdue" selected`, "Apply filters", `href="/recoverables/list">Reset`} {
-		if !strings.Contains(chunk, want) {
-			t.Fatalf("mobile filters missing %q", want)
-		}
+	mustContain(t, "mobile filters", chunk, `name="category"`, `name="ageing"`, `value="overdue" selected`, "Apply filters", `href="/recoverables/list">Reset`)
+}
+
+func TestEditedRecoveryReplayDoesNotShowSuccess(t *testing.T) {
+	s := newAppTestServer(t)
+	_, head := s.seedHead("Recovery replay")
+	id := seedRecoverable(t, s, head, "PR-REPLAY-HTTP", "icd", "Replay Party", "2026-06-30", "2026-02-01", 700000)
+	s.loginAdmin()
+	path := fmt.Sprintf("/recoverables/%d/events", id)
+	form := url.Values{"kind": {"return"}, "amount": {"2000"}, "occurred_on": {"2026-02-02"}, "reference": {"ORIGINAL-RECEIPT"}, "note": {"Bank evidence"}, "token": {"http-recovery-replay-confirmation"}}
+	requireStatus(t, s.postForm(path, form), http.StatusSeeOther)
+	form.Set("amount", "3000")
+	form.Set("reference", "CHANGED-RECEIPT")
+	resp := s.postForm(path, form)
+	requireStatus(t, resp, http.StatusUnprocessableEntity)
+	body := responseBody(t, resp)
+	if !strings.Contains(body, "already recorded a different recovery") || !strings.Contains(body, `value="3000"`) {
+		t.Fatal("changed replay lacks clear refusal or loses typed amount")
 	}
 }

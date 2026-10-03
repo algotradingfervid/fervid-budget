@@ -38,7 +38,9 @@ Only four things, and nothing else — no raw HTML, it will be escaped and shown
 - `*italic*` — for emphasis, sparingly
 - backtick-wrapped text — for literal values, statuses and field names
 - `[label](page:section/slug)` — a link to another manual page. The build fails on an
-  unknown target, so you cannot link to a page that does not exist.
+  unknown target, so you cannot link to a page that does not exist. Add `#heading-id` to land
+  on one heading — `[the tabs](page:requester/tracking-your-requests#the-four-tabs)`; the build
+  also fails if that page has no heading with that id.
 
 > **Escape every backtick you write in prose.** Page text is written inside a backtick
 > template literal, so a bare backtick ends the string and breaks the file. Write `\``
@@ -61,10 +63,12 @@ manual trustworthy. If you are writing about a screen, open its PNG under
 `docs/manual/assets/shots/<id>.png` and look at it. Do not describe a button because a
 similar product has one.
 
-**2. Verify anything you assert about behaviour.** The code is the source of truth. Templates
-are Go string literals in `internal/app/templates.go` (there is no `web/templates/`
-directory); routes and permissions are in `internal/app/app.go`; validation lives in
-`internal/store/store.go`. You may query the live dataset read-only:
+**2. Verify anything you assert about behaviour.** The code is the source of truth. Screen
+HTML is in `internal/app/templates/*.html`, one file per feature (there is no `web/templates/`
+directory); the route table and the permission each URL needs are in `internal/app/routes.go`;
+refusal messages and business rules live in the `internal/store` package (for example
+`request_validation.go`, `request_transitions.go`, `accounts_queue.go`, `payments.go`).
+`docs/ARCHITECTURE.md` maps the rest. You may query the live dataset read-only:
 
 ```
 sqlite3 -readonly "data/fervid.db" "select …"
@@ -90,6 +94,28 @@ Money is written as `₹80,700.00`. Statuses are written in code font in their l
 it to a reader.
 
 Use they/them for any person you refer to generically.
+
+## Change the source, never the published HTML
+
+`docs/manual/` is build output. Edit the `.mts` file and rebuild; a change made directly in the
+HTML is silently undone by the next build.
+
+Screenshots come from `make manual`, which first runs the capture in
+`tests/manual/capture.spec.ts` against an already running server with the full demo dataset
+(it does not start one). To capture against a copy of that dataset on another port, start the
+server with `FERVID_ADDR=127.0.0.1:<port>` and, because it is plain HTTP on your machine,
+`FERVID_SECURE_COOKIES=false` (otherwise every sign-in is refused as a cross-origin post), then
+run the capture with `FERVID_MANUAL_PORT=<port>`.
+
+The capture signs in once per shot, about a hundred times from one address, which trips the
+sign-in throttle part-way through. Start the capture server with `FERVID_LOGIN_LIMIT_PER_IP` and
+`FERVID_LOGIN_LIMIT_GLOBAL` raised (for example to `100000`) or most shots fail at sign-in.
+
+The shots depend on the specific records named in `tests/manual/actors.ts`, so they cannot be
+taken from a freshly seeded (`--seed`) database, which has no requests. Take them from a copy of
+the demo dataset instead, and remove from that copy anything left over from development that a
+reader would find confusing — for example an experimental role with its test user — before
+capturing. Never capture against `data/fervid.db` itself.
 
 ## Checking your work
 

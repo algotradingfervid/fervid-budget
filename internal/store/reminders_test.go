@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-func seedReminderRequest(t *testing.T, s *Store, ctx context.Context, number, status string) int64 {
+func seedReminderRequest(t *testing.T, s *Store, number, status string) int64 {
 	t.Helper()
+	ctx := t.Context()
 	reqUser, err := s.CreateUser(ctx, number+"-req@test", "Req", "h", "data_entry", true)
 	if err != nil {
 		t.Fatal(err)
@@ -18,24 +19,13 @@ func seedReminderRequest(t *testing.T, s *Store, ctx context.Context, number, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO payment_requests(number,status,treatment,type,amount,purpose,requester_id,manager_id,submitted_at)
-		VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
-		number, status, "budget", "vendor_invoice", int64(500000), "Rent", reqUser, mgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
+	return insertRequestRow(t, s, requestRow{
+		"number": number, "status": status, "treatment": "budget", "type": "vendor_invoice", "amount": int64(500000),
+		"purpose": "Rent", "requester_id": reqUser, "manager_id": mgr, "submitted_at": sqlNow,
+	})
 }
 
-// F-F-08: the thresholds are elapsed 24-hour days, not calendar-date
-// boundaries. TestCalendarDaysBetweenCountsDateBoundaries used to live here and
-// exercised a helper nothing in production ever called; the helper is gone and
-// this test replaces it by pinning the semantics that actually run, so the two
-// can no longer disagree.
+// Reminder thresholds are elapsed 24-hour days, not calendar-date boundaries.
 //
 // A request submitted at 23:50 has not "waited a day" ten minutes later at
 // 00:00, and — the decisive case — a reminder sent at 23:55 is not repeatable
@@ -43,7 +33,7 @@ func seedReminderRequest(t *testing.T, s *Store, ctx context.Context, number, st
 func TestReminderThresholdsCountElapsedDaysNotCalendarBoundaries(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	id := seedReminderRequest(t, s, ctx, "PR-2026-000020", "pending")
+	id := seedReminderRequest(t, s, "PR-2026-000020", "pending")
 	th := ReminderThresholds{PendingAfterDays: 1, RepeatEveryDays: 1, StaleAfterDays: 1}
 
 	submitted := time.Date(2026, 7, 20, 23, 50, 0, 0, time.UTC)
@@ -79,14 +69,14 @@ func TestReminderThresholdsCountElapsedDaysNotCalendarBoundaries(t *testing.T) {
 	}
 }
 
-// F-F-02: "a reminder went out" needs a witness. The stale-reservation screen's
+// A reminder leaves an audit row. The stale-reservation screen's
 // "Who has been told" thread is built from the audit log, so the reminder has to
 // leave a row there — naming which reminder and who was told, since both
 // reminders land on the same request's trail.
 func TestMarkReminderSentWritesAnAuditRow(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	id := seedReminderRequest(t, s, ctx, "PR-2026-000030", "processing")
+	id := seedReminderRequest(t, s, "PR-2026-000030", "processing")
 	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
 
 	if err := s.MarkReminderSent(ctx, id, now, ReminderAudit{
@@ -155,7 +145,7 @@ func TestMarkReminderSentWritesAnAuditRow(t *testing.T) {
 func TestReminderThresholdsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	th, err := s.ReminderThresholds(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +179,7 @@ func TestReminderThresholdsDefaultsAndOverrides(t *testing.T) {
 func TestRequestsPendingReminderHonoursConfiguredThreshold(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	id := seedReminderRequest(t, s, ctx, "PR-2026-000001", "pending")
+	id := seedReminderRequest(t, s, "PR-2026-000001", "pending")
 	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
 	th := ReminderThresholds{PendingAfterDays: 3, RepeatEveryDays: 1, StaleAfterDays: 1}
 	if _, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET submitted_at=? WHERE id=?`, now.AddDate(0, 0, -4), id); err != nil {
@@ -240,16 +230,16 @@ func TestRequestsPendingReminderHonoursConfiguredThreshold(t *testing.T) {
 func TestRequestsStaleProcessingSkipsSettledAndHonoursThreshold(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	now := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
 	th := ReminderThresholds{PendingAfterDays: 3, RepeatEveryDays: 1, StaleAfterDays: 1}
 
-	stale := seedReminderRequest(t, s, ctx, "PR-2026-000010", "processing")
+	stale := seedReminderRequest(t, s, "PR-2026-000010", "processing")
 	if _, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET processing_at=?, processing_by=? WHERE id=?`,
 		now.AddDate(0, 0, -3), actor.ID, stale); err != nil {
 		t.Fatal(err)
 	}
-	paid := seedReminderRequest(t, s, ctx, "PR-2026-000011", "processing")
+	paid := seedReminderRequest(t, s, "PR-2026-000011", "processing")
 	if _, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET processing_at=?, processing_by=? WHERE id=?`,
 		now.AddDate(0, 0, -3), actor.ID, paid); err != nil {
 		t.Fatal(err)

@@ -53,9 +53,9 @@ func TestBudgetAndMasterViewersHaveNoWriteControls(t *testing.T) {
 		t.Fatalf("viewer changed head: %q %v", headName, err)
 	}
 	// Full editors retain the controls, ensuring this isn't a blanket disable.
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	for _, tc := range []struct{ path, button string }{{"/budgets", "Save Budgets"}, {"/projects", "Add Project"}, {"/heads", "Add Head"}} {
-		body := responseBody(t, s.request(http.MethodGet, tc.path, nil, ""))
+		body := s.get(tc.path)
 		if !strings.Contains(body, tc.button) {
 			t.Errorf("editor lost %s", tc.button)
 		}
@@ -65,10 +65,7 @@ func TestBudgetAndMasterViewersHaveNoWriteControls(t *testing.T) {
 func TestMasterCreateAndEditGrantsAreIndependent(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Separate grants")
-	var projectID int64
-	if err := s.st.DB().QueryRow(`SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOf(t, s, headID)
 	for _, action := range []string{"create", "edit"} {
 		email := action + "@example.test"
 		s.seedProbeUser(email, action, "SeparateGrants123", action+"-only", []store.Grant{
@@ -80,7 +77,7 @@ func TestMasterCreateAndEditGrantsAreIndependent(t *testing.T) {
 			path, button string
 			id           int64
 		}{{"/projects", "Add Project", projectID}, {"/heads", "Add Head", headID}} {
-			body := responseBody(t, s.request(http.MethodGet, tc.path, nil, ""))
+			body := s.get(tc.path)
 			if strings.Contains(body, tc.button) != (action == "create") {
 				t.Errorf("%s-only wrong create control on %s", action, tc.path)
 			}

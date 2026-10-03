@@ -53,7 +53,7 @@ export default page({
     section('What a rejected request looks like'),
     prose(
       `The status pill reads **Rejected — final**, and the line beside it says *Closed. Raise a new
-       request if needed.* Your reason is shown twice: once in a banner across the top of the
+       request if needed* Your reason is shown twice: once in a banner across the top of the
        request, headed with your name, and again as a line in the history with the time you took the
        decision.`,
     ),
@@ -68,9 +68,10 @@ export default page({
     table(
       ['What you see', 'Why'],
       [
-        ['A message saying a reason is required to reject a request', 'The reason box was empty. It is checked before anything else.'],
+        ['*a reason is required to reject a request*', 'The reason box was empty. It is checked before anything else.'],
         ['*You do not have permission to perform this action.*', 'You are not the approver this request was routed to.'],
-        ['A message saying a request in that state cannot be rejected', 'Only a `pending` request can be rejected. Somebody has already decided it, or the requester withdrew it.'],
+        ['*this request changed; reload and review it before deciding*', 'The request changed after you opened it. Reload it, read what changed, and decide again.'],
+        ['A message such as *an approved request cannot be rejected*', 'Only a `pending` request can be rejected. Somebody has already decided it, or the requester withdrew it.'],
       ],
     ),
 

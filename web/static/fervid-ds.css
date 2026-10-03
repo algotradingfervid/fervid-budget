@@ -1,6 +1,14 @@
 /*
-  Fervid Budget design system
-  Dense server-rendered UI primitives for operational finance screens.
+  Fervid Budget design system — the app-wide stylesheet.
+
+  Colour, type, radius and shadow tokens (:root), base element styles, the
+  app shell, and every shared component: buttons, forms, tables, the variance
+  grid, pills, banners, sheets and the mobile chrome. The last part holds the
+  responsive rules: two breakpoints, 860px (desktop/phone layout) and 560px.
+
+  Some components are styled in more than one place: a shared base rule and
+  later, more specific rules. Where two rules have the same specificity the
+  later one wins, so moving a rule can change what the page looks like.
 */
 
 :root {
@@ -38,6 +46,19 @@
   --bad-line: #edc3bd;
   --warn-line: #ecd39a;
   --info-line: #c5daed;
+  /* Paler warn/ok tints used by metric tiles and the Approve button. */
+  --warn-pale: #fff8ef;
+  --warn-pale-line: #e6c9a8;
+  --warn-pale-ink: #8a5a12;
+  --ok-pale: #f4fbf5;
+  --ok-pale-line: #bcd9c2;
+  --ok-pale-ink: #256b3a;
+
+  /* Form controls and focus */
+  --input-border: #81766b;
+  --focus: 0 0 0 3px var(--info);
+  /* Focus outline on the dark sidebar and mobile chrome. */
+  --focus-on-dark: #ffdc8c;
 
   --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: Georgia, "Times New Roman", serif;
@@ -53,22 +74,6 @@
   --r-pill: 999px;
   --shadow-1: 0 1px 2px rgba(31, 39, 37, .07);
   --shadow-2: 0 2px 4px rgba(31, 39, 37, .06), 0 12px 28px rgba(31, 39, 37, .10);
-  --focus: 0 0 0 3px rgba(168, 58, 29, .26);
-
-  /* Legacy aliases — every pre-redesign rule reads these. Do not delete. */
-  --fb-bg: var(--paper);              --fb-surface: var(--surface);
-  --fb-surface-2: var(--surface-2);   --fb-surface-3: var(--surface-3);
-  --fb-text: var(--ink);              --fb-muted: var(--muted);
-  --fb-subtle: var(--muted-2);        --fb-border: var(--line);
-  --fb-border-strong: var(--line-2);  --fb-accent: var(--brand);
-  --fb-accent-strong: var(--brand-2); --fb-accent-soft: var(--brand-tint);
-  --fb-info: var(--info);             --fb-info-soft: var(--info-soft);
-  --fb-warn: var(--warn);             --fb-warn-soft: var(--warn-soft);
-  --fb-danger: var(--bad);            --fb-danger-soft: var(--bad-soft);
-  --fb-success: var(--ok);            --fb-success-soft: var(--ok-soft);
-  --fb-radius: var(--r);              --fb-radius-sm: var(--r-sm);
-  --fb-font: var(--font-ui);          --fb-mono: var(--font-mono);
-  --fb-focus: var(--focus);           --fb-shadow: var(--shadow-2);
 }
 
 *,
@@ -79,7 +84,6 @@
 
 html {
   min-height: 100%;
-  background: var(--fb-bg);
   font-size: 16px;
 }
 
@@ -87,13 +91,12 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   margin: 0;
-  color: var(--fb-text);
-  background: var(--fb-bg);
-  font-family: var(--fb-font);
   font-size: 14px;
   line-height: 1.45;
   letter-spacing: 0;
   text-rendering: optimizeLegibility;
+  color: var(--ink);
+  font-family: var(--font-ui);
 }
 
 img,
@@ -103,7 +106,7 @@ svg {
 }
 
 a {
-  color: var(--fb-accent-strong);
+  color: var(--brand-2);
   text-decoration: none;
 }
 
@@ -124,12 +127,12 @@ button {
 
 :focus-visible {
   outline: 2px solid transparent;
-  box-shadow: var(--fb-focus);
+  box-shadow: var(--focus);
 }
 
 ::selection {
   color: #fff;
-  background: var(--fb-accent);
+  background: var(--brand);
 }
 
 [hidden],
@@ -150,31 +153,8 @@ button {
 }
 
 /* App frame */
-.app-shell,
-.layout,
-.page-shell {
-  display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
-  min-height: 100vh;
-  min-height: 100dvh;
-}
 
-.sidebar,
-.app-sidebar {
-  position: sticky;
-  top: 0;
-  align-self: start;
-  height: 100vh;
-  height: 100dvh;
-  padding: 16px 12px;
-  overflow-y: auto;
-  color: #f5fbf8;
-  background: #20312d;
-  border-right: 1px solid rgba(255, 255, 255, .08);
-}
-
-.brand,
-.app-brand {
+.brand {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -187,92 +167,33 @@ button {
   border-bottom: 1px solid rgba(255, 255, 255, .12);
 }
 
-.brand img,
-.app-brand img {
+.brand img {
   width: 30px;
   height: 30px;
-  border-radius: 6px;
-}
-
-.nav,
-.app-nav {
-  display: grid;
-  gap: 3px;
-}
-
-.nav a,
-.nav-item,
-.app-nav a {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-height: 36px;
-  padding: 8px 10px;
-  color: rgba(255, 255, 255, .78);
-  border-radius: 6px;
-  text-decoration: none;
-}
-
-.nav a:hover,
-.nav-item:hover,
-.app-nav a:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, .08);
-  text-decoration: none;
-}
-
-.nav a[aria-current="page"],
-.nav a.is-active,
-.nav-item.is-active,
-.app-nav a[aria-current="page"] {
-  color: #fff;
-  background: var(--fb-accent);
+  border-radius: var(--r-sm);
 }
 
 .main,
-.app-main,
 main {
   min-width: 0;
   padding: 20px 24px 32px;
 }
 
-.topbar,
-.app-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 50px;
-  padding: 10px 0 18px;
-}
-
-.container,
-.page-container {
+.container {
   width: min(100%, 1520px);
   margin: 0 auto;
 }
 
-.page-header,
-.section-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.page-title,
 h1 {
   margin: 0;
-  color: var(--fb-text);
+  color: var(--ink);
   font-size: 24px;
   line-height: 1.12;
   font-weight: 780;
   letter-spacing: 0;
 }
 
-h2,
-.section-title {
+h2 {
   margin: 0 0 10px;
   font-size: 18px;
   line-height: 1.2;
@@ -288,95 +209,53 @@ h3 {
   letter-spacing: 0;
 }
 
-.eyebrow,
-.kicker,
-.subtle {
-  color: var(--fb-muted);
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0;
-}
-
-.muted,
-.help,
-.hint {
-  color: var(--fb-muted);
-}
-
 /* Toolbars and filters */
-.toolbar,
-.filters,
-.filter-bar,
-.actions {
+.toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-
-.toolbar,
-.filter-bar {
   padding: 10px;
   margin-bottom: 12px;
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
   box-shadow: 0 1px 0 rgba(31, 39, 37, .03);
 }
 
-.toolbar-spacer {
-  flex: 1 1 auto;
-}
-
-/* The toolbar's search box takes the width nothing else claimed, so the one
-   control a person types a sentence into is not the same size as a three-option
-   <select>.
-
-   `class="field search"` has been on five toolbars since Phase 0 — requests,
-   vendors, the accounts queue, approvals and the recoverables register — with no
-   rule for the bare `search` token anywhere in this file, so the token rendered
-   as nothing. It is not a token somebody invented: the approved stylesheet
-   carries `.toolbar .search { flex: 1 1 200px; }` (mockups/mockup.css:934), and
-   Phase 0 ported its two `.m-search` neighbours (see the 860px block) and
-   dropped this one. Ported verbatim, the same omission a80e18f fixed for four
-   other classes.
-
-   Growing only ever spends free space, and flex-shrink stays at 1, so this
-   cannot widen a toolbar or push a page sideways. */
+/* A toolbar's search box takes the width nothing else claims, so the box
+   people type a sentence into is wider than the selects beside it. Growing
+   only spends free space and flex-shrink stays at 1, so this never widens a
+   toolbar or pushes the page sideways. */
 .toolbar .search {
   flex: 1 1 200px;
 }
 
-.summary-strip,
-.metric-strip,
-.stats-grid {
+/* Metric tiles: a row of headline numbers */
+.metric-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(160px, 1fr));
   gap: 10px;
   margin-bottom: 12px;
 }
 
-.metric,
-.stat,
-.summary-card {
+.metric {
   min-width: 0;
   padding: 12px;
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: #fffdf9;
 }
 
-.metric-label,
-.stat-label {
+.metric-label {
   display: block;
-  color: var(--fb-muted);
+  color: var(--muted);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
-.metric-value,
-.stat-value {
+.metric-value {
   display: block;
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
@@ -385,47 +264,44 @@ h3 {
   font-weight: 780;
 }
 
-/* Phase 0 defects, fixed in Phase 6. All four appear in the approved mockups,
-   and .metric-foot is already emitted by shipped Phase-3, -4 and -5 templates,
-   so until now that third line in every metric tile rendered unstyled. */
+/* The small third line of a tile, e.g. "of 12 budgeted". */
 .metric-foot {
   display: block;
   margin-top: 4px;
-  color: var(--fb-muted);
+  color: var(--muted);
   font-size: 11.5px;
   line-height: 1.3;
 }
 
-/* The tone a metric carries when its number is the one to worry about, and the
-   matching reassuring tone. Both are borrow-nothing: only the accent changes,
-   so a strip of four tiles still reads as one row. */
+/* A tile whose number needs attention (warn) or is reassuring (good). Only
+   the tint changes, so a strip of tiles still reads as one row. */
 .metric.warn {
-  border-color: var(--fb-warn-border, #e6c9a8);
-  background: var(--fb-warn-bg, #fff8ef);
+  border-color: var(--warn-pale-line);
+  background: var(--warn-pale);
 }
 
 .metric.warn .metric-value {
-  color: var(--fb-warn-ink, #8a5a12);
+  color: var(--warn-pale-ink);
 }
 
 .metric.good {
-  border-color: var(--fb-good-border, #bcd9c2);
-  background: var(--fb-good-bg, #f4fbf5);
+  border-color: var(--ok-pale-line);
+  background: var(--ok-pale);
 }
 
 .metric.good .metric-value {
-  color: var(--fb-good-ink, #256b3a);
+  color: var(--ok-pale-ink);
 }
 
-/* The affirmative terminal action, distinct from the neutral one beside it. */
+/* The Approve button: green, so it stands apart from the neutral button beside it. */
 .btn.approve {
-  border-color: var(--fb-good-border, #bcd9c2);
-  background: var(--fb-good-bg, #f4fbf5);
-  color: var(--fb-good-ink, #256b3a);
+  border-color: var(--ok-pale-line);
+  background: var(--ok-pale);
+  color: var(--ok-pale-ink);
 }
 
 .btn.approve:hover {
-  border-color: var(--fb-good-ink, #256b3a);
+  border-color: var(--ok-pale-ink);
 }
 
 /* Buttons */
@@ -439,10 +315,10 @@ input[type="button"] {
   gap: 7px;
   min-height: 34px;
   padding: 7px 12px;
-  color: var(--fb-text);
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border-strong);
-  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
   font-weight: 680;
   line-height: 1.2;
   text-decoration: none;
@@ -453,38 +329,39 @@ input[type="button"] {
 button:hover,
 input[type="submit"]:hover,
 input[type="button"]:hover {
-  background: var(--fb-surface-2);
+  background: var(--surface-2);
   text-decoration: none;
 }
 
-.btn-primary,
+.btn.primary,
 button.primary,
 button[name="save"],
 input[type="submit"].primary {
   color: #fff;
-  background: var(--fb-accent);
-  border-color: var(--fb-accent);
+  background: var(--brand);
+  border-color: var(--brand);
 }
 
-.btn-primary:hover,
 button.primary:hover,
 button[name="save"]:hover,
 input[type="submit"].primary:hover {
-  background: var(--fb-accent-strong);
-  border-color: var(--fb-accent-strong);
+  background: var(--brand-2);
+  border-color: var(--brand-2);
 }
 
-/* `.btn.danger` is the approved spelling: the mockups use it on anchors as
-   well as buttons, and an <a class="btn danger"> matched none of the element
-   selectors below, so a destructive link rendered as an ordinary one. */
+/* A primary link darkens its fill on hover and keeps its border. */
+.btn.primary:hover {
+  background: var(--brand-2);
+}
+
+/* Destructive actions. `.btn.danger` covers links styled as buttons too. */
 .btn.danger,
-.btn-danger,
 button.danger,
 button[name="delete"],
 button[name="void"] {
   color: #fff;
-  background: var(--fb-danger);
-  border-color: var(--fb-danger);
+  background: var(--bad);
+  border-color: var(--bad);
 }
 
 .btn.danger:hover {
@@ -492,20 +369,6 @@ button[name="void"] {
   border-color: #8f1b12;
 }
 
-.btn-ghost,
-.btn-link {
-  color: var(--fb-accent-strong);
-  background: transparent;
-  border-color: transparent;
-}
-
-.icon-btn {
-  width: 34px;
-  min-width: 34px;
-  padding: 0;
-}
-
-.btn-sm,
 .compact button,
 button.small {
   min-height: 28px;
@@ -517,34 +380,28 @@ button.small {
 button[disabled],
 input[disabled],
 select[disabled],
-textarea[disabled],
-.is-disabled {
+textarea[disabled] {
   cursor: not-allowed;
   opacity: .58;
 }
 
+/* Segmented controls and tabs */
 .segmented,
 .tabs {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   padding: 3px;
-  background: var(--fb-surface-2);
-  border: 1px solid var(--fb-border);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
   border-radius: 7px;
 }
 
-/* A strip such as the roles switcher grows one item per row and has no upper
-   bound a template can enforce. Every other wide surface in this system
-   contains its own overflow rather than the page's -- .table-wrap,
-   .grid-wrap, .budget-grid and .data-table all set `overflow: auto` below.
-   .segmented matches that intent: past this width the strip scrolls in its
-   own box, and the page -- with the sidebar and the mobile tab bar it
-   carries along -- never does. The items keep their natural size (see
-   flex-shrink below) so the strip scrolls rather than squishing into
-   illegible tabs, and because they are <a>/<button> elements the scrollable
-   region already contains focusable content, so it is keyboard-reachable
-   without extra markup. */
+/* A strip such as the roles switcher has one item per role, so it can grow
+   without limit. Like .table-wrap, it scrolls inside its own box instead of
+   pushing the page sideways. The items keep their natural size (flex-shrink:
+   0 below) so the strip scrolls rather than squashing them, and because they
+   are links and buttons the scrolling box is reachable by keyboard. */
 .segmented {
   max-width: 100%;
   overflow-x: auto;
@@ -558,7 +415,7 @@ textarea[disabled],
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--fb-muted);
+  color: var(--muted);
   font-weight: 680;
   flex-shrink: 0;
   white-space: nowrap;
@@ -568,9 +425,22 @@ textarea[disabled],
 .segmented .is-active,
 .tab[aria-selected="true"],
 .tab.is-active {
-  color: var(--fb-text);
-  background: var(--fb-surface);
+  color: var(--ink);
+  background: var(--surface);
   box-shadow: 0 1px 2px rgba(31, 39, 37, .08);
+}
+
+.tabs {
+  margin: 0 28px 12px;
+}
+
+.tab {
+  text-decoration: none;
+}
+
+.tab.is-active {
+  color: #fff;
+  background: var(--brand);
 }
 
 /* Forms */
@@ -579,16 +449,13 @@ form {
 }
 
 .form,
-.form-panel,
-.panel,
 .card {
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
 }
 
-.form,
-.form-panel {
+.form {
   padding: 16px;
 }
 
@@ -598,10 +465,10 @@ form {
   gap: 12px;
 }
 
-/* The tracks above can already shrink, but a grid item defaults to
-   min-width:auto — its content's intrinsic width — and an <input> refuses to go
-   narrower than roughly its `size`. Without this, a narrow window pushes the
-   whole document sideways instead of the field simply becoming narrower. */
+/* The tracks above can shrink, but a grid item defaults to min-width: auto
+   (its content's natural width) and an <input> will not go narrower than
+   roughly its `size`. Without this a narrow window pushes the whole page
+   sideways instead of the field getting narrower. */
 .form-grid > * {
   min-width: 0;
 }
@@ -613,11 +480,14 @@ form {
   max-width: 100%;
 }
 
-.field,
-.form-field {
+/* A form-grid row stretches every field to the tallest one (the one with a
+   hint or the amount in words). align-content: start keeps each field's rows
+   at their natural height, so controls in a row line up at the top. */
+.field {
   display: grid;
   gap: 5px;
   min-width: 0;
+  align-content: start;
 }
 
 .field.span-2 { grid-column: span 2; }
@@ -631,7 +501,7 @@ form {
 
 label,
 .label {
-  color: var(--fb-text);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 720;
 }
@@ -642,10 +512,10 @@ textarea {
   width: 100%;
   min-height: 34px;
   padding: 7px 9px;
-  color: var(--fb-text);
+  color: var(--ink);
   background: #fff;
-  border: 1px solid var(--fb-border-strong);
-  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
   box-shadow: inset 0 1px 1px rgba(31, 39, 37, .04);
 }
 
@@ -659,78 +529,46 @@ input[type="radio"] {
   width: 16px;
   min-height: 16px;
   padding: 0;
-  accent-color: var(--fb-accent);
+  accent-color: var(--brand);
 }
 
 input[type="file"] {
   padding: 5px;
-  background: var(--fb-surface);
-}
-
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: var(--fb-accent);
-  outline: 0;
-  box-shadow: var(--fb-focus);
-}
-
-input[aria-invalid="true"],
-select[aria-invalid="true"],
-textarea[aria-invalid="true"],
-.field-error input,
-.field-error select,
-.field-error textarea {
-  border-color: var(--fb-danger);
+  background: var(--surface);
 }
 
 .error,
 .field-error-message {
-  color: var(--fb-danger);
+  color: var(--bad);
   font-size: 12px;
   font-weight: 650;
 }
 
-.form-actions,
-.modal-actions {
+.field-error-message {
+  margin: 4px 0;
+}
+
+.form-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding-top: 12px;
   margin-top: 12px;
-  border-top: 1px solid var(--fb-border);
-}
-
-fieldset {
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
-}
-
-legend {
-  padding: 0 5px;
-  color: var(--fb-muted);
-  font-size: 12px;
-  font-weight: 760;
+  border-top: 1px solid var(--line);
 }
 
 /* Tables and variance grid */
-.table-wrap,
-.grid-wrap,
-.budget-grid,
-.data-table {
+.table-wrap {
   width: 100%;
-  /* `overflow: auto` only contains the table if the box is allowed to be
-     narrower than its contents. As a grid or flex item it is not: min-width
-     defaults to auto, i.e. the table's min-content width, so the wrapper grew to
-     the full width of the roles matrix and scrolled the page sideways instead of
-     itself. width:100% cannot override that — only a real min-width can. */
+  /* `overflow: auto` only contains the table if the box may be narrower than
+     its contents. As a grid or flex item its min-width defaults to the
+     table's own width, so without this the wrapper grows and the page scrolls
+     sideways instead of the wrapper. */
   min-width: 0;
   overflow: auto;
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
 }
 
 table {
@@ -742,7 +580,7 @@ table {
 th,
 td {
   padding: 8px 10px;
-  border-bottom: 1px solid var(--fb-border);
+  border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
 
@@ -751,7 +589,7 @@ th {
   top: 0;
   z-index: 2;
   color: #33413e;
-  background: var(--fb-surface-2);
+  background: var(--surface-2);
   font-size: 11px;
   font-weight: 780;
   text-align: left;
@@ -760,7 +598,7 @@ th {
 }
 
 td {
-  background: var(--fb-surface);
+  background: var(--surface);
 }
 
 tbody tr:hover td {
@@ -774,8 +612,6 @@ tbody tr:last-child td {
 .num,
 .money,
 .amount,
-.variance,
-.percent,
 td[data-type="money"],
 td[data-type="number"] {
   text-align: right;
@@ -783,7 +619,6 @@ td[data-type="number"] {
   white-space: nowrap;
 }
 
-.sticky-col,
 .project-col,
 .head-col {
   position: sticky;
@@ -792,267 +627,88 @@ td[data-type="number"] {
   background: inherit;
 }
 
-th.sticky-col,
 th.project-col,
 th.head-col {
   z-index: 3;
-  background: var(--fb-surface-2);
+  background: var(--surface-2);
 }
 
-.project-row td,
-.group-row td {
+.project-row td {
   background: #edf4f1;
   font-weight: 760;
 }
 
-.subtotal-row td,
-.total-row td,
-tfoot td {
-  background: #f4f6f2;
-  border-top: 1px solid var(--fb-border-strong);
-  font-weight: 780;
+.over {
+  color: var(--bad);
 }
 
-.grand-total td {
-  color: #fff;
-  background: #2d423d;
-  border-color: #2d423d;
+.under {
+  color: var(--ok);
 }
 
-.variance-positive,
-.over,
-.text-danger {
-  color: var(--fb-danger);
-}
-
-.variance-negative,
-.under,
-.text-success {
-  color: var(--fb-success);
-}
-
-.variance-zero,
 .on-track {
-  color: var(--fb-accent-strong);
+  color: var(--brand-2);
 }
 
-.budget-bar,
-.variance-bar {
-  position: relative;
-  min-width: 110px;
-  height: 8px;
-  overflow: hidden;
-  background: var(--fb-surface-3);
-  border-radius: 999px;
-}
-
-.budget-bar > span,
-.variance-bar > span,
-.bar-fill {
-  display: block;
-  width: var(--value, 0%);
-  max-width: 100%;
-  height: 100%;
-  background: var(--fb-accent);
-  border-radius: inherit;
-}
-
-.budget-bar.over > span,
-.variance-bar.over > span,
-.bar-fill.over {
-  background: var(--fb-danger);
-}
-
-.budget-bar.warn > span,
-.variance-bar.warn > span,
-.bar-fill.warn {
-  background: #cf8b1a;
-}
-
-.row-actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
-  white-space: nowrap;
-}
-
-/* Banners and badges */
-.banner,
+/* Alerts and the lock banner (.banner has its own rules further down) */
 .alert,
-.locked-banner,
 .lock-banner {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
   margin-bottom: 12px;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
-  background: var(--fb-info-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--info-soft);
   color: var(--info);
 }
 
-.locked-banner,
-.lock-banner,
-.alert-warning {
+.lock-banner {
   color: var(--warn);
-  background: var(--fb-warn-soft);
+  background: var(--warn-soft);
   border-color: var(--warn-line);
 }
 
-.alert-danger {
-  color: var(--bad);
-  background: var(--fb-danger-soft);
-  border-color: var(--bad-line);
-}
-
-.alert-success {
-  color: var(--ok);
-  background: var(--fb-success-soft);
-  border-color: var(--ok-line);
-}
-
-.badge,
-.status,
-.status-badge,
-[data-status] {
+.status {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   min-height: 22px;
   padding: 3px 8px;
-  border: 1px solid var(--fb-border);
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--fb-surface-2);
-  color: var(--fb-muted);
+  background: var(--surface-2);
+  color: var(--muted);
   font-size: 12px;
   font-weight: 760;
   line-height: 1;
   white-space: nowrap;
 }
 
-.badge::before,
-.status-badge::before,
-[data-status]::before {
-  width: 7px;
-  height: 7px;
-  content: "";
-  background: currentColor;
-  border-radius: 999px;
-}
-
-.badge.over,
-.status-over,
-[data-status="over"] {
-  color: var(--fb-danger);
-  background: var(--fb-danger-soft);
-  border-color: var(--bad-line);
-}
-
-.badge.unbudgeted,
-.status-unbudgeted,
-[data-status="unbudgeted"] {
-  color: var(--fb-warn);
-  background: var(--fb-warn-soft);
-  border-color: var(--warn-line);
-}
-
-.badge.under,
-.status-under,
-[data-status="under"] {
-  color: var(--fb-success);
-  background: var(--fb-success-soft);
-  border-color: var(--ok-line);
-}
-
-.badge.on-track,
-.status-on-track,
-[data-status="on-track"],
-[data-status="on_track"] {
-  color: var(--fb-accent-strong);
-  background: var(--fb-accent-soft);
-  border-color: var(--brand-tint-2);
-}
-
-.badge.not-paid,
-.status-not-paid,
-[data-status="not-paid"],
-[data-status="not_paid"] {
-  color: var(--fb-muted);
-  background: var(--fb-surface-2);
-}
-
-.badge.locked,
-.status-locked,
-[data-status="locked"] {
-  color: var(--fb-warn);
-  background: var(--fb-warn-soft);
-  border-color: var(--warn-line);
-}
-
-.role-admin {
-  color: var(--fb-info);
-  background: var(--fb-info-soft);
-}
-
-.role-data-entry,
-.role-data_entry {
-  color: var(--fb-accent-strong);
-  background: var(--fb-accent-soft);
-}
-
 /* Audit and detail views */
-.details-grid,
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
-.detail,
-.detail-item {
-  min-width: 0;
-  padding: 10px;
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius-sm);
-}
-
-.detail-label {
-  display: block;
-  color: var(--fb-muted);
-  font-size: 11px;
-  font-weight: 760;
-  text-transform: uppercase;
-}
-
-.detail-value {
-  display: block;
-  margin-top: 3px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.audit-list,
 .timeline {
   display: grid;
   gap: 8px;
-  margin: 0;
+  margin: 0 28px;
   padding: 0;
   list-style: none;
 }
 
-.audit-entry,
 .timeline-item {
   position: relative;
   padding: 10px 12px 10px 34px;
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
 }
 
-.audit-entry::before,
 .timeline-item::before {
   position: absolute;
   top: 16px;
@@ -1060,20 +716,18 @@ tfoot td {
   width: 9px;
   height: 9px;
   content: "";
-  background: var(--fb-accent);
+  background: var(--brand);
   border-radius: 999px;
 }
 
-.audit-meta,
-.timeline-meta {
+.audit-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 12px;
-  color: var(--fb-muted);
+  color: var(--muted);
   font-size: 12px;
 }
 
-.audit-diff,
 .diff {
   display: grid;
   gap: 6px;
@@ -1081,16 +735,16 @@ tfoot td {
   padding: 8px;
   overflow-x: auto;
   background: #f9faf8;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius-sm);
-  font-family: var(--fb-mono);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
 details {
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
 }
 
 summary {
@@ -1103,34 +757,18 @@ details > :not(summary) {
   margin: 0 11px 11px;
 }
 
-dialog,
-.modal {
+dialog {
   width: min(680px, calc(100vw - 24px));
   padding: 0;
-  color: var(--fb-text);
-  background: var(--fb-surface);
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
-  box-shadow: var(--fb-shadow);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-2);
 }
 
-dialog::backdrop,
-.modal-backdrop {
+dialog::backdrop {
   background: rgba(31, 39, 37, .42);
-}
-
-.modal-header,
-.modal-body,
-.modal-footer {
-  padding: 14px 16px;
-}
-
-.modal-header {
-  border-bottom: 1px solid var(--fb-border);
-}
-
-.modal-footer {
-  border-top: 1px solid var(--fb-border);
 }
 
 /* HTMX affordances */
@@ -1168,45 +806,9 @@ dialog::backdrop,
   gap: 8px;
 }
 
-.split {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.right {
-  margin-left: auto;
-}
-
-.text-right {
-  text-align: right;
-}
-
-.nowrap {
-  white-space: nowrap;
-}
-
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.p-0 { padding: 0 !important; }
-.mt-0 { margin-top: 0 !important; }
-.mb-0 { margin-bottom: 0 !important; }
-
-
-
 @media print {
   .sidebar,
-  .app-sidebar,
-  .topbar,
-  .app-topbar,
   .toolbar,
-  .filter-bar,
-  .actions,
   .btn,
   button {
     display: none !important;
@@ -1214,15 +816,12 @@ dialog::backdrop,
 
   body,
   .main,
-  .app-main,
   main {
     background: #fff;
     padding: 0;
   }
 
   .table-wrap,
-  .grid-wrap,
-  .budget-grid,
   .card,
   .panel {
     box-shadow: none;
@@ -1230,15 +829,12 @@ dialog::backdrop,
   }
 }
 
-/* v4 variance grid theme, adapted from docs/superpowers/specs/2026-06-29-v4-variance-grid.html */
+/* ==========================================================================
+   App shell (sidebar and page column) and the variance grid
+   ========================================================================== */
 html,
 body {
   background: var(--paper);
-}
-
-body {
-  color: var(--ink);
-  font-family: var(--font-ui);
 }
 
 .appshell {
@@ -1249,9 +845,12 @@ body {
   background: var(--paper);
 }
 
+/* The dark desktop sidebar: brand, navigation, and the user at the bottom. */
 .sidebar {
   position: sticky;
   top: 0;
+  align-self: start;
+  color: #f5fbf8;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1259,21 +858,8 @@ body {
   height: 100dvh;
   padding: 18px 12px;
   overflow-y: auto;
-  background: #191817;
+  background: var(--sidebar);
   border-right: 1px solid rgba(255, 255, 255, .08);
-}
-
-.logo-link {
-  display: flex;
-  align-items: center;
-  min-height: 58px;
-  padding: 8px 10px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, .08);
-}
-
-.logo {
-  width: 178px;
-  height: auto;
 }
 
 .side-nav {
@@ -1288,7 +874,7 @@ body {
   min-height: 38px;
   padding: 9px 11px;
   color: #bdb7af;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-weight: 650;
   text-decoration: none;
 }
@@ -1366,31 +952,6 @@ body {
   min-width: 0;
   padding: 0;
   background: var(--paper);
-}
-
-.page > h1,
-.page > .panel,
-.page > form:not(.toolbar),
-.page > table,
-.page > .table-wrap,
-.page > .split,
-.page > .details,
-.page > h2,
-.page > .alert,
-.page > .locked,
-.page > .toolbar:not(.gridhead .toolbar) {
-  margin-right: 28px;
-  margin-left: 28px;
-}
-
-.page > h1 {
-  padding-top: 24px;
-  margin-bottom: 14px;
-  font-family: var(--font-display);
-}
-
-.page > .table-wrap {
-  width: auto;
 }
 
 .gridhead {
@@ -1471,26 +1032,6 @@ body {
 
 .spacer {
   flex: 1 1 auto;
-}
-
-.btn,
-.button,
-button {
-  border-radius: 6px;
-}
-
-.btn.primary,
-.button.primary,
-button.primary {
-  color: #fff;
-  background: var(--brand);
-  border-color: var(--brand);
-}
-
-.btn.primary:hover,
-.button.primary:hover,
-button.primary:hover {
-  background: var(--brand-2);
 }
 
 .btn.outline {
@@ -1599,19 +1140,9 @@ table.matrix tr.head:hover td {
   background: var(--brand-tint);
 }
 
-.project-name {
-  color: var(--muted);
-  font-weight: 650;
-}
-
 .hname {
   color: var(--ink-2);
   font-weight: 650;
-}
-
-.due {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 tr.total td {
@@ -1650,7 +1181,11 @@ tr.total .pctxt {
   min-width: 108px;
 }
 
+/* Variance bar: how much of the budget is used. It is an inline <span>, so
+   inline-block is needed for its width to apply at all. The fill colour comes
+   from .is-under/.is-ontrack/.is-over/.is-unbudgeted (or .ok/.warn/.bad). */
 .vbar {
+  display: inline-block;
   position: relative;
   flex: 1;
   height: 9px;
@@ -1705,46 +1240,11 @@ tr.total .pctxt {
   color: var(--muted-2);
 }
 
-.badge {
-  min-height: 22px;
-  padding: 4px 8px;
-  border-radius: var(--r-pill);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.badge.under {
-  color: var(--ok);
-  background: var(--ok-soft);
-  border-color: var(--ok-line);
-}
-
-.badge.on-track {
-  color: var(--brand-2);
-  background: var(--brand-tint);
-  border-color: var(--brand-tint-2);
-}
-
-.badge.over {
-  color: var(--bad);
-  background: var(--bad-soft);
-  border-color: var(--bad-line);
-}
-
-.badge.unbudgeted {
-  color: var(--warn);
-  background: var(--warn-soft);
-  border-color: var(--warn-line);
-}
-
-.badge.not-paid {
-  color: var(--muted);
-  background: var(--surface-2);
-  border-color: var(--line-2);
-}
-
+/* Two-column page body: main content and a narrower side column. */
 .split {
   display: grid;
+  align-items: center;
+  justify-content: space-between;
   grid-template-columns: minmax(0, 1.6fr) minmax(280px, .8fr);
   gap: 16px;
   padding-bottom: 36px;
@@ -1752,9 +1252,7 @@ tr.total .pctxt {
 
 .split > div,
 .panel,
-.details,
-.page > table,
-.page > form:not(.toolbar) {
+.details {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1786,7 +1284,7 @@ tr.total .pctxt {
   height: 76px;
   margin-bottom: 18px;
   content: "";
-  background-color: #191817;
+  background-color: var(--sidebar);
   background-image: url("/static/fervid-logo.svg");
   background-repeat: no-repeat;
   background-position: center;
@@ -1800,8 +1298,9 @@ tr.total .pctxt {
   font-family: var(--font-display);
 }
 
-
-/* UX implementation pass */
+/* ==========================================================================
+   Page header band, page-level blocks and the variance grid's details
+   ========================================================================== */
 .page-banner {
   display: flex;
   align-items: flex-start;
@@ -1835,8 +1334,7 @@ tr.total .pctxt {
 }
 
 .page-banner > form,
-.page-banner > .btn,
-.page-banner > .badge {
+.page-banner > .btn {
   flex: 0 0 auto;
   margin-top: 8px;
 }
@@ -1853,26 +1351,8 @@ tr.total .pctxt {
   margin: 16px 0 4px;
 }
 
-.metric {
-  background: #fffdf9;
-  border-color: var(--line);
-}
-
 .metric-value {
   color: var(--ink);
-}
-
-.tabs {
-  margin: 0 28px 12px;
-}
-
-.tab {
-  text-decoration: none;
-}
-
-.tab.is-active {
-  color: #fff;
-  background: var(--brand);
 }
 
 .matrix .project-col {
@@ -1976,36 +1456,6 @@ tr.total .pctxt {
   font-size: 12px;
 }
 
-.badge.locked,
-.badge.warn {
-  color: var(--warn);
-  background: var(--warn-soft);
-  border-color: var(--warn-line);
-}
-
-.badge.good {
-  color: var(--ok);
-  background: var(--ok-soft);
-  border-color: var(--ok-line);
-}
-
-.badge.info {
-  color: var(--info);
-  background: var(--info-soft);
-  border-color: var(--info-line);
-}
-
-.badge.danger {
-  color: var(--bad);
-  background: rgba(180, 35, 24, .11);
-  border-color: rgba(180, 35, 24, .24);
-}
-
-.badge.neutral {
-  color: var(--muted);
-  background: var(--surface-2);
-}
-
 .locked,
 .alert.error,
 .alert.success {
@@ -2025,17 +1475,19 @@ tr.total .pctxt {
 
 .alert.error {
   color: var(--bad);
-  background: var(--fb-danger-soft);
+  background: var(--bad-soft);
   border-color: var(--bad-line);
 }
 
 .alert.success {
   color: var(--ok);
-  background: var(--fb-success-soft);
+  background: var(--ok-soft);
   border-color: var(--ok-line);
 }
 
 .due {
+  color: var(--muted);
+  font-size: 12px;
   display: grid;
   gap: 2px;
 }
@@ -2111,13 +1563,10 @@ tr.total .pctxt {
   min-height: 86px;
 }
 
-/* The three payment grids set their own column shapes. The lower bound of each
-   track used to be a pixel floor, which added up to more than the column is wide
-   between the 860px breakpoint and a full desktop — 766px of minimums inside a
-   666px container on the reference row — and the excess pushed the whole
-   document sideways. A floor of 0 leaves the proportions untouched wherever
-   there is room (the fr value wins whenever it is the larger of the two), and
-   lets the tracks shrink instead of overflowing when there is not. */
+/* The three payment grids set their own column shapes. Each track's lower
+   bound is 0, not a pixel width: pixel floors can add up to more than the
+   column is wide between 860px and a full desktop and push the page sideways.
+   Where there is room the fr proportions apply unchanged. */
 .payment-core .form-grid {
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
 }
@@ -2175,7 +1624,7 @@ tr.total .pctxt {
   padding: 10px;
   background: #fffdf9;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 
 .detail-grid dt {
@@ -2208,11 +1657,6 @@ tr.total .pctxt {
   gap: 10px;
 }
 
-.timeline {
-  margin-right: 28px;
-  margin-left: 28px;
-}
-
 .timeline-item p {
   margin: 5px 0 0;
 }
@@ -2239,7 +1683,7 @@ pre {
   padding: 8px;
   background: #f8f6f1;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -2249,8 +1693,7 @@ pre {
   min-width: 140px;
 }
 
-/* Single definition — the design-system checkline and the legacy one are the
-   same component, so this rule carries both sets of declarations. */
+/* A checkbox with its label on one line. */
 .checkline {
   display: inline-flex !important;
   align-items: center;
@@ -2258,10 +1701,9 @@ pre {
   min-width: auto !important;
   font-size: 13px;
   font-weight: 650;
-  /* A label is as long as its sentence, and a confirmation sentence is longer
-     than a phone is wide. nowrap made the label as wide as its text, so the
-     head-deactivation warning scrolled 103px sideways at 390px (F-G-024). Short
-     labels still sit on one line wherever there is room for them. */
+  /* A confirmation sentence can be longer than a phone is wide, so the label
+     wraps instead of scrolling the page sideways. Short labels still sit on
+     one line wherever there is room. */
   max-width: 100%;
   white-space: normal;
 }
@@ -2274,10 +1716,8 @@ pre {
   overflow-x: auto;
 }
 
-/* .table-wrap sets width:100%, so side margins here would push the box past
-   the container and overflow the document by exactly the margin. width:auto
-   lets a block fill what is left after its own margins, which is the inset
-   this rule was always after. */
+/* .table-wrap sets width: 100%, so with side margins the box would overflow
+   its container by the margin. width: auto fills what is left after them. */
 .payments-table {
   width: auto;
   margin-right: 28px;
@@ -2297,10 +1737,10 @@ pre {
   min-width: 220px;
 }
 
-/* On a <td> the flex box took the cell out of table layout: it stopped
-   stretching to the row's height, so its bottom rule sat above the row's
-   (ui-1). The cell stays a cell and its single wrapper lays the buttons out.
-   The phone restack (table.t-cards tbody td) outranks this and keeps its flex. */
+/* On a <td>, display: flex would take the cell out of table layout and its
+   bottom border would no longer line up with the row's. The cell stays a
+   table cell and its single wrapper lays the buttons out. The phone restack
+   (table.t-cards tbody td) is more specific and keeps its flex. */
 td.actions-cell { display: table-cell; }
 td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 
@@ -2315,7 +1755,7 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   padding: 4px 8px;
   color: var(--bad);
   border: 1px solid rgba(180, 35, 24, .24);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: rgba(180, 35, 24, .08);
   font-size: 12px;
   font-weight: 800;
@@ -2332,17 +1772,9 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   border-radius: 8px;
 }
 
-.budget-editor table input,
-.page > table input,
-.page > table select {
+.budget-editor table input {
   min-width: 130px;
 }
-
-.page > table input[type="checkbox"] {
-  min-width: 0;
-}
-
-
 
 .error-state {
   max-width: 760px;
@@ -2377,27 +1809,18 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
 }
 
 /* ==========================================================================
-   New components — layout
+   Page layout
    ========================================================================== */
 
-/* The gutter between the sidebar and the content lives here, on the column
-   itself, so every block inside it is inset by the same amount.
-
-   It used to be applied the other way round — an opt-in list of `.page > h1,
-   .page > .panel, …` selectors further up this file — which stopped matching
-   anything when this `.page-inner` wrapper was introduced between `.page` and
-   the content. The result was that only the two blocks carrying their own
-   padding (`.page-banner` and `.gridhead`) were indented; the other thirty-odd
-   block types sat flush against the sidebar, while the 1180px measure left a
-   gap on the right. Setting it once, here, is what keeps it consistent: a new
-   block cannot be forgotten because there is no list to add it to. */
+/* The gutter between the sidebar and the content is set once, on the column
+   itself (main.page > .page-inner), so every block inside is inset by the
+   same amount and a new kind of block needs no rule of its own. */
 .page-inner {
   width: 100%;
   max-width: calc(1180px + var(--page-gutter) * 2);
   padding-inline: var(--page-gutter);
-  /* The same gutter above the first block. A page that opens on a card rather
-     than a banner — a request, a payment — otherwise drew that card's border
-     along the very top of the window. */
+  /* The same gutter above the first block, so a page that opens on a card
+     does not draw the card's border along the top of the window. */
   padding-top: var(--page-gutter);
 }
 
@@ -2416,14 +1839,12 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   margin-top: calc(var(--page-gutter) * -1);
 }
 
-/* The layout draws its flash (.alert.error / .alert.success) ahead of the
-   page's own content, so on a page that opens with a band the band is no
-   longer :first-child: the flash took the top gutter and the band sat under
-   it, off the top edge (rbac-11 review). When a flash — or the pair of them —
-   is followed by a band, the flash opens the page in the band's place: it
-   takes the top gutter and the full column width, drops its rounded corners
-   and side borders, and the band follows it flush. A flash ahead of a card
-   keeps the gutter, as the card would. */
+/* The layout draws its flash message (.alert.error / .alert.success) before
+   the page's own content, so on a page that opens with a band the band is not
+   the first child. When a flash (or two) is followed by a band, the flash
+   takes the band's place at the top: full column width, no top gutter, no
+   rounded corners or side borders, with the band flush below it. A flash
+   before a card keeps the gutter, as the card would. */
 .page-inner > .alert:first-child:has(+ .page-banner, + .gridhead, + .alert + .page-banner, + .alert + .gridhead),
 .page-inner > .alert:first-child + .alert:has(+ .page-banner, + .gridhead) {
   margin-inline: calc(var(--page-gutter) * -1);
@@ -2438,10 +1859,9 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   margin-top: calc(var(--page-gutter) * -1);
 }
 
-/* Three blocks predate the gutter and carry a hand-written 28px of their own.
-   Nested inside a card that margin is real spacing and must stay, so it is only
-   cancelled where the block sits directly in the content column and the gutter
-   has already done the job. */
+/* Three blocks carry side margins of their own (28px). Inside a card that is
+   real spacing, so it is cancelled only where the block sits directly in the
+   content column and the gutter already insets it. */
 .page-inner > .timeline,
 .page-inner > .payments-table,
 .page-inner > .tabs {
@@ -2542,10 +1962,6 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   padding: 14px;
 }
 
-.panel-pad-sm {
-  padding: 12px;
-}
-
 .section-head {
   display: flex;
   flex-wrap: wrap;
@@ -2568,20 +1984,7 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   font-weight: 700;
 }
 
-.greet {
-  margin-bottom: 12px;
-}
-
-.greet h1 {
-  font-size: 21px;
-}
-
-.greet p {
-  margin: 2px 0 0;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-
+/* Small utilities */
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -2589,7 +1992,6 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
 
 .stack-8 > * + * { margin-top: 8px; }
 .stack-12 > * + * { margin-top: 12px; }
-.stack-16 > * + * { margin-top: 16px; }
 
 .row {
   display: flex;
@@ -2602,18 +2004,17 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   margin-left: auto;
 }
 
-/* Device-only blocks. Each is hidden by the viewport that should NOT see it,
-   so the element keeps its own display (grid, flex, table) on the viewport
-   that should. `display: revert` cannot do this: it rolls the whole author
-   origin back, so a .type-grid.m-only would come back as `block`, not `grid`
-   — measured, not assumed. Hence the complement query; it is the same 860px
-   line, not a new breakpoint. */
+/* Device-only blocks (.m-only here, .d-only in the 860px block). Each is
+   hidden on the screens that should not see it, so on the others it keeps its
+   own display (grid, flex, table). `display: revert` would not work: it
+   resets to the browser default, so a .type-grid.m-only would become `block`.
+   861px is the other side of the same 860px line, not a new breakpoint. */
 @media (min-width: 861px) {
   .m-only { display: none !important; }
 }
 
 /* ==========================================================================
-   New components — status pills and the waiting-on line
+   Status pills and the waiting-on line
    ========================================================================== */
 
 .pill {
@@ -2639,14 +2040,13 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
 
 .pill.awaiting   { color: var(--info);    background: var(--info-soft);  border-color: var(--info-line); }
 .pill.returned   { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
-.pill.rejected   { color: #8d5a54;        background: var(--surface-2);  border-color: var(--line-2); }
+.pill.rejected   { color: #8d5a54;        background: var(--surface-2); }
 .pill.approved   { color: var(--brand-2); background: var(--brand-tint); border-color: var(--brand-tint-2); }
 .pill.hold       { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
 .pill.cancelreq  { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
-.pill.cancelled  { color: var(--muted);   background: var(--surface-2);  border-color: var(--line-2); }
+.pill.cancelled  { color: var(--muted);   background: var(--surface-2); }
 .pill.processing { color: var(--brand-2); background: var(--brand-tint); border-color: var(--brand-tint-2); }
 .pill.partial    { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
-.pill.discussion { color: var(--warn);    background: var(--warn-soft);  border-color: #e0c48b; }
 .pill.completed  { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
 .pill.completed-partial { color: var(--ok); background: var(--surface); border-color: var(--ok); }
 .pill.recoverable { color: #59409a;       background: #ece7f7;           border-color: #d5c9ee; }
@@ -2656,12 +2056,10 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
 .pill.info       { color: var(--info);    background: var(--info-soft);  border-color: var(--info-line); }
 .pill.warn       { color: var(--warn);    background: var(--warn-soft);  border-color: var(--warn-line); }
 
-/* Variance-grid tones. The grid renders statusFor() straight into the class,
-   so these five names are fixed by internal/app.statusForView, not chosen
-   here. They carry the same values the .badge equivalents did, so retiring
-   .badge (decision D5) recolours nothing — except On track, whose copied
-   brand rust read as a cousin of Over while its legend swatch and bar are the
-   green --track. The pill is that green now, dot and rule included (BV22). */
+/* Variance-grid tones. The grid writes the head's status straight into the
+   class, so these names come from the Go code (statusForView), not from here.
+   On track uses the green --track colour, matching its legend swatch and
+   bar, so it cannot be mistaken for Over. */
 .pill.under      { color: var(--ok);      background: var(--ok-soft);    border-color: var(--ok-line); }
 .pill.on-track   { color: #25603a;        background: #e9f5ed;           border-color: var(--track); }
 .pill.on-track::before { background: var(--track); }
@@ -2687,22 +2085,22 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   font-weight: 800;
 }
 
-/* Striped and dashed treatments carry "someone is mid-action". */
+/* Striped and dashed pills mean "someone is in the middle of this". */
 .pill.hold,
 .pill.processing {
   background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .55) 0 5px, transparent 5px 10px);
 }
 
-.pill.discussion { border-style: dashed; }
+.pill.discussion {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: #e0c48b;
+  border-style: dashed;
+}
 
-/* Closed states are deliberately quieter than live ones, but the quietening
-   used to be `opacity: .78` over the whole pill, which fades the text as well
-   as the frame: "Rejected — final" measured 3.2:1 against the card behind it
-   (#a57d78 on #f3f1eb) where AA asks for 4.5:1 at this size, and it is 11.5px
-   bold — small text, where legibility matters most. Fading only the frame keeps
-   the pill visually recessed while the words stay readable, which takes the
-   same label back over 5:1. This was the single cause of every colour-contrast
-   failure the capture run found. */
+/* Closed states (rejected, cancelled) are quieter than live ones. Only the
+   frame and fill are faded, never the text, so the words keep a contrast of
+   at least 4.5:1. */
 .pill.rejected,
 .pill.cancelled {
   border-color: color-mix(in srgb, var(--line-2) 78%, transparent);
@@ -2710,7 +2108,7 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
 }
 .pill.no-dot::before { display: none; }
 
-/* The signature element: a plain sentence naming who owes the next action. */
+/* The "waiting on" line: a plain sentence naming who owes the next action. */
 .waiting {
   display: inline-flex;
   align-items: center;
@@ -2741,10 +2139,7 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
 .waiting.closed::before { content: "—"; color: var(--line-2); }
 
 /* ==========================================================================
-   New components — banners
-   Adds tone modifiers to .banner without disturbing the legacy
-   `.banner, .alert, .locked-banner, .lock-banner` rule above, which still
-   owns .alert and .locked-banner.
+   Banners: a message block with a coloured left edge, in tones
    ========================================================================== */
 
 .banner {
@@ -2834,7 +2229,8 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
 }
 
 /* ==========================================================================
-   New components — forms
+   Form parts: field labels, fieldsets, the money input, the request-type
+   chooser, choice lists, the combobox, the uploader and the action bar
    ========================================================================== */
 
 .field > label,
@@ -2858,14 +2254,8 @@ td.actions-cell > span { display: flex; flex-wrap: wrap; gap: 6px; align-items: 
   font-weight: 600;
 }
 
-.err {
-  display: block;
-  color: var(--bad);
-  font-size: 11.5px;
-  font-weight: 650;
-}
-
 fieldset {
+  min-width: 0;
   margin: 0;
   padding: 14px;
   background: var(--surface);
@@ -2886,7 +2276,8 @@ legend {
   text-transform: uppercase;
 }
 
-/* Money input — the field people get wrong on a phone. */
+/* Money input: large digits, a rupee sign inside the box, and the amount in
+   words underneath (written by fervid-app.js). */
 .money-field .money-wrap {
   position: relative;
   display: block;
@@ -2934,6 +2325,7 @@ legend {
 
 .type-card {
   display: block;
+  min-width: 0;
   padding: 15px;
   color: inherit;
   text-align: left;
@@ -2941,6 +2333,10 @@ legend {
   border: 1px solid var(--line);
   border-radius: var(--r);
   text-decoration: none;
+}
+
+.type-card > * {
+  min-width: 0;
 }
 
 .type-card:hover {
@@ -2977,6 +2373,9 @@ legend {
 .type-card .tc-tag {
   display: inline-block;
   margin-top: 8px;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* Choice list — radio cards. The highlight is CSS, not JS. */
@@ -3222,7 +2621,9 @@ legend {
 }
 
 /* ==========================================================================
-   New components — lists and detail
+   Lists and detail screens: request cards and header, the thread, comment
+   box, dashboard work areas, notifications, detail lists, the grid's phone
+   accordion and the permission matrix
    ========================================================================== */
 
 .req-list {
@@ -3367,8 +2768,8 @@ legend {
   margin-top: 11px;
 }
 
-/* Timeline and conversation as one stream. Distinct from the legacy
-   .timeline component above; both are in use and both must keep working. */
+/* A request's history and conversation as one stream. This is a different
+   component from .timeline above; both are in use. */
 .thread {
   position: relative;
   padding: 4px 0 0;
@@ -3623,13 +3024,6 @@ legend {
   font-weight: 700;
 }
 
-.is-empty .a-list {
-  padding: 20px 13px;
-  color: var(--muted);
-  font-size: 12.5px;
-  text-align: center;
-}
-
 /* Notifications */
 .notif-list { display: grid; grid-template-columns: minmax(0, 1fr); }
 
@@ -3683,7 +3077,7 @@ legend {
    the link colour say it is clickable, and a long URL may break anywhere so it
    never widens the row at 390px. */
 .notif .n-link {
-  color: var(--fb-accent-strong);
+  color: var(--brand-2);
   text-decoration: underline;
   overflow-wrap: anywhere;
 }
@@ -3847,7 +3241,6 @@ legend {
   width: 100%;
 }
 
-.good-num { color: var(--ok); }
 .bad-num { color: var(--bad); }
 
 /* Permission matrix */
@@ -3860,11 +3253,9 @@ legend {
 }
 
 .perm-scope label {
-  /* Positioned so it becomes the containing block for the absolutely-positioned
-     radio below. Without this the radio resolves against the document instead,
-     which puts it outside the permission table's scrolling wrapper: it escapes
-     that wrapper's clipping and drags the whole page 39px sideways at narrower
-     desktop widths, even though the table itself scrolls correctly. */
+  /* Positioned so the hidden radio inside is placed relative to the label.
+     Otherwise the radio is placed relative to the page, outside the table's
+     scrolling wrapper, and can push the whole page sideways. */
   position: relative;
   padding: 3px 8px;
   background: var(--surface);
@@ -3881,9 +3272,8 @@ legend {
   border-color: var(--brand);
 }
 
-/* The mockup's scope pills are static labels; production needs a real radio
-   inside each one so a keyboard can reach it. The input is taken out of the
-   visual flow and the label carries its focus ring. */
+/* Each scope pill holds a real radio so a keyboard can reach it. The radio
+   is taken out of the visual flow and the label shows its focus ring. */
 .perm-scope input {
   position: absolute;
   width: 1px;
@@ -3938,20 +3328,16 @@ legend {
 
 .perm-acc .pa-item:not(.is-open) .pa-body { display: none; }
 
-/* Variance bars. As an inline span a .vbar ignores width and the bar
-   disappears — inline-block is load-bearing, not cosmetic.
-   .ok/.warn/.bad are aliases; the legacy .is-* modifiers stay. */
-.vbar { display: inline-block; }
+/* Variance bar fills named by tone (the .is-* names are near .vbar above). */
 .vbar.ok i { background: var(--ok); }
 .vbar.warn i { background: var(--warn); }
 .vbar.bad i { background: var(--bad); }
 
 /* ==========================================================================
-   New components — overlay, sheet and tables
+   Overlay and sheet (dialogs), comparison block, and table chrome
    ========================================================================== */
 
-/* Fixed, unconditionally. The mockup only makes this absolute because its
-   .appshell is a fake phone bezel. */
+/* The dimmed backdrop, fixed to the viewport, with the sheet centred on it. */
 .overlay {
   position: fixed;
   inset: 0;
@@ -4070,6 +3456,7 @@ thead th {
 }
 
 tfoot td {
+  border-top: 1px solid var(--line-2);
   padding: 10px 11px;
   color: #f0eae2;
   background: var(--sidebar);
@@ -4090,12 +3477,10 @@ td .t-sub {
   text-align: center;
 }
 
-/* Empty states put their one useful action inline in the sentence — "No
-   payments match these filters. Record a payment" — where the link was told
-   apart from the words around it by colour alone. Against this muted grey that
-   is 1.34:1, well under the 3:1 that colour-only differentiation needs, so an
-   underline carries the difference instead. Buttons are excluded: they already
-   look like controls. */
+/* An empty state puts its one useful action inside the sentence ("No payments
+   match these filters. Record a payment"). Against the muted grey, colour
+   alone does not mark the link clearly enough, so it is underlined. Buttons
+   already look like controls and are left alone. */
 .empty a:not(.btn) {
   text-decoration: underline;
 }
@@ -4124,9 +3509,9 @@ td .t-sub {
 }
 
 /* ==========================================================================
-   New components — mobile chrome
-   The three pieces are hidden on desktop and switched on inside the 860px
-   block below.
+   Mobile chrome: the top bar, the bottom tab bar and the More sheet
+   The top bar and tab bar are hidden on desktop and switched on inside the
+   860px block below.
    ========================================================================== */
 
 .m-topbar,
@@ -4282,8 +3667,7 @@ td .t-sub {
 
 .tabbar .fab-wrap:hover { text-decoration: none; }
 
-/* Fixed, like .overlay — the mockup's absolute positioning only works
-   because its shell is a fake phone. */
+/* The More sheet covers the whole screen, fixed like .overlay. */
 .more-sheet {
   position: fixed;
   inset: 0;
@@ -4386,17 +3770,15 @@ td .t-sub {
 }
 
 /* ==========================================================================
-   Responsive — two breakpoints, 860 and 560. Nothing else.
-   860 is the desktop/mobile line: the shell collapses here exactly once.
+   Responsive: two breakpoints, 860px and 560px.
+   860px is the desktop/phone line: the sidebar gives way to the mobile
+   chrome, tables restack into cards and controls grow to touch size.
    ========================================================================== */
 
 @media (max-width: 860px) {
-  /* There is no sidebar at this width, but the content still needs an edge.
-     This used to be 0px, on the belief that each narrow block set its own 14px
-     inset. Only the page banner and the grid header did; every card, list,
-     filter row and heading sat flush against the glass with its border and
-     corners clipped. The column carries the gutter here as it does on desktop,
-     and the two bands re-apply the same value as their own padding below. */
+  /* There is no sidebar at this width, but the content still needs an edge:
+     the column keeps a (smaller) gutter, and the two edge-to-edge bands use
+     the same value as their own padding below. */
   :root {
     --page-gutter: 16px;
   }
@@ -4414,8 +3796,10 @@ td .t-sub {
     margin-left: 0;
   }
 
+  /* A half-width field takes the full width of the single phone column,
+     including inside grids that set their own field columns. */
   .form-grid > .field.m-half {
-    grid-column: span 6;
+    grid-column: 1 / -1;
   }
 
   .type-grid {
@@ -4445,12 +3829,13 @@ td .t-sub {
     margin-top: 6px;
   }
 
-  /* No negative side margin: the production .page does not carry the
-     mockup's 14px padding, and -14px pushes the document 14px wide. */
+  /* The form's action bar sticks to the bottom of the screen, just above the
+     tab bar. It has no negative side margin, which would make the page
+     wider than the screen. */
   .action-bar {
     position: sticky;
-    /* Match the page's mobile navigation reserve, including the raised
-       primary tab and device safe area, throughout the form's scroll. */
+    /* The same reserve as the page's bottom padding: the tab bar, its raised
+       middle button and the device's safe area. */
     bottom: calc(100px + env(safe-area-inset-bottom));
     z-index: 15;
     padding: 11px 14px;
@@ -4461,11 +3846,8 @@ td .t-sub {
     backdrop-filter: blur(6px);
   }
 
-  .action-bar .btn { flex: 1 1 auto; }
-  .action-bar .btn.wide { flex-basis: 100%; }
-
-  /* Keep the same labelled vendor filters on touch layouts. A separate
-     search-only form hid status/type/category and discarded their values. */
+  /* The vendor filters stay the same labelled controls on a phone, in two
+     columns, so no filter is hidden or loses its value. */
   .toolbar.vendor-filters {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4477,10 +3859,11 @@ td .t-sub {
   .vendor-filters input,
   .vendor-filters select { width: 100%; min-width: 0; }
 
-  /* Some actions carry a person's name ("Save and notify …"), so a label has
-     no length a template can promise. A button that refused to wrap was as
-     wide as its name and ran off the right edge of the bar. */
+  /* Some action labels carry a person's name ("Save and notify …") and can
+     be long, so the buttons share the bar and their text wraps rather than
+     running off the edge. */
   .action-bar .btn {
+    flex: 1 1 auto;
     max-width: 100%;
     text-align: center;
     white-space: normal;
@@ -4619,9 +4002,8 @@ td .t-sub {
     border-radius: 0;
   }
 
-  /* The desktop toolbar only steps aside once a mobile filter row exists to
-     replace it. Hiding it unconditionally would remove working controls from
-     every screen that has not been rebuilt yet. */
+  /* The desktop toolbar is hidden only on pages that have a mobile filter row
+     to replace it; elsewhere it stays, so no screen loses its filters. */
   .m-filters {
     display: flex;
     align-items: center;
@@ -4640,10 +4022,8 @@ td .t-sub {
   }
 
   /* Touch targets ------------------------------------------------------
-     Desktop is a pointer: 34px controls are precise and keep screens dense.
-     A phone is a thumb, and 34px is where mis-taps start. Everything the
-     user can operate grows to 44px here, and nowhere else -- desktop
-     density is a deliberate choice, not an oversight to correct. */
+     On desktop 34px controls keep screens dense. On a phone everything the
+     user can operate grows to 44px, a comfortable size for a thumb. */
   .btn,
   button,
   input[type="submit"],
@@ -4657,7 +4037,6 @@ td .t-sub {
 
   /* Row-level actions sit inside dense lists, where 44px would push the row
      past a thumb's reach anyway. 40px is the floor. */
-  .btn-sm,
   .btn.small,
   .compact button,
   button.small,
@@ -4677,20 +4056,17 @@ td .t-sub {
 
   /* Mobile chrome ------------------------------------------------------ */
 
-  /* Nothing may sit under the fixed tab bar. The bar measures a hair over
-     96px once its own border/backdrop are laid out (96.2px observed), so a
-     reserve of exactly 96px left a sub-pixel gap that a sticky .action-bar
-     could round the wrong way into an overlap. 100px keeps a real margin
-     instead of a coin flip. */
+  /* Nothing may sit under the fixed tab bar. The bar is a little over 96px
+     tall, so the page reserves 100px (plus the device's safe area) to leave
+     a clear margin rather than a sub-pixel one. */
   .page {
     padding-bottom: calc(100px + env(safe-area-inset-bottom));
   }
 
-  /* Padding protects the *end* of the document. It does nothing for a control
-     in the middle of a long page: scrolling that into view aligns it with the
-     bottom edge, which is exactly where the fixed bar sits, and the tap lands
-     on the tab bar instead. scroll-margin-bottom reserves the band during
-     scroll-into-view, so anything the user can operate stops above it. */
+  /* Padding protects only the end of the page. When a control in the middle
+     of a long page is scrolled into view, the browser aligns it with the
+     bottom edge, under the tab bar. scroll-margin-bottom makes it stop above
+     the bar instead. */
   .page a,
   .page button,
   .page summary,
@@ -4729,83 +4105,44 @@ td .t-sub {
     backdrop-filter: blur(6px);
   }
 
-  .appshell,
-  .app-shell,
-  .layout,
-  .page-shell {
+  .appshell {
     display: block;
     grid-template-columns: 1fr;
   }
 
-  /* The mobile chrome replaces the sidebar outright — the top bar, tab bar and
-     More sheet carry the same nav the sidebar does. Leaving it on screen put
-     two "Primary" navigation landmarks in the accessibility tree and pushed
-     every page down by half a viewport before its first heading. */
-  .sidebar,
-  .app-sidebar {
+  /* The mobile chrome replaces the sidebar outright: the top bar, tab bar and
+     More sheet carry the same navigation. Hiding the sidebar keeps a single
+     "Primary" navigation landmark and puts each page's heading at the top. */
+  .sidebar {
     display: none;
   }
-
 
   .side-nav {
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   }
 
-  .brand,
-  .app-brand {
+  .brand {
     margin-bottom: 8px;
     padding-bottom: 8px;
   }
 
-  .nav,
-  .app-nav {
-    display: flex;
-    gap: 4px;
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
-
-  .nav a,
-  .nav-item,
-  .app-nav a {
-    flex: 0 0 auto;
-  }
-
   .main,
-  .app-main,
   main {
     padding: 14px 12px 24px;
-  }
-
-  .page-header,
-  .section-header,
-  .topbar,
-  .app-topbar {
-    align-items: stretch;
-    flex-direction: column;
   }
 
   .split {
     grid-template-columns: 1fr;
   }
 
-  .toolbar,
-  .filter-bar,
-  .actions,
-  .filters {
+  .toolbar {
     align-items: stretch;
   }
 
-  .toolbar > *,
-  .filter-bar > *,
-  .actions > *,
-  .filters > * {
+  .toolbar > * {
     flex: 1 1 auto;
   }
 
-  .summary-strip,
-  .stats-grid,
-  .details-grid,
   .detail-grid,
   .detail-grid.details {
     grid-template-columns: 1fr;
@@ -4839,15 +4176,12 @@ td .t-sub {
     grid-template-columns: 1fr;
   }
 
-  .form-actions,
-  .modal-actions {
+  .form-actions {
     flex-direction: column-reverse;
   }
 
   .form-actions .btn,
-  .form-actions button,
-  .modal-actions .btn,
-  .modal-actions button {
+  .form-actions button {
     width: 100%;
   }
 
@@ -4865,21 +4199,6 @@ td .t-sub {
   .gridwrap {
     padding-right: var(--page-gutter);
     padding-left: var(--page-gutter);
-  }
-
-  .page > h1,
-  .page > .panel,
-  .page > form:not(.toolbar),
-  .page > table,
-  .page > .table-wrap,
-  .page > .split,
-  .page > .details,
-  .page > h2,
-  .page > .alert,
-  .page > .locked,
-  .page > .toolbar:not(.gridhead .toolbar) {
-    margin-right: 14px;
-    margin-left: 14px;
   }
 
   .page-banner {
@@ -4907,10 +4226,6 @@ td .t-sub {
 }
 
 @media (max-width: 560px) {
-  /* The pre-redesign sidebar-as-sticky-panel and its two-column nav lived
-     here. Both are unreachable now that the 860px block hides the sidebar
-     outright, so they are gone rather than left to contradict it. */
-
   .toolbar > *,
   .toolbar label,
   .toolbar .btn,
@@ -4933,73 +4248,60 @@ td .t-sub {
 }
 
 /* ==========================================================================
-   form-7 (2026-09-25 fix wave): sibling controls share a height and a width.
-
-   Height. .field is a grid, and a .form-grid row stretches every field in it
-   to the tallest — the one carrying a hint or the amount-in-words line. With
-   align-content left at its default the leftover height was shared out across
-   the field's rows, so the control in a hint-less field grew and sat lower
-   than its neighbour (Head 47px beside Project 35px, Needed by 62px beside
-   Amount). Rows keep their natural height; the field still fills the row.
-
-   Width. Below 860px the form is one column, but `.form-grid > .field.m-half
-   { grid-column: span 6 }` (0,3,0) outranked `.field.span-* { grid-column:
-   1 / -1 }` (0,2,0), so an m-half field still spanned six tracks of a
-   one-track grid — five implicit zero-width columns plus five 12px gaps —
-   and every other field in the same grid came out 60px narrower than it.
+   Control borders and focus, skip link, error summaries
+   These come after the responsive blocks on purpose: they must win over the
+   base control rules above.
    ========================================================================== */
-.field,
-.form-field {
-  align-content: start;
-}
 
-@media (max-width: 860px) {
-  .form-grid > .field.m-half {
-    grid-column: 1 / -1;
-  }
-}
-
-/* UX review: keyboard navigation, control boundaries and narrow-screen text. */
-:root {
-  --input-border: #81766b;
-  --focus: 0 0 0 3px #245b8f;
-}
-
+/* Text fields, selects and text areas get a darker border than cards. */
 input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
   border-color: var(--input-border);
 }
+
+/* Invalid fields are red. Inputs are listed twice: the plain selectors cover
+   checkboxes and radios, and the :not() pair makes the text-input selectors
+   more specific than the grey border above. */
 input[aria-invalid="true"],
+.field-error input,
+input[aria-invalid="true"]:not([type="checkbox"]):not([type="radio"]),
 select[aria-invalid="true"],
 textarea[aria-invalid="true"],
-.field-error input,
+.field-error input:not([type="checkbox"]):not([type="radio"]),
 .field-error select,
 .field-error textarea {
-  border-color: var(--fb-danger);
-}
-input:focus, select:focus, textarea:focus {
-  border-color: var(--fb-accent);
+  border-color: var(--bad);
 }
 
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 0;
+  box-shadow: var(--focus);
+  border-color: var(--brand);
+}
+
+/* On the dark sidebar the focus ring is a light outline. */
 .sidebar :focus-visible {
-  outline: 3px solid #ffdc8c;
+  outline: 3px solid var(--focus-on-dark);
   outline-offset: 2px;
   box-shadow: none;
 }
 
 /* Keep mobile navigation focus inside the rounded, clipped list. */
 .more-sheet .ms-list a:focus-visible {
-  outline: 3px solid #245b8f;
+  outline: 3px solid var(--info);
   outline-offset: -3px;
   box-shadow: none;
 }
 .more-sheet .ms-close:focus-visible {
-  outline: 3px solid #ffdc8c;
+  outline: 3px solid var(--focus-on-dark);
   outline-offset: 2px;
   box-shadow: none;
 }
 
+/* "Skip to content" link: off screen until it receives keyboard focus. */
 .skip-link {
   position: fixed;
   left: 12px;
@@ -5007,49 +4309,43 @@ input:focus, select:focus, textarea:focus {
   z-index: 10000;
   padding: 10px 16px;
   color: #fff;
-  background: #245b8f;
-  border-radius: 6px;
+  background: var(--info);
+  border-radius: var(--r-sm);
   transform: translateY(-160%);
 }
 .skip-link:focus {
   transform: translateY(0);
   color: #fff;
-  outline: 3px solid #ffdc8c;
+  outline: 3px solid var(--focus-on-dark);
   outline-offset: 2px;
 }
 main.page:focus { outline: none; box-shadow: none; }
 
-.type-card,
-.type-card > * { min-width: 0; }
-.type-card .tc-tag {
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
+/* The box listing a form's errors, drawn by the server or by fervid-app.js. */
 .error-summary {
-  border: 2px solid var(--fb-danger);
-  border-radius: 6px;
+  border: 2px solid var(--bad);
+  border-radius: var(--r-sm);
   padding: 14px 18px;
   margin-bottom: 18px;
   background: #fff;
 }
-.error-summary a { color: var(--fb-danger); text-decoration: underline; }
+.error-summary a { color: var(--bad); text-decoration: underline; }
 .error-summary h2 { margin: 0 0 8px; font-size: 18px; }
 .error-summary ul { margin: 0; padding-left: 20px; }
-.field-error-message { margin: 4px 0; }
 
-/* Contact links embedded in explanatory text remain identifiable without color. */
+/* Contact links inside explanatory text are underlined, not marked by colour alone. */
 a[href^="mailto:"] { text-decoration: underline; }
 
-/* Constraint errors use the same layout on native, HTMX and row-edit forms. */
+/* The summary and inline messages fervid-app.js adds when the browser blocks
+   a submission. The summary spans the full width of whatever grid or flex
+   row it lands in. */
 .client-error-summary { margin-top: 6px; flex: 0 0 100%; grid-column: 1 / -1; width: 100%; box-sizing: border-box; }
 .client-error-summary p { margin: 0 0 8px; }
-.client-error-summary:focus { outline: 3px solid var(--fb-danger); outline-offset: 3px; }
-.client-field-error { display: block; color: var(--fb-danger); font-size: 13px; line-height: 1.45; white-space: normal; }
+.client-error-summary:focus { outline: 3px solid var(--bad); outline-offset: 3px; }
+.client-field-error { display: block; color: var(--bad); font-size: 13px; line-height: 1.45; white-space: normal; }
 
-/* Short viewports need the document's full height for editing. A bottom-sticky
-   action bar can be constrained by its form start and overlap the fixed nav. */
+/* On a short phone screen (landscape) the action bar stops sticking, so it
+   cannot cover the form or the tab bar. */
 @media (max-width: 860px) and (max-height: 500px) {
   .page .action-bar { position: static; box-shadow: none; backdrop-filter: none; }
 }

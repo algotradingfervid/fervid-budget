@@ -191,12 +191,20 @@ for (const shot of SHOTS) {
     const file = join(SHOT_DIR, `${shot.id}.png`);
     mkdirSync(dirname(file), { recursive: true });
     const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-    const clipped = !shot.fullHeight && pageHeight > MAX_SHOT_HEIGHT;
-    await page.screenshot({
-      path: file,
-      fullPage: true,
-      ...(clipped ? { clip: { x: 0, y: 0, width: SHOT_WIDTH, height: MAX_SHOT_HEIGHT } } : {}),
-    });
+    const clipped = !shot.windowOnly && !shot.fullHeight && pageHeight > MAX_SHOT_HEIGHT;
+    if (shot.windowOnly) {
+      // Opening a panel from a row far down the list scrolls the page to that
+      // row; put the page back at the top so the heading and sidebar sit where
+      // a reader expects them behind the panel.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: file });
+    } else {
+      await page.screenshot({
+        path: file,
+        fullPage: true,
+        ...(clipped ? { clip: { x: 0, y: 0, width: SHOT_WIDTH, height: MAX_SHOT_HEIGHT } } : {}),
+      });
+    }
 
     const meta: ShotMeta = {
       id: shot.id,

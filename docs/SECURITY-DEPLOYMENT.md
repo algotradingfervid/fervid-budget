@@ -8,7 +8,8 @@ The security remediation targets Go **1.27.1**. The Go tests and dependency scan
 - `FERVID_ADDR` defaults to `127.0.0.1:8080`.
 - `FERVID_SECURE_COOKIES` defaults to `true`. Serve production behind HTTPS. Set it to `false` only for an explicitly local HTTP development instance.
 - Set a persistent, randomly generated `FERVID_SESSION_KEY` in the protected service environment.
-- `FERVID_TRUSTED_PROXIES` is an optional comma-separated list of **exact proxy IPs or narrow CIDRs**. Without this, forwarded client IPs are ignored and login/reset throttles use the connection peer. With a reverse proxy, configure its actual address and ensure it overwrites untrusted forwarding headers. Never trust all networks.
+- `FERVID_TRUSTED_PROXIES` is an optional comma-separated list of **exact proxy IPs or narrow CIDRs**. Without this, forwarded client IPs are ignored and login/reset throttles use the connection peer. With a reverse proxy, configure its actual address and ensure it overwrites untrusted forwarding headers. Never trust all networks. Production behind Caddy on the same host must set it to `127.0.0.1`.
+- `FERVID_LOGIN_LIMIT_PER_IP` (default `30`) and `FERVID_LOGIN_LIMIT_GLOBAL` (default `300`) are the per-minute caps on POSTs to `/login` and its sub-pages, per client address and overall. Only whole numbers above zero are accepted; anything else keeps the default. Keep the defaults in production; the Playwright test servers raise them.
 - `FERVID_SMTP_ALLOWED_HOSTS` is a comma-separated operator allowlist of exact relay hostnames. An empty list disables SMTP delivery. Configure it before using email or password reset. SMTP requires a publicly routable relay, verified TLS, and port 587 (STARTTLS) or 465 (implicit TLS). The SMTP password remains environment-only. SMTP operations have a 10-second deadline and honor cancellation. Private/internal relays need a separately reviewed transport policy; they are deliberately refused by this default.
 - `FERVID_ATTACHMENT_QUOTA_MB` defaults to **1024 MiB** across the attachment directory, including files staged by concurrent requests. The app logs a warning above 80% usage and refuses writes above the quota. Monitor disk use for backups and logs as well; this is not a whole-filesystem quota.
 
@@ -24,15 +25,17 @@ Rollbacks restore binary/assets only. Review the saved backup before any databas
 
 ## Intentional behavior changes
 
-- Login/reset submissions are limited by source and globally. Failed guesses cannot globally lock a victim out of a correct-password login from a different source. Failures use the same message and password-hash verification path for unknown/inactive accounts.
+- Login/reset submissions are limited by source and globally. Failed sign-ins do not lock the account, so failed guesses cannot lock a victim out of a correct-password login from a different source. Failures use the same message ("Invalid email or password") and password-hash verification path for unknown/inactive accounts.
+- A request the caller may not see answers **404**, exactly like a request that does not exist, on every page, form and download, so request ids cannot be probed. The `assigned` data scope means requests routed to the person for approval plus the requests they raised; `own` means only the requests they raised.
+- After sign-in, a `?next=` link to a record opens that record only if the user may open it; otherwise the user lands on Home with a notice that does not name the page.
 - Logout increments the user's session version, invalidating **all existing sessions** for that account.
 - Non-administrators can delegate only permissions and scopes they already hold. They cannot manage higher-privilege users or the system Admin role. The administrator's user/role management grants cannot be removed, and self-demotion/deactivation through role IDs is refused.
-- Approval, return and rejection forms must match the reviewed request revision. A stale form must be reloaded and reviewed. A settlement date cannot precede approval; recoveries cannot be entered in a locked month.
+- Approval, return, rejection and cancellation-decision forms must match the reviewed request revision. A stale form must be reloaded and reviewed. A settlement date cannot precede the (local) day of approval; recoveries cannot be entered in a locked month.
 - Each financial entry is capped at **100 crore rupees** (`100,000,000,000` paise). Aggregate storage is bounded at `900,000,000,000,000` paise per financial table. Startup refuses an existing database outside these limits with an operator-review error, without rewriting financial values. Budget amounts are parsed exactly; malformed digit grouping and excess decimal precision are rejected. Reports are limited to 120 months.
 - A head with financial history cannot move to another project. Create a new head instead. Project/head edits have atomic before/after audit records.
 - Vendor totals are marked **Restricted** unless the viewer can read the corresponding company-wide payment/request data. Notification delivery and inbox reads enforce current request visibility, including after permission changes.
 - Uploads require valid PDF/JPEG/PNG structure. Images are re-encoded to remove appended data. Downloads remain attachments and cannot escape the attachment root through symlinks. This is structural validation, not antivirus scanning or a guarantee that every PDF is harmless.
-- Only the seven named release assets are public under `/static/`; arbitrary files and directory listings are refused. HTMX is pinned to 2.0.11 with evaluation and script execution disabled. The CSP permits same-origin scripts; no inline script/event handlers are required.
+- Only the seven named release assets are public under `/static/`; arbitrary files and directory listings are refused. The design-system reference page (`_kitchensink.html`) is served only when `FERVID_DEV_PAGES=true`, which test and development servers set and production never does. HTMX is pinned to 2.0.11 with evaluation and script execution disabled. The CSP permits same-origin scripts; no inline script/event handlers are required.
 
 ## Verification
 
@@ -42,7 +45,14 @@ The detailed local issue-by-issue report is generated under `output/security-rem
 
 ## Known issues
 
-Found while re-verifying the 2026-09-27 security review; not yet fixed.
-
-1. **Anyone can block every login (Medium).** `internal/app/security.go:130` counts a request against the shared 300-per-minute login limit before it checks the 30-per-minute limit for that source's IP address. One source sending 300 requests a minute therefore uses up the shared limit, and everyone else, admin included, gets "Too many attempts" for the rest of that minute. It can repeat this every minute. The fix is to check the per-IP limit first.
-2. **Scheduled reminder emails will never send.** `cmd/server/main.go:100` creates the reminder mailer without passing the list of allowed mail servers (`cfg.SMTPAllowedHosts`), so it refuses every send. Emails sent from the web pages are unaffected. This is a one-line fix.
+- **The shared sign-in limit can still be used up by several sources at once.**
+  One client alone can no longer block everyone: the per-client limit is checked
+  first, so a client's refused attempts never count against the shared limit.
+  But about ten addresses, each staying under its own 30 a minute, can still use
+  up the shared 300 a minute and refuse every sign-in for that minute. An IPv6
+  attacker has many addresses to hand. Grouping IPv6 addresses by /64 would make
+  this harder; until then, watch for bursts of 429 responses on `/login`.
+- **Reminder emails stop at the first failed send.** When reminder emails are on
+  and the mail server is down, the hourly pass stops at the first failure, before
+  that request is marked as reminded. That request gets another in-app reminder
+  every hour, and the requests after it in the batch get none until mail works.

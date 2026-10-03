@@ -34,7 +34,7 @@ func TestRecoverableNoPaymentCopyMatchesRequestLifecycle(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			s.login(s.cfg.AdminEmail, testAdminPassword)
+			s.loginAdmin()
 			resp := s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", id), nil, "")
 			requireStatus(t, resp, http.StatusOK)
 			body := responseBody(t, resp)

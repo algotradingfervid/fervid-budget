@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -103,7 +102,7 @@ func TestCaseInsensitiveIdentifiersAndDueDayValidation(t *testing.T) {
 func TestSetBudgetsIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	err := s.SetBudgets(ctx, actor, "2026-08", []BudgetInput{{HeadID: headID, Amount: 10000}, {HeadID: 999999, Amount: 20000}})
 	if err == nil {
 		t.Fatal("SetBudgets succeeded with a nonexistent head")
@@ -153,7 +152,7 @@ func TestLoginAttemptLockAndReset(t *testing.T) {
 func TestLastActiveAdminAndAttachmentInvariants(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	if err := s.UpdateUser(ctx, actor.ID, actor.Name, "data_entry", true, ""); !errors.Is(err, ErrValidation) {
 		t.Fatalf("demoting final admin = %v, want %v", err, ErrValidation)
 	}
@@ -202,7 +201,7 @@ func TestLastActiveAdminAndAttachmentInvariants(t *testing.T) {
 func TestCreatePaymentWithAttachmentIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	_, err := s.CreatePaymentWithAttachment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-04-02", Amount: 5000}, &AttachmentInput{OriginalName: "", StoredPath: "/tmp/nope", SizeBytes: 1})
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("invalid attachment = %v, want %v", err, ErrValidation)
@@ -228,7 +227,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	ctx := context.Background()
 	t.Run("create", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		abortAuditAction(t, s, "create")
 		if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000}); err == nil {
 			t.Fatal("CreatePayment succeeded despite audit failure")
@@ -239,7 +238,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	})
 	t.Run("update_with_attachment", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000, VendorPayee: "Original"})
 		if err != nil {
 			t.Fatal(err)
@@ -260,7 +259,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	})
 	t.Run("void", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000})
 		if err != nil {
 			t.Fatal(err)
@@ -276,7 +275,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 	})
 	t.Run("attachment", func(t *testing.T) {
 		s := newTestStore(t)
-		actor, headID := seedActorAndHead(t, s, ctx)
+		actor, headID := seedActorAndHead(t, s)
 		paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-05-02", Amount: 1000})
 		if err != nil {
 			t.Fatal(err)
@@ -295,7 +294,7 @@ func TestPaymentMutationsRollBackWhenAuditFails(t *testing.T) {
 func TestUpdatePaymentWithAttachmentCommitsTogether(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-06-01", Amount: 1000})
 	if err != nil {
 		t.Fatal(err)
@@ -394,7 +393,7 @@ func TestCreateMonthPlanCopiesOnlyActiveHeads(t *testing.T) {
 func TestHistoricalGridAndReportsIncludeRetiredHeads(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	if err := s.SetBudget(ctx, actor, headID, "2026-06", 100000); err != nil {
 		t.Fatalf("SetBudget: %v", err)
@@ -440,7 +439,7 @@ func TestHistoricalGridAndReportsIncludeRetiredHeads(t *testing.T) {
 func TestPaymentCreateEditVoidAndAudit(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	paymentID, err := s.CreatePayment(ctx, actor, PaymentInput{
 		HeadID:      headID,
@@ -516,7 +515,7 @@ func TestPaymentCreateEditVoidAndAudit(t *testing.T) {
 func TestLockedMonthRejectsBudgetAndPaymentMutations(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
 	oldMonthPaymentID, err := s.CreatePayment(ctx, actor, PaymentInput{
 		HeadID:      headID,
@@ -579,7 +578,7 @@ func TestLockedMonthRejectsBudgetAndPaymentMutations(t *testing.T) {
 func TestRecordAuditCreatesQueryableEntry(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	entityID := int64(42)
 
 	err := s.RecordAudit(ctx, AuditInput{
@@ -616,16 +615,13 @@ func TestRecordAuditCreatesQueryableEntry(t *testing.T) {
 	}
 }
 
-// TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest is the F-D-01 proof:
-// a manager approves an amount against a project and head, and the entry
-// screen offers no control to change the head, the payee or the invoice — so
-// the store derives all three from the request row and ignores the form's
-// copies. Before the fix a forged head_id charged an approved payment to a
-// head nobody approved, with the audit blob recording the forgery as truth.
+// A linked payment takes its head, payee and invoice from the approved request
+// and ignores the form's copies, so a forged head_id cannot charge the payment
+// to a head nobody approved.
 func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	otherProjectID, err := s.UpsertProject(ctx, 0, "People", true, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -634,11 +630,11 @@ func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 440000, 440000)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 440000, 440000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{
 		HeadID:      otherHeadID, // forged: another project's head
 		PaidOn:      "2026-06-15",
 		Amount:      440000,
@@ -673,16 +669,14 @@ func TestRecordPaymentDerivesHeadPayeeAndInvoiceFromRequest(t *testing.T) {
 	}
 }
 
-// TestRecoverableSettlementNeedsNoHead is the F-D-11 / F-E-01 / F-G-001 proof,
-// through the real write path end to end: CreateRequest (the shape the form
-// produces — no head for a recoverable), ApproveRequest, ReserveRequest, then
-// RecordPaymentForRequest posting head_id=0 exactly as the entry screen's
-// hidden input does. Before v8 this died on payments.head_id NOT NULL for
-// every one of the six categories.
+// A recoverable is settled without a head, for every category, through the
+// real write path: CreateRequest (no head for a recoverable), ApproveRequest,
+// ReserveRequest, then RecordPaymentForRequest posting head_id=0 exactly as the
+// entry screen's hidden input does.
 func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx) // budget head for the grid contrast
+	actor, headID := seedActorAndHead(t, s) // budget head for the grid contrast
 	mgrRow, err := s.CreateUser(ctx, "approver@example.com", "Approver", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -718,7 +712,7 @@ func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	// head_id=0 is exactly what the entry screen's hidden input posts.
-	payID, err := historicalSettlement(s, ctx, mgr, reqID, PaymentInput{
+	payID, err := historicalSettlement(ctx, s, mgr, reqID, PaymentInput{
 		HeadID: 0, PaidOn: "2026-07-20", Amount: 500000, VendorPayee: "whatever the form carried",
 	}, "settled", "", nil)
 	if err != nil {
@@ -796,20 +790,19 @@ func TestRecoverableSettlementNeedsNoHead(t *testing.T) {
 	}
 }
 
-// TestReserveRequestNamesEachRefusalCause is the F-D-02 store half: the three
-// reasons a reservation can be refused arrive as three distinct sentinels, each
-// still an ErrForbidden so every existing handler branch keeps working.
+// The three reasons a reservation can be refused arrive as three distinct
+// errors, each still an ErrForbidden so every handler branch keeps working.
 func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
 	otherID, err := s.CreateUser(ctx, "other-acc@example.com", "Other Accountant", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other, _ := s.UserByID(ctx, otherID)
 
-	held := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 100000, 100000)
+	held := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 100000, 100000)
 	if err := s.HoldRequest(ctx, acc, held, "waiting on the requester"); err != nil {
 		t.Fatal(err)
 	}
@@ -817,7 +810,7 @@ func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 		t.Fatalf("reserve held = %v, want ErrRequestOnHold (wrapping ErrForbidden)", err)
 	}
 
-	taken := seedApprovedRequest(t, s, ctx, 2, req.ID, mgrID, headID, 200000, 200000)
+	taken := seedApprovedRequest(t, s, 2, req.ID, mgrID, headID, 200000, 200000)
 	if err := s.ReserveRequest(ctx, other, taken); err != nil {
 		t.Fatal(err)
 	}
@@ -825,7 +818,7 @@ func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 		t.Fatalf("reserve taken = %v, want ErrAlreadyReserved (wrapping ErrForbidden)", err)
 	}
 
-	done := seedApprovedRequest(t, s, ctx, 3, req.ID, mgrID, headID, 300000, 300000)
+	done := seedApprovedRequest(t, s, 3, req.ID, mgrID, headID, 300000, 300000)
 	if _, err := s.DB().ExecContext(ctx, `UPDATE payment_requests SET status='completed' WHERE id=?`, done); err != nil {
 		t.Fatal(err)
 	}
@@ -838,9 +831,8 @@ func TestReserveRequestNamesEachRefusalCause(t *testing.T) {
 	}
 }
 
-// TestClassifyTurnsForeignKeyViolationsIntoValidation covers F-B-06 / F-G-027:
-// a forged foreign id is a client error that must surface as a 400 keeping the
-// typed form, not a 500 losing it — and the driver text never travels.
+// A forged foreign id is a client error: it surfaces as a validation error
+// (a 400 that keeps the typed form), and the driver's text never travels.
 func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -855,15 +847,12 @@ func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 	}
 
 	// And through a real write: a request naming a vendor that does not exist.
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	mgrRow, err := s.CreateUser(ctx, "fk-approver@example.com", "FK Approver", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
+	projectID := projectOfHead(t, s, headID)
 	_, err = s.CreateRequest(ctx, actor, RequestInput{
 		Treatment: "budget", Type: "vendor_invoice", ProjectID: projectID, HeadID: headID,
 		VendorID: 999999, ShortTitle: "Forged vendor", Amount: 5000, Purpose: "probe",
@@ -874,15 +863,14 @@ func TestClassifyTurnsForeignKeyViolationsIntoValidation(t *testing.T) {
 	}
 }
 
-// TestListPaymentsScopeNarrowsToEnteredBy is the F-A-04 / F-G-003 store half:
-// the `payment` data scope finally reads. "own" (and "assigned", which has no
-// routed-to meaning on the ledger) narrow to rows the viewer entered; "all" is
-// unrestricted and "" — the role editor's "None" — reads nothing, like
-// requestWhere (fixwave rbac-2; the empty scope used to be unrestricted here).
+// The `payment` data scope narrows the ledger. "own" (and "assigned", which has
+// no routed-to meaning on the ledger) narrow to rows the viewer entered; "all"
+// is unrestricted and "" — the role editor's "None" — reads nothing, like the
+// request list.
 func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	otherID, err := s.CreateUser(ctx, "second-entry@example.com", "Second Entry", "hash", "admin", true)
 	if err != nil {
 		t.Fatal(err)
@@ -929,19 +917,14 @@ func TestListPaymentsScopeNarrowsToEnteredBy(t *testing.T) {
 	}
 }
 
-// TestValidatePaymentRefusesFutureDateAgainstInjectedClock is F-D-06.
-//
-// The rule reads the injected clock when the caller supplies one, so a test can
-// pin the day — and falls back to the server's local day when it does not, so the
-// rule is enforced whether or not anybody remembered to wire a clock. The
-// second half is the fix: the check shipped skipping on a zero Now, no
-// production caller ever set the field, and the guard therefore refused nothing
-// for a whole release. The last block below is what pins that, and it is the
-// exact assertion this test used to make in reverse.
+// A payment cannot be dated in the future. The rule reads the injected clock
+// when the caller supplies one, so a test can pin the day, and falls back to the
+// server's local day when it does not, so the rule holds whether or not a clock
+// was wired.
 func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	clock := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
 
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-07-28", Amount: 1000, Now: clock}); !errors.Is(err, ErrValidation) {
@@ -966,17 +949,15 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID := seedApprovedRequest(t, s, ctx, 41, reqRow, mgrID, headID, 5000, 5000)
+	reqID := seedApprovedRequest(t, s, 41, reqRow, mgrID, headID, 5000, 5000)
 	if err := s.ReserveRequest(ctx, actor, reqID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, actor, reqID, PaymentInput{HeadID: headID, PaidOn: "2027-01-01", Amount: 5000, Now: clock}, "settled", "", nil); !errors.Is(err, ErrValidation) {
+	if _, err := historicalSettlement(ctx, s, actor, reqID, PaymentInput{HeadID: headID, PaidOn: "2027-01-01", Amount: 5000, Now: clock}, "settled", "", nil); !errors.Is(err, ErrValidation) {
 		t.Fatalf("future-dated settlement = %v, want ErrValidation", err)
 	}
 	// No clock at all — the shape every production caller uses. The rule must
-	// still bite, because a guard that switches itself off when the caller
-	// forgets to inject a clock guards nothing, which is what F-D-06 found.
-	// Both dates are relative to the real day, so this cannot rot into a test
+	// still apply. Both dates are relative to the real day, so this cannot rot into a test
 	// that passes only until the calendar catches up with a literal.
 	localToday := time.Now()
 	tomorrow := localToday.AddDate(0, 0, 1).Format("2006-01-02")
@@ -989,18 +970,17 @@ func TestValidatePaymentRefusesFutureDateAgainstInjectedClock(t *testing.T) {
 	}
 }
 
-// TestAddAttachmentRefusesLinkedPayment closes F-D-08: a linked payment is the
-// request's outcome and the screen calls it read-only; edit and void already
-// refuse it, and a new document now gets the same answer.
+// A linked payment is the request's outcome and is read-only: like edit and
+// void, adding a document to it is refused.
 func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000}, "settled", "", nil)
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000}, "settled", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1014,15 +994,14 @@ func TestAddAttachmentRefusesLinkedPayment(t *testing.T) {
 	}
 }
 
-// TestRequestAttachmentByIDAndAttachmentWithPayment pins the store surface
-// Wave 3 builds the F-A-01 / F-A-05 ownership checks on: request documents
-// resolve from their own table, and a payment attachment resolves to its
-// payment (and through Payment.RequestID to its request) in one call.
+// The attachment lookups the download ownership checks rely on: request
+// documents resolve from their own table, and a payment attachment resolves to
+// its payment (and through Payment.RequestID to its request) in one call.
 func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, req, mgrID, headID := seedRequestParty(t, s, ctx)
-	reqID := seedApprovedRequest(t, s, ctx, 1, req.ID, mgrID, headID, 500000, 500000)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	reqID := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
 
 	docID, err := s.AddRequestAttachment(ctx, req, reqID, AttachmentInput{OriginalName: "invoice-mine.txt", StoredPath: "/tmp/invoice-mine.txt", MimeType: "text/plain", SizeBytes: 12})
 	if err != nil {
@@ -1042,7 +1021,7 @@ func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, reqID); err != nil {
 		t.Fatal(err)
 	}
-	payID, err := historicalSettlement(s, ctx, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000},
+	payID, err := historicalSettlement(ctx, s, acc, reqID, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 500000},
 		"settled", "", &AttachmentInput{OriginalName: "advice.pdf", StoredPath: "/tmp/advice.pdf", MimeType: "application/pdf", SizeBytes: 9})
 	if err != nil {
 		t.Fatal(err)
@@ -1064,41 +1043,6 @@ func TestRequestAttachmentByIDAndAttachmentWithPayment(t *testing.T) {
 	if _, _, err := s.AttachmentWithPayment(ctx, 999999); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing payment attachment = %v, want ErrNotFound", err)
 	}
-}
-
-func newTestStore(t *testing.T) *Store {
-	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "fervid-budget-test.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
-		}
-	})
-	return s
-}
-
-func seedActorAndHead(t *testing.T, s *Store, ctx context.Context) (User, int64) {
-	t.Helper()
-	userID, err := s.CreateUser(ctx, "qa@example.com", "QA User", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	actor, err := s.UserByID(ctx, userID)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	projectID, err := s.UpsertProject(ctx, 0, "Operations", true, 1)
-	if err != nil {
-		t.Fatalf("UpsertProject: %v", err)
-	}
-	headID, err := s.UpsertHead(ctx, 0, projectID, "Rent", "5", true, 1)
-	if err != nil {
-		t.Fatalf("UpsertHead: %v", err)
-	}
-	return actor, headID
 }
 
 func assertAuditActions(t *testing.T, audits []AuditEntry, want []string) {
@@ -1144,13 +1088,12 @@ func assertAuditPayloads(t *testing.T, audits []AuditEntry, paymentID int64) {
 	}
 }
 
-// F-G-034 — the profile, the role assignment and the default approver used to be
-// three store calls with three transactions, so a save refused by the second
-// left the first one's rename committed.
+// Saving a user is one transaction across the profile, the role assignment and
+// the default approver: a save refused part-way leaves nothing committed.
 func TestSaveUserIsAtomicAcrossProfileRolesAndApprover(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	subject, err := s.CreateUser(ctx, "envelope@example.com", "Original Name", "hash", "data_entry", true)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -1236,7 +1179,7 @@ func TestSaveUserIsAtomicAcrossProfileRolesAndApprover(t *testing.T) {
 func TestSaveUserKeepsTheLastAdministrator(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	err := s.SaveUser(ctx, actor, UserSaveInput{ID: actor.ID, Name: actor.Name, Role: "data_entry", Active: true})
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("demoting the last administrator = %v, want ErrValidation", err)

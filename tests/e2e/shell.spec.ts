@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures';
 
 /**
- * Phase 0 Task 20 acceptance criteria, as a test rather than a one-off review.
+ * The app shell's acceptance criteria, as a test rather than a one-off review.
  *
  * Every screen, on both devices: no horizontal overflow, a visible heading,
  * and exactly one navigation chrome. Screenshot diffing catches what a page

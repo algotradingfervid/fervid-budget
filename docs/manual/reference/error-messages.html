@@ -131,7 +131,7 @@
 <tr><td>&quot;Only the person who raised a request may edit it.&quot;</td><td>Correcting a request is the requester’s act. An approver who wants a change returns the request instead, which is a different verb with its own audit line.</td><td>Return the request for correction, or ask its requester to make the change.</td></tr>
 <tr><td>&quot;Only the person who raised a request may ask for it to be cancelled.&quot;</td><td>Asking is the requester’s act, whoever else holds <code>request:cancel</code>.</td><td>An approver with <code>approval:cancel</code> can cancel the request outright with a reason instead.</td></tr>
 <tr><td>&quot;Only the approver this request was sent to can decide its cancellation.&quot;</td><td>The decision belongs to the named approver, not to everybody holding the permission.</td><td>If that approver cannot act, reassign the approval to somebody who can.</td></tr>
-<tr><td>&quot;Only the person holding this reservation can release it.&quot;</td><td>Releasing a claim you do not hold is taking work off a colleague, which needs <code>reservation:reassign</code> — an administrator permission.</td><td>Ask an administrator to reassign the reservation.</td></tr>
+<tr><td>&quot;Only the person holding this reservation can release it.&quot;</td><td>You opened the release screen for a claim you do not hold. Taking work off a colleague needs <code>reservation:reassign</code> — an administrator permission.</td><td>Ask an administrator to reassign the reservation.</td></tr>
 <tr><td>&quot;You do not have permission to record a partial payment.&quot;</td><td>Asking the manager to decide a shortfall needs <code>payment:mark_partial</code>.</td><td>Record the payment as settled if that is what it is, or ask a colleague who holds the grant.</td></tr>
 </tbody></table></div>
 <h3 id="state-refusals-that-also-answer-403">State refusals that also answer 403</h3>
@@ -141,7 +141,7 @@
 <tr><td>&quot;Someone else is already processing this request&quot;</td><td>Somebody else holds the claim.</td></tr>
 <tr><td>&quot;Only an approved request can be taken for processing&quot;</td><td>The request is in some other status entirely.</td></tr>
 <tr><td>&quot;Reserve this request before recording its payment&quot;</td><td>A payment was posted for a request you do not currently hold.</td></tr>
-<tr><td>&quot;Only the assignee may release this request&quot;</td><td>You tried to release somebody else’s claim without <code>reservation:reassign</code>.</td></tr>
+<tr><td>&quot;Only the assignee may release this request&quot;</td><td>A release was sent for a claim somebody else now holds — usually from a page that went out of date while the claim changed hands — and you do not hold <code>reservation:reassign</code>.</td></tr>
 <tr><td>&quot;Only a processing request can be released&quot;</td><td>There is nothing claimed to release.</td></tr>
 <tr><td>&quot;The reservation changed while you were deciding&quot;</td><td>The claim moved between the screen loading and your press.</td></tr>
 <tr><td>&quot;Reservation was lost before settlement&quot;</td><td>The claim moved between the confirmation sheet and the save. No payment was written.</td></tr>
@@ -154,7 +154,7 @@
 <p>Two different sentences answer with 404, and they mean different things.</p>
 <div class="table-wrap"><table><caption>The two 404 messages.</caption><thead><tr><th scope="col">What the product says</th><th scope="col">What it means</th></tr></thead><tbody>
 <tr><td>&quot;That page does not exist. It may have moved, or it may not be built yet.&quot;</td><td>The address itself is not a screen this product serves. Check the URL.</td></tr>
-<tr><td>&quot;The requested record was not found.&quot;</td><td>The record does not exist — or it exists and your data scope does not reach it. These two are made deliberately indistinguishable.</td></tr>
+<tr><td>&quot;The requested record was not found.&quot;</td><td>The record does not exist — or it exists and your data scope does not reach it. These two are made deliberately indistinguishable. It is also the answer when somebody who is not a request's approver sends an approval for it.</td></tr>
 </tbody></table></div>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/shared/not-found.png" aria-label="Enlarge: The 404 page. &quot;The requested record was not found.&quot; is also what an out-of-scope record answers.">
@@ -167,7 +167,7 @@
 <h2 id="409-somebody-else-got-there-first">409 — somebody else got there first</h2>
 <p>The whole point of claiming a request before paying it is that two people cannot pay the same invoice. Losing that race is not treated as an error; it is a screen that tells you what actually happened and what to do next. All three versions end with the same reassurance: nothing you typed has been saved, and no payment was created.</p>
 <h3 id="somebody-else-has-it">Somebody else has it</h3>
-<p>The heading names the person holding the claim, the badge below it reads <strong>Processing</strong> followed by their name, and the line beside it says when they took it.</p>
+<p>The heading names the person holding the claim, the badge below it reads <strong>With Accounts — taken by</strong> followed by their name, and the line beside it says when they took it.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/accounts/conflict-taken.png" aria-label="Enlarge: The taken conflict. The banner names the holder; **What you can do** offers the queue and a read-only view of the request.">
     <img src="../assets/shots/accounts/conflict-taken.png" alt="The screen shown when you open a request another person has claimed." loading="lazy" width="1440">
@@ -197,16 +197,18 @@
 <h3 id="other-409s">Other 409s</h3>
 <div class="table-wrap"><table><caption>Conflicts that are not about reservations.</caption><thead><tr><th scope="col">What the product says</th><th scope="col">When</th><th scope="col">What to do</th></tr></thead><tbody>
 <tr><td>&quot;This request is not reserved by anyone.&quot;</td><td>You opened the release or the reserved-too-long screen for a request nobody has claimed.</td><td>Go back to the queue. If the request is approved and unclaimed, take it for processing.</td></tr>
-<tr><td>&quot;This month is locked and cannot be changed.&quot;</td><td>A write landed in a month an administrator has closed.</td><td>Ask an administrator to unlock the month, or use a date inside an open one.</td></tr>
+<tr><td>&quot;This month is locked. Unlock it with a reason before changing budgets or payments.&quot;</td><td>A write landed in a month an administrator has closed.</td><td>Ask an administrator to unlock the month, or use a date inside an open one.</td></tr>
 </tbody></table></div>
 <h2 id="locked-months">Locked months</h2>
-<p>Locking a month makes its budgets and its payments read-only. Three refusals come out of that, and they read differently because they arrive at different moments.</p>
-<div class="table-wrap"><table><caption>The three faces of a locked month.</caption><thead><tr><th scope="col">Where</th><th scope="col">What the product says</th><th scope="col">What to do</th></tr></thead><tbody>
+<p>Locking a month makes its budgets and its payments read-only. The refusals that come out of that read differently because they arrive at different moments.</p>
+<div class="table-wrap"><table><caption>The faces of a locked month.</caption><thead><tr><th scope="col">Where</th><th scope="col">What the product says</th><th scope="col">What to do</th></tr></thead><tbody>
 <tr><td>Approving a request whose Needed by date falls in a locked month</td><td>The month, then &quot;is locked, so this request cannot be approved for payment in it. Reopen the month, or ask for the required-by date to be changed.&quot;</td><td>The check happens before the approval, not after — so the obligation is never created. Ask for the month to be reopened, or for the date to be changed.</td></tr>
-<tr><td>A screen that redraws with the message in place, such as the budget editor or the settlement confirmation</td><td>&quot;This month is locked. Unlock it with a reason before changing budgets or payments.&quot;</td><td>Everything you typed is still on the screen. Unlocking is an administrator act and demands a written reason.</td></tr>
-<tr><td>A refusal that takes you to the error page</td><td>&quot;This month is locked and cannot be changed.&quot;</td><td>The same remedy; only the delivery differs.</td></tr>
+<tr><td>Choosing a Paid on date in a locked month on the payment form</td><td>A warning under the date: the month, then &quot;is locked, so a payment dated in it will be refused. Pick a date in an open month, or ask for&quot; the month &quot;to be unlocked.&quot;</td><td>A warning before you save, not a refusal. Change the date.</td></tr>
+<tr><td>Saving a budget in the budget editor</td><td>&quot;Your changes were not saved because this month is locked. The saved budget is shown below. Unlock the month with a reason before editing.&quot;</td><td>The screen shows the saved budget, read-only. Unlocking is an administrator act and demands a written reason.</td></tr>
+<tr><td>Any other write into a locked month, such as recording a payment dated in it</td><td>&quot;This month is locked. Unlock it with a reason before changing budgets or payments.&quot;</td><td>Ask for the month to be unlocked, or use a date inside an open one.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-note"><p>Recording a payment also refuses a date in the future: &quot;paid on cannot be a future date — money cannot have left the bank after today&quot;. The payment date records when money left the bank, so a date after today records something that has not happened.</p></aside>
+<aside class="callout callout-note"><p>A payment against a request also cannot be dated before the day the request was approved: &quot;payment date cannot precede approval&quot;. Money paid before anybody approved the spend is not a payment against that approval.</p></aside>
 <h2 id="expired-forms">Expired forms</h2>
 <p>If you leave a form open for a long time, or your session is replaced in another tab, submitting it answers 403 with:</p>
 <p>&quot;Your form session expired. Refresh the page and try again.&quot;</p>
@@ -232,7 +234,12 @@
 <tr><td>&quot;the invoice number is required&quot; / &quot;the invoice date is required&quot;</td><td>Both, on a vendor invoice.</td></tr>
 <tr><td>&quot;the expense date is required&quot;</td><td>When you spent the money, on a reimbursement.</td></tr>
 <tr><td>&quot;say what the advance is for&quot;</td><td>A reason, on a vendor advance.</td></tr>
-<tr><td>&quot;a vendor invoice is a budget expense&quot; / &quot;a vendor advance is a budget expense&quot; / &quot;reimbursement is a budget expense&quot;</td><td>The recoverable treatment on a type that cannot carry it. Only an employee advance may be recoverable.</td></tr>
+<tr><td>&quot;say what the money is for&quot;</td><td>A reason, on an employee advance.</td></tr>
+<tr><td>&quot;a vendor invoice is a budget expense&quot; / &quot;a vendor advance is a budget expense&quot; / &quot;reimbursement is a budget expense&quot;</td><td>The recoverable treatment on a type that cannot carry it. Only an employee advance may be either; a deposit or guarantee is always recoverable.</td></tr>
+<tr><td>&quot;recoverable type requires recoverable treatment&quot;</td><td>A deposit or guarantee sent as a budget expense. It is always recoverable.</td></tr>
+<tr><td>&quot;an employee advance is always in the Employee advance category — a deposit, guarantee or loan is raised as its own request type&quot;</td><td>A recoverable employee advance filed under any other category.</td></tr>
+<tr><td>&quot;an advance to an employee is raised as an Employee advance, which pays the person raising it&quot;</td><td>A deposit or guarantee filed under the Employee advance category.</td></tr>
+<tr><td>&quot;say who receives the money — the counterparty company or the authority holding the deposit&quot;</td><td>The payee, on a deposit or guarantee.</td></tr>
 <tr><td>&quot;choose a recoverable category&quot;</td><td>A category, once the treatment is recoverable.</td></tr>
 <tr><td>&quot;expected return date is required for recoverables&quot;</td><td>When you expect the money back.</td></tr>
 <tr><td>&quot;repayment or refund terms are required for recoverables&quot;</td><td>How it comes back.</td></tr>
@@ -255,9 +262,13 @@
 <tr><td>&quot;you cannot reassign a request to yourself&quot;</td><td>Picking your own name in the reassign panel. Nobody may, an administrator included.</td></tr>
 <tr><td>&quot;this request is with … now, so it is not yours to reassign&quot;</td><td>Reassigning from a page loaded before an administrator moved the request to somebody else.</td></tr>
 <tr><td>&quot;only a rejected request can be re-raised&quot;</td><td>Re-raising something that was not rejected.</td></tr>
-<tr><td>A payment confirmation requires a valid settlement choice</td><td>Explicitly choose full settlement, installment, or manager shortfall review as appropriate.</td></tr>
-<tr><td>&quot;a reason is required for a partial settlement&quot;</td><td>Paying short without explaining why.</td></tr>
+<tr><td>&quot;choose how the remaining balance should be handled&quot;</td><td>A payment confirmed without choosing <strong>Fully settled</strong>, <strong>Installment — pay the balance later</strong> or <strong>Ask manager to accept a shortfall</strong>.</td></tr>
+<tr><td>&quot;a reason is required for a partial settlement&quot;</td><td>Asking the manager to accept a shortfall without explaining why.</td></tr>
+<tr><td>&quot;explain the deduction or agreed adjustment before closing a short payment&quot;</td><td>Marking a short payment <strong>Fully settled</strong> without saying why less was paid.</td></tr>
+<tr><td>&quot;this payment clears the remaining balance; choose fully settled instead of shortfall review&quot;</td><td>Sending a payment for shortfall review when it pays everything that is left.</td></tr>
 <tr><td>&quot;… is more than the approved …&quot;</td><td>The payment exceeds the approved amount. To pay more, cancel the request and raise a new one.</td></tr>
+<tr><td>&quot;… exceeds the remaining approved balance of …&quot;</td><td>A later installment is larger than what is left to pay. Extra spending needs a separately approved request.</td></tr>
+<tr><td>&quot;a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling&quot;</td><td>Asking for, or making, a cancellation on a request that already has a payment against it.</td></tr>
 <tr><td>&quot;confirm that no payment was initiated before releasing&quot;</td><td>Releasing a claim without ticking the confirmation.</td></tr>
 <tr><td>&quot;a reason is required so the requester and approver know why&quot;</td><td>Releasing a claim without a reason.</td></tr>
 <tr><td>&quot;a reason is required when a reservation changes hands&quot;</td><td>Reassigning a claim without a reason.</td></tr>
@@ -273,14 +284,14 @@
 <h2 id="signing-in">Signing in</h2>
 <div class="table-wrap"><table><caption>The two sign-in refusals. See <a href="../getting-started/signing-in.html">Signing in</a>.</caption><thead><tr><th scope="col">What the product says</th><th scope="col">What it means</th></tr></thead><tbody>
 <tr><td>&quot;Invalid email or password&quot;</td><td>One of the two was wrong. It deliberately does not say which, because that would tell anybody at your keyboard whether an address has an account behind it.</td></tr>
-<tr><td>&quot;Too many failed attempts. Try again later.&quot;</td><td>Repeated failures have locked the account for a period. Wait, or ask an administrator.</td></tr>
+<tr><td>&quot;Too many attempts. Try again later.&quot;</td><td>Too many sign-in attempts arrived from your network in one minute. Nothing is locked: wait a minute and try again. A wrong password never locks the account itself.</td></tr>
 </tbody></table></div>
 <h2 id="when-something-has-genuinely-broken">When something has genuinely broken</h2>
 <p>&quot;Something went wrong while processing your request.&quot; is the only message the product shows for a fault it did not expect, and it is the one message that is never your fault. So is &quot;Something went wrong while preparing this page.&quot;, which carries the request ID in the sentence itself.</p>
 <p><strong>What to do.</strong> Copy the request ID, then tell an administrator. It is the key to the log entry for your exact attempt, and without it the search is a great deal harder.</p>
 <dl class="faq"><dt>I got 403 on a screen I use every day.</dt><dd><p>Check whether the message is the generic &quot;You do not have permission to perform this action.&quot; or one that names a reason. If it is the generic one, a role has changed. If it is &quot;Your form session expired. Refresh the page and try again.&quot;, it is not a permission problem at all — reload and try again.</p></dd>
 <dt>The conflict screen says nothing was saved. Is that reliable?</dt><dd><p>Yes. The confirmation sheet writes nothing — it only computes and displays. The payment and the request status are written together in a single step, so either both happened or neither did.</p></dd>
-<dt>Can I see the messages somebody else got?</dt><dd><p>Every refusal is logged with its request ID, and administrators can read the record on <a href="../admin/the-audit-trail.html">The audit trail</a>. The messages themselves are not stored on the request.</p></dd>
+<dt>Can I see the messages somebody else got?</dt><dd><p>Not from inside the product. Every refusal is written to the server's log with its request ID, which whoever runs your installation can search. <a href="../admin/the-audit-trail.html">The audit trail</a> records changes and sign-ins, including failed sign-ins, but not refusals, and the messages are not stored on the request.</p></dd>
 <dt>The form came back with a message but I cannot see which field is wrong.</dt><dd><p>The band names the rule rather than highlighting the field. Read the message against <a href="../requester/raising-a-request.html">Raising a request</a>, which lists every field and what it requires for each type.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../reference/permissions-matrix.html"><span>Previous</span>The permission matrix</a><a class="pager-next" href="../reference/glossary.html"><span>Next</span>Glossary</a></nav>
 </div>

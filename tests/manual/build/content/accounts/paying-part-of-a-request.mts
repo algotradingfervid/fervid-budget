@@ -1,115 +1,85 @@
-import { page, prose, section, shot, steps, note, warning, table, faq } from '../../schema.mts';
+import { page, prose, section, shot, steps, table } from '../../schema.mts';
 
 export default page({
   section: 'accounts',
   slug: 'paying-part-of-a-request',
   title: 'Paying part of a request',
-  summary: 'Settling short of the approved amount, and what happens to the difference.',
+  summary: 'Record the payment and make an explicit decision about the unpaid balance.',
   blocks: [
-    prose(
-      `Sometimes the amount that leaves the bank is less than the amount that was approved. The
-       product does not guess why. It asks you one question, and your answer decides whether the
-       request closes or goes to somebody else.`,
-    ),
+    prose(`Enter the amount that actually left the bank. The confirmation compares **Remaining before
+       this payment** with **Actually paid** and shows the difference. A short payment has no
+       settlement choice selected for you. A payment that clears the balance is offered only
+       **Fully settled** and **Ask manager to accept a shortfall**, and the second of those is
+       refused — there is no shortfall to review.`),
 
-    section('The question the confirmation asks'),
-    shot('accounts/settlement-sheet', 'A payment short of the approved amount. The difference is called out, and the two outcomes are named with the status each produces.'),
-    prose(
-      `Enter the amount you actually paid on the form, then select **Payment settled →**. Because
-       the figures do not match, the confirmation says “You paid less than was approved. Which is
-       it?” and offers two choices.`,
-    ),
+    section(`Choose what happens to the balance`),
+
+    shot('accounts/settlement-sheet', 'The confirmation for a payment short of the approved amount. The remaining balance is called out, and none of the three choices is selected yet.'),
+
+    prose(`The explanation for either short-payment choice goes in **Reason for any deduction or
+       shortfall**, under the choices.`),
+
     table(
-      ['Choice', 'When it is right', 'What the product does'],
+      [`Choice`, `When to use it`, `Result`],
       [
-        ['**Fully settled**', 'The obligation is discharged. TDS, retention or any other deduction was handled outside this system.', 'The request closes as `completed`. The requester and the approver are told it has been paid; neither is asked to decide anything.'],
-        ['**Partial payment**', 'A balance is genuinely still owed to the payee.', 'The request moves to `partial_review` and the approver is asked to decide.'],
+        [`**Installment — pay the balance later**`, `Part has been paid and the rest remains payable under this approval.`, `The payment is recorded, the reservation is released, and the request returns to Approved. Accounts can claim it again for another installment. No notification is sent.`],
+        [`**Fully settled**`, `No further amount is owed. For a short payment, explain the agreed deduction or adjustment.`, `The request closes as Completed, and by default the requester and approver are notified. The explanation is required when the payment is short of the remaining balance; the product does not calculate tax. The unpaid difference is never paid against this request.`],
+        [`**Ask manager to accept a shortfall**`, `You need the approver to decide whether to close an unpaid balance.`, `A reason is required. The request moves to Partial — manager review, and by default the approver is notified.`],
       ],
     ),
-    warning(
-      `The distinction is not cosmetic. **Fully settled** ends the request; **Partial payment**
-       puts a decision on somebody else’s desk. Choosing the first because it is quicker leaves a
-       real debt with no record that anybody owes it.`,
-      'Two very different answers',
-    ),
 
-    section('Recording a partial payment'),
+    section(`Record an installment`),
+
     steps([
-      { text: 'Enter the amount that actually left the bank, then select **Payment settled →**.' },
-      { text: 'On the confirmation, choose **Partial payment**.' },
-      {
-        text: 'Write into **Why only part was paid** — the field appears when you make that choice, and it is required.',
-        note: 'The approver reads exactly what you write. Say what the payee agreed to, or what is still being waited on.',
-      },
-      {
-        text: 'Select **Confirm and save payment**.',
-        note: 'The payment is written, the request moves to `partial_review`, and the approver is told that it was approved for one figure and paid another.',
-      },
+      { text: `Claim the approved request from the Accounts queue.` },
+      { text: `Record the actual amount, date, payment mode and reference, and any proof.` },
+      { text: `Open the confirmation and choose **Installment — pay the balance later**.` },
+      { text: `Check the remaining balance and confirm.` },
+      { text: `For the next transfer, claim the same request again. The next payment cannot exceed the remaining approved balance.` },
     ]),
-    note(
-      `Recording a partial payment is a permission of its own. If your account does not carry it,
-       the product refuses the partial branch and says so, while **Fully settled** still works.`,
-    ),
 
-    section('What the approver sees'),
-    shot('manager/partial-review', 'The approver’s screen. Your reason is quoted at the top, and the payment underneath it is marked **Cannot be edited**.'),
-    prose(
-      `The approver gets the approved figure, what was paid, what is still owed, your reason, and
-       the payment itself — read-only. They have two decisions, and neither of them moves any
-       money.`,
-    ),
-    table(
-      ['Their decision', 'What it does'],
-      [
-        ['**Accept and close**', 'The balance is written off for good. The request closes as `completed_partial`, which the screens write **Completed — partial accepted**.'],
-        ['**Raise a concern**', 'The request stays in review and their words come back to you. Nothing is reversed — see [raising a concern](page:accounts/raising-a-concern).'],
-      ],
-    ),
-    prose(
-      `[Reviewing a shortfall](page:manager/shortfall-review) is the same story written for the
-       person taking that decision.`,
-    ),
+    prose(`Each saved payment is permanent. Multiple installments share the original request and
+       approval; they are not edits to earlier payments. Confirming the same submission twice does
+       not create a second transfer record. Cancellation is unavailable after any payment has been
+       recorded.`),
 
-    section('Following it up'),
-    shot('accounts/queue-partial-review', 'The Partial review tab lists every shortfall waiting on an approver.'),
-    prose(
-      `The **Partial review** tab of [the payment queue](page:accounts/the-payment-queue) is where
-       your shortfalls sit while they wait. **View** on a row opens the approver’s screen so you
-       can see what has been said, and you can reply in the conversation there even though the
-       decision is not yours.`,
-    ),
+    section(`When the approver reviews a shortfall`),
 
-    section('The balance'),
-    prose(
-      `Whichever way the approver decides, this request accepts no further payment. If the payee
-       is later paid the rest, that is a new request raised by the requester for the outstanding
-       amount, approved in its own right and paid in its own right. The blue note on the
-       confirmation sheet says as much before you save.`,
-    ),
+    prose(`The approver can **Keep balance payable** with a required plan note, which returns the
+       request to Approved for further payment; **Accept and close**, which permanently writes off
+       the unpaid balance from this request; or **Raise a concern**, which records the question and
+       leaves the request under review.
 
-    faq([
-      {
-        q: 'Can I pay the balance later against the same request?',
-        a: `No. One request, one payment — the rule is stated at the top of the payment queue and
-            enforced when the payment is written. The balance needs a fresh request.`,
-      },
-      {
-        q: 'The approver accepted a shortfall I now think was a mistake.',
-        a: `The request is closed as \`completed_partial\` and nothing reopens it. The trail on the
-            payment records every step, including the reason you gave and the note the approver
-            left, so the history explains itself. Anything further is a new request.`,
-      },
-      {
-        q: 'I deducted TDS. Is that a partial payment?',
-        a: `No. The confirmation is explicit: deductions handled outside this system still settle
-            the obligation, so choose **Fully settled** and describe the deduction in the
-            processing note.`,
-      },
-      {
-        q: 'Nothing happened for days after I marked it partial.',
-        a: `It is waiting on one person: the approver the request was routed to. Their name is on
-            the request. You can post a comment on it to ask.`,
-      },
-    ]),
+       Do not use Accept and close merely to arrange an installment. See [Reviewing a
+       shortfall](page:manager/shortfall-review).`),
+
+    shot('manager/partial-review', 'The approver’s screen. Your reason is quoted near the top, the payment is marked **Cannot be edited**, and the three decisions sit at the bottom.'),
+
+    section(`Following it up`),
+
+    shot('accounts/queue-partial-review', 'The Partial review tab of the payment queue. Every row carries the Partial — manager review pill and a View button.'),
+
+    prose(`While the approver decides, the request sits on the **Partial review** tab of [the payment
+       queue](page:accounts/the-payment-queue), its count on the tab. Each row shows the request
+       number with the requester and approval time beneath it, the payee, the project and head (or a
+       **Recoverable** pill), the approved amount, the needed-by date and the status pill **Partial —
+       manager review**, which reads **Partial — under discussion** while the approver has a
+       concern open.
+
+       **View** opens the shortfall screen. It shows **Approved**, **Total paid to date** and **Still
+       owed to the payee**; your reason under a banner reading *… marked this a genuine partial
+       payment*; the recorded payment, marked **Cannot be edited**; and the history and conversation.
+       The decision buttons are not yours — the foot of the screen says the approver *decides. You
+       can still comment.* — so answer any question they raise in the comment box there. When they
+       have raised a concern and you recorded the payment, the box’s label changes to
+       “Answer *approver’s name*’s concern”, and posting your reply hands the
+       decision back to them.`),
+
+    section(`Following the balance`),
+
+    prose(`The request shows cumulative payments and what remains. Installments awaiting payment return
+       to the Accounts queue. Closed full settlements and accepted shortfalls remain closed;
+       correcting a mistaken closure needs an agreed accounting process, not rewriting a saved
+       payment.`),
   ],
 });

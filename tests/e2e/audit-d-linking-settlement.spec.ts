@@ -10,34 +10,27 @@
  * WHAT THIS FILE ADDS TO THE SHIPPED SUITE. `linking-settlement.spec.ts` walks
  * the happy journey once at 390 px and shows the loser of one race a screen
  * rather than a stack trace. `core-workflows.spec.ts` proves the ledger row and
- * the G13 ceiling. Neither asks what a person holding exactly one role may do,
- * neither drives the race more than once, and neither posts past the browser to
- * see what the store actually guarantees. This file does all three, and it
- * modifies neither of them.
- *
- * READING THE ANNOTATIONS. Not one test here calls `test.fail()` any more, and
- * that is the point. Every case that once did named a finding in
- * `docs/qa/results/findings-d-linking-settlement.md` and carried the assertion
- * the product *should* pass, so that the day somebody fixed the defect the test
- * went red with "passed unexpectedly" — exactly the signal a deleted assertion
- * would have thrown away. All of them have now made that trip: TC-D-058
- * (F-D-01), TC-D-095 (F-D-08), TC-D-096 (F-D-11), TC-D-023 (F-D-02), TC-D-044
- * (F-D-03), TC-D-090 (F-D-06), TC-D-094 (F-D-07) and TC-D-099 (F-D-12). Each
- * annotation was removed and its comment rewritten to say what the case now
- * protects; none of the assertions changed direction, because each was always
- * written as the truth the product owed.
+ * that nobody may pay more than was approved. Neither asks what a person
+ * holding exactly one role may do, neither drives the race more than once, and
+ * neither posts past the browser to see what the store actually guarantees.
+ * This file does all three.
  *
  * THE SHARED CORPUS. Four approved requests, one of each shape the linkable set
  * has to distinguish (unclaimed · on hold · reserved by somebody else ·
  * completed), plus the single-role sessions the permission probes need. Every
- * one of them is expensive — an approved request needs a second signed-in person
- * to approve it (G8) — and every read-only test wants the same four, so they are
- * built once, lazily, and closed at the end. Tests that mutate build their own
- * request from their own `runId` and share nothing.
+ * one of them is expensive — an approved request needs a second signed-in
+ * person to approve it, because nobody approves their own request — and every
+ * read-only test wants the same four, so they are built once, lazily, and
+ * closed at the end. Tests that mutate build their own request from their own
+ * `runId` and share nothing.
  *
- * STATUS VOCABULARY. `requestStatusText` (internal/app/requests.go:988) spells
- * `processing` as **"With Accounts"**, not "Processing". Every assertion below
- * reads the sentence a person sees rather than the enum value.
+ * DATES. A payment may be dated neither before the request's approval nor
+ * after today, and every request here is approved today, so every payment is
+ * dated today and ledger lookups read the current month.
+ *
+ * STATUS VOCABULARY. `requestStatusText` spells `processing` as
+ * **"With Accounts"**, not "Processing". Every assertion below reads the
+ * sentence a person sees rather than the enum value.
  */
 import { type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
@@ -49,7 +42,10 @@ import {
   createApprovedRequest,
   createApproverUser,
   login,
-  settlePayment
+  settlePayment,
+  thisMonth,
+  today,
+  pdfUpload
 } from './fixtures';
 import {
   asRole,
@@ -59,11 +55,12 @@ import {
   probePost,
   expectOutcome,
   signIn,
-  type Probe
+  type Probe,
+  toProbe
 } from './audit-support';
 
-/** Every payment this file records lands in the current seeded month. */
-const PAID_ON = '2026-07-20';
+/** Every payment is dated today: never before its approval, never in the future. */
+const PAID_ON = today();
 /** What `.rh-status .pill` reads while a request is reserved. */
 const RESERVED = 'With Accounts';
 
@@ -78,8 +75,8 @@ interface Session {
 }
 
 // ---------------------------------------------------------------------------
-// Shared helpers. Kept in this file deliberately: fixtures.ts and
-// audit-support.ts are shipped and shared, and the brief forbids touching them.
+// Shared helpers. Kept in this file because fixtures.ts and audit-support.ts
+// are shared by every spec and stay unchanged.
 // ---------------------------------------------------------------------------
 
 /**
@@ -214,10 +211,7 @@ async function postRepeated(page: Page, path: string, pairs: Array<[string, stri
     maxRedirects: 0,
     failOnStatusCode: false
   });
-  const status = response.status();
-  const location = response.headers()['location'] ?? null;
-  const text = status < 300 || status >= 400 ? await response.text().catch(() => '') : '';
-  return { status, location, body: text, outcome: location ? `${status} → ${location}` : String(status) };
+  return toProbe(response);
 }
 
 /**
@@ -275,10 +269,10 @@ async function subjectWithGrants(
  * question here is specifically about a recoverable whose category needs no
  * project — the one shape that reaches the settlement with no head at all.
  *
- * Two forms since form-1 / recoverables-1: an employee advance is its own
- * type, category fixed, paid to the requester; every other category is a
- * deposit or guarantee (`/requests/new?type=recoverable`) with a payee the
- * requester names. Neither form ever offers a head.
+ * There are two forms: an employee advance is its own type, category fixed,
+ * paid to the requester; every other category is a deposit or guarantee
+ * (`/requests/new?type=recoverable`) with a payee the requester names. Neither
+ * form ever offers a head.
  */
 async function createApprovedRecoverable(
   adminPage: Page,
@@ -323,7 +317,7 @@ async function createApprovedRecoverable(
   await adminPage.getByLabel('Purpose').fill(`Recoverable ${category} for ${runId}.`);
   await adminPage.getByLabel('Approver').selectOption({ label: approver.name });
   await adminPage.getByRole('button', { name: 'Submit request' }).click();
-  await expect(adminPage, 'D1: one POST creates, numbers and submits it').toHaveURL(
+  await expect(adminPage, 'one POST creates, numbers and submits it').toHaveURL(
     /\/requests\/\d+\/submitted$/
   );
   const id = Number(new URL(adminPage.url()).pathname.split('/')[2]);
@@ -438,9 +432,10 @@ test.afterAll(async () => {
  * 30 s is not enough here, and the reason is structural rather than slow code.
  *
  * Every approved request in this file is raised and approved through the real
- * screens by two different people (G8 forbids self-approval), which is a dozen
- * navigations; several tests build three of them, and whichever test happens to
- * build the shared corpus builds four plus five signed-in subjects. The seeded
+ * screens by two different people (nobody approves their own request), which
+ * is a dozen navigations; several tests build three of them, and whichever
+ * test happens to build the shared corpus builds four plus five signed-in
+ * subjects. The seeded
  * database also grows all run — /users and the queue both get longer — so the
  * same work costs more by the end than at the start.
  */
@@ -477,7 +472,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
     await expect(form.locator('input[name="csrf"]'), 'the reservation POST carries a CSRF token').toHaveCount(1);
   });
 
-  test('TC-D-002 — S1 entry point one: the queue hands the reservation to the entry screen', async ({ browser }) => {
+  test('TC-D-002 — entry point one: the queue hands the reservation to the entry screen', async ({ browser }) => {
     const c = await corpus(browser);
     const request = await createApprovedRequest(c.admin, c.runId, { amount: '1250.00' });
     await takeFromQueue(c.admin, request);
@@ -490,7 +485,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
     ).toContainText('nobody else can process this request');
   });
 
-  test('TC-D-003 — S1 entry point two: the payment picker reserves the same way', async ({ browser }) => {
+  test('TC-D-003 — entry point two: the payment picker reserves the same way', async ({ browser }) => {
     const c = await corpus(browser);
     const request = await createApprovedRequest(c.admin, c.runId, { amount: '1350.00' });
     await c.admin.goto(`/payments/new?q=${encodeURIComponent(request.number)}`);
@@ -505,7 +500,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
     await expect(c.admin.locator('.reserve-bar')).toContainText('Reserved by you');
   });
 
-  test('TC-D-004 — S3: only approved, unclaimed, not-on-hold requests are takeable', async ({ browser }) => {
+  test('TC-D-004 — only approved, unclaimed, not-on-hold requests are takeable', async ({ browser }) => {
     const c = await corpus(browser);
     const takeable = await pickerOptions(c.admin, c.open.number);
     expect(takeable, 'an approved unclaimed request is offered as a POST form').toContain(
@@ -533,7 +528,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
     expect(body).toContain(`Which site is this rent for? ${c.runId}`);
     expect(
       await isTakeable(c.admin, c.onHold),
-      'L7: on hold leaves the status approved, and the availability test drops it out of the takeable set'
+      'on hold leaves the status approved, and the availability test drops it out of the takeable set'
     ).toBe(false);
   });
 
@@ -544,7 +539,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
     expect(body, 'and that it is not theirs to take').toContain('you cannot take this one');
   });
 
-  test('TC-D-007 — L10: a completed request drops out of the linkable list', async ({ browser }) => {
+  test('TC-D-007 — a completed request drops out of the linkable list', async ({ browser }) => {
     const c = await corpus(browser);
     const body = await pickerOptions(c.admin, c.done.number);
     expect(body, 'a settled request is finished; offering it again would create a second payment').not.toContain(
@@ -559,7 +554,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
     await expect(paidRow.locator('td[data-label="Status"] .pill')).toHaveText('Completed');
   });
 
-  test('TC-D-008/009 — S4: the picker search finds a request by number and by requester', async ({ browser }) => {
+  test('TC-D-008/009 — the picker search finds a request by number and by requester', async ({ browser }) => {
     const c = await corpus(browser);
     expect(await pickerOptions(c.admin, c.open.number), 'by request number').toContain(c.open.number);
     expect(await pickerOptions(c.admin, 'Fervid Admin'), 'by the requester who raised it').toContain(c.open.number);
@@ -569,14 +564,14 @@ test.describe('D · reservation entry points and the linkable set', () => {
     ).toContain('No approved requests match');
   });
 
-  test('TC-D-010 — S4: the picker search finds a request by payee', async ({ browser }) => {
+  test('TC-D-010 — the picker search finds a request by payee', async ({ browser }) => {
     const c = await corpus(browser);
     const body = await pickerOptions(c.admin, c.payee);
     expect(body, 'typing a vendor name must find the row that shows that name').toContain(c.open.number);
     expect(body, 'and the row prints the payee it was found by').toContain(c.payee);
   });
 
-  test('TC-D-011/012 — S4: the picker search finds a request by project and by head', async ({ browser }) => {
+  test('TC-D-011/012 — the picker search finds a request by project and by head', async ({ browser }) => {
     const c = await corpus(browser);
     expect(await pickerOptions(c.admin, 'Operations'), 'by project').toContain(c.open.number);
     expect(await pickerOptions(c.admin, 'Office Rent'), 'by head').toContain(c.open.number);
@@ -586,14 +581,11 @@ test.describe('D · reservation entry points and the linkable set', () => {
     ).not.toContain(c.open.number);
   });
 
-  test('TC-D-013 — S4: the amount search matches the amount a person can see', async ({ browser }) => {
-    // FINDING F-D-04, fixed. The amount column used to be searched only as
-    // `CAST(r.amount AS TEXT)` — paise — so the figure a person can actually read,
-    // ₹7,431.00, never matched and the rupee digits matched by substring luck.
-    // The query now also parses the needle with `money.ParsePaise` (the same
-    // normaliser the form uses, so the two cannot drift) and compares on paise.
-    // This case guards both halves: the paise substring still works, and the
-    // displayed figure the hint promises — "or amount" — now finds the row.
+  test('TC-D-013 — the amount search matches the amount a person can see', async ({ browser }) => {
+    // The amount is searched as a person reads it: the query parses the needle
+    // with `money.ParsePaise` (the same normaliser the form uses) and compares
+    // on paise, so "₹7,431.00" finds the row. A substring of the stored paise
+    // still matches as text too.
     const c = await corpus(browser);
     expect(
       await pickerOptions(c.admin, '743100'),
@@ -607,6 +599,9 @@ test.describe('D · reservation entry points and the linkable set', () => {
 
   test('TC-D-014 — the queue search narrows the rows without moving the counts', async ({ browser }) => {
     const c = await corpus(browser);
+    // The corpus leaves only one request takeable, so a second one is raised
+    // here: the search needs more than one row to narrow.
+    await createApprovedRequest(c.admin, `${c.runId}-narrow`, { amount: '1234.00' });
     await c.admin.goto('/accounts-queue?tab=approved');
     const metrics = c.admin.locator('.metric-strip .metric .metric-value');
     await expect(metrics, 'the queue carries four metric tiles').toHaveCount(4);
@@ -616,7 +611,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
 
     // Driven through the query the form submits rather than the form itself:
     // what this case measures is the metric strip, not the control. That the
-    // control exists at desktop width is TC-D-094's own subject (F-D-07).
+    // control exists at desktop width is TC-D-094's own subject.
     await c.admin.goto(`/accounts-queue?tab=approved&q=${encodeURIComponent(c.open.number)}`);
     await expect(c.admin.locator('tbody tr')).toHaveCount(1);
     expect(
@@ -626,20 +621,15 @@ test.describe('D · reservation entry points and the linkable set', () => {
   });
 
   test('TC-D-094 — the queue offers a search control at desktop width', async ({ browser }) => {
-    // Regression guard for F-D-07. accounts_queue used to render only
-    // `<form class="m-filters">`, which fervid-ds.css:3853 sets to display:none
-    // outside the 860 px media query, so the queue's search box existed only on a
-    // phone while every other searchable list — requests, approvals, vendors,
-    // recoverables — shipped a `.toolbar` beside its `.m-filters`. The queue now
-    // ships one too, so #queue-q is on the screen an accountant actually works
-    // from. TC-D-014 still drives the search through the query string, because
-    // what it measures is the metric strip, not the control.
+    // The phone-only `.m-filters` form is hidden above 860 px, so the queue
+    // also ships a desktop `.toolbar` like every other searchable list, and
+    // #queue-q is on the screen an accountant actually works from.
     const c = await corpus(browser);
     expect(c.admin.viewportSize()!.width, 'this case is about desktop width').toBeGreaterThan(860);
     await c.admin.goto('/accounts-queue?tab=approved');
     await expect(
       c.admin.locator('#queue-q'),
-      'S4: an accountant with a queue of hundreds needs the search on the screen they work from'
+      'an accountant with a queue of hundreds needs the search on the screen they work from'
     ).toBeVisible();
   });
 
@@ -680,7 +670,7 @@ test.describe('D · reservation entry points and the linkable set', () => {
 });
 
 // ===========================================================================
-// B — atomicity (S2, S5). The centrepiece.
+// B — the reservation is atomic: of two simultaneous takers, exactly one wins.
 // ===========================================================================
 
 test.describe('D · the reservation is atomic', () => {
@@ -712,13 +702,13 @@ test.describe('D · the reservation is atomic', () => {
     const wonBySecond = entry.test(secondPage.url());
     expect(
       [wonByAdmin, wonBySecond].filter(Boolean).length,
-      'S2/S5: exactly one of two simultaneous reservations may succeed'
+      'exactly one of two simultaneous reservations may succeed'
     ).toBe(1);
 
     const winner = wonByAdmin ? adminPage : secondPage;
     const loser = wonByAdmin ? secondPage : adminPage;
     await expect(winner.locator('.reserve-bar')).toContainText('Reserved by you');
-    await expect(loser.locator('.banner.bad'), 'G15: the loser gets a screen, not a stack trace').toContainText(
+    await expect(loser.locator('.banner.bad'), 'the loser gets a screen, not a stack trace').toContainText(
       'took this request before you'
     );
     await expect(loser.locator('.banner.bad'), 'and is told in as many words that nothing was written').toContainText(
@@ -776,15 +766,11 @@ test.describe('D · the reservation is atomic', () => {
   test('TC-D-020 — reserving a completed request is refused, and the screen says it is finished rather than held', async ({
     browser
   }) => {
-    // Regression guard for the third of F-D-02's three causes. The screen used
-    // to report "Someone else took this request before you" here, which was
-    // false twice over: the request was paid last month, and nobody held it.
-    // The sentinel alone could not tell the truth — RecordPaymentForRequest
-    // leaves processing_by set on a completed request, so ReserveRequest's cause
-    // check still answers ErrAlreadyReserved — so conflictCause now reads the
-    // sentinel and the row together and lets the row win on "does anybody hold
-    // it" (internal/app/linking.go:96-110). The completed case renders the
-    // `not-approved` branch (internal/app/templates.go:823-830).
+    // A completed request still has processing_by set, so ReserveRequest
+    // answers ErrAlreadyReserved. conflictCause reads that together with the
+    // row and lets the row decide whether anybody holds it, so the screen says
+    // the request is finished (its not-approved branch) rather than claiming
+    // that somebody else took it.
     const c = await corpus(browser);
     const probe = await reserve(c.admin, c.done.id);
     expect(probe.status, 'a settled request has left the reservable set for good').toBe(409);
@@ -825,16 +811,10 @@ test.describe('D · the reservation is atomic', () => {
   test('TC-D-023 — reserving an on-hold request says it is on hold, not that somebody took it', async ({
     browser
   }) => {
-    // Regression guard for F-D-02. requestRecordPayment used to funnel every
-    // ErrForbidden from ReserveRequest into one conflict screen written for a
-    // single cause — somebody else got there first — so an on-hold request, which
-    // nobody holds, made the screen invent "Someone else" and report a
-    // reservation that did not exist. ReserveRequest now returns a sentinel per
-    // cause (internal/store/store.go:890-937), conflictCause maps it with the row
-    // (internal/app/linking.go:96-110) and the template branches three ways
-    // (internal/app/templates.go:815-838). This case protects the hold branch:
-    // the accountant is told payment is paused and who is being waited on, which
-    // is the answer that is one click away rather than a colleague to chase.
+    // ReserveRequest returns a separate reason for each refusal (taken, on
+    // hold, not approved) and the conflict screen branches on it. Nobody holds
+    // an on-hold request, so the accountant is told payment is paused and who
+    // is being waited on — never that "someone else" took it.
     const c = await corpus(browser);
     const probe = await reserve(c.admin, c.onHold.id);
     expect(probe.status, 'an on-hold request is not available to process').toBe(409);
@@ -849,7 +829,7 @@ test.describe('D · the reservation is atomic', () => {
 });
 
 // ===========================================================================
-// C — no auto-release, release and reassign (S6, S7, G11, G12)
+// C — nothing expires a reservation; release and reassign are explained acts
 // ===========================================================================
 
 test.describe('D · giving a reservation up', () => {
@@ -857,7 +837,7 @@ test.describe('D · giving a reservation up', () => {
     test.skip(testInfo.project.name !== 'chromium', 'Reservation handover runs once, on chromium.');
   });
 
-  test('TC-D-024 — S6: nothing expires a reservation', async ({ adminPage, secondPage, runId }) => {
+  test('TC-D-024 — nothing expires a reservation', async ({ adminPage, secondPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '6100.00' });
     await takeFromQueue(adminPage, request);
 
@@ -875,14 +855,14 @@ test.describe('D · giving a reservation up', () => {
       settlement: 'settled',
       ...(await entryFields(adminPage, request.id))
     });
-    expect(over.status, 'G13: over-paying is refused').toBe(400);
+    expect(over.status, 'over-paying is refused').toBe(400);
 
     await adminPage.goto('/');
     await adminPage.goto('/accounts-queue?tab=processing');
     await adminPage.goto(`/payments/new?request=${request.id}`);
     await expect(
       adminPage.locator('.reserve-bar'),
-      'S6: there is no auto-release, so the reservation is still the same person’s'
+      'there is no auto-release, so the reservation is still the same person’s'
     ).toContainText('Reserved by you');
     expect(await isTakeable(adminPage, request), 'and nobody else may take it').toBe(false);
   });
@@ -896,10 +876,10 @@ test.describe('D · giving a reservation up', () => {
     await adminPage.goto(`/requests/${request.id}/reservation`);
     await expect(adminPage.locator('h1')).toHaveText('Release or reassign this request');
     await expect(adminPage.locator('.reserve-bar')).toContainText('Reserved by you');
-    await expect(adminPage.getByLabel('Reason'), 'G12: a release is explained to the requester').toBeVisible();
+    await expect(adminPage.getByLabel('Reason'), 'a release is explained to the requester').toBeVisible();
     await expect(
       adminPage.getByLabel('I confirm no payment has been initiated for this request'),
-      'S7: the one thing a reservation protects against is two people paying the same invoice'
+      'the one thing a reservation protects against is two people paying the same invoice'
     ).toBeVisible();
     await expect(adminPage.getByRole('button', { name: 'Release reservation' })).toBeVisible();
   });
@@ -912,12 +892,12 @@ test.describe('D · giving a reservation up', () => {
     await reserve(adminPage, request.id);
 
     const noConfirm = await probePost(adminPage, `/requests/${request.id}/release`, { reason: 'Wrong invoice' });
-    expect(noConfirm.status, 'S7: an unconfirmed release must not release').toBe(400);
+    expect(noConfirm.status, 'an unconfirmed release must not release').toBe(400);
     expect(noConfirm.body).toContain('confirm that no payment was initiated');
     expect(await isTakeable(adminPage, request), 'and the reservation survives the refusal').toBe(false);
 
     const noReason = await probePost(adminPage, `/requests/${request.id}/release`, { confirm: 'on' });
-    expect(noReason.status, 'G12: a reason is required').toBe(400);
+    expect(noReason.status, 'a reason is required').toBe(400);
     expect(noReason.body).toContain('a reason is required');
     expect(await isTakeable(adminPage, request)).toBe(false);
 
@@ -934,7 +914,7 @@ test.describe('D · giving a reservation up', () => {
     });
     expect(released.status, 'with both, the holder releases it').toBe(303);
     expect(released.location, 'and lands back on the queue').toBe('/accounts-queue');
-    expect(await isTakeable(adminPage, request), 'S6: the request is back in the open queue').toBe(true);
+    expect(await isTakeable(adminPage, request), 'the request is back in the open queue').toBe(true);
     expect(await statusPill(adminPage, request.id), 'and back to approved').toContain('Approved');
   });
 
@@ -952,7 +932,7 @@ test.describe('D · giving a reservation up', () => {
         confirm: 'on',
         reason: 'I want it'
       });
-      expect(post.status, 'S6: only the assignee, or a caller who may reassign, may release').toBe(403);
+      expect(post.status, 'only the assignee, or a caller who may reassign, may release').toBe(403);
       const stillHeld = await probeGet(c.holder.page, `/payments/new?request=${c.taken.id}`);
       expect(stillHeld.status, 'and the holder still holds it').toBe(200);
     } finally {
@@ -1039,7 +1019,7 @@ test.describe('D · giving a reservation up', () => {
         reason: `Handing to the invoice desk ${runId}`,
         to_user_id: targetId!
       });
-      expect(moved.status, 'G11: the reservation changes hands').toBe(303);
+      expect(moved.status, 'the reservation changes hands').toBe(303);
       expect(moved.location, 'and the reader is returned to the request').toBe(`/requests/${request.id}`);
 
       const now = await probeGet(target.page, `/payments/new?request=${request.id}`);
@@ -1135,7 +1115,7 @@ test.describe('D · giving a reservation up', () => {
 });
 
 // ===========================================================================
-// D — the stale nudge (Q6)
+// D — the stale-reservation nudge
 // ===========================================================================
 
 test.describe('D · the stale-reservation nudge', () => {
@@ -1162,7 +1142,7 @@ test.describe('D · the stale-reservation nudge', () => {
     await expect(c.holder.page.locator('.banner.warn')).toContainText('reserved by you');
     await expect(
       c.holder.page.locator('.banner.warn'),
-      'Q6: the nudge is a nudge — nothing is released automatically'
+      'the nudge is a nudge — nothing is released automatically'
     ).toContainText('Nothing is released automatically');
 
     const choices = c.holder.page.locator('.a-list a');
@@ -1199,14 +1179,10 @@ test.describe('D · the stale-reservation nudge', () => {
   });
 
   test('TC-D-044 — a non-holding accountant is offered no choice that answers 403', async ({ browser }) => {
-    // Regression guard for F-D-03. The template's own rule is "a choice the
-    // reader could not take is not shown greyed out — it is not shown"
-    // (internal/app/templates.go:1139-1150). "Put it on hold" used to be gated on
-    // payment:hold alone while linking to the release screen, which refuses
-    // anybody who is neither the holder nor able to reassign — so a second
-    // accountant was offered a choice that answered 403. Every choice the nudge
-    // now offers answers 200 for the reader it is offered to, and this drives
-    // each one for a bystander to prove it.
+    // The nudge's rule is "a choice the reader could not take is not shown
+    // greyed out — it is not shown". Every choice it offers must answer 200 for
+    // the reader it is offered to, and this drives each one as a bystander
+    // accountant who neither holds the request nor may reassign it.
     const c = await corpus(browser);
     const other = await asRole(c.admin, browser, `${c.runId}c`, ['Accounts'], 'bystander');
     try {
@@ -1234,7 +1210,7 @@ test.describe('D · the stale-reservation nudge', () => {
 });
 
 // ===========================================================================
-// E — hold and unhold (L7, Q6)
+// E — hold and unhold (a hold pauses an approved request without a new status)
 // ===========================================================================
 
 test.describe('D · hold and unhold', () => {
@@ -1263,11 +1239,12 @@ test.describe('D · hold and unhold', () => {
       await expect(accounts.page.locator('.banner.warn')).toContainText('Payment is blocked until Accounts lifts');
 
       // The hold tab's own query is `on_hold=1 AND status='approved'`, so the row
-      // being in it is the proof that L7 holds — no separate status was invented.
+      // being in it proves a hold keeps the request approved — no separate
+      // status was invented.
       await accounts.page.goto(`/accounts-queue?tab=hold&q=${encodeURIComponent(request.number)}`);
       await expect(
         accounts.page.locator('tbody tr').filter({ hasText: request.number }),
-        'L7: on_hold=1 implies status=approved, which is exactly what this tab selects'
+        'on_hold=1 implies status=approved, which is exactly what this tab selects'
       ).toHaveCount(1);
     } finally {
       await accounts.close();
@@ -1313,7 +1290,7 @@ test.describe('D · hold and unhold', () => {
 
   test('TC-D-049 — an on-hold request cannot be reserved and is takeable from neither list', async ({ browser }) => {
     const c = await corpus(browser);
-    expect((await reserve(c.holder.page, c.onHold.id)).status, 'L7: payment is blocked while the hold stands').toBe(
+    expect((await reserve(c.holder.page, c.onHold.id)).status, 'payment is blocked while the hold stands').toBe(
       409
     );
     expect(await isTakeable(c.admin, c.onHold), 'the queue offers no Take button').toBe(false);
@@ -1323,7 +1300,7 @@ test.describe('D · hold and unhold', () => {
     expect(await statusPill(c.admin, c.onHold.id), 'while the request itself is still on hold').toContain('On hold');
   });
 
-  test('TC-D-050 — Q6: the requester answers while on hold and not one field changes', async ({
+  test('TC-D-050 — the requester answers while on hold and not one field changes', async ({
     adminPage,
     browser,
     runId
@@ -1383,11 +1360,9 @@ test.describe('D · hold and unhold', () => {
 
   test('TC-D-053 — a reserved request cannot be put on hold', async ({ browser }) => {
     const c = await corpus(browser);
-    // The refusal used to read as the generic permission sentence, which sent an
-    // accountant who holds payment:hold to an administrator for a grant they
-    // already have (F-D-02/F-A-09). respondStoreError now passes an ErrForbidden
-    // that carries its own reason through friendly (internal/app/http_errors.go:191-198),
-    // so the sentence names the state instead.
+    // A refusal that carries its own reason shows that reason (through
+    // `friendly`), so the sentence names the state rather than sending an
+    // accountant who holds payment:hold to an administrator for a grant.
     const probe = await probePost(c.admin, `/requests/${c.taken.id}/hold`, { reason: 'too late' });
     expect(probe.status, 'a hold pauses an approved request; this one is already being paid').toBe(403);
     expect(probe.body, 'and the refusal names the state rather than a permission the caller holds').toContain(
@@ -1404,7 +1379,7 @@ test.describe('D · hold and unhold', () => {
 });
 
 // ===========================================================================
-// F — the entry screen and its prefill (S14)
+// F — the entry screen and its prefill
 // ===========================================================================
 
 test.describe('D · the entry screen and its prefill', () => {
@@ -1438,15 +1413,11 @@ test.describe('D · the entry screen and its prefill', () => {
       }
       await expect(adminPage.getByLabel(text), `and getByLabel('${text}') resolves it`).toHaveCount(1);
     }
-    // "Processing note" carries an "optional" chip rather than an asterisk, and
-    // F-D-05 was that the chip alone was not aria-hidden — so a screen reader
-    // announced the field as "Processing note optional" while every required
-    // field beside it announced its own name cleanly. The chip is decoration in
-    // exactly the same sense the asterisk is, and now carries the same attribute
-    // (internal/app/templates.go:452), so the accessible name is the label the
-    // design names and nothing more. Asserted as the computed accessible name,
-    // not as the label's text: getByLabel reads the label's text content and
-    // would pass either way, which is what let this slip through before.
+    // "Processing note" carries an "optional" chip rather than an asterisk. The
+    // chip is decoration just as the asterisk is and is aria-hidden too, so a
+    // screen reader announces "Processing note" and nothing more. Asserted as
+    // the computed accessible name, because getByLabel reads the label's text
+    // content and would pass either way.
     await expect(adminPage.getByLabel('Processing note')).toHaveCount(1);
     await expect(adminPage.locator('label[for="remarks"]')).toHaveText('Processing note optional');
     await expect(
@@ -1465,7 +1436,7 @@ test.describe('D · the entry screen and its prefill', () => {
     await expect(adminPage.locator('label.uploader')).toContainText('Add the bank advice');
   });
 
-  test('TC-D-055/056 — S14: the payee, head and invoice arrive as hidden inputs copied from the request', async ({
+  test('TC-D-055/056 — the payee, head and invoice arrive as hidden inputs copied from the request', async ({
     browser
   }) => {
     const c = await corpus(browser);
@@ -1531,7 +1502,7 @@ test.describe('D · the entry screen and its prefill', () => {
       'the payment detail’s h1 is the payee, and it is not blank'
     ).toHaveText(payee);
 
-    await c.admin.goto(`/payments?month=2026-07&q=${encodeURIComponent(payee)}`);
+    await c.admin.goto(`/payments?month=${thisMonth()}&q=${encodeURIComponent(payee)}`);
     const ledgerRow = c.admin.locator('tbody tr').filter({ has: c.admin.locator(`a[href="${payment}"]`) });
     await expect(ledgerRow, 'and the ledger row is findable by the payee it was written with').toHaveCount(1);
     await expect(ledgerRow.locator('td[data-label="Payee"]')).toHaveText(payee);
@@ -1542,13 +1513,11 @@ test.describe('D · the entry screen and its prefill', () => {
     browser,
     runId
   }) => {
-    // Regression guard for F-D-01. paymentInput still reads head_id, vendor_payee
-    // and invoice_no straight off the form — they are display baggage the entry
-    // screen echoes back — but RecordPaymentForRequest now overwrites all three
-    // from the request row it already holds open (internal/store/store.go:950-954)
-    // instead of trusting them. So a tampered snapshot is neither honoured nor
-    // refused: it is ignored, and the payment is booked exactly where the approval
-    // put it. This test protects that: an accountant holding the reservation
+    // The form's head_id, vendor_payee and invoice_no are display copies the
+    // entry screen echoes back; RecordPaymentForRequest overwrites all three
+    // from the request row instead of trusting them. So a tampered value is
+    // neither honoured nor refused: it is ignored, and the payment is booked
+    // exactly where the approval put it. An accountant holding the reservation
     // cannot charge the payment to another head or write another payee on it.
     const c = await corpus(browser);
     const request = await createApprovedRequest(adminPage, runId, { amount: '4400.00' });
@@ -1585,7 +1554,7 @@ test.describe('D · the entry screen and its prefill', () => {
   }) => {
     const c = await corpus(browser);
     const probe = await probeGet(c.admin, `/payments/new?request=${c.taken.id}`);
-    expect(probe.status, 'G15: HTTP 409 on a rendered screen').toBe(409);
+    expect(probe.status, 'HTTP 409 on a rendered screen').toBe(409);
     expect(probe.body, 'the reader needs to know who has it').toContain('took this request before you');
     expect(probe.body, 'and what they may do instead').toContain('Go back to the queue');
     expect(probe.body, 'this is not the error page').not.toContain('class="error-code"');
@@ -1604,7 +1573,7 @@ test.describe('D · the entry screen and its prefill', () => {
 });
 
 // ===========================================================================
-// G — the settlement preview is pure (D8, S13)
+// G — the settlement preview writes nothing
 // ===========================================================================
 
 test.describe('D · the settlement preview writes nothing', () => {
@@ -1612,14 +1581,14 @@ test.describe('D · the settlement preview writes nothing', () => {
     test.skip(testInfo.project.name !== 'chromium', 'Purity is a server property.');
   });
 
-  test('TC-D-061 — D8: previewing, then abandoning, records nothing at all', async ({ adminPage, runId }) => {
+  test('TC-D-061 — previewing, then abandoning, records nothing at all', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '5100.00' });
     await reserve(adminPage, request.id);
     const fields = await entryFields(adminPage, request.id);
 
     const snapshot = async () => {
       const detail = await probeGet(adminPage, `/requests/${request.id}`);
-      const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-PURE-${runId}`);
+      const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-PURE-${runId}`);
       return {
         status: await statusPill(adminPage, request.id),
         outcome: detail.body.includes('Payment outcome'),
@@ -1645,7 +1614,7 @@ test.describe('D · the settlement preview writes nothing', () => {
       `value="UTR-PURE-${runId}"`
     );
 
-    expect(await snapshot(), 'D8: the preview holds no transaction, so nothing about the world changed').toEqual(
+    expect(await snapshot(), 'the preview holds no transaction, so nothing about the world changed').toEqual(
       before
     );
 
@@ -1655,7 +1624,7 @@ test.describe('D · the settlement preview writes nothing', () => {
     expect(await snapshot(), 'and abandoning the flow leaves the request exactly as it was').toEqual(before);
   });
 
-  test('TC-D-062 — S13: the sheet swaps into #settle-mount without changing the URL, and Go back is a link', async ({
+  test('TC-D-062 — the sheet swaps into #settle-mount without changing the URL, and Go back is a link', async ({
     adminPage,
     runId
   }) => {
@@ -1685,7 +1654,7 @@ test.describe('D · the settlement preview writes nothing', () => {
     await expect(adminPage.locator('.reserve-bar'), 'and the reservation survives the retreat').toContainText(
       'Reserved by you'
     );
-    // settlement-6: dismissing the sheet is not a reload. The amount, mode
+    // Dismissing the sheet is not a reload. The amount, mode
     // and reference just typed are still in the form, so one field can be
     // corrected without retyping the rest — which is what the manual promises
     // ("Go back returns to the form with everything you typed still there").
@@ -1705,7 +1674,7 @@ test.describe('D · the settlement preview writes nothing', () => {
       'a Manager holds no payment:settle'
     );
     const nonHolder = await probePost(c.admin, `/requests/${c.taken.id}/settlement-preview`, { amount: '10.00' });
-    expect(nonHolder.status, 'losing the reservation between entry and confirmation is a screen (G15)').toBe(409);
+    expect(nonHolder.status, 'losing the reservation between entry and confirmation is a screen').toBe(409);
     expect(nonHolder.body).toContain('took this request before you');
   });
 
@@ -1730,7 +1699,7 @@ test.describe('D · the settlement preview writes nothing', () => {
 });
 
 // ===========================================================================
-// H — settlement outcomes (S10, S11)
+// H — settlement outcomes: settled in full, settled short, partial
 // ===========================================================================
 
 test.describe('D · settlement outcomes', () => {
@@ -1738,7 +1707,7 @@ test.describe('D · settlement outcomes', () => {
     test.skip(testInfo.project.name !== 'chromium', 'Outcomes are driven once, on chromium.');
   });
 
-  test('TC-D-065 — S10: paid less than approved, settled, completes the request', async ({ adminPage, runId }) => {
+  test('TC-D-065 — paid less than approved, settled, completes the request', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '6000.00' });
     await takeFromQueue(adminPage, request);
     await fillEntry(adminPage, { amount: '4500.00', reference: `UTR-UNDER-${runId}` });
@@ -1754,7 +1723,7 @@ test.describe('D · settlement outcomes', () => {
     await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
     await expect(
       adminPage.locator('.pill.completed'),
-      'S10: settled completes it even under the approved figure'
+      'settled completes it even under the approved figure'
     ).toBeVisible();
     await expect(adminPage.locator('.compare .cmp-row.match')).toContainText('confirmed settled by Accounts');
 
@@ -1783,7 +1752,7 @@ test.describe('D · settlement outcomes', () => {
     expect(await statusPill(adminPage, request.id)).toContain('Completed');
   });
 
-  test('TC-D-067 — G13: paid more than approved is refused and writes nothing', async ({ adminPage, runId }) => {
+  test('TC-D-067 — paid more than approved is refused and writes nothing', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '6200.00' });
     await reserve(adminPage, request.id);
     const probe = await probePost(adminPage, '/payments', {
@@ -1799,7 +1768,7 @@ test.describe('D · settlement outcomes', () => {
     expect(probe.body).toContain('more than the approved');
     expect(probe.body).toContain('cancel this request and raise a new one');
     expect(await statusPill(adminPage, request.id), 'and the request is still being processed').toContain(RESERVED);
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-OVER-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-OVER-${runId}`);
     expect(ledger.body, 'with no payment behind it').toContain('No payments match these filters');
   });
 
@@ -1818,13 +1787,13 @@ test.describe('D · settlement outcomes', () => {
         partial_reason,
         ...fields
       });
-      expect(probe.status, 'L9: the manager reads this reason when deciding, so it cannot be blank').toBe(400);
+      expect(probe.status, 'the manager reads this reason when deciding, so it cannot be blank').toBe(400);
       expect(probe.body).toContain('a reason is required for a partial settlement');
     }
     expect(await statusPill(adminPage, request.id)).toContain(RESERVED);
   });
 
-  test('TC-D-069/070/071 — S11: a partial settlement routes to the manager, who accepts and closes it', async ({
+  test('TC-D-069/070/071 — a partial settlement routes to the manager, who accepts and closes it', async ({
     adminPage,
     browser,
     runId
@@ -1840,7 +1809,7 @@ test.describe('D · settlement outcomes', () => {
     await sheet.getByRole('button', { name: 'Confirm and save payment' }).click();
     await expect(adminPage).toHaveURL(/\/payments\/\d+$/);
     await expect(adminPage.locator('.pill.partial')).toBeVisible();
-    expect(await statusPill(adminPage, request.id), 'L9: the request goes to the manager, not to completed').toContain(
+    expect(await statusPill(adminPage, request.id), 'the request goes to the manager, not to completed').toContain(
       'Partial'
     );
 
@@ -1864,7 +1833,7 @@ test.describe('D · settlement outcomes', () => {
       await expect(page.locator('.banner.warn').first()).toContainText(
         `Retention held back until handover ${runId}`
       );
-      await expect(page.locator('.card .pill.neutral.no-dot'), 'S12: nothing here can amend the payment').toHaveText(
+      await expect(page.locator('.card .pill.neutral.no-dot'), 'nothing here can amend the payment').toHaveText(
         'Cannot be edited'
       );
 
@@ -1877,7 +1846,7 @@ test.describe('D · settlement outcomes', () => {
       await expect(page).toHaveURL(new RegExp(`/requests/${request.id}$`));
       await expect(
         page.locator('.rh-status .pill.completed-partial'),
-        'G14: a written-off balance stays visible for the life of the record'
+        'a written-off balance stays visible for the life of the record'
       ).toHaveText('Completed — partial accepted');
       await expect(
         page.locator('ol.thread li').filter({ hasText: `Balance written off ${runId}` }),
@@ -1980,7 +1949,7 @@ test.describe('D · settlement outcomes', () => {
 });
 
 // ===========================================================================
-// I — duplicate confirmations and immutability (S9, S12, S15, X5, X6)
+// I — duplicate confirmations, and a linked payment can never be changed
 // ===========================================================================
 
 test.describe('D · duplicate confirmations and immutable payment history', () => {
@@ -1988,7 +1957,7 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     test.skip(testInfo.project.name !== 'chromium', 'Immutability is a server property.');
   });
 
-  test('TC-D-076 — S9: a second settlement creates no second payment', async ({ adminPage, runId }) => {
+  test('TC-D-076 — a second settlement creates no second payment', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '7100.00' });
     await reserve(adminPage, request.id);
     const form = {
@@ -2015,13 +1984,13 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     ).toBe(303);
     expect(second.location, 'a double confirm goes to the payment that already exists').toBe(paymentPath);
 
-    await adminPage.goto(`/payments?month=2026-07&q=UTR-ONCE-${runId}`);
+    await adminPage.goto(`/payments?month=${thisMonth()}&q=UTR-ONCE-${runId}`);
     await expect(adminPage.locator('tbody tr'), 'and there is exactly one payment against the request').toHaveCount(1);
-    await adminPage.goto(`/payments?month=2026-07&q=UTR-SECOND-${runId}`);
+    await adminPage.goto(`/payments?month=${thisMonth()}&q=UTR-SECOND-${runId}`);
     await expect(adminPage.locator('td.empty'), 'the second attempt wrote nothing').toHaveCount(1);
   });
 
-  test('TC-D-077/078 — S12: a linked payment can be neither edited nor voided', async ({ adminPage, runId }) => {
+  test('TC-D-077/078 — a linked payment can be neither edited nor voided', async ({ adminPage, runId }) => {
     const request = await createApprovedRequest(adminPage, runId, { amount: '7200.00' });
     const payment = await settlePayment(adminPage, request.id, {
       amount: '7200.00',
@@ -2046,7 +2015,7 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
       vendor_payee: 'rewritten',
       payment_mode: 'cash'
     });
-    expect(edit.status, 'S12: editing it would rewrite what the requester was told was paid').toBe(400);
+    expect(edit.status, 'editing it would rewrite what the requester was told was paid').toBe(400);
     expect(edit.body).toContain('a payment linked to a request cannot be edited');
 
     const voided = await probePost(adminPage, `/payments/${id}/void`, { reason: 'mistake' });
@@ -2060,7 +2029,7 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     await expect(adminPage.locator('.pill.completed')).toBeVisible();
   });
 
-  test('TC-D-079/080/081 — X5/S15: no payment without a reservation the caller holds', async ({
+  test('TC-D-079/080/081 — no payment without a reservation the caller holds', async ({
     adminPage,
     browser,
     runId
@@ -2078,39 +2047,35 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     };
 
     const noRequest = await probePost(adminPage, '/payments', base);
-    expect(noRequest.status, 'X5: free-standing payment entry is gone').toBe(400);
+    expect(noRequest.status, 'free-standing payment entry is gone').toBe(400);
     expect(noRequest.body).toContain('Payments must be linked to an approved request.');
 
-    // Both of the next two are ErrForbidden, and settlementError renders them as
-    // a 403 confirmation sheet. It used to carry the generic "Something went
-    // wrong" sentence rather than the store's own reason (F-D-02/F-A-09);
-    // friendly now keeps a refusal's reason when it has one
-    // (internal/app/app.go:2173-2184), so the accountant is told what to do next.
+    // When the caller does not hold the request's reservation, settlementError
+    // answers 409 with the confirmation sheet and says the request is not
+    // reserved by them and nothing was saved, so the accountant knows what to do.
     const unreserved = await probePost(adminPage, '/payments', { ...base, request_id: String(request.id) });
-    expect(unreserved.status, 'S15: approved is not enough — the payment needs a reservation').toBe(403);
+    expect(unreserved.status, 'approved is not enough — the payment needs a reservation').toBe(409);
     expect(unreserved.body, 'and the sheet says what is missing, not that something went wrong').toContain(
-      'eserve this request before recording its payment'
+      'reserved by you. Your payment was not saved'
     );
 
     const notMine = await probePost(adminPage, '/payments', { ...base, request_id: String(c.taken.id) });
-    expect(notMine.status, 'and it has to be the caller’s own reservation').toBe(403);
-    expect(notMine.body).toContain('eserve this request before recording its payment');
+    expect(notMine.status, 'and it has to be the caller’s own reservation').toBe(409);
+    expect(notMine.body).toContain('reserved by you. Your payment was not saved');
 
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-NOLINK-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-NOLINK-${runId}`);
     expect(ledger.body, 'none of the three wrote anything').toContain('No payments match these filters');
     expect(await statusPill(adminPage, request.id), 'and the unreserved request is still merely approved').toContain(
       'Approved'
     );
   });
 
-  test('TC-D-095 — S12: a linked payment accepts no new attachment either', async ({ adminPage, runId }) => {
-    // Regression guard for F-D-08 (the sibling's SD-03, reproduced here because
-    // S12 is this audit's). POST /payments/{id}/attachments is still gated only on
-    // attachment:create, but store.AddAttachment now refuses a payment whose
-    // request_id is set (internal/store/store.go:1403-1405), joining
-    // UpdatePaymentWithAttachment and VoidPayment. A linked payment is the
-    // request's outcome and a new document mutates that record like any other
-    // edit. The settlement's own proof travels inside RecordPaymentForRequest's
+  test('TC-D-095 — a linked payment accepts no new attachment either', async ({ adminPage, runId }) => {
+    // A linked payment is the request's outcome, and a new document changes
+    // that record like any other edit. store.AddAttachment refuses a payment
+    // whose request_id is set, as UpdatePaymentWithAttachment and VoidPayment
+    // do. The upload is a valid PDF so the refusal can only be for that reason.
+    // The settlement's own proof travels inside RecordPaymentForRequest's
     // transaction and never passes through here — see fixtures.settlePayment's
     // `attachment` option.
     const request = await createApprovedRequest(adminPage, runId, { amount: '7400.00' });
@@ -2131,22 +2096,22 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
     const response = await adminPage.request.post(`/payments/${id}/attachments`, {
       multipart: {
         csrf,
-        attachment: { name: 'late-advice.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 audit-d') }
+        attachment: pdfUpload('late-advice.pdf')
       },
       maxRedirects: 0,
       failOnStatusCode: false
     });
     expect(
       response.status(),
-      'S12: a payment the screen calls read-only must refuse a new document as firmly as it refuses an edit'
+      'a payment the screen calls read-only must refuse a new document as firmly as it refuses an edit'
     ).toBe(400);
   });
 
-  test('TC-D-082 — X6: every payment this product can create is linked, and offers only View', async ({
+  test('TC-D-082 — every payment this product can create is linked, and offers only View', async ({
     browser
   }) => {
     const c = await corpus(browser);
-    await c.admin.goto('/payments?month=2026-07&status=all');
+    await c.admin.goto(`/payments?month=${thisMonth()}&status=all`);
     const rows = c.admin.locator('tbody tr');
     const count = await rows.count();
     expect(count, 'the corpus alone put a settled payment in this month').toBeGreaterThan(0);
@@ -2156,14 +2121,14 @@ test.describe('D · duplicate confirmations and immutable payment history', () =
       await expect(actions, 'and that action is View').toHaveText('View');
       await expect(
         rows.nth(i).locator('details.inline-danger'),
-        'the Remove disclosure belongs to historical rows only (X6)'
+        'the Remove disclosure belongs to historical rows only'
       ).toHaveCount(0);
     }
   });
 });
 
 // ===========================================================================
-// J — proof of absence (X3)
+// J — there is no refund or reversal
 // ===========================================================================
 
 test.describe('D · what deliberately does not exist', () => {
@@ -2171,7 +2136,7 @@ test.describe('D · what deliberately does not exist', () => {
     test.skip(testInfo.project.name !== 'chromium', 'Absence is absence on one engine.');
   });
 
-  test('TC-D-083 — X3: there is no refund, reversal or return-of-money route', async ({ browser }) => {
+  test('TC-D-083 — there is no refund, reversal or return-of-money route', async ({ browser }) => {
     const c = await corpus(browser);
     for (const path of [
       `/requests/${c.done.id}/refund`,
@@ -2201,9 +2166,9 @@ test.describe('D · what deliberately does not exist', () => {
     await expect(c.admin.locator('.action-bar')).toContainText('Refunds and reversals are outside this version.');
     await expect(c.admin.getByRole('button', { name: /Refund|Reverse/ })).toHaveCount(0);
     await expect(c.admin.getByRole('link', { name: /Refund|Reverse/ })).toHaveCount(0);
-    // On the read-only card, not the "Payment saved" banner: since
-    // settlement-5 that banner appears once, on the redirect from the
-    // confirming POST, and this is a plain visit months later.
+    // On the read-only card, not the "Payment saved" banner: that banner
+    // appears once, on the redirect from the confirming POST, and this is a
+    // plain later visit.
     await expect(c.admin.locator('.card .hint')).toContainText('can no longer be edited or cancelled');
   });
 });
@@ -2247,7 +2212,7 @@ test.describe('D · tampering with the settlement', () => {
       await statusPill(adminPage, request.id),
       'and after twelve refusals the request is still reserved'
     ).toContain(RESERVED);
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-TAMPER2-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-TAMPER2-${runId}`);
     expect(ledger.body, 'with nothing written').toContain('No payments match these filters');
   });
 
@@ -2289,13 +2254,9 @@ test.describe('D · tampering with the settlement', () => {
   });
 
   test('TC-D-090 — a payment cannot be dated in the future', async ({ adminPage, runId }) => {
-    // Regression guard for F-D-06. validatePayment used to check the shape of
-    // paid_on and the month lock and nothing else, so a payment dated years ahead
-    // was accepted and landed in a future month's actuals. It now refuses a
-    // paid_on after the caller's `Now`, and the handler sets it — the store half
-    // shipped one wave before the wiring, deliberately, because the fixtures that
-    // booked payments in 2027-2029 had to move first. 2029-12-31 is this case's
-    // whole point and stays: it is the date that used to be accepted.
+    // paid_on records when money left the bank, so a date after today records
+    // something that has not happened and would land in a future month's
+    // actuals. The store refuses any paid_on after today.
     const request = await createApprovedRequest(adminPage, runId, { amount: '8300.00' });
     await reserve(adminPage, request.id);
     const probe = await probePost(adminPage, '/payments', {
@@ -2331,16 +2292,16 @@ test.describe('D · tampering with the settlement', () => {
         `nor may a ${csrf} token reach the preview`
       ).toBe(403);
     }
-    const ledger = await probeGet(adminPage, `/payments?month=2026-07&q=UTR-CSRF-${runId}`);
+    const ledger = await probeGet(adminPage, `/payments?month=${thisMonth()}&q=UTR-CSRF-${runId}`);
     expect(ledger.body).toContain('No payments match these filters');
   });
 });
 
 // ===========================================================================
-// M — the two refusals that strand money, and the gate that is not there
+// M — recoverables with no head are payable; the settlement writer is gated like its preview
 // ===========================================================================
 
-test.describe('D · settlements the product cannot complete', () => {
+test.describe('D · recoverable settlements and the settlement gates', () => {
   test.beforeEach(async ({}, testInfo) => {
     test.skip(testInfo.project.name !== 'chromium', 'These are server properties.');
   });
@@ -2350,16 +2311,12 @@ test.describe('D · settlements the product cannot complete', () => {
     browser,
     runId
   }) => {
-    // Regression guard for F-D-11, the most serious defect this audit found. A
-    // recoverable category that requires no project gives the request no project
-    // and therefore no head, and the entry screen still posts head_id=0 because
-    // there is nothing else it could post. What changed is the data model:
-    // migration v8 rebuilt `payments` with a NULLABLE head_id, `validatePayment`
-    // requires a head only for a budget-treatment payment
-    // (internal/store/store.go:1741) and RecordPaymentForRequest writes NULL
-    // rather than 0 (:968-973). A recoverable's head was never meaningful — the
-    // grid and the monthly report exclude recoverables by treatment — so the
-    // absence of one may not decide whether approved money can be paid at all.
+    // A recoverable category that requires no project gives the request no
+    // project and therefore no head, and the entry screen posts head_id=0.
+    // Payments have a nullable head, and the payment validator requires a head
+    // only for a budget-treatment payment. A recoverable's head is never
+    // meaningful — the grid and the monthly report exclude recoverables — so
+    // the absence of one may not decide whether approved money can be paid.
     //
     // Every category is driven before the assertion, so one run reports all four
     // rather than stopping at the first.
@@ -2400,8 +2357,8 @@ test.describe('D · settlements the product cannot complete', () => {
       });
     }
 
-    // The stranding is the harm, and it is the same for every category: the
-    // reservation is still held, so nobody else can even look at it afresh.
+    // A refused category would strand its request: the reservation is still
+    // held, so nobody else can even look at it afresh.
     for (const o of outcomes) {
       if (o.status === 303) continue;
       expect(o.strandedAt, `${o.category}: the request is stuck in processing after the refusal`).toContain(RESERVED);
@@ -2418,17 +2375,11 @@ test.describe('D · settlements the product cannot complete', () => {
     browser,
     runId
   }) => {
-    // FINDING F-D-10, fixed while this suite was being repaired — the annotation
-    // is removed here because the fix landed in another wave's file, not because
-    // this case changed. POST /requests/{id}/settlement-preview, which writes
-    // nothing, was gated on payment:settle while POST /payments — the only writer
-    // in the flow — was gated on payment:create alone; RecordPaymentForRequest
-    // checked the reservation and nothing else, and payment:mark_partial gated no
-    // route at all. So a subject holding create+reserve could settle a request in
-    // full and mark one a partial without either verb. POST /payments now requires
-    // payment:settle, and payment:mark_partial when settlement=partial. This case
-    // is the regression guard: the writer is never gated more loosely than the
-    // read-only preview beside it.
+    // The settlement preview writes nothing and is gated on payment:settle, so
+    // the writer beside it (POST /payments) must be gated at least as tightly:
+    // it requires payment:settle, and payment:mark_partial when
+    // settlement=partial. A subject holding only create and reserve may do
+    // neither.
     const heads = await headIds(adminPage);
     const head = heads.get('Operations / Office Rent')!;
     const entry = await subjectWithGrants(adminPage, browser, runId, 'entryonly', [
@@ -2487,24 +2438,15 @@ test.describe('D · settlements the product cannot complete', () => {
     browser,
     runId
   }) => {
-    // Regression guard for F-D-12 (the sibling's SD-02, reproduced here because
-    // the promise is made on this audit's screen). templates.go:1042 states "The
-    // requester and the approver are both notified."; requestRelease called no
-    // a.fire at all and internal/notify/events.go declared no release, reassign
-    // or unhold event, so the sentence was false from the day it shipped.
-    // Migration v9 seeds `reservation_released` with IncludeRequester and
-    // IncludeManager (internal/store/migrations_notifications.go:96-100) and
-    // requestRelease fires it (internal/app/linking.go:712), so both people the
-    // screen names are told.
+    // The release screen promises "The requester and the approver are both
+    // notified.", so releasing fires the `reservation_released` event to both
+    // the requester and the request's manager.
     //
     // Counted off the filter strip rather than by counting rendered rows. The
-    // centre lists at most defaultNotificationLimit = 100 rows
-    // (internal/store/inapp.go:100) and the shared admin of a full run is past
-    // that by the time this case runs, so a rendered-row count stops moving while
-    // NotificationCounts — which the strip prints, and which has no cap — keeps
-    // counting. That disagreement is F-G-037 itself; the screen now names both
-    // numbers, and reading the uncapped one is what makes this case mean the same
-    // thing alone and in a full run.
+    // notification centre lists at most defaultNotificationLimit (100) rows and
+    // the shared admin of a full run is past that by the time this case runs,
+    // while the strip's counts have no cap — so reading them makes this case
+    // mean the same thing alone and in a full run.
     const request = await createApprovedRequest(adminPage, runId, { amount: '3700.00' });
     const approver = approverFor(runId);
     await reserve(adminPage, request.id);
@@ -2602,7 +2544,7 @@ test.describe('D · the reserve→settle journey on a phone', () => {
     await takeFromQueue(adminPage, request);
 
     const response = await secondPage.goto(`/payments/new?request=${request.id}`);
-    expect(response?.status(), 'G15: a rendered screen carrying 409').toBe(409);
+    expect(response?.status(), 'a rendered screen carrying 409').toBe(409);
     await expect(secondPage.locator('.banner.bad')).toContainText('took this request before you');
     await expect(secondPage.locator('.a-list a[href="/accounts-queue"]')).toBeVisible();
     const conflictOverflow = await secondPage.evaluate(

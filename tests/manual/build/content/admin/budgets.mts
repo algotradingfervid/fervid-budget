@@ -71,7 +71,7 @@ export default page({
       { text: 'Open the month on **Budgets** and select **Edit budget lines**.' },
       {
         text: 'Expand the relevant project and head, then adjust descriptions or amounts, add lines, or remove lines.',
-        note: 'You can add more projects and heads too. The month of an existing plan is fixed. Unsaved projects and heads can be removed from the draft; populated groups ask for confirmation. This does not delete master records. Already-saved groups cannot be removed; retain a described zero-value line if an existing head no longer needs an allocation.',
+        note: 'You can add more projects and heads too. The month of an existing plan is fixed. Projects and heads added in this session can be taken out again with **Remove project from draft** or **Remove head from draft**; one that already holds heads or lines asks for confirmation first. This does not delete master records. Already-saved groups cannot be removed; retain a described zero-value line if an existing head no longer needs an allocation.',
       },
       {
         text: 'Select **Review budget →**, inspect the changes, then **Save budget changes**.',
@@ -85,19 +85,20 @@ export default page({
     ),
 
     section('Budget overview'),
-    shot('admin/budgets', 'The budget overview: one aggregate row per expense head. This earlier capture does not show the guided planner.'),
+    shot('admin/budgets', 'The budget overview for July 2026: **Create budget** and **Edit budget lines** at the top, then one row per project and expense head with its budget, actual and percentage used.'),
     prose(
       'The overview remains useful for comparing each head’s total budget with actual spending. ' +
-      '**Open** loads the selected month; **Month history** opens monthly plans, and **View grid** ' +
+      '**Create budget** and **Edit budget lines** appear only to somebody who may edit budgets. **Open** loads the selected month; **Month history** opens monthly plans, and **View grid** ' +
       'opens its variance grid. Heads with saved budget lines show a read-only total and an **Edit ' +
-      'lines** link to the relevant head in the planner. Older budgets without a line breakdown can ' +
+      'lines** link to the relevant head in the planner; somebody who cannot edit budgets sees "Total of saved budget lines." instead. Older budgets without a line breakdown can ' +
       'still be edited as aggregate amounts in this overview with **Save Budgets**. Opening an older ' +
       'budget in the planner presents its amount as a **Monthly allocation** line.',
     ),
     table(
       ['Column', 'What it shows'],
       [
-        ['Project / Head', 'The project and expense head for the row.'],
+        ['Project', 'The project the head belongs to.'],
+        ['Head', 'The expense head for the row.'],
         ['Status', 'Active, or Retired for an item retained for history.'],
         ['Budget', 'The head’s total planned amount. Detailed budgets are changed through Edit lines.'],
         ['Actual', 'Actual spending recorded against the head for the selected month.'],

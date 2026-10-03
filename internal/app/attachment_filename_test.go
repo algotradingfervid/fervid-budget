@@ -31,7 +31,7 @@ func TestLongAttachmentNamesSurviveCreateEditAndDownload(t *testing.T) {
 		if i > 0 {
 			path = fmt.Sprintf("/requests/%d/edit", id)
 			fields.Set("short_title", "Unicode filename correction")
-			fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, path, nil, ""))))
+			fields.Set("revision", requestRevisionFromPage(t, s.get(path)))
 		}
 		body, ct := attachmentMultipart(t, fields, name, pdf)
 		response := s.request(http.MethodPost, path, body, ct)
@@ -84,7 +84,7 @@ func TestLongAttachmentNamesSurviveCreateEditAndDownload(t *testing.T) {
 	}
 	// A rejected edit must remove its validly staged long-name file as well.
 	fields.Set("purpose", "")
-	fields.Set("revision", requestRevisionFromPage(t, responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d/edit", id), nil, ""))))
+	fields.Set("revision", requestRevisionFromPage(t, s.get(fmt.Sprintf("/requests/%d/edit", id))))
 	body, ct := attachmentMultipart(t, fields, names[0], pdf)
 	response := s.request(http.MethodPost, fmt.Sprintf("/requests/%d/edit", id), body, ct)
 	requireStatus(t, response, http.StatusBadRequest)
@@ -155,4 +155,38 @@ func TestConcurrentSameOriginalAttachmentNameGetsDistinctPrivateFiles(t *testing
 	if err != nil || len(files) != 0 {
 		t.Fatalf("cleanup left files: %v %v", files, err)
 	}
+}
+
+// Request documents link to their own route, not to /attachments/{id}, which
+// reads payment_attachments and would 404 or serve an unrelated payment's file.
+func TestRequestDocumentsLinkToTheirOwnRoute(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, headID := s.seedHead("Doc links")
+	requester := s.seedRequester("docs@example.test", "Doc Requester", "DocPass12345")
+	id := s.seedPendingRequest(1401, requester.ID, admin.ID, headID, 100000)
+	attID, err := s.st.AddRequestAttachment(s.ctx, requester, id, s.seedAttachmentFile("invoice-mine.txt", "mine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.login("docs@example.test", "DocPass12345")
+	want := fmt.Sprintf(`href="/requests/%d/attachments/%d"`, id, attID)
+	detail := s.get(fmt.Sprintf("/requests/%d", id))
+	if !strings.Contains(detail, want) {
+		t.Fatalf("the request detail does not link a document to its own route: %s", firstLines(detail))
+	}
+	if strings.Contains(detail, fmt.Sprintf(`href="/attachments/%d"`, attID)) {
+		t.Fatal("the request detail still points a request document at the payment attachment route")
+	}
+	edit := s.get(fmt.Sprintf("/requests/%d/edit", id))
+	if !strings.Contains(edit, want) {
+		t.Fatal("the correction screen lists a document with no way to open it")
+	}
+	// And the link works, which is the whole point.
+	resp := s.request(http.MethodGet, fmt.Sprintf("/requests/%d/attachments/%d", id, attID), nil, "")
+	requireStatus(t, resp, http.StatusOK)
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "invoice-mine.txt") {
+		t.Fatalf("Content-Disposition = %q, want the requester's own document", cd)
+	}
+	_ = responseBody(t, resp)
 }

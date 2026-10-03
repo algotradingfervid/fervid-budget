@@ -1,18 +1,21 @@
 import { mkdirSync } from 'node:fs';
-import type { Browser, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import {
   test,
   expect,
   admin,
+  approveInFull,
   createApprovedRequest,
   createApproverUser,
   login,
   openNewUserSheet,
-  settlePayment
+  settlePayment,
+  thisMonth,
+  today
 } from './fixtures';
 
 /*
- * The grid-and-reports repairs (fix wave 2026-09-25), each driven from the
+ * The grid and reports rules, each driven from the
  * screen a person uses. Every test also leaves 1440px and 390px photographs in
  * output/playwright/fixwave-grid/ (ignored by git), which is where the visual
  * half of each fix — a colour, a card, a drawer — was looked at.
@@ -42,21 +45,16 @@ function paise(text: string | null): number {
   return Math.round(Number(t) * 100);
 }
 
-function today() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 /** Nothing is printed as "Project / Head" with one side missing. */
 function assertNoDanglingSlash(text: string, where: string) {
   expect(/(^|\s)\/(\s|$|·)/.test(text.replace(/\S+\s\/\s\S+/g, '')), `${where} renders a dangling "/": ${JSON.stringify(text)}`).toBe(false);
 }
 
-async function raiseAndApproveEmd(page: Page, browser: Browser, runId: string, amount: string, expectedReturn: string) {
+async function raiseAndApproveEmd(page: Page, runId: string, amount: string, expectedReturn: string) {
   const approver = await createApproverUser(page, runId);
-  // A deposit is its own request type since the C cluster's form-1 fix: the
-  // "Deposit or guarantee" card carries the category picker and asks who is
-  // paid, and the employee advance no longer offers the deposit categories.
+  // A deposit is its own request type: the "Deposit or guarantee" card carries
+  // the category picker and asks who is paid.
   await page.goto('/requests/new?type=recoverable');
   await page.getByLabel('Short title').fill(`EMD ${runId}`);
   await page.locator('#rcategory').selectOption('emd');
@@ -75,19 +73,7 @@ async function raiseAndApproveEmd(page: Page, browser: Browser, runId: string, a
   await expect(page).toHaveURL(/\/requests\/\d+\/submitted$/);
   const id = Number(new URL(page.url()).pathname.split('/')[2]);
 
-  const context = await browser.newContext();
-  try {
-    const ap = await context.newPage();
-    await login(ap, approver.email, approver.password);
-    await ap.goto(`/requests/${id}`);
-    await ap.getByRole('button', { name: /^Approve / }).click();
-    const sheet = ap.locator('#approve-sheet');
-    await sheet.getByLabel('Amount approved').fill(amount);
-    await sheet.getByRole('button', { name: 'Approve request' }).click();
-    await expect(ap).toHaveURL(/\/approvals$/);
-  } finally {
-    await context.close();
-  }
+  await approveInFull(page, approver, id, amount);
   return { id, approver };
 }
 
@@ -102,7 +88,7 @@ test('recoverables-1/-2, grid-2, grid-1 — a recoverable never reaches the grid
   const outstandingBefore = paise(await categoryTable.locator('tfoot td[data-label="Outstanding"]').innerText());
   const overdueBefore = paise(await categoryTable.locator('tfoot td[data-label="Overdue"]').innerText());
   const countBefore = Number(await categoryTable.locator('tfoot td[data-label="Count"]').innerText());
-  const { id, approver } = await raiseAndApproveEmd(adminPage, browser, runId, amount, '2026-01-15');
+  const { id, approver } = await raiseAndApproveEmd(adminPage, runId, amount, '2026-01-15');
 
   // Approved but unpaid remains visible in the register, with zero money
   // outstanding. Neither the category balance/count nor the overdue total may
@@ -218,51 +204,58 @@ test('grid-pill-1 + audit-2 — On track is green like its legend, and budget sa
   adminPage,
   runId
 }) => {
-  // audit-2: the first save of 2026-08 writes what it creates; saving again with
-  // nothing changed writes nothing; changing one head writes one readable row.
+  // audit-2: the first save of the month writes what it creates; saving again
+  // with nothing changed writes nothing; changing one head writes one readable
+  // row. The month is this one because a payment can only be dated today, and
+  // the seed budgets live in 2026-06, so nothing is budgeted here beforehand.
+  const month = thisMonth();
   const auditRows = async () => {
     await adminPage.goto('/audit?entity=budget');
-    return (await adminPage.locator('body').innerText()).match(/2026-08:/g)?.length ?? 0;
+    return (await adminPage.locator('body').innerText()).match(new RegExp(`${month}:`, 'g'))?.length ?? 0;
   };
   const beforeFirst = await auditRows();
-  await adminPage.goto('/budgets?month=2026-08');
+  await adminPage.goto(`/budgets?month=${month}`);
   await adminPage.getByLabel('Budget for Operations / Office Rent').fill('2,50,000.00');
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
-  await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
+  await expect(adminPage).toHaveURL(new RegExp(`/budgets\\?month=${month}`));
   const afterFirst = await auditRows();
   // Every other head on the form went in at ₹0 with no budget behind it, which
   // is no change at all: the first save records the one head that was set.
   expect(afterFirst - beforeFirst, 'the first save audits only the head that was set').toBe(1);
-  await expect(adminPage.getByText('Operations / Office Rent 2026-08: set to ₹2,50,000.00').first()).toBeVisible();
+  await expect(adminPage.getByText(`Operations / Office Rent ${month}: set to ₹2,50,000.00`).first()).toBeVisible();
 
-  await adminPage.goto('/budgets?month=2026-08');
+  await adminPage.goto(`/budgets?month=${month}`);
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
-  await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
+  await expect(adminPage).toHaveURL(new RegExp(`/budgets\\?month=${month}`));
   expect(await auditRows(), 'an unchanged save writes no audit rows').toBe(afterFirst);
 
-  await adminPage.goto('/budgets?month=2026-08');
+  await adminPage.goto(`/budgets?month=${month}`);
   const utilities = adminPage.getByLabel('Budget for Operations / Utilities');
   const before = await utilities.inputValue();
   const next = paise(before) === 100000 ? '2,000.00' : '1,000.00';
   await utilities.fill(next);
   await adminPage.getByRole('button', { name: 'Save Budgets' }).click();
-  await expect(adminPage).toHaveURL(/\/budgets\?month=2026-08/);
+  await expect(adminPage).toHaveURL(new RegExp(`/budgets\\?month=${month}`));
   expect(await auditRows(), 'one head changed, one audit row').toBe(afterFirst + 1);
-  // Utilities had no 2026-08 budget until now (an untouched head is not
+  // Utilities had no budget this month until now (an untouched head is not
   // written), so its first figure is a "set to"; a later one names both sides.
   const nextRe = next.replace(/[.]/g, '\\.');
   const summary = paise(before) === 0
-    ? new RegExp(`Operations / Utilities 2026-08: set to ₹${nextRe}`)
-    : new RegExp(`Operations / Utilities 2026-08: ₹[\\d,.]+ → ₹${nextRe}`);
+    ? new RegExp(`Operations / Utilities ${month}: set to ₹${nextRe}`)
+    : new RegExp(`Operations / Utilities ${month}: ₹[\\d,.]+ → ₹${nextRe}`);
   await expect(adminPage.getByText(summary).first()).toBeVisible();
   await shoot(adminPage, 'audit2-1440', false);
 
-  // grid-pill-1: pay Office Rent exactly its 2026-08 budget.
-  const request = await createApprovedRequest(adminPage, runId, { amount: '250000' });
-  await settlePayment(adminPage, request.id, { amount: '250000', paidOn: '2026-08-10' });
+  // grid-pill-1: pay Utilities exactly the budget it was just given. On track
+  // means actual equals budget to the paise, and every other spec in this run
+  // pays Office Rent in this same month, so the head nobody else touches is the
+  // one that can be made to land exactly on its budget.
+  const exact = next.replace(/,/g, '');
+  const request = await createApprovedRequest(adminPage, runId, { amount: exact, head: 'Operations / Utilities' });
+  await settlePayment(adminPage, request.id, { amount: exact, paidOn: today() });
   for (const [vp, tag] of [[DESKTOP, '1440'], [PHONE, '390']] as const) {
     await adminPage.setViewportSize(vp);
-    await adminPage.goto('/grid?month=2026-08&status=on-track');
+    await adminPage.goto(`/grid?month=${month}&status=on-track`);
     const pill = adminPage.locator('.pill.on-track:visible').first();
     await expect(pill).toHaveText('On track');
     const colours = await adminPage.evaluate(() => {
@@ -355,11 +348,10 @@ test('grid-htmx-1 — filters swap the grid in over htmx, push the URL, and stil
 });
 
 /*
- * grid-htmx-1, review. Typing a search and pressing Enter (or Apply) before the
- * live-search pause runs out used to fire two requests, the second cancelling
- * the first, and htmx logged the cancellation as console errors. Back and
- * Forward restored the grid rows from htmx's snapshot but not what was typed or
- * picked in the controls, so the next change silently dropped the filter.
+ * Typing a search and pressing Enter (or Apply) before the live-search pause
+ * runs out sends exactly one grid request and logs no console error. Back and
+ * Forward restore what was typed or picked in the controls together with the
+ * grid rows, so the next change keeps the filter the page shows.
  */
 test('grid-htmx-1 — search then Enter logs no errors, and Back/Forward keep the controls in step with the grid', async ({
   adminPage
@@ -369,6 +361,9 @@ test('grid-htmx-1 — search then Enter logs no errors, and Back/Forward keep th
   adminPage.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
   const gridRequests: string[] = [];
   adminPage.on('request', r => { if (r.headers()['hx-request'] && r.url().includes('/grid?')) gridRequests.push(r.url()); });
+  // A controllable clock, so the test can step past the live-search pause
+  // instead of sleeping for it. Time still flows normally otherwise.
+  await adminPage.clock.install();
 
   for (const [vp, tag] of [[DESKTOP, '1440'], [PHONE, '390']] as const) {
     await adminPage.setViewportSize(vp);
@@ -385,7 +380,7 @@ test('grid-htmx-1 — search then Enter logs no errors, and Back/Forward keep th
     await q.press('Enter');
     await expect(adminPage).toHaveURL(/q=Office/);
     await expect(rows.first()).toContainText('Office');
-    await adminPage.waitForTimeout(800); // past the 350ms live-search pause
+    await adminPage.clock.runFor(800); // well past the 350ms live-search pause
     expect(errors, 'no console error from a search submitted mid-pause').toEqual([]);
     expect(gridRequests, 'the pause does not fire the same search a second time').toHaveLength(1);
     await shoot(adminPage, `htmx-enter-${tag}`);

@@ -10,11 +10,9 @@ import (
 	"time"
 )
 
-// The seeded categories must reproduce the Phase-2 recoverableCategoryRules map
-// exactly. Phase 2 shipped those rules hardcoded and its tests pin them; moving
-// the rules onto table rows is only safe if the rows say the same thing. Note
-// security_deposit requires a counterparty — the Phase-4 plan text says it
-// requires nothing, which would have silently weakened shipped validation.
+// The seeded categories reproduce the built-in recoverableCategoryRules map
+// exactly, so moving the rules onto table rows changed no validation. Note that
+// security_deposit requires a counterparty.
 func TestMigrationV6SeedsRecoverableCategories(t *testing.T) {
 	s := newTestStore(t)
 	var version int
@@ -59,8 +57,8 @@ func TestMigrationV6SeedsRecoverableCategories(t *testing.T) {
 	}
 }
 
-// The seeded rows are the authority the request validator reads. If this ever
-// disagrees with recoverableCategoryRules, Phase 2's shipped behaviour changed.
+// The seeded rows are the authority the request validator reads, and they agree
+// with the built-in recoverableCategoryRules.
 func TestSeededCategoriesMatchPhase2Rules(t *testing.T) {
 	s := newTestStore(t)
 	rows, err := s.DB().Query(`SELECT code,requires_project,requires_counterparty FROM recoverable_categories`)
@@ -116,25 +114,20 @@ func TestMigrationV6IsIdempotent(t *testing.T) {
 	}
 }
 
-// Phase 2 wrote payment_requests.recoverable_category (a code) and hardcoded
-// recoverable_category_id to NULL. Every register query in Phase 4 joins on the
-// id, so an installed database full of Phase-2 requests must be back-filled or
-// the whole register renders a blank category for real rows.
+// Older requests carry only the category code, with recoverable_category_id
+// NULL. The register joins on the id, so the migration back-fills it from the
+// code; otherwise those rows would show a blank category.
 func TestBackfillLinksExistingRequestsToCategories(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,recoverable_category,recoverable_category_id,head_id,amount,purpose,
-		 counterparty,expected_return_date,repayment_notes,requester_id,manager_id,submitted_at)
-		VALUES('PR-2026-000900','pending','recoverable','recoverable','emd',NULL,?,?, 'Tender EMD',
-		 'Ridge Metro','2027-03-31','Refund on award',?,?,CURRENT_TIMESTAMP)`,
-		headID, int64(100000), actor.ID, actor.ID)
-	if err != nil {
-		t.Fatalf("seed legacy request: %v", err)
-	}
-	reqID, _ := res.LastInsertId()
+	reqID := insertRequestRow(t, s, requestRow{
+		"number": "PR-2026-000900", "status": "pending", "treatment": "recoverable", "type": "recoverable",
+		"recoverable_category": "emd", "recoverable_category_id": nil, "head_id": headID, "amount": int64(100000),
+		"purpose": "Tender EMD", "counterparty": "Ridge Metro", "expected_return_date": "2027-03-31", "repayment_notes": "Refund on award",
+		"requester_id": actor.ID, "manager_id": actor.ID, "submitted_at": sqlNow,
+	})
 
 	tx, err := s.DB().BeginTx(ctx, nil)
 	if err != nil {
@@ -161,7 +154,7 @@ func TestBackfillLinksExistingRequestsToCategories(t *testing.T) {
 func TestRecoverableCategoryCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 
 	id, err := s.UpsertRecoverableCategory(ctx, actor, 0, "Retention money", true, false, true, 7)
 	if err != nil {
@@ -244,24 +237,20 @@ func TestRecoverableCategoryRequiresLabel(t *testing.T) {
 func TestListRecoverableCategoriesWithUsageCountsRequests(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	var emdID, icdID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='emd'`).Scan(&emdID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&icdID); err != nil {
-		t.Fatal(err)
-	}
+	emdID = recoverableCategoryID(t, s, "emd")
+	icdID = recoverableCategoryID(t, s, "icd")
 	for i, cat := range []struct {
 		id   int64
 		code string
 	}{{emdID, "emd"}, {emdID, "emd"}, {icdID, "icd"}} {
-		if _, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-			(number,status,treatment,type,recoverable_category,recoverable_category_id,head_id,amount,purpose,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,submitted_at)
-			VALUES(?, 'pending','recoverable','recoverable',?,?,?,?, 'Deposit','Counterparty','2027-03-31','Refund later',?,?,CURRENT_TIMESTAMP)`,
-			fmt.Sprintf("PR-2026-%06d", 300+i), cat.code, cat.id, headID, int64(100000), actor.ID, actor.ID); err != nil {
-			t.Fatal(err)
-		}
+		insertRequestRow(t, s, requestRow{
+			"number": fmt.Sprintf("PR-2026-%06d", 300+i), "status": "pending", "treatment": "recoverable", "type": "recoverable",
+			"recoverable_category": cat.code, "recoverable_category_id": cat.id, "head_id": headID, "amount": int64(100000),
+			"purpose": "Deposit", "counterparty": "Counterparty", "expected_return_date": "2027-03-31", "repayment_notes": "Refund later",
+			"requester_id": actor.ID, "manager_id": actor.ID, "submitted_at": sqlNow,
+		})
 	}
 	usage, err := s.ListRecoverableCategoriesWithUsage(ctx)
 	if err != nil {
@@ -291,14 +280,13 @@ func TestListRecoverableCategoriesWithUsageCountsRequests(t *testing.T) {
 	}
 }
 
-// The register joins payment_requests to recoverable_categories on the id, and
-// Phase 2 hardcoded that id to NULL. If CreateRequest does not fill it, every
-// screen in Phase 4 shows a blank category for every request the real form ever
-// produced — while tests that INSERT the id by hand still pass.
+// CreateRequest fills recoverable_category_id. The register joins on the id, so
+// without it every request the real form produced would show a blank category
+// (while tests that INSERT the id by hand would still pass).
 func TestCreateRequestLinksRecoverableCategoryID(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, _ := seedRequestActors(t, s, ctx)
+	req, mgr, _ := seedRequestActors(t, s)
 
 	id, err := s.CreateRequest(ctx, req, RequestInput{
 		Treatment: "recoverable", Type: "recoverable", ShortTitle: "Ridge Metro EMD",
@@ -335,7 +323,7 @@ func TestCreateRequestLinksRecoverableCategoryID(t *testing.T) {
 func TestBudgetRequestHasNoCategoryLink(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 
 	id, err := s.CreateRequest(ctx, req, RequestInput{
 		Treatment: "budget", Type: "reimbursement", ShortTitle: "Team lunch",
@@ -354,13 +342,12 @@ func TestBudgetRequestHasNoCategoryLink(t *testing.T) {
 	}
 }
 
-// V4: categories are admin-configurable, so the rules must come from the table.
-// With the Phase-2 map still in charge, a category an admin adds is simply an
-// unknown code and every request naming it is rejected.
+// Categories are admin-configurable, so the rules come from the table: a
+// category an admin adds is accepted and its own rules are enforced.
 func TestAdminAddedCategoryRulesAreEnforced(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, _ := seedRequestActors(t, s, ctx)
+	req, mgr, _ := seedRequestActors(t, s)
 	admin, _ := s.UserByID(ctx, mgr.ID)
 	if _, err := s.UpsertRecoverableCategory(ctx, admin, 0, "Retention money", false, true, true, 7); err != nil {
 		t.Fatalf("add category: %v", err)
@@ -399,12 +386,9 @@ func TestAdminAddedCategoryRulesAreEnforced(t *testing.T) {
 func TestDeactivatedCategoryIsRejectedOnNewRequests(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, _ := seedRequestActors(t, s, ctx)
+	req, mgr, _ := seedRequestActors(t, s)
 	admin, _ := s.UserByID(ctx, mgr.ID)
-	var pbgID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='pbg'`).Scan(&pbgID); err != nil {
-		t.Fatal(err)
-	}
+	pbgID := recoverableCategoryID(t, s, "pbg")
 	if _, err := s.UpsertRecoverableCategory(ctx, admin, pbgID, "PBG", true, false, false, 3); err != nil {
 		t.Fatalf("deactivate: %v", err)
 	}
@@ -424,21 +408,17 @@ func TestDeactivatedCategoryIsRejectedOnNewRequests(t *testing.T) {
 // RecoverableReport joins. It sets both the category code and the category id,
 // the shape CreateRequest actually writes. projectID of 0 leaves the
 // recoverable unlinked from any project.
-func seedRecoverablePayment(t *testing.T, s *Store, ctx context.Context, actor User, headID, projectID int64, number, paidOn string, amount int64) (int64, int64) {
+func seedRecoverablePayment(t *testing.T, s *Store, actor User, headID, projectID int64, number, paidOn string, amount int64) (int64, int64) {
 	t.Helper()
-	reqID := seedRecoverableRequestOnly(t, s, ctx, actor, headID, projectID, number, "completed", "security_deposit", "Acme Landlord", "2027-12-31", amount, false)
-	payID := payRecoverable(t, s, ctx, actor, headID, reqID, paidOn, amount)
+	reqID := seedRecoverableRequestOnly(t, s, actor, headID, projectID, number, "completed", "security_deposit", "Acme Landlord", "2027-12-31", amount, false)
+	payID := payRecoverable(t, s, actor, headID, reqID, paidOn, amount)
 	return reqID, payID
 }
 
 // seedRecoverableRequestOnly inserts a recoverable request with no linked
 // payment, so the register can be tested for rows approved but not yet paid.
-func seedRecoverableRequestOnly(t *testing.T, s *Store, ctx context.Context, actor User, headID, projectID int64, number, status, code, counterparty, expectedReturn string, amount int64, onHold bool) int64 {
+func seedRecoverableRequestOnly(t *testing.T, s *Store, actor User, headID, projectID int64, number, status, code, counterparty, expectedReturn string, amount int64, onHold bool) int64 {
 	t.Helper()
-	var catID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&catID); err != nil {
-		t.Fatalf("lookup category %q: %v", code, err)
-	}
 	var proj, expReturn any
 	if projectID != 0 {
 		proj = projectID
@@ -446,21 +426,19 @@ func seedRecoverableRequestOnly(t *testing.T, s *Store, ctx context.Context, act
 	if expectedReturn != "" {
 		expReturn = expectedReturn
 	}
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,head_id,amount,approved_amount,
-		 purpose,counterparty,expected_return_date,repayment_notes,requester_id,manager_id,on_hold,submitted_at)
-		VALUES(?,?, 'recoverable','recoverable',?,?,?,?,?,?, 'Deposit',?,?, 'Refund on close',?,?,?,CURRENT_TIMESTAMP)`,
-		number, status, code, catID, proj, headID, amount, amount, counterparty, expReturn, actor.ID, actor.ID, boolInt(onHold))
-	if err != nil {
-		t.Fatalf("insert recoverable request %s: %v", number, err)
-	}
-	id, _ := res.LastInsertId()
-	return id
+	return insertRequestRow(t, s, requestRow{
+		"number": number, "status": status, "treatment": "recoverable", "type": "recoverable",
+		"recoverable_category": code, "recoverable_category_id": recoverableCategoryID(t, s, code),
+		"project_id": proj, "head_id": headID, "amount": amount, "approved_amount": amount,
+		"purpose": "Deposit", "counterparty": counterparty, "expected_return_date": expReturn, "repayment_notes": "Refund on close",
+		"requester_id": actor.ID, "manager_id": actor.ID, "on_hold": boolInt(onHold), "submitted_at": sqlNow,
+	})
 }
 
 // payRecoverable links a settled, non-voided payment to a recoverable request.
-func payRecoverable(t *testing.T, s *Store, ctx context.Context, actor User, headID, requestID int64, paidOn string, amount int64) int64 {
+func payRecoverable(t *testing.T, s *Store, actor User, headID, requestID int64, paidOn string, amount int64) int64 {
 	t.Helper()
+	ctx := t.Context()
 	res, err := s.DB().ExecContext(ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(?,?,?,?,?,?, 'settled')`,
 		headID, paidOn, amount, "Acme Landlord", actor.ID, requestID)
 	if err != nil {
@@ -470,17 +448,18 @@ func payRecoverable(t *testing.T, s *Store, ctx context.Context, actor User, hea
 	return id
 }
 
-func TestGridAndReportExcludeRecoverablePayments(t *testing.T) { // V2
+// A recoverable payment is a deposit, not budget spend: the grid and the report leave it out.
+func TestGridAndReportExcludeRecoverablePayments(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	if err := s.SetBudget(ctx, actor, headID, "2026-02", 1000000); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-02-05", Amount: 300000, VendorPayee: "Budget Vendor"}); err != nil {
 		t.Fatal(err)
 	}
-	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000001", "2026-02-06", 700000)
+	seedRecoverablePayment(t, s, actor, headID, 0, "PR-2026-000001", "2026-02-06", 700000)
 
 	grid, err := s.Grid(ctx, "2026-02", "", "")
 	if err != nil {
@@ -503,7 +482,7 @@ func TestGridAndReportExcludeRecoverablePayments(t *testing.T) { // V2
 func TestHistoricalPaymentsStillCountAsActuals(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-02-05", Amount: 450000, VendorPayee: "Legacy Vendor"}); err != nil {
 		t.Fatal(err)
 	}
@@ -516,17 +495,17 @@ func TestHistoricalPaymentsStillCountAsActuals(t *testing.T) {
 	}
 }
 
-func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.T) { // V3, V6
+func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	if err := s.SetBudget(ctx, actor, headID, "2026-03", 1000000); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreatePayment(ctx, actor, PaymentInput{HeadID: headID, PaidOn: "2026-03-03", Amount: 250000, VendorPayee: "Budget Vendor"}); err != nil {
 		t.Fatal(err)
 	}
-	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000009", "2026-03-04", 800000)
+	seedRecoverablePayment(t, s, actor, headID, 0, "PR-2026-000009", "2026-03-04", 800000)
 
 	grid, err := s.Grid(ctx, "2026-03", "", "")
 	if err != nil {
@@ -547,15 +526,12 @@ func TestRecoverablePaymentExcludedFromActualsButInRecoverableReport(t *testing.
 	}
 }
 
-func TestRecoverableReportShowsLinkedProject(t *testing.T) { // V8
+func TestRecoverableReportShowsLinkedProject(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
-	var projectID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM heads WHERE id=?`, headID).Scan(&projectID); err != nil {
-		t.Fatal(err)
-	}
-	seedRecoverablePayment(t, s, ctx, actor, headID, projectID, "PR-2026-000021", "2026-10-01", 500000)
+	actor, headID := seedActorAndHead(t, s)
+	projectID := projectOfHead(t, s, headID)
+	seedRecoverablePayment(t, s, actor, headID, projectID, "PR-2026-000021", "2026-10-01", 500000)
 	rec, err := s.RecoverableReport(ctx, RecoverableReportOptions{From: "2026-10", To: "2026-10", Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
@@ -591,14 +567,14 @@ func TestRecoverableAgeingLabels(t *testing.T) {
 	}
 }
 
-func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { // G18
+func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
-	seedRecoverablePayment(t, s, ctx, actor, headID, 0, "PR-2026-000200", "2026-05-10", 400000)
-	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000201", "approved", "emd", "Ridge Metro tender authority", "2026-11-30", 200000, false)
-	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000202", "rejected", "emd", "Nobody", "2026-11-30", 999999, false)
-	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000203", "cancelled", "icd", "Nobody", "2026-11-30", 999999, false)
+	actor, headID := seedActorAndHead(t, s)
+	seedRecoverablePayment(t, s, actor, headID, 0, "PR-2026-000200", "2026-05-10", 400000)
+	seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000201", "approved", "emd", "Ridge Metro tender authority", "2026-11-30", 200000, false)
+	seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000202", "rejected", "emd", "Nobody", "2026-11-30", 999999, false)
+	seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000203", "cancelled", "icd", "Nobody", "2026-11-30", 999999, false)
 
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf, Viewer: RecoverableViewerAll()})
@@ -632,21 +608,21 @@ func TestRecoverableReportIncludesUnpaidAndExcludesDeadRequests(t *testing.T) { 
 	}
 }
 
-func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
+func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 	// Each row is paid: money that never left cannot be overdue, so an unpaid
 	// row ages as "Awaiting payment" no matter how old its return date is.
-	r1 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000301", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false) // 25 days overdue
-	payRecoverable(t, s, ctx, actor, headID, r1, "2026-02-12", 200000)
-	r2 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000302", "completed", "pbg", "Ridge Metro", "2026-08-10", 300000, false) // due in 16 days
-	payRecoverable(t, s, ctx, actor, headID, r2, "2026-03-01", 300000)
-	r3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000303", "completed", "icd", "Harith Infra", "2027-01-15", 100000, false) // later
-	payRecoverable(t, s, ctx, actor, headID, r3, "2026-04-03", 100000)
-	r4 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000304", "completed", "security_deposit", "Whitefield", "", 65000, false) // no fixed date
-	payRecoverable(t, s, ctx, actor, headID, r4, "2026-01-30", 65000)
+	r1 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000301", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false) // 25 days overdue
+	payRecoverable(t, s, actor, headID, r1, "2026-02-12", 200000)
+	r2 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000302", "completed", "pbg", "Ridge Metro", "2026-08-10", 300000, false) // due in 16 days
+	payRecoverable(t, s, actor, headID, r2, "2026-03-01", 300000)
+	r3 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000303", "completed", "icd", "Harith Infra", "2027-01-15", 100000, false) // later
+	payRecoverable(t, s, actor, headID, r3, "2026-04-03", 100000)
+	r4 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000304", "completed", "security_deposit", "Whitefield", "", 65000, false) // no fixed date
+	payRecoverable(t, s, actor, headID, r4, "2026-01-30", 65000)
 
 	all, err := s.RecoverableReport(ctx, RecoverableReportOptions{AsOf: asOf, Viewer: RecoverableViewerAll()})
 	if err != nil {
@@ -701,25 +677,25 @@ func TestRecoverableReportAgeingFilterAndOrdering(t *testing.T) { // G18
 	}
 }
 
-func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
+func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 
 	// Paid this month, due far out.
-	req1 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000401", "completed", "pbg", "Ridge Metro", "2027-01-15", 300000, false)
-	payRecoverable(t, s, ctx, actor, headID, req1, "2026-07-05", 300000)
+	req1 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000401", "completed", "pbg", "Ridge Metro", "2027-01-15", 300000, false)
+	payRecoverable(t, s, actor, headID, req1, "2026-07-05", 300000)
 	// Paid earlier, now overdue.
-	req2 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000402", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
-	payRecoverable(t, s, ctx, actor, headID, req2, "2026-02-12", 200000)
+	req2 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000402", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
+	payRecoverable(t, s, actor, headID, req2, "2026-02-12", 200000)
 	// Paid earlier, due inside 30 days.
-	req3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000403", "completed", "icd", "Harith Infra", "2026-08-10", 100000, false)
-	payRecoverable(t, s, ctx, actor, headID, req3, "2026-03-01", 100000)
+	req3 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000403", "completed", "icd", "Harith Infra", "2026-08-10", 100000, false)
+	payRecoverable(t, s, actor, headID, req3, "2026-03-01", 100000)
 	// Approved, unpaid: visible in the list but no outstanding money yet.
-	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000404", "approved", "emd", "Ridge Metro", "2026-11-30", 50000, false)
+	seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000404", "approved", "emd", "Ridge Metro", "2026-11-30", 50000, false)
 	// Rejected: invisible everywhere.
-	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000405", "rejected", "emd", "Nobody", "2026-01-01", 999999, false)
+	seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000405", "rejected", "emd", "Nobody", "2026-01-01", 999999, false)
 
 	m, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
 	if err != nil {
@@ -739,17 +715,17 @@ func TestRecoverableMetricsFourDashboardNumbers(t *testing.T) { // G18
 	}
 }
 
-func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
+func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
-	req1 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000501", "completed", "emd", "Ridge Metro", "2026-06-30", 200000, false)
-	payRecoverable(t, s, ctx, actor, headID, req1, "2026-02-12", 200000)
-	req2 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000502", "completed", "emd", "Coastal Power", "2026-12-31", 400000, false)
-	payRecoverable(t, s, ctx, actor, headID, req2, "2026-04-03", 400000)
-	req3 := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000503", "completed", "pbg", "Ridge Metro", "2026-11-30", 300000, false)
-	payRecoverable(t, s, ctx, actor, headID, req3, "2026-05-20", 300000)
+	req1 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000501", "completed", "emd", "Ridge Metro", "2026-06-30", 200000, false)
+	payRecoverable(t, s, actor, headID, req1, "2026-02-12", 200000)
+	req2 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000502", "completed", "emd", "Coastal Power", "2026-12-31", 400000, false)
+	payRecoverable(t, s, actor, headID, req2, "2026-04-03", 400000)
+	req3 := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000503", "completed", "pbg", "Ridge Metro", "2026-11-30", 300000, false)
+	payRecoverable(t, s, actor, headID, req3, "2026-05-20", 300000)
 
 	cats, err := s.RecoverableRollups(ctx, "category", asOf, RecoverableViewerAll())
 	if err != nil {
@@ -790,29 +766,24 @@ func TestRecoverableRollupsByCategoryAndCounterparty(t *testing.T) { // G18
 	}
 }
 
-// V7: settling a recoverable closes the request but must not quietly turn it
+// Settling a recoverable closes the request but must not quietly turn it
 // into an ordinary expense. The classification and the return information are
 // what keep it in the register after it closes.
 func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
-	var catID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='emd'`).Scan(&catID); err != nil {
-		t.Fatal(err)
-	}
+	actor, headID := seedActorAndHead(t, s)
+	catID := recoverableCategoryID(t, s, "emd")
 	// An approved + reserved (processing) recoverable request, ready to settle.
-	res, err := s.DB().ExecContext(ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,recoverable_category,recoverable_category_id,project_id,head_id,amount,purpose,
-		 expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,processing_by,processing_at,submitted_at)
-		VALUES('PR-2026-000031','processing','recoverable','recoverable','emd',?,?,?,?, 'Tender EMD','2027-06-30','Refund on award',?,?,?,?,CURRENT_TIMESTAMP,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		catID, nil, headID, 500000, actor.ID, actor.ID, 500000, actor.ID, actor.ID)
-	if err != nil {
-		t.Fatalf("seed processing request: %v", err)
-	}
-	reqID, _ := res.LastInsertId()
+	reqID := insertRequestRow(t, s, requestRow{
+		"number": "PR-2026-000031", "status": "processing", "treatment": "recoverable", "type": "recoverable",
+		"recoverable_category": "emd", "recoverable_category_id": catID, "project_id": nil, "head_id": headID, "amount": 500000,
+		"purpose": "Tender EMD", "expected_return_date": "2027-06-30", "repayment_notes": "Refund on award",
+		"requester_id": actor.ID, "manager_id": actor.ID, "approved_amount": 500000, "approved_by": actor.ID, "approved_at": sqlNow,
+		"processing_by": actor.ID, "processing_at": sqlNow, "submitted_at": sqlNow,
+	})
 
-	if _, err := historicalSettlement(s, ctx, actor, reqID,
+	if _, err := historicalSettlement(ctx, s, actor, reqID,
 		PaymentInput{HeadID: headID, PaidOn: "2026-02-20", Amount: 500000, VendorPayee: "State PWD"}, "settled", "", nil); err != nil {
 		t.Fatalf("RecordPaymentForRequest: %v", err)
 	}
@@ -846,21 +817,19 @@ func TestRecoverableRequestClosesOnPaymentRetainingClassification(t *testing.T) 
 	}
 }
 
-// F-E-05. The dashboard's "Past expected return" tile and the register are the
-// same population at two levels of detail, so they must apply the same rule:
-// recoverableAgeing checks `paidOn == ""` first and answers "Awaiting payment",
-// because money that never left cannot be overdue. RecoverableMetrics compared
-// only dates, so an approved, unpaid, years-overdue request inflated the tile and
-// the reader who followed it found fewer red rows than they were promised.
+// Money that never left cannot be overdue. The dashboard's "Past expected
+// return" tile and the register show the same population at two levels of
+// detail, so RecoverableMetrics applies the register's rule: an unpaid request
+// is "Awaiting payment", whatever its expected return date.
 func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 	asOf := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 
 	// Paid, and past its expected return: genuinely overdue.
-	paid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000601", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
-	payRecoverable(t, s, ctx, actor, headID, paid, "2026-02-12", 200000)
+	paid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000601", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
+	payRecoverable(t, s, actor, headID, paid, "2026-02-12", 200000)
 
 	before, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
 	if err != nil {
@@ -871,7 +840,7 @@ func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 	}
 
 	// Approved but never paid, with a return date years in the past.
-	unpaid := seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000602", "approved", "emd", "Ridge Metro", "2019-01-31", 777000, false)
+	unpaid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000602", "approved", "emd", "Ridge Metro", "2019-01-31", 777000, false)
 
 	after, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
 	if err != nil {
@@ -909,27 +878,20 @@ func TestOverdueMetricsIgnoreMoneyThatNeverLeft(t *testing.T) {
 	}
 }
 
-// F-E-02 (store half). The request form's category <select> is six hardcoded
-// options, so an admin-added category is enforced and unreachable and a
-// deactivated one is still offered. The store half is
-// ListRecoverableCategories(ctx, true): this pins the contract the template needs
-// — every active category, in the order it should be rendered, each carrying the
-// stable `code` that goes in the option's value and the admin's `name` for its
-// label. TestRecoverableCategoryCRUD covers the CRUD; this covers the handover.
+// ListRecoverableCategories(ctx, true) gives the request form its category
+// options: every active category, in display order, each carrying the stable
+// `code` for the option's value and the admin's `name` for its label.
 func TestActiveCategoriesAreTheOptionsTheRequestFormMustRender(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 
 	added, err := s.UpsertRecoverableCategory(ctx, actor, 0, "Retention money", false, true, true, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Deactivate one of the six seeded codes.
-	var otherID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='other'`).Scan(&otherID); err != nil {
-		t.Fatal(err)
-	}
+	otherID := recoverableCategoryID(t, s, "other")
 	if _, err := s.UpsertRecoverableCategory(ctx, actor, otherID, "Other", false, false, false, 6); err != nil {
 		t.Fatal(err)
 	}
@@ -975,8 +937,9 @@ func TestActiveCategoriesAreTheOptionsTheRequestFormMustRender(t *testing.T) {
 // Configuration screen renders, so a test asserting agreement between the
 // screen's number and the delete refusal's number is asking the same question
 // the screen asks.
-func categoryUsage(t *testing.T, s *Store, ctx context.Context, id int64) (RecoverableCategoryUsage, bool) {
+func categoryUsage(t *testing.T, s *Store, id int64) (RecoverableCategoryUsage, bool) {
 	t.Helper()
+	ctx := t.Context()
 	rows, err := s.ListRecoverableCategoriesWithUsage(ctx)
 	if err != nil {
 		t.Fatalf("ListRecoverableCategoriesWithUsage: %v", err)
@@ -989,25 +952,24 @@ func categoryUsage(t *testing.T, s *Store, ctx context.Context, id int64) (Recov
 	return RecoverableCategoryUsage{}, false
 }
 
-// TestDeleteRecoverableCategoryRemovesAnUnusedOne is F-E-06's happy path: the
-// permission recoverable_category:delete has been grantable since Phase 4 with
-// no code behind it at all, and this is the store half of it meaning something.
+// A recoverable category that no request uses can be deleted
+// (recoverable_category:delete).
 func TestDeleteRecoverableCategoryRemovesAnUnusedOne(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 
 	id, err := s.UpsertRecoverableCategory(ctx, actor, 0, "Tender fee", false, false, true, 9)
 	if err != nil {
 		t.Fatalf("UpsertRecoverableCategory: %v", err)
 	}
-	if usage, ok := categoryUsage(t, s, ctx, id); !ok || usage.InUse != 0 {
+	if usage, ok := categoryUsage(t, s, id); !ok || usage.InUse != 0 {
 		t.Fatalf("a fresh category = %+v, present=%v; want InUse 0", usage, ok)
 	}
 	if err := s.DeleteRecoverableCategory(ctx, actor, id); err != nil {
 		t.Fatalf("DeleteRecoverableCategory: %v", err)
 	}
-	if _, ok := categoryUsage(t, s, ctx, id); ok {
+	if _, ok := categoryUsage(t, s, id); ok {
 		t.Fatal("the category is still listed after being deleted")
 	}
 	// A hard delete of a configuration row is exactly the kind of thing that has
@@ -1042,14 +1004,11 @@ func TestDeleteRecoverableCategoryRemovesAnUnusedOne(t *testing.T) {
 func TestDeleteRecoverableCategoryRefusesOneInUseAndLeavesItIntact(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
-	var emdID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='emd'`).Scan(&emdID); err != nil {
-		t.Fatal(err)
-	}
-	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000901", "approved", "emd", "Ridge Metro", "2027-03-31", 200000, false)
-	seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, "PR-2026-000902", "completed", "emd", "Coastal Power", "2027-03-31", 300000, false)
+	emdID := recoverableCategoryID(t, s, "emd")
+	seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000901", "approved", "emd", "Ridge Metro", "2027-03-31", 200000, false)
+	seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000902", "completed", "emd", "Coastal Power", "2027-03-31", 300000, false)
 
 	err := s.DeleteRecoverableCategory(ctx, actor, emdID)
 	if !errors.Is(err, ErrForbidden) {
@@ -1066,7 +1025,7 @@ func TestDeleteRecoverableCategoryRefusesOneInUseAndLeavesItIntact(t *testing.T)
 
 	// Refused means refused: the row, its rules and the requests pointing at it
 	// are all exactly as they were.
-	usage, ok := categoryUsage(t, s, ctx, emdID)
+	usage, ok := categoryUsage(t, s, emdID)
 	if !ok {
 		t.Fatal("the category was deleted despite the refusal")
 	}
@@ -1087,7 +1046,7 @@ func TestDeleteRecoverableCategoryRefusesOneInUseAndLeavesItIntact(t *testing.T)
 	if _, err := s.UpsertRecoverableCategory(ctx, actor, emdID, "EMD", true, false, false, 2); err != nil {
 		t.Fatalf("deactivating a category in use: %v", err)
 	}
-	if usage, _ := categoryUsage(t, s, ctx, emdID); usage.Active {
+	if usage, _ := categoryUsage(t, s, emdID); usage.Active {
 		t.Fatal("the category is still active after being deactivated")
 	}
 }
@@ -1099,16 +1058,13 @@ func TestDeleteRecoverableCategoryRefusesOneInUseAndLeavesItIntact(t *testing.T)
 func TestDeleteRecoverableCategoryRefusalAgreesWithInUse(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, headID := seedActorAndHead(t, s, ctx)
+	actor, headID := seedActorAndHead(t, s)
 
-	var icdID int64
-	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code='icd'`).Scan(&icdID); err != nil {
-		t.Fatal(err)
-	}
+	icdID := recoverableCategoryID(t, s, "icd")
 	for i := 1; i <= 3; i++ {
-		seedRecoverableRequestOnly(t, s, ctx, actor, headID, 0, fmt.Sprintf("PR-2026-00091%d", i),
+		seedRecoverableRequestOnly(t, s, actor, headID, 0, fmt.Sprintf("PR-2026-00091%d", i),
 			"approved", "icd", "Meridian", "2027-03-31", 100000, false)
-		usage, _ := categoryUsage(t, s, ctx, icdID)
+		usage, _ := categoryUsage(t, s, icdID)
 		err := s.DeleteRecoverableCategory(ctx, actor, icdID)
 		if !errors.Is(err, ErrForbidden) {
 			t.Fatalf("delete with %d in use = %v, want ErrForbidden", usage.InUse, err)
@@ -1122,13 +1078,14 @@ func TestDeleteRecoverableCategoryRefusalAgreesWithInUse(t *testing.T) {
 	}
 	// Singular and plural both read correctly, because the sentence is shown to
 	// a person.
-	if !strings.Contains(mustDeleteErr(t, s, ctx, actor, icdID), "3 requests") {
+	if !strings.Contains(mustDeleteErr(t, s, actor, icdID), "3 requests") {
 		t.Fatal("the refusal does not pluralise")
 	}
 }
 
-func mustDeleteErr(t *testing.T, s *Store, ctx context.Context, actor User, id int64) string {
+func mustDeleteErr(t *testing.T, s *Store, actor User, id int64) string {
 	t.Helper()
+	ctx := t.Context()
 	err := s.DeleteRecoverableCategory(ctx, actor, id)
 	if err == nil {
 		t.Fatal("DeleteRecoverableCategory unexpectedly succeeded")
@@ -1136,7 +1093,7 @@ func mustDeleteErr(t *testing.T, s *Store, ctx context.Context, actor User, id i
 	return err.Error()
 }
 
-// V6: a recoverable request records who owes the money (the employee, or the
+// A recoverable request records who owes the money (the employee, or the
 // counterparty company), when it is expected back, and the repayment notes —
 // and those are what the store gives back when the request is read. Two shapes
 // are created through CreateRequest and read back through Request:
@@ -1147,7 +1104,7 @@ func mustDeleteErr(t *testing.T, s *Store, ctx context.Context, actor User, id i
 func TestRecoverableCreateRecordsCounterpartyReturnDateAndNotes(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, _ := seedRequestActors(t, s, ctx)
+	req, mgr, _ := seedRequestActors(t, s)
 
 	t.Run("employee advance", func(t *testing.T) {
 		id, err := s.CreateRequest(ctx, req, RequestInput{
@@ -1222,4 +1179,52 @@ func TestRecoverableCreateRecordsCounterpartyReturnDateAndNotes(t *testing.T) {
 			t.Errorf("repayment notes = %q", got.RepaymentNotes)
 		}
 	})
+}
+
+// Money that never left cannot be overdue in the By-category/By-counterparty
+// rollup or the register's ageing=overdue filter either, matching the dashboard
+// tile: an approved-but-unpaid row with a past return date is not counted.
+func TestOverdueRollupAndRegisterFilterIgnoreMoneyThatNeverLeft(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	actor, headID := seedActorAndHead(t, s)
+	asOf := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+
+	paid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000701", "completed", "emd", "Coastal Power", "2026-06-30", 200000, false)
+	payRecoverable(t, s, actor, headID, paid, "2026-02-12", 200000)
+	unpaid := seedRecoverableRequestOnly(t, s, actor, headID, 0, "PR-2026-000702", "approved", "emd", "Ridge Metro", "2026-01-15", 250000, false)
+
+	m, err := s.RecoverableMetrics(ctx, asOf, RecoverableViewerAll())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, by := range []string{"category", "counterparty"} {
+		rolls, err := s.RecoverableRollups(ctx, by, asOf, RecoverableViewerAll())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var overdue int64
+		for _, r := range rolls {
+			overdue += r.Overdue
+			if r.Label == "Ridge Metro" && r.Overdue != 0 {
+				t.Fatalf("the unpaid counterparty row is overdue by %d; money that never left cannot be overdue", r.Overdue)
+			}
+		}
+		if overdue != m.OverdueAmount {
+			t.Fatalf("%s rollup rows add up to %d overdue while the tile and Total row say %d", by, overdue, m.OverdueAmount)
+		}
+	}
+
+	rows, err := s.RecoverableReport(ctx, RecoverableReportOptions{Ageing: "overdue", AsOf: asOf, Viewer: RecoverableViewerAll()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.RequestID == unpaid {
+			t.Fatalf("ageing=overdue lists the unpaid row, labelled %q", r.AgeingLabel)
+		}
+	}
+	if len(rows) != m.OverdueCount {
+		t.Fatalf("ageing=overdue lists %d rows and the tile it is linked from counts %d", len(rows), m.OverdueCount)
+	}
 }

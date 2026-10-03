@@ -114,6 +114,12 @@
 <aside class="callout callout-warning"><p class="callout-title">A settled payment is final</p><p>Saved payments cannot be rewritten. Explain mistakes in the request conversation and follow your accounting correction process. A live installment balance can be paid against the same request; an accepted full settlement or shortfall remains closed. Recoverable returns and referenced reconciliations have a separate <a href="../accounts/the-recoverables-register.html">recovery recording workflow</a>, which does not edit the original payout.</p></aside>
 <h2 id="what-can-still-be-changed">What can still be changed</h2>
 <p>One kind of payment is still editable: a payment with no request behind it. These are the historical rows recorded before every payment had to belong to an approved request. They are still ledger entries, so they are still corrected the old way.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payments-ledger.png" aria-label="Enlarge: The ledger for June 2026. Every row in this capture is settled against a request, so each offers only **View**.">
+    <img src="../assets/shots/accounts/payments-ledger.png" alt="Every payment recorded, filtered by month." loading="lazy" width="1440">
+  </button>
+  <figcaption>The ledger for June 2026. Every row in this capture is settled against a request, so each offers only <strong>View</strong>. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
+</figure>
 <div class="table-wrap"><table><thead><tr><th scope="col">Kind of payment</th><th scope="col">View</th><th scope="col">Edit</th><th scope="col">Remove</th></tr></thead><tbody>
 <tr><td>Settled against a request</td><td>Yes</td><td>No</td><td>No</td></tr>
 <tr><td>No request behind it, month open, not already removed</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
@@ -122,12 +128,18 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p>The Actions column is where you can tell the two kinds apart at a glance. Opening the edit address for a payment that settled a request takes you to the payment itself rather than to a form whose <strong>Save</strong> could only ever fail.</p></aside>
 <h2 id="editing-a-request-less-payment">Editing a request-less payment</h2>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/accounts/payment-edit.png" aria-label="Enlarge: The edit form. This payment belongs to a locked or voided period, so the banner says it is read-only and **Save Payment** is unavailable.">
+    <img src="../assets/shots/accounts/payment-edit.png" alt="The edit form, available only for payments not tied to a request." loading="lazy" width="1440">
+  </button>
+  <figcaption>The edit form. This payment belongs to a locked or voided period, so the banner says it is read-only and <strong>Save Payment</strong> is unavailable. </figcaption>
+</figure>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Project / Head</strong></td><td><span class="req">Required</span></td><td>What the spend is booked against, chosen from the active heads.</td></tr>
 <tr><td><strong>Paid on</strong></td><td><span class="req">Required</span></td><td>The date the money left the bank.</td></tr>
 <tr><td><strong>Amount</strong></td><td><span class="req">Required</span></td><td>In rupees. Commas and the ₹ sign are accepted.</td></tr>
 <tr><td><strong>Vendor / Payee</strong></td><td><span class="opt">Optional</span></td><td>Free text on this form — there is no request to take the payee from.</td></tr>
-<tr><td><strong>Payment mode</strong></td><td><span class="opt">Optional</span></td><td><code>Cash</code>, <code>Bank transfer</code>, <code>Cheque</code>, <code>Card</code>, <code>UPI</code> or <code>Other</code>.</td></tr>
+<tr><td><strong>Payment mode</strong></td><td><span class="opt">Optional</span></td><td>The modes set under <strong>Payment modes offered</strong> on the configuration screen. The payment’s current mode stays on the list even if it has since been taken off.</td></tr>
 <tr><td><strong>Invoice / Bill No</strong></td><td><span class="opt">Optional</span></td><td>The supplier’s document number.</td></tr>
 <tr><td><strong>Reference No</strong></td><td><span class="opt">Optional</span></td><td>The bank’s reference for the transfer.</td></tr>
 <tr><td><strong>Attachment</strong></td><td><span class="opt">Optional</span></td><td>An optional bill, receipt or payment proof. Uploading one adds to what is there rather than replacing it.</td></tr>
@@ -151,7 +163,7 @@
 <h2 id="when-a-settled-payment-is-wrong">When a settled payment is wrong</h2>
 <p>Work out which of these it is, and the route follows.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">What is wrong</th><th scope="col">What to do</th></tr></thead><tbody>
-<tr><td>You paid less than approved and marked it fully settled</td><td>Nothing changes the payment. Say so in the conversation on the request; the balance needs a fresh request.</td></tr>
+<tr><td>You paid less than approved and chose <strong>Fully settled</strong> when the rest is still owed</td><td>The request is closed as Completed, and the explanation you gave for the deduction is on the payment as its <strong>Settlement reason</strong>. Nothing reopens the request or changes the payment. Say what happened in the conversation on the request; the rest of the money needs a new request, approved in the usual way.</td></tr>
 <tr><td>The reference or the note is wrong</td><td>Post a comment on the request with the correct detail. The trail then carries both, in order.</td></tr>
 <tr><td>The approver disputes the shortfall</td><td>They raise a concern and the request stays in review — see <a href="../accounts/raising-a-concern.html">raising a concern</a>.</td></tr>
 <tr><td>The money went to the wrong payee</td><td>That is an accounting adjustment outside this product. Record what happened in the conversation so the trail explains it.</td></tr>

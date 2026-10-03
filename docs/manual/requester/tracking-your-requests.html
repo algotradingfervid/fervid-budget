@@ -111,6 +111,12 @@
 <header class="page-head"><h1>Tracking your requests</h1><p class="lede">The list, its tabs and filters, and how to tell at a glance what is waiting on you.</p></header>
 <p><strong>My requests</strong> is the one screen you will live in. It holds every request you have ever raised, divided into four tabs, and every card on it ends with a plain sentence naming whoever owes the next move.</p>
 <h2 id="the-screen">The screen</h2>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/requests-open.png" aria-label="Enlarge: My requests on the Open tab. The line under the heading says how many are shown and how they are sorted.">
+    <img src="../assets/shots/requester/requests-open.png" alt="The requester’s own list on the Open tab, with the four tabs and their counts." loading="lazy" width="1440">
+  </button>
+  <figcaption>My requests on the Open tab. The line under the heading says how many are shown and how they are sorted. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
+</figure>
 <p>The heading is followed by <em>N shown · sorted by who is holding them up</em>. That sort is literal: urgent requests come first, and after them the oldest, because the request nobody has touched for a fortnight is the one that needs finding. At the top right sit <strong>⤓ Export CSV</strong> and <strong>+ New request</strong>.</p>
 <h2 id="the-four-tabs">The four tabs</h2>
 <p>Each tab is its own address, so a view can be bookmarked or pasted to somebody. The number beside each label is the count for that tab under the filters currently applied.</p>
@@ -122,13 +128,31 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p>Under the same search, Type, Treatment and access scope, <strong>Open</strong> plus <strong>Closed</strong> equals <strong>All</strong>. <strong>Needs me</strong> is an overlapping action view, not a third partition. Switching tabs retains the active filters, so the counts and displayed cards describe the same scope.</p></aside>
 <h3 id="needs-me">Needs me</h3>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/requests-needs-me.png" aria-label="Enlarge: The Needs me tab. Two returned requests, both saying Waiting on you.">
+    <img src="../assets/shots/requester/requests-needs-me.png" alt="The tab that collects only the requests waiting on something from the requester." loading="lazy" width="1440">
+  </button>
+  <figcaption>The Needs me tab. Two returned requests, both saying Waiting on you. </figcaption>
+</figure>
 <p>This is the tab worth checking first. For somebody who only raises requests it collects the ones your approver sent back for correction, and nothing else — an approved request waiting on Accounts is not yours to move, so it does not appear here.</p>
 <h3 id="closed">Closed</h3>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/requests-closed.png" aria-label="Enlarge: The Closed tab, mixing rejected, withdrawn and completed requests. The sentence at the right of each card says how each one ended.">
+    <img src="../assets/shots/requester/requests-closed.png" alt="Finished requests: paid, rejected, withdrawn and cancelled." loading="lazy" width="1440">
+  </button>
+  <figcaption>The Closed tab, mixing rejected, withdrawn and completed requests. The sentence at the right of each card says how each one ended. </figcaption>
+</figure>
 <p>Find completed full settlements and accepted shortfalls here alongside rejected, withdrawn and cancelled requests. The status badge identifies how each request ended; closure does not mean it was paid in full.</p>
 <h3 id="all">All</h3>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/requests-all.png" aria-label="Enlarge: The All tab. Open and closed requests in one list, 26 in total.">
+    <img src="../assets/shots/requester/requests-all.png" alt="Every request this person has ever raised, in one list." loading="lazy" width="1440">
+  </button>
+  <figcaption>The All tab. Open and closed requests in one list, 26 in total. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
+</figure>
 <p>Use All to see both outstanding work and every terminal outcome without changing the other filters.</p>
 <h2 id="reading-a-card">Reading a card</h2>
-<p>Each card carries, in order: the request number at the left and the amount at the right; the short title you gave it; a meta line naming the type and, where there is one, the project, the head and the invoice number; and a foot with the status pill on the left and the waiting sentence on the right. A recoverable request also shows a violet <strong>Recoverable</strong> pill naming its category, and an urgent one a red <strong>Urgent</strong> pill.</p>
+<p>Each card carries, in order: the request number at the left and the amount at the right; the short title you gave it; a meta line naming the type and, where there is one, the project, the head and the invoice number; and a foot with the status pill on the left and the waiting sentence on the right. At the start of the meta line, an urgent request shows a red <strong>Urgent</strong> pill and a recoverable one a violet <strong>Recoverable</strong> pill naming its category.</p>
 <div class="table-wrap"><table><caption>The full set is in <a href="../reference/request-lifecycle.html">The request lifecycle</a>.</caption><thead><tr><th scope="col">Status pill</th><th scope="col">What it means</th><th scope="col">Waiting sentence</th></tr></thead><tbody>
 <tr><td><strong>Awaiting approval</strong></td><td>Submitted, nobody has decided it yet.</td><td>Waiting on your approver, by name</td></tr>
 <tr><td><strong>Returned for correction</strong></td><td>Your approver sent it back with a reason.</td><td>Waiting on you</td></tr>
@@ -144,14 +168,20 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p>A hold is not a status. When Accounts park an approved request, its card still reads <strong>Approved — awaiting payment</strong>, but the sentence beside it changes to <strong>Waiting on you</strong>. The <strong>On hold</strong> pill and the question they asked appear when you open the request. See <a href="../requester/getting-paid.html">Getting paid</a>.</p></aside>
 <h2 id="searching-and-filtering">Searching and filtering</h2>
-<p>Above the tabs is a toolbar with three controls and an <strong>Apply</strong> button. <strong>Search</strong> matches the request number, the payee, the invoice number, the purpose, the short title and the requester's name — its placeholder lists most of them: <em>Number, payee, invoice, purpose…</em>. <strong>Type</strong> narrows to one of the four request types. <strong>Treatment</strong> narrows to <strong>Budget expense</strong> or <strong>Recoverable</strong>.</p>
-<p>When nothing matches, the body reads <strong>No requests match. Try another tab, or clear the filters.</strong> Note that the tab counts fall to zero with it — the counts are computed under the same filters as the rows, so a tab can never promise a number the list does not show.</p>
+<p>Above the tabs is a toolbar with three controls and an <strong>Apply</strong> button. <strong>Search</strong> matches the request number, the payee, the invoice number, the purpose, the short title and the requester's name — its placeholder lists most of them: <em>Number, payee, invoice, purpose…</em>. <strong>Type</strong> narrows to one of the five request types. <strong>Treatment</strong> narrows to <strong>Budget expense</strong> or <strong>Recoverable</strong>. Beneath the toolbar, <strong>Clear filters</strong> empties all three at once and keeps you on the same tab. Beside it a hint repeats how the tabs divide: <em>Open includes payment in progress. Closed includes completed, rejected, withdrawn and cancelled requests.</em></p>
+<p>When nothing matches, the body reads <em>No requests match. Clear filters or choose another tab.</em>, where <strong>Clear filters</strong> is a link that does the same as the button. Note that the tab counts fall to zero with it — the counts are computed under the same filters as the rows, so a tab can never promise a number the list does not show.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/requests-search-empty.png" aria-label="Enlarge: A search that matched nothing. Every tab count reads 0, and the body offers Clear filters.">
+    <img src="../assets/shots/requester/requests-search-empty.png" alt="What the list shows when a search matches none of your requests." loading="lazy" width="1440">
+  </button>
+  <figcaption>A search that matched nothing. Every tab count reads 0, and the body offers Clear filters. </figcaption>
+</figure>
 <aside class="callout callout-tip"><p>Filters survive when you change tabs, and they are in the address. If a colleague asks what happened to a particular invoice, search for the invoice number on <strong>All</strong> and send them the resulting address.</p></aside>
 <h2 id="when-the-list-is-longer-than-the-page">When the list is longer than the page</h2>
 <p>A very long list is drawn in pages. The sub-line then reads <em>N of M shown</em>, and a row appears beneath the cards saying <strong>Showing 1–200 of 214</strong> with <strong>← Newer</strong> and <strong>Older →</strong> buttons. Both carry every filter with them, so paging never quietly widens the set.</p>
 <h2 id="exporting">Exporting</h2>
-<p><strong>⤓ Export CSV</strong> downloads the list as a spreadsheet file with one row per request and these columns: Number, Status, Type, Title, Amount, Payee, Requester, Approver, Created. The export carries every matching row — it is never truncated the way the screen is.</p>
-<aside class="callout callout-note"><p>The export follows the tab you are on and the text in <strong>Search</strong>, but not the <strong>Type</strong> and <strong>Treatment</strong> dropdowns. If those matter to you, filter the spreadsheet afterwards.</p></aside>
+<p><strong>⤓ Export CSV</strong> downloads the list as a file called <code>requests.csv</code>, with one row per request and these columns: Number, Status, Type, Title, Amount, Approved amount, Payee, Requester, Approver, Created. <strong>Approved amount</strong> stays empty until the request has been approved. The export carries every matching row — it is never cut into pages the way the screen is.</p>
+<aside class="callout callout-note"><p>The export follows everything the screen is showing: the tab you are on, the text in <strong>Search</strong>, and the <strong>Type</strong> and <strong>Treatment</strong> filters. What you download is what you see, without the page limit.</p></aside>
 <dl class="faq"><dt>A request I raised is missing from every tab.</dt><dd><p>Clear the search box and the two dropdowns, then look at <strong>All</strong>. The counts drop with the filters, so an active filter can empty a tab completely.</p></dd>
 <dt>I cannot see a colleague’s request.</dt><dd><p>You are not meant to. A requester sees their own requests and nothing else, and an address pointing at somebody else’s answers <em>Not Found</em>.</p></dd>
 <dt>Why is an old request above a new one?</dt><dd><p>Because the list is sorted by who has been kept waiting longest — oldest first, with urgent requests ahead of everything. It is a work queue, not a diary.</p></dd>

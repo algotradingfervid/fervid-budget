@@ -18,7 +18,7 @@ func TestUXBudgetPartialSaveLinksRejectedCellsAndKeepsSavedValue(t *testing.T) {
 	if err := s.st.SetBudget(s.ctx, actor, b, "2026-04", 50000); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.postForm("/budgets", url.Values{"month": {"2026-04"}, fmt.Sprintf("budget_%d", a): {"100.50"}, fmt.Sprintf("budget_%d", b): {"abc"}, fmt.Sprintf("budget_%d", c): {"-10"}})
 	requireStatus(t, resp, http.StatusBadRequest)
 	body := responseBody(t, resp)
@@ -52,18 +52,18 @@ func TestUXGridSeparatesFilteredSubtotalAndFullMonthAndRecoversNoMatch(t *testin
 			t.Fatal(err)
 		}
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/grid?month=2026-04&q=OfficeRentUX", nil, ""))
+	s.loginAdmin()
+	body := s.get("/grid?month=2026-04&q=OfficeRentUX")
 	for _, want := range []string{"Filtered subtotal", "Showing 1 of 2 heads", "Full month company total: budget ₹12,500.00", "Full month: 2 budgeted heads are unpaid", `href="/grid?month=2026-04"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	noMatch := responseBody(t, s.request(http.MethodGet, "/grid?month=2026-04&q=does-not-match", nil, ""))
+	noMatch := s.get("/grid?month=2026-04&q=does-not-match")
 	if !strings.Contains(noMatch, "No heads match these filters") || strings.Contains(noMatch, "Add projects and heads to begin") {
 		t.Fatal("no match gives setup advice")
 	}
-	cleared := responseBody(t, s.request(http.MethodGet, "/grid?month=2026-04", nil, ""))
+	cleared := s.get("/grid?month=2026-04")
 	if !strings.Contains(cleared, "OfficeRentUX") || !strings.Contains(cleared, "UtilitiesUX") {
 		t.Fatal("clear did not restore rows")
 	}
@@ -72,8 +72,8 @@ func TestUXGridSeparatesFilteredSubtotalAndFullMonthAndRecoversNoMatch(t *testin
 func TestUXZeroActivityDoesNotInventUnpaidObligation(t *testing.T) {
 	s := newAppTestServer(t)
 	s.seedHead("NeutralUX")
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request(http.MethodGet, "/grid?month=2020-01", nil, ""))
+	s.loginAdmin()
+	body := s.get("/grid?month=2020-01")
 	if !strings.Contains(body, "No activity") || !strings.Contains(body, "Usual day 5") || !strings.Contains(body, "Full month: 0 budgeted heads are unpaid") {
 		t.Fatal("zero activity not shown neutrally")
 	}
@@ -102,10 +102,10 @@ func TestUXReportDrilldownCarriesIDsDatesAndSourceScope(t *testing.T) {
 	if err = s.st.DB().QueryRow("SELECT project_id FROM heads WHERE id=?", head).Scan(&project); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	origin := "/reports/heads?from=2026-03&to=2026-06"
 	link := reportDetailURL(store.ReportRow{Period: "2026-04", HeadID: head, ProjectID: project}, origin)
-	body := responseBody(t, s.request(http.MethodGet, link, nil, ""))
+	body := s.get(link)
 	for _, want := range []string{"Back to source report", html.EscapeString(origin), "Payments behind these actuals", "Drill payee", fmt.Sprintf("Open payment %d", pay), fmt.Sprintf(`value="%d"`, head), "2026-04"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
@@ -119,7 +119,7 @@ func TestUXReportDrilldownCarriesIDsDatesAndSourceScope(t *testing.T) {
 	}
 	s.seedProbeUser("reportonly@example.test", "Report only", "ReportOnlyPass1", "report-only", []store.Grant{{Resource: "report", Action: "view"}}, nil)
 	s.login("reportonly@example.test", "ReportOnlyPass1")
-	limited := responseBody(t, s.request(http.MethodGet, link, nil, ""))
+	limited := s.get(link)
 	if strings.Contains(limited, "Drill payee") {
 		t.Fatal("report privilege exposed payment data")
 	}

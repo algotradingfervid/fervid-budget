@@ -26,31 +26,31 @@ func TestParsePaise(t *testing.T) {
 		{name: "negative", input: "-1", wantErr: true},
 		{name: "infinity", input: "Inf", wantErr: true},
 		{name: "not a number", input: "NaN", wantErr: true},
-		// F-B-01: an amount whose paise overflow int64 must be refused, never
-		// silently saturated to MaxInt64 (₹92,23,37,20,36,85,47,758.07).
+		// An amount whose paise overflow int64 is refused, never silently
+		// saturated to MaxInt64 (₹92,23,37,20,36,85,47,758.07).
 		{name: "overflow scientific 1e300", input: "1e300", wantErr: true},
 		{name: "overflow 9e18 rupees", input: "9e18", wantErr: true},
 		{name: "overflow 1e19 rupees", input: "1e19", wantErr: true},
 		{name: "overflow plain digits", input: "100000000000000000", wantErr: true},
-		{name: "exact int64 paise boundary", input: "92233720368547758.07", wantErr: true},
-		{name: "one paisa above int64 boundary", input: "92233720368547758.08", wantErr: true},
-		{name: "beyond float safe precision remains exact", input: "90071992547409.91", wantErr: true},
-		{name: "next paisa remains exact", input: "90071992547409.93", wantErr: true},
+		{name: "refuses the exact int64 paise boundary", input: "92233720368547758.07", wantErr: true},
+		{name: "refuses one paisa above the int64 boundary", input: "92233720368547758.08", wantErr: true},
+		{name: "refuses amount above the maximum (float-unsafe)", input: "90071992547409.91", wantErr: true},
+		{name: "refuses amount above the maximum (next paisa, float-unsafe)", input: "90071992547409.93", wantErr: true},
 		{name: "leading decimal point", input: ".5", want: 50},
 		{name: "trailing decimal point", input: "1.", want: 100},
 		{name: "exact decimal exponent", input: "1e1", want: 1000},
 		{name: "exponent one paisa", input: "1e-2", want: 1},
 		{name: "exponent decimal shift", input: "1.001e3", want: 100100},
 		{name: "reject subpaise exponent", input: "1e-3", wantErr: true},
-		{name: "reject audit recovery fraction", input: "1.001", wantErr: true},
-		{name: "reject audit request fraction", input: "2.999", wantErr: true},
+		{name: "reject three decimal places (1.001)", input: "1.001", wantErr: true},
+		{name: "reject three decimal places (2.999)", input: "2.999", wantErr: true},
 		{name: "reject unicode minus", input: "−88.90", wantErr: true},
 		{name: "reject multiple dots", input: "1.2.3", wantErr: true},
 		{name: "reject stripped letters", input: "1abc2", wantErr: true},
 		{name: "reject hex float", input: "0x1p2", wantErr: true},
 		{name: "reject huge negative exponent", input: "1e-9223372036854775808", wantErr: true},
 		{name: "reject huge positive exponent", input: "1e9223372036854775807", wantErr: true},
-		{name: "very large but representable", input: "10000000000000000", wantErr: true},
+		{name: "refuses amount above the maximum (fits int64)", input: "10000000000000000", wantErr: true},
 	}
 
 	for _, tt := range tests {

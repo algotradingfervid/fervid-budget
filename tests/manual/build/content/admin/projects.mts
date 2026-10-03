@@ -11,7 +11,7 @@ export default page({
       'and heads hold a budget figure for each month. Everything downstream depends on this list — ' +
       'the variance grid groups by project, the reports break down by project, and every payment is ' +
       'booked against a head that belongs to one.\n\n' +
-      'The dataset behind these captures has 24 projects and 229 heads.',
+      'The dataset behind these captures has 25 projects and 230 heads.',
     ),
 
     section('The screen'),
@@ -19,7 +19,9 @@ export default page({
     prose(
       'There is no separate detail page. The name and the sort order are text boxes on the row itself, ' +
       'the status is a tick box, and each row has its own **Save**. Change one row and save it; the ' +
-      'others are untouched.',
+      'others are untouched.\n\n' +
+      'Without permission to edit projects, the boxes are greyed out and the last column reads ' +
+      '`Read only` instead of **Save**. The add form appears only for someone allowed to create projects.',
     ),
 
     section('Adding a project'),
@@ -27,7 +29,7 @@ export default page({
       { text: 'Type a **Project name** in the form at the top.' },
       {
         text: 'Set **Order** if you want the project to sit somewhere particular in the lists.',
-        note: 'It is a plain number and it sorts ascending. Rows sharing a number fall back to alphabetical order, which is why the seeded projects all carry `0` and read alphabetically.',
+        note: 'It is a plain number and it sorts ascending, so `0` comes first. Rows sharing a number fall back to alphabetical order, which is why most projects in the capture carry `0` and read alphabetically, with the few numbered `1` to `4` at the bottom.',
       },
       { text: 'Leave **Active** ticked.' },
       {
@@ -36,7 +38,7 @@ export default page({
       },
     ]),
     fields([
-      { name: 'Project name', required: true, note: 'Required. An empty name is refused with `project name is required`.' },
+      { name: 'Project name', required: true, note: 'Required. A name of only spaces is refused with `project name is required`. Names must be unique: a name another project already uses is refused with `A record with this name already exists.`' },
       { name: 'Order', required: false, note: 'Where the project sits in every list that shows projects. Lower first.' },
       { name: 'Active', required: false, note: 'Ticked means the project can be used. See below for what unticking does.' },
     ]),
@@ -58,13 +60,15 @@ export default page({
     section('Retiring a project'),
     prose(
       'There is no delete. A project that is no longer used is retired by unticking **Active** and ' +
-      'saving the row, and the history stays intact.',
+      'saving the row, and the history stays intact.\n\n' +
+      'Unlike retiring a head or a user, retiring a project shows no warning page, even when requests ' +
+      'are still open under its heads. The row saves straight away.',
     ),
     steps([
       { text: 'Untick **Active** on the row.' },
       { text: 'Select **Save**.' },
     ]),
-    prose('Retiring a project has four consequences worth knowing before you do it.'),
+    prose('Retiring a project has five consequences worth knowing before you do it.'),
     fields([
       {
         name: 'New heads',
@@ -75,6 +79,11 @@ export default page({
         name: 'Existing heads',
         required: false,
         note: 'They stay, and they still appear on the heads screen. Their project select shows the retired project marked `(retired)` so the row can be saved without silently moving.',
+      },
+      {
+        name: 'New requests',
+        required: false,
+        note: 'The request form offers only heads that are active in an active project. A request that still names one of the retired project\'s heads is refused with `that budget head has been retired — choose a head that is still open`.',
       },
       {
         name: 'New payments',
@@ -89,14 +98,14 @@ export default page({
     ]),
     warning(
       'Retiring a project stops money being booked against it, but it does not close anything that is ' +
-      'already in flight. A request approved against one of its heads will be refused at the payment ' +
-      'stage, and the accountant will find out only when they try to record it. Check the queue before ' +
-      'you retire a project mid-month.',
+      'already in flight, and no warning page lists what is still open. A request approved against one ' +
+      'of its heads will be refused at the payment stage, and the accountant will find out only when ' +
+      'they try to record it. Check the queue before you retire a project mid-month.',
       'Work already in flight',
     ),
     note(
-      'A retired project cannot be brought back through some separate route — tick **Active** again ' +
-      'and save. Nothing was thrown away.',
+      'To bring a retired project back, tick **Active** again on its row and save. There is no ' +
+      'separate route, and nothing was thrown away.',
     ),
 
     faq([

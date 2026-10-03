@@ -91,6 +91,16 @@ export const EXAMPLES = {
   // anything having to be deleted to produce it.
   emptyPaymentMonth: '2026-04',
 
+  // Screens that default to the current month would otherwise be photographed
+  // on whatever month the capture runs in, which may hold little or nothing.
+  // 2026-06 has 47 payments, all ordinary; 2026-07 has more, but among them
+  // are stress-test rows and a junk payee left over from development. May to
+  // July is the span with both budgets and payments, so the reports show a
+  // real comparison.
+  busyPaymentMonth: '2026-06',
+  reportFrom: '2026-05',
+  reportTo: '2026-07',
+
   // Locked-month states are captured by locking this month during the run and
   // unlocking it afterwards. 2026-03 carries budgets but no payments, so the
   // lock is inert while it is held.

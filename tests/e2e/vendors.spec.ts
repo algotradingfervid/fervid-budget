@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { expect, test, login, createDataEntryUser } from './fixtures';
 
 /**
- * Phase 1V — the vendor master.
+ * The vendor master.
  *
  * The second test is the one that matters: it proves a session without
  * vendor_bank:view cannot see bank details on the detail screen. The Go tests

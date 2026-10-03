@@ -53,6 +53,26 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+func TestLoginLimitsDefaultOverrideAndRejectInvalid(t *testing.T) {
+	t.Setenv("FERVID_LOGIN_LIMIT_PER_IP", "")
+	t.Setenv("FERVID_LOGIN_LIMIT_GLOBAL", "")
+	if got := Load(); got.LoginLimitPerIP != 30 || got.LoginLimitGlobal != 300 {
+		t.Fatalf("login limit defaults = %d/%d, want 30/300", got.LoginLimitPerIP, got.LoginLimitGlobal)
+	}
+	t.Setenv("FERVID_LOGIN_LIMIT_PER_IP", "5000")
+	t.Setenv("FERVID_LOGIN_LIMIT_GLOBAL", "20000")
+	if got := Load(); got.LoginLimitPerIP != 5000 || got.LoginLimitGlobal != 20000 {
+		t.Fatalf("login limit overrides = %d/%d, want 5000/20000", got.LoginLimitPerIP, got.LoginLimitGlobal)
+	}
+	for _, bad := range []string{"0", "-1", "lots", "1.5"} {
+		t.Setenv("FERVID_LOGIN_LIMIT_PER_IP", bad)
+		t.Setenv("FERVID_LOGIN_LIMIT_GLOBAL", bad)
+		if got := Load(); got.LoginLimitPerIP != 30 || got.LoginLimitGlobal != 300 {
+			t.Fatalf("invalid value %q gave limits %d/%d, want defaults 30/300", bad, got.LoginLimitPerIP, got.LoginLimitGlobal)
+		}
+	}
+}
+
 func TestEnsureDirs(t *testing.T) {
 	root := t.TempDir()
 	cfg := Config{

@@ -7,6 +7,7 @@ import (
 	"net/smtp"
 	"strings"
 	"testing"
+	"time"
 
 	"fervidbudget/internal/store"
 )
@@ -19,7 +20,7 @@ func TestSMTPMailerBuildsMessageAndUsesEnvPassword(t *testing.T) {
 		SMTPHost: "smtp.example.test", SMTPPort: 2525, SMTPUsername: "mailer@example.test",
 		SMTPFromName: "Fervid", SMTPFromAddr: "noreply@example.test",
 	}))
-	m := NewSMTPMailer(st, "s3cr3t-from-env", "smtp.example.test")
+	m := NewSMTPMailer(st, "s3cr3t-from-env", []string{"smtp.example.test"})
 	var gotAddr, gotFrom string
 	var gotAuth smtp.Auth
 	var gotTo []string
@@ -54,7 +55,7 @@ func TestSMTPMailerBuildsMessageAndUsesEnvPassword(t *testing.T) {
 
 func TestSMTPMailerRequiresHost(t *testing.T) {
 	st := openTestStore(t)
-	m := NewSMTPMailer(st, "", "smtp.example.test")
+	m := NewSMTPMailer(st, "", []string{"smtp.example.test"})
 	err := m.Send(context.Background(), Message{To: []string{"a@x.test"}, Subject: "x", Body: "y"})
 	if err == nil {
 		t.Fatal("expected error when smtp host is not configured")
@@ -68,7 +69,7 @@ func TestSMTPMailerOmitsAuthWithoutUsername(t *testing.T) {
 	st := openTestStore(t)
 	actor := testActor(t, st)
 	must(t, st.SetMailSettings(ctx, actor, store.MailSettings{SMTPHost: "smtp.example.test"}))
-	m := NewSMTPMailer(st, "", "smtp.example.test")
+	m := NewSMTPMailer(st, "", []string{"smtp.example.test"})
 	var gotAuth smtp.Auth
 	var gotAddr string
 	m.sendMail = func(addr string, a smtp.Auth, _ string, _ []string, _ []byte) error {
@@ -90,7 +91,7 @@ func TestSMTPMailerSkipsEmptyRecipients(t *testing.T) {
 	st := openTestStore(t)
 	actor := testActor(t, st)
 	must(t, st.SetMailSettings(ctx, actor, store.MailSettings{SMTPHost: "smtp.example.test"}))
-	m := NewSMTPMailer(st, "", "smtp.example.test")
+	m := NewSMTPMailer(st, "", []string{"smtp.example.test"})
 	called := false
 	m.sendMail = func(string, smtp.Auth, string, []string, []byte) error {
 		called = true
@@ -105,7 +106,7 @@ func TestSMTPMailerSkipsEmptyRecipients(t *testing.T) {
 // Header text must be ASCII unless the server negotiated SMTPUTF8, and
 // net/smtp only does that when the server offers it. Every default subject
 // carries a ₹ or an em dash, so the Subject and a non-ASCII From display name
-// go out as RFC 2047 encoded-words any MTA can carry (notify-3).
+// go out as RFC 2047 encoded-words any MTA can carry.
 func TestBuildRFC822EncodesNonASCIIHeaders(t *testing.T) {
 	subject := "PR-2026-000002 needs your approval — ₹2,250.50 to Rhea Requester"
 	raw := buildRFC822(Message{From: "Fervid Bügets <noreply@x.test>", To: []string{"a@x.test"},
@@ -144,4 +145,36 @@ func TestBuildRFC822EncodesNonASCIIHeaders(t *testing.T) {
 			t.Fatalf("ASCII header changed; missing %q in:\n%s", want, plain)
 		}
 	}
+}
+
+// Mail goes only to the operator's allow-listed relay (never loopback, internal
+// names, an explicit port or a header-injected host), and a cancelled send
+// returns at once instead of blocking.
+func TestSecuritySMTPDestinationAndCancellation(t *testing.T) {
+	t.Run("only the allow-listed relay is accepted", func(t *testing.T) {
+		for _, host := range []string{"localhost", "127.0.0.1", "metadata.internal", "smtp.example.test:25", "smtp.example.test\r\n"} {
+			if AllowedSMTPHost(host, []string{"smtp.example.test"}) {
+				t.Fatalf("unauthorized host %q", host)
+			}
+		}
+		if !AllowedSMTPHost("smtp.example.test", []string{"smtp.example.test"}) {
+			t.Fatal("operator relay refused")
+		}
+	})
+	t.Run("a cancelled send returns at once", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := time.Now()
+		if err := sendTLSMail(ctx, "smtp.example.test", 587, nil, "from@test", []string{"to@test"}, nil); err == nil {
+			t.Fatal("cancelled send succeeded")
+		}
+		if time.Since(start) > time.Second {
+			t.Fatal("cancelled SMTP blocked")
+		}
+	})
+	t.Run("a loopback relay is refused", func(t *testing.T) {
+		if err := sendTLSMail(context.Background(), "127.0.0.1", 587, nil, "from@test", []string{"to@test"}, nil); err == nil {
+			t.Fatal("loopback relay accepted")
+		}
+	})
 }

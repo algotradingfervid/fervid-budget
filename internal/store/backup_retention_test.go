@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// backup-3: §10 asks for at least 30 daily and 12 monthly backups. Pruning used
-// to apply one 30-day cutoff, so every monthly backup was deleted with the rest.
+// Pruning keeps at least 30 daily backups and the newest backup of each of the
+// last 12 months, rather than applying one 30-day cutoff to everything.
 func TestPruneBackupsKeepsThirtyDaysAndTheNewestBackupOfTwelveMonths(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.Local)

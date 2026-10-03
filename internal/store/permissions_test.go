@@ -7,23 +7,10 @@ import (
 	"testing"
 )
 
-func newRoleActor(t *testing.T, s *Store, ctx context.Context) User {
-	t.Helper()
-	id, err := s.CreateUser(ctx, "roleadmin@example.com", "Role Admin", "hash", "admin", true)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	u, err := s.UserByID(ctx, id)
-	if err != nil {
-		t.Fatalf("UserByID: %v", err)
-	}
-	return u
-}
-
 func TestCreateRoleAndListAndDeleteCustomRole(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	id, err := s.CreateRole(ctx, actor, "Auditor", "Read-only reviewer")
 	if err != nil {
@@ -80,9 +67,8 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 		}
 	}
 
-	// The four resources the design-system adoption spec adds (D2): the roles
-	// matrix and Phases 1V-5 are written against them, so they must exist here
-	// before any of those screens can be gated.
+	// Four resources the roles matrix and the screens behind it are gated on;
+	// they must be in the vocabulary before those screens can be gated.
 	for _, g := range []Grant{
 		{"vendor", "view"}, {"vendor", "create"}, {"vendor", "edit"},
 		{"vendor_bank", "view"}, {"vendor_bank", "edit"},
@@ -93,7 +79,7 @@ func TestPermissionVocabularyIsCanonical(t *testing.T) {
 			t.Fatalf("canonical grant %s:%s is missing from the vocabulary", g.Resource, g.Action)
 		}
 	}
-	// The cancellation flow Phase 2 adds gates its routes on these two pairs;
+	// The cancellation flow gates its routes on these two pairs;
 	// the vocabulary has to carry them before those routes can be registered.
 	for _, g := range []Grant{
 		{"request", "cancel"}, {"approval", "cancel"},
@@ -131,10 +117,8 @@ func countGrants() int {
 	return total
 }
 
-// The Phase 0 stub matched "*" because Casbin's admin policy was a wildcard.
-// Once roles are data a stale wildcard row would grant everything to everyone,
-// which is precisely the failure mode this phase exists to remove: matching is
-// exact, and AllGrants is how a caller asks for everything.
+// Permission matching is exact: a stray "*" row grants nothing, and AllGrants
+// is how a caller asks for everything.
 func TestNewPermissionSetMatchesExactlyAndAllGrantsIsTheWholeVocabulary(t *testing.T) {
 	wildcard := NewPermissionSet([]Grant{{Resource: "*", Action: "*"}}, nil)
 	if wildcard.Can("payment", "view") || wildcard.Scope("request") != "" {
@@ -158,7 +142,7 @@ func TestNewPermissionSetMatchesExactlyAndAllGrantsIsTheWholeVocabulary(t *testi
 func TestUpdateRolePermissionsPersistsAndValidates(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	id, err := s.CreateRole(ctx, actor, "Approvers", "")
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +185,7 @@ func TestUpdateRolePermissionsPersistsAndValidates(t *testing.T) {
 func TestCopyRoleDuplicatesGrantsAndScopes(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	srcID, err := s.CreateRole(ctx, actor, "Template", "source")
 	if err != nil {
@@ -243,7 +227,7 @@ func TestCopyRoleDuplicatesGrantsAndScopes(t *testing.T) {
 func TestSetUserRolesReplacesAssignment(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	uid, err := s.CreateUser(ctx, "member@example.com", "Member", "hash", "data_entry", true)
 	if err != nil {
@@ -278,7 +262,7 @@ func TestSetUserRolesReplacesAssignment(t *testing.T) {
 func TestEffectivePermissionsUnionAndBroadestScope(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	uid, err := s.CreateUser(ctx, "union@example.com", "Union User", "hash", "data_entry", true)
 	if err != nil {
@@ -380,7 +364,7 @@ func TestSeedSystemRolesMatchDefaults(t *testing.T) {
 func TestDeleteRoleRejectsSystemRole(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	roles, _ := s.AllRoles(ctx)
 	var adminID int64
 	for _, r := range roles {
@@ -396,7 +380,7 @@ func TestDeleteRoleRejectsSystemRole(t *testing.T) {
 func TestUpdateRoleRenamesCustomRolesAndProtectsSystemNames(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	id, err := s.CreateRole(ctx, actor, "Reviewer", "first")
 	if err != nil {
@@ -440,7 +424,7 @@ func TestUpdateRoleRenamesCustomRolesAndProtectsSystemNames(t *testing.T) {
 func TestSetUserDefaultApproverRejectsSelfAndUnknownUsers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 
 	uid, err := s.CreateUser(ctx, "employee@example.com", "Employee", "hash", "data_entry", true)
 	if err != nil {
@@ -526,13 +510,12 @@ func TestCreateUserAssignsDefaultRole(t *testing.T) {
 	}
 }
 
-// F-G-022 — user_roles.role_id cascades, so deleting an assigned role stripped it
-// from every holder in silence. F-G-023 — and the refusal has to say something
-// true, which is what the app layer renders through friendly().
+// A role somebody holds cannot be deleted (user_roles.role_id cascades, so the
+// delete would strip it from every holder in silence), and the refusal says why.
 func TestDeleteRoleRefusesARoleSomebodyHolds(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor := newRoleActor(t, s, ctx)
+	actor := newRoleActor(t, s)
 	roleID, err := s.CreateRole(ctx, actor, "Held", "")
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)

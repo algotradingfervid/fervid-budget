@@ -1,5 +1,11 @@
 package app
 
+// The app shell: the sidebar navigation, the mobile tab bar and the badge
+// counts. It is driven by permissions only and never branches on a role name
+// (a test checks this file for role names). Every nav item declares the
+// resource and action it needs; items with no resource are shown to every
+// signed-in user, and items marked Soon are announcements, not links.
+
 import (
 	"net/http"
 	"strings"
@@ -7,12 +13,7 @@ import (
 	"fervidbudget/internal/store"
 )
 
-// The shell is permission-driven. Nothing in this file may branch on a role
-// name: every item declares the resource and action it needs and the
-// PermissionSet decides. Items with no Resource are available to every signed
-// in user; items marked Soon are announcements, not links, and are shown to
-// everyone exactly as the approved mockup does.
-
+// NavItem is one sidebar entry. Badge names the count shown beside it.
 type NavItem struct {
 	Key, Label, Href, Icon string
 	Resource, Action       string
@@ -20,21 +21,25 @@ type NavItem struct {
 	Soon                   bool
 }
 
+// NavGroup is a titled group of sidebar entries.
 type NavGroup struct {
 	Title string
 	Items []NavItem
 }
 
+// TabItem is one entry of the mobile tab bar.
 type TabItem struct {
 	Key, Label, Href, Icon string
 }
 
+// TabBar is the mobile tab bar: up to two tabs each side of a centre action.
 type TabBar struct {
 	Left  []TabItem
 	Fab   TabItem
 	Right []TabItem
 }
 
+// Shell is everything the page chrome needs for one render.
 type Shell struct {
 	Groups                                        []NavGroup
 	Tabs                                          TabBar
@@ -43,33 +48,24 @@ type Shell struct {
 	Unread                                        int
 	Chrome                                        string // "app" | "none"
 	Title, Sub, BackHref, ActionLabel, ActionHref string
-	// RoleNames is what the caption under the signed-in person's name reads. It
-	// names the roles that actually grant permissions. It used to come from the
-	// superseded column on the user row, which carries the same value for every
-	// non-administrator — so approvers and the accounts team were all captioned
-	// identically, and wrongly, on every page they opened.
+	// RoleNames is the caption under the signed-in person's name: the names of
+	// the roles they hold, filled in by renderStatus.
 	RoleNames string
 }
 
-// navSpec is the full navigation of the product, in the order the approved
-// mockup lays it out. Screens that are not built yet still carry the resource
-// and action they will be gated on, so they light up the moment their route
-// and policy exist.
+// navSpec is the full sidebar navigation, in display order. Each item is
+// gated on the same permission as its route.
 var navSpec = []NavGroup{
 	{Title: "", Items: []NavItem{
 		{Key: "dashboard", Label: "Home", Href: "/", Icon: "⌂"},
-		// G19's own centre, and the only entry point to it above 860 px. The
-		// .m-topbar bell is display:none on every desktop, and navSpec had no item,
-		// so a desktop user had no way to discover their notifications existed
-		// (F-F-05). No Resource: every row the screen can return is already scoped
-		// to the signed-in user by the store, which is why the route itself needs no
-		// verb either. The badge is the unread count, injected in buildPageShell.
+		// The user's own notification centre. On desktop this is its only entry
+		// (the top-bar bell is phone-only). No permission: the page only shows
+		// the user's own rows. The badge is the unread count.
 		{Key: "notifications", Label: "Notifications", Href: "/notifications", Icon: "✉", Badge: "notifications"},
 	}},
-	// Soon marks a screen whose route does not exist yet: it renders as an
-	// announcement, not a link, so nobody can click through to a 404. The
-	// phase that builds the screen drops the flag, and
-	// TestEveryLinkedNavItemResolves fails until it does.
+	// A Soon item is a screen that does not exist yet: it renders as an
+	// announcement, not a link. TestEveryLinkedNavItemResolves checks that
+	// every linked item has a route.
 	{Title: "Requests", Items: []NavItem{
 		{Key: "requests-list", Label: "My requests", Href: "/requests", Icon: "▤", Resource: "request", Action: "view"},
 		{Key: "approvals", Label: "Approvals", Href: "/approvals", Icon: "✓", Resource: "approval", Action: "approve", Badge: "approvals"},
@@ -96,9 +92,7 @@ var navSpec = []NavGroup{
 		{Key: "users", Label: "Users", Href: "/users", Icon: "◍", Resource: "user", Action: "view"},
 		{Key: "roles", Label: "Roles & permissions", Href: "/roles", Icon: "⚿", Resource: "role", Action: "view"},
 		{Key: "configuration", Label: "Configuration", Href: "/configuration", Icon: "⚙", Resource: "config", Action: "view"},
-		// Two different screens, per adoption spec D7: /admin/notifications is
-		// the rule editor, /notifications (the topbar bell) is the user's own
-		// in-app centre. Phase 5 builds both.
+		// The notification rules editor, not the user's own centre above.
 		{Key: "notif-admin", Label: "Notification rules", Href: "/admin/notifications", Icon: "✉", Resource: "notification", Action: "view"},
 		{Key: "audit", Label: "Audit log", Href: "/audit", Icon: "◎", Resource: "audit", Action: "view"},
 		{Key: "backups", Label: "Backups", Href: "/backups", Icon: "⇪", Resource: "backup", Action: "view"},
@@ -118,13 +112,9 @@ func buildShell(perms store.PermissionSet) []NavGroup {
 	for _, group := range navSpec {
 		items := make([]NavItem, 0, len(group.Items))
 		for _, item := range group.Items {
-			if !navItemVisible(item, perms) {
+			if item.Resource != "" && !can(perms, item.Resource, item.Action) {
 				continue
 			}
-			// An item whose route does not exist yet is announced, never
-			// linked. Derived here rather than hand-flagged so the switch
-			// stays in one place.
-			item.Soon = item.Soon || !routeBuilt(item.Href)
 			items = append(items, item)
 		}
 		if len(items) == 0 {
@@ -156,15 +146,13 @@ func (a *App) buildPageShell(r *http.Request, user store.User, perms store.Permi
 			"request_id", requestID(r),
 			"error", err,
 		)
-		badges = map[string]int{}
 	}
-	if badges == nil {
+	if err != nil || badges == nil {
 		badges = map[string]int{}
 	}
 	shell.Badges = badges
-	// The bell is the one count that is not permission-derived: every row is
-	// already addressed to this user, so there is nothing to gate. A failure
-	// here must not cost the page its chrome — the badge just stays absent.
+	// The unread count needs no permission (the rows are the user's own). If
+	// it cannot be read the badge is simply left off.
 	if unread, err := a.st.UnreadNotificationCount(r.Context(), user.ID); err != nil {
 		a.log.WarnContext(r.Context(), "unread notification count unavailable",
 			"request_id", requestID(r),
@@ -178,32 +166,22 @@ func (a *App) buildPageShell(r *http.Request, user store.User, perms store.Permi
 	return shell
 }
 
-// workQueueBadges fills in the two badges navSpec has always declared and no
-// query ever populated (F-G-013): a manager with pending approvals saw no badge
-// on Approvals, and an accountant saw none on the Accounts queue — the two counts
-// a person most needs at a glance were the two that were never built, which is the
-// opposite of D4.
-//
-// They are computed here rather than as store badgeSpecs because neither is a
-// scalar sub-select over one table the way the other three are: the approvals
-// count needs the caller's `assigned` scope, and the queue count needs the
-// takeable predicate (approved · unclaimed · not on hold) that
-// LinkablePaymentRequests already owns and CountRequests cannot express. A
-// batched read in the store is the better long-term home; a looser count is not.
-//
-// Each is gated on the same verb its nav item is, so an unauthorised count is
-// never computed. A failure costs the badge and never the page.
+// workQueueBadges adds the Approvals and Accounts queue counts. They are
+// computed here, not in store.BadgeCounts, because each needs the caller's
+// request scope and the same query as its queue: requests routed to this
+// approver, and approved requests nobody has claimed that are not on hold.
+// Each is computed only for a holder of its nav item's permission, and a
+// failure only hides that badge.
 func (a *App) workQueueBadges(r *http.Request, user store.User, perms store.PermissionSet, badges map[string]int) {
 	if can(perms, "approval", "approve") {
-		// The badge counts what the queue lists as waiting on this approver.
-		// A partial review is one of those (settlement-3), for a holder of
-		// the verb that decides it.
+		// Everything the approvals queue lists as waiting on this approver,
+		// including partial-payment reviews for those who may decide them.
 		statuses := []string{"pending"}
 		if can(perms, "approval", "accept_partial") {
 			statuses = append(statuses, "partial_review")
 		}
 		n, err := a.st.CountRequests(r.Context(), store.RequestListOptions{
-			Scope: "assigned", ViewerID: user.ID, Statuses: statuses})
+			Scope: perms.Scope("request"), ViewerID: user.ID, RoutedToViewer: true, Statuses: statuses})
 		if err != nil {
 			a.log.WarnContext(r.Context(), "approvals badge unavailable",
 				"request_id", requestID(r), "error", err)
@@ -223,6 +201,8 @@ func (a *App) workQueueBadges(r *http.Request, user store.User, perms store.Perm
 	}
 }
 
+// chromeApp and chromeNone are the two Shell.Chrome values: the full app
+// chrome, or none (signed-out pages, htmx fragments, the error page).
 const (
 	chromeApp  = "app"
 	chromeNone = "none"
@@ -267,6 +247,7 @@ var centreActions = []struct {
 	{Resource: "request", Action: "create", Tab: TabItem{Key: "new", Label: "New", Href: "/requests/new", Icon: "＋"}},
 }
 
+// homeTab and moreTab are the fixed tabs: Home first, the More sheet last.
 var homeTab = TabItem{Key: "dashboard", Label: "Home", Href: "/", Icon: "⌂"}
 var moreTab = TabItem{Key: "more", Label: "More", Href: "#more", Icon: "⋯"}
 
@@ -274,22 +255,17 @@ var moreTab = TabItem{Key: "more", Label: "More", Href: "#more", Icon: "⋯"}
 // hold at most two items each and More is always the last one.
 func resolveTabs(perms store.PermissionSet) TabBar {
 	tabs := TabBar{Left: []TabItem{homeTab}, Fab: homeTab}
-	// The tab bar is the only navigation a phone has, so a tab pointing at an
-	// unbuilt screen is a dead end with no way around it. Skip those until
-	// their route exists.
-	// Every tab is gated on the verb its own route is gated on. A tab that 403s is
-	// worse than an absent one on a phone, where the bar is the only navigation
-	// there is: /grid is now RequirePermission("grid","view") (F-A-02/F-G-032), so
-	// the Budget fallback below used to hand a Requester — who holds no grid:view —
-	// a tab that refused them, and a role-less account two of them.
+	// The tab bar is a phone's only navigation, so every tab is gated on the
+	// same permission as its route: a tab that leads to a refusal is worse
+	// than no tab.
 	grid := TabItem{Key: "variance-grid", Label: "Budget", Href: "/grid", Icon: "▥"}
-	if requests := (TabItem{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"}); can(perms, "request", "view") && routeBuilt(requests.Href) {
+	if requests := (TabItem{Key: "requests-list", Label: "Requests", Href: "/requests", Icon: "▤"}); can(perms, "request", "view") {
 		tabs.Left = append(tabs.Left, requests)
 	} else if can(perms, "grid", "view") {
 		tabs.Left = append(tabs.Left, grid)
 	}
 	for _, candidate := range centreActions {
-		if can(perms, candidate.Resource, candidate.Action) && routeBuilt(candidate.Tab.Href) {
+		if can(perms, candidate.Resource, candidate.Action) {
 			tabs.Fab = candidate.Tab
 			break
 		}
@@ -304,44 +280,8 @@ func resolveTabs(perms store.PermissionSet) TabBar {
 	return tabs
 }
 
+// can reports whether perms grants action on resource; a nil set grants
+// nothing.
 func can(perms store.PermissionSet, resource, action string) bool {
 	return perms != nil && perms.Can(resource, action)
-}
-
-// unbuiltPrefixes lists the screens the navigation knows about but no route
-// serves yet. It is the single switch: the sidebar renders these as Soon
-// announcements and the mobile tab bar skips them, so a phase that builds a
-// screen deletes one line here and the entry lights up in both places at once.
-// TestEveryLinkedNavItemResolves and TestTabBarNeverLinksToAnUnbuiltRoute fail
-// until the line goes, so it cannot be forgotten.
-// Every screen the navigation knows about is now built, so this list is empty.
-// It stays because it is the switch a future phase flips: add the prefix while
-// the nav entry exists but the route does not, and delete it when it does.
-var unbuiltPrefixes []string
-
-func routeBuilt(href string) bool {
-	if href == "" || strings.HasPrefix(href, "#") {
-		return true // not a route: an announcement, or the More sheet toggle
-	}
-	for _, prefix := range unbuiltPrefixes {
-		if href == prefix || strings.HasPrefix(href, prefix+"/") {
-			return false
-		}
-	}
-	return true
-}
-
-// navItemVisible gates on permission alone. Soon says a screen is not built
-// yet, not that it is ungated: announcing a screen the user will never be
-// allowed to open is noise, and it would resurrect group headings that should
-// stay hidden. Items with no resource (Home, and the product announcements in
-// "Coming soon") are visible to everyone.
-func navItemVisible(item NavItem, perms store.PermissionSet) bool {
-	if item.Resource == "" {
-		return true
-	}
-	if perms == nil {
-		return false
-	}
-	return perms.Can(item.Resource, item.Action)
 }

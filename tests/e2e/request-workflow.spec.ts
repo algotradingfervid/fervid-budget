@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, login } from './fixtures';
+import { createApproverUser, expect, fixturePassword, test, login } from './fixtures';
 import type { Browser, Page } from '@playwright/test';
 
 /**
@@ -15,7 +15,6 @@ import type { Browser, Page } from '@playwright/test';
  */
 
 const MIN_TAP_PX = 40;
-const APPROVER_PASSWORD = 'StrongTestPassword!42';
 
 async function qualityProblems(page: Page, label: string): Promise<string[]> {
   const mobile = page.viewportSize()!.width <= 860;
@@ -89,28 +88,6 @@ async function qualityProblems(page: Page, label: string): Promise<string[]> {
   return problems;
 }
 
-/**
- * Gives somebody the Manager role. Nobody may approve their own request, so
- * every one of these journeys needs a second person; the admin raises and this
- * person decides.
- */
-async function createApprover(page: Page, runId: string) {
-  const email = `mgr-${runId}@example.test`;
-  const name = `Manager ${runId}`;
-  await page.goto('/users');
-  await page.locator('.pb-actions').getByRole('button', { name: 'Add user' }).click();
-  const sheet = page.locator('#user-new');
-  await sheet.getByLabel('Email').fill(email);
-  await sheet.getByLabel('Name').fill(name);
-  // Ticked at creation. The create sheet used to offer only a two-value legacy
-  // account type, so the real role needed a second trip through the edit sheet.
-  await sheet.getByRole('checkbox', { name: /^Manager/ }).check();
-  await sheet.getByLabel('Password').fill(APPROVER_PASSWORD);
-  await sheet.getByRole('button', { name: 'Add User' }).click();
-  await expect(page).toHaveURL(/\/users$/);
-  return { email, name };
-}
-
 /** Raises a reimbursement and returns the id it was given. */
 async function raiseRequest(page: Page, title: string, approver: string, amount = '18400') {
   await page.goto('/requests/new?type=reimbursement');
@@ -129,13 +106,13 @@ async function raiseRequest(page: Page, title: string, approver: string, amount 
 async function asApprover(browser: Browser, page: Page, email: string) {
   const context = await browser.newContext({ viewport: page.viewportSize() ?? undefined });
   const approverPage = await context.newPage();
-  await login(approverPage, email, APPROVER_PASSWORD);
+  await login(approverPage, email, fixturePassword);
   return { context, approverPage };
 }
 
 test.describe('the approval workflow', () => {
   test('raise, edit, approve and ask for cancellation, on both devices', async ({ adminPage, runId, browser }) => {
-    const approver = await createApprover(adminPage, runId);
+    const approver = await createApproverUser(adminPage, runId);
     const problems: string[] = [];
     const id = await raiseRequest(adminPage, `Site visit ${runId}`, approver.name);
 
@@ -204,7 +181,7 @@ test.describe('the approval workflow', () => {
   });
 
   test('a returned request is corrected and resubmitted on its own screen', async ({ adminPage, runId, browser }) => {
-    const approver = await createApprover(adminPage, `ret-${runId}`);
+    const approver = await createApproverUser(adminPage, `ret-${runId}`);
     const problems: string[] = [];
     const id = await raiseRequest(adminPage, `Cab receipts ${runId}`, approver.name);
 

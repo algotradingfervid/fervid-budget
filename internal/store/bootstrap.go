@@ -1,3 +1,5 @@
+// bootstrap.go creates the very first administrator on an empty database.
+
 package store
 
 import (
@@ -23,7 +25,7 @@ func (s *Store) BootstrapAdminIfEmpty(ctx context.Context, email, name, hash str
 	if err := validateUserFields(email, name, "admin"); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}

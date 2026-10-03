@@ -6,18 +6,16 @@ import (
 	"testing"
 )
 
-// Decision D9: `users.default_approver_id` belongs to Phase 1. SetUserDefaultApprover
-// is the canonical writer and User.DefaultApproverID (int64, 0 = none) the canonical
-// reader — Phase 2 must not ship a second pair of accessors over the same column,
-// because that is how the two drift apart. This test pins the contract Phase 2's
-// request form actually consumes: the stored default is readable off the loaded
-// user, and it is always one of the options ListApprovers offers.
+// SetUserDefaultApprover is the one writer of users.default_approver_id and
+// User.DefaultApproverID (0 = none) the one reader. The request form relies on
+// this: the stored default is readable off the loaded user, and it is always one
+// of the options ListApprovers offers.
 func TestDefaultApproverPreselectsAnOfferedApprover(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	req, mgr, headID := seedRequestActors(t, s, ctx)
+	req, mgr, headID := seedRequestActors(t, s)
 	admin := mgr
-	grantApprovalPermission(t, s, ctx, mgr.ID)
+	grantApprovalPermission(t, s, mgr.ID)
 
 	// Unset by default: 0 means "no default", and the form pre-selects nothing.
 	u, err := s.UserByID(ctx, req.ID)
@@ -32,7 +30,7 @@ func TestDefaultApproverPreselectsAnOfferedApprover(t *testing.T) {
 		t.Fatalf("DefaultApproverID = %d, %v; want %d", u.DefaultApproverID, err, mgr.ID)
 	}
 
-	// G9 + G8: whatever is pre-selected must be a legal option, i.e. it must be
+	// Whatever is pre-selected must be a legal option, i.e. it must be
 	// in the very list the approver control is built from, and never the
 	// requester themselves.
 	approvers, err := s.ListApprovers(ctx, req.ID)
@@ -57,7 +55,7 @@ func TestDefaultApproverPreselectsAnOfferedApprover(t *testing.T) {
 		t.Fatalf("CreateRequest routed to the default approver: %v", err)
 	}
 
-	// A person can never be their own default approver (G8), and a rejection
+	// A person can never be their own default approver, and a rejection
 	// never moves the stored value.
 	if err := s.SetUserDefaultApprover(ctx, admin, req.ID, req.ID); !errors.Is(err, ErrValidation) {
 		t.Fatalf("self as default approver = %v, want ErrValidation", err)

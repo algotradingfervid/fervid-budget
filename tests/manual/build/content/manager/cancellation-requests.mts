@@ -18,9 +18,9 @@ export default page({
 
     section('Opening the decision'),
     prose(
-      `Select the request from the **Cancellations** tab, or open it from anywhere and select
-       **Decide the cancellation**. Either way you land on the cancellation screen, which is a
-       stripped-back version of the request built around the one question you have to answer.`,
+      `Select the request from the **Cancellations** tab (or open it from anywhere), then select
+       **Decide the cancellation** in the bar along the bottom. That opens the cancellation screen,
+       a stripped-back version of the request built around the one question you have to answer.`,
     ),
     shot('manager/cancellation-decision', 'The cancellation screen. Payment is frozen while you decide.'),
     table(
@@ -76,7 +76,7 @@ export default page({
         text: 'Write in **Why it should still be paid**. This one is required — the placeholder notes that the requester and Accounts both see it.',
         shot: 'manager/cancellation-decline-sheet',
       },
-      { text: 'Select **Decline and unfreeze**.' },
+      { text: 'Select **Decline and unfreeze**.', note: 'You land back on the Cancellations tab, and the request is gone from it.' },
     ]),
     fields(
       [
@@ -108,7 +108,9 @@ export default page({
     prose(
       `You can also cancel an approved request on your own initiative, without anybody asking. The
        control is on the request itself and reads **Cancel with reason**; it appears while the
-       request is \`approved\` and you are its approver.`,
+       request is \`approved\`, nothing has been paid against it, and you are its approver. It
+       opens the cancellation screen, where a second **Cancel with reason** opens the panel; the
+       button inside reads **Cancel request**. Afterwards you land back on the request.`,
     ),
     shot('manager/outright-cancel-sheet', 'Cancelling an approved request when the requester has not asked.'),
     prose(
@@ -140,9 +142,11 @@ export default page({
       ['What you see', 'Why'],
       [
         ['*Only the approver this request was sent to can decide its cancellation.*', 'You opened somebody else’s cancellation. The approver named on the request has to decide it.'],
-        ['A message saying to say why it should still be paid', 'You declined without filling in the reason.'],
-        ['A message saying a reason is required to cancel a request', 'You used **Cancel with reason** and left the box empty.'],
-        ['A message saying there is no cancellation to decide on a request in that state', 'Somebody has already decided it. Reload and read the status pill.'],
+        ['*say why it should still be paid*', 'You declined without filling in the reason.'],
+        ['*a reason is required to cancel a request*', 'You used **Cancel with reason** and left the box empty.'],
+        ['A message such as *there is no cancellation to decide on an approved request*', 'Somebody has already decided it. Reload and read the status pill.'],
+        ['*a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling*', 'Money has already been paid against the request, so it can no longer be cancelled.'],
+        ['*this request changed; reload and review it before deciding*', 'The request changed after you opened the decision. Reload it, read what changed, and decide again.'],
         ['*… somebody else changed this request a moment ago — reload it and look again*', 'Two people acted on the request at once. Reload it; the first decision stands.'],
       ],
     ),
@@ -156,13 +160,14 @@ export default page({
       },
       {
         q: 'Can I cancel a request that has already been paid?',
-        a: `No. Cancellation applies to an approved request that has not been settled. Once a payment
-            is recorded the request is closed a different way — talk to the accounts team about
+        a: `No. Cancellation applies only to an approved request with nothing paid against it — once
+            any payment is recorded, even a first installment, **Cancel with reason** is no longer
+            offered. Talk to the accounts team about
             [correcting or voiding the payment](page:accounts/correcting-a-payment).`,
       },
       {
         q: 'Who is told when I decide?',
-        a: 'The requester and the accountant assigned to the request. The decision and any wording you gave are in the history for anybody else who looks.',
+        a: 'When you accept or decline a cancellation the requester was asking for, the requester and the accountant assigned to the request are notified. When you cancel outright, the requester is. The decision and any wording you gave are in the history for anybody else who looks. Which messages go out depends on how your organisation has set up [notification rules](page:admin/notification-rules).',
       },
     ]),
   ],

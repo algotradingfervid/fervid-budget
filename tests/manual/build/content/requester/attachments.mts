@@ -9,15 +9,17 @@ export default page({
     prose(
       `A request with the invoice attached is a request your approver can decide without writing back
        to you. Every screen you can raise or correct a request on carries an uploader, and everything
-       you attach stays with the request for the rest of its life.`,
+       you attach stays with the request for the rest of its life. Only the person who raised a
+       request can add documents to it.`,
     ),
 
     section('Attaching a document as you raise a request'),
     shot('requester/form-vendor-invoice', 'The uploader sits in the Purpose and documents fieldset, below the purpose box.'),
     prose(
       `The uploader is labelled **Add invoice, receipt or proof**, with the accepted shape underneath:
-       *PDF, JPG or PNG up to 10 MB*. The size is a setting your administrator controls, so the number
-       you see may differ from the one here. Below that is a **Choose File** control, reading
+       *PDF, JPG or PNG up to 10 MiB*. The size is a setting your administrator controls — any whole
+       number from 1 to 20 MiB — so the number you see may differ from the one here. Below that is a
+       **Choose File** control, reading
        *No file chosen* until you pick something.`,
     ),
     steps([
@@ -61,16 +63,15 @@ export default page({
     ),
     prose(
       `Each document that is there gets a row: a small square with the file type, the file name, its
-       size, the date it was added, and a **Download** button. Uploading also drops a line into
-       **History and conversation**, so the story of the request shows when a document arrived and
-       who put it there.`,
+       size, the date it was added, and a **Download** button. Uploading also drops an **Attachment
+       added** line, with the file name and size, into **History and conversation**, so the story of
+       the request shows when each document arrived.`,
     ),
 
     subsection('Downloading'),
     prose(
       `**Download** opens the file exactly as it was uploaded. You can download documents on any
-       request you can see, which for a requester means your own requests — including documents that
-       somebody else attached to your request.`,
+       request you can see, which for a requester means your own requests.`,
     ),
 
     section('Adding a document later'),
@@ -79,7 +80,8 @@ export default page({
       [
         ['`pending` — awaiting approval', 'Yes', '**Edit request** → **Add another document**'],
         ['`returned` — sent back to you', 'Yes', 'The correction form → **Attach the corrected document**'],
-        ['`approved` and everything after it', 'No', 'The request is locked; ask in the conversation instead'],
+        ['`approved` and on hold with Accounts', 'Yes', 'The hold banner → **Add a document** → **Attach it**'],
+        ['`approved` and everything after it, otherwise', 'No', 'The request is locked; ask in the conversation instead'],
         ['`rejected`, `withdrawn`, `cancelled`', 'No', 'The request is closed'],
       ],
     ),
@@ -87,6 +89,12 @@ export default page({
       `On a returned request the uploader is worded for the job in hand — **Attach the corrected
        document** — and sits with the fields your approver is most likely to have asked about. See
        [When a request comes back to you](page:requester/when-a-request-is-returned).`,
+    ),
+    prose(
+      `When Accounts put an approved request on hold — often to ask for a missing receipt — the amber
+       hold banner on the request carries its own **Add a document** control and an **Attach it**
+       button. It takes one file at a time, and it is there only while the hold lasts. See
+       [Getting paid](page:requester/getting-paid).`,
     ),
 
     section('What you cannot do'),
@@ -97,8 +105,12 @@ export default page({
       'Uploads are permanent',
     ),
     prose(
-      `There is also a hard ceiling above whatever your administrator has set: a file larger than
-       20 MiB is refused outright with \`files must be 20 MiB or smaller\`, whatever the form says.`,
+      `The size figure the uploader quotes is the real limit. A larger file is refused with a message
+       quoting that same figure — for example \`files must be 10 MiB or smaller. Choose the attachment
+       again after correcting it\`. Your administrator can raise the limit, but never above 20 MiB.
+       A file that is not a genuine PDF, JPG or PNG — whatever its name says — is refused with
+       \`attach a PDF, JPG or PNG file whose contents match its extension. Choose the attachment again
+       after correcting it\`.`,
     ),
 
     faq([
@@ -110,13 +122,15 @@ export default page({
       },
       {
         q: 'My file will not upload.',
-        a: `Check the size against the figure the uploader quotes, and against the 20 MiB ceiling. A
-            scan at full resolution is often the culprit; re-export it smaller.`,
+        a: `Check the size against the figure the uploader quotes, and that the file really is a PDF,
+            JPG or PNG. A scan at full resolution is often the culprit; re-export it smaller.`,
       },
       {
         q: 'Can my approver attach something?',
-        a: `Anybody who can reach the request and holds the permission to add documents can attach one.
-            Whatever they add shows in the same list and in the same history stream.`,
+        a: `No. Documents on a request come only from the person who raised it — on the form, the edit
+            form, the correction screen or the hold banner. Anybody else is refused with
+            *Only the person who raised a request may add documents to it.* Your approver can ask for
+            a document in the conversation, or return the request so you can attach it.`,
       },
       {
         q: 'I attached the file but the request was refused. Was it kept?',

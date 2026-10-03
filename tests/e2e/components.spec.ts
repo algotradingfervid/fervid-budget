@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test';
-import { capturePageErrors, createApprovedRequest, expect, test } from './fixtures';
+import { capturePageErrors, createApprovedRequest, expect, test, today } from './fixtures';
 
 /**
  * Design-system behaviours (web/static/fervid-app.js).
@@ -47,7 +47,7 @@ test.describe('design system behaviours', () => {
     const amount = adminPage.getByLabel('Amount actually paid');
     const reference = adminPage.getByLabel('Transaction / UTR reference');
     const preview = adminPage.getByRole('button', { name: 'Payment settled →' });
-    await adminPage.getByLabel('Paid on').fill('2026-07-20');
+    await adminPage.getByLabel('Paid on').fill(today());
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await reference.fill('TEST-REF');
     for (const invalid of ['0', '-1.01', '1.001', '100.02']) {
@@ -96,6 +96,26 @@ test.describe('design system behaviours', () => {
     await expect(summary).toHaveCount(0);
     await page.getByRole('button', { name: 'Login', exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
+  });
+
+  test('invalid text inputs get the red border and lose it once corrected', async ({ page }) => {
+    // The generic input border rule once outranked the invalid rule, so a
+    // flagged text field stayed grey while its error message was shown.
+    const red = 'rgb(180, 35, 24)'; // --bad
+    const grey = 'rgb(129, 118, 107)'; // --input-border
+    const border = (name: string) =>
+      page.getByLabel(name, { exact: true }).evaluate((el) => getComputedStyle(el).borderTopColor);
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Login', exact: true }).click();
+    await expect(page.locator('.client-error-summary')).toBeFocused();
+    for (const name of ['Email', 'Password']) {
+      await expect(page.getByLabel(name, { exact: true })).toHaveAttribute('aria-invalid', 'true');
+      await expect.poll(() => border(name)).toBe(red);
+    }
+    await page.getByLabel('Email', { exact: true }).fill('admin@fervid.local');
+    await page.getByLabel('Email', { exact: true }).blur();
+    await expect(page.getByLabel('Email', { exact: true })).not.toHaveAttribute('aria-invalid', 'true');
+    await expect.poll(() => border('Email')).toBe(grey);
   });
 
   test('app validation describes bounds in real head creation without losing other input', async ({ adminPage, runId }) => {

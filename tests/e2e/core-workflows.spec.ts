@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { test, expect, capturePageErrors, createApprovedRequest, createDataEntryUser, login, settlePayment } from './fixtures';
+import { test, expect, capturePageErrors, createApprovedRequest, createDataEntryUser, login, settlePayment, thisMonth, today } from './fixtures';
 
 test.describe('authentication, permissions, and navigation', () => {
   test('admin can log in, traverse primary navigation, and log out without browser errors', async ({ adminPage }) => {
@@ -70,42 +70,30 @@ test.describe('authentication, permissions, and navigation', () => {
 
 test.describe('payments, budgets, locks, exports, and accessibility', () => {
   /**
-   * Re-scoped, not shrunk. This test used to read "create, filter, view, edit,
-   * void, and export", and all six were one screen's worth of work because a
-   * payment was a free-standing row anybody could type in and change again.
+   * The payment ledger: settling a request puts a row there, the filters find
+   * it, it opens and it exports.
    *
-   * Phase 3 split those six in half. A payment now exists only as the end of an
-   * approved request, and a linked payment is immutable (S12): the store refuses
-   * to edit or void one, the ledger row offers nothing but View, and
-   * /payments/{id}/edit redirects back to the payment rather than serving a form
-   * whose Save can only fail. Edit and Void survive solely for HISTORICAL,
-   * request-less rows (X6) — and the shipped UI can no longer create one
-   * (CreatePayment is off every HTTP route) and the e2e seed contains none, so
-   * there is nothing in this environment to drive them against. Their Go twins
-   * own that branch.
-   *
-   * So the honest subject of this test is the LEDGER: that the journey puts a
-   * row there, that the filters find it, that it opens, and that it exports.
-   * Edit and void stay in the title's place as a proof-of-absence — the thing
-   * this file used to assert worked is now asserted to be gone, on purpose,
-   * rather than quietly dropped.
+   * A payment exists only as the end of an approved request, and such a
+   * payment is immutable: the store refuses to edit or void it, the ledger row
+   * offers nothing but View, and /payments/{id}/edit redirects back to the
+   * payment. Edit and void remain only for historical payments made without a
+   * request, which nothing can create any more; the Go tests cover those.
    */
   test('admin can record, filter, view and export a payment — and cannot edit or void it', async ({ adminPage, runId }) => {
     const errors = capturePageErrors(adminPage);
     const request = await createApprovedRequest(adminPage, runId, { amount: '4200.00' });
     // The processing note is the search term: the ledger's search covers
     // project, head, payee, invoice, reference and remarks, and the remarks are
-    // unique to this run. The payee is asserted on the detail screen below
-    // (F-D-09: it reaches every hop, whatever the old KNOWN GAP comment said).
+    // unique to this run. The payee is asserted on the detail screen below.
     const payment = await settlePayment(adminPage, request.id, {
       amount: '4200.00',
-      paidOn: '2026-06-15',
+      paidOn: today(),
       mode: 'upi',
       reference: `UTR-${runId}`,
       remarks: `Settled by e2e ${runId}`
     });
 
-    await adminPage.goto('/payments?month=2026-06');
+    await adminPage.goto(`/payments?month=${thisMonth()}`);
     await adminPage.getByLabel('Search').fill(runId);
     await adminPage.getByRole('button', { name: 'Filter' }).click();
     // Both halves matter: the filter narrowed the ledger to a single row, and
@@ -116,7 +104,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('4,200.00');
 
-    // S12 from the ledger's side: View is the only action a linked row offers.
+    // Immutable from the ledger's side too: View is the only action offered.
     // The Edit link and the Remove disclosure are gated on `not .RequestID`.
     const actions = row.locator('.actions-cell a');
     await expect(actions).toHaveCount(1);
@@ -141,7 +129,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(adminPage.getByRole('button', { name: 'Save Payment' })).toHaveCount(0);
 
     const download = adminPage.waitForEvent('download');
-    await adminPage.goto('/grid?month=2026-06');
+    await adminPage.goto(`/grid?month=${thisMonth()}`);
     await adminPage.getByRole('link', { name: /Export/ }).click();
     expect(await download).toBeTruthy();
     expect(errors).toEqual([]);
@@ -159,7 +147,8 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(amount).toHaveAttribute('aria-invalid', 'true');
     await amount.fill('6000.00');
     await expect(adminPage.locator('#diff-banner')).toHaveClass(/bad/);
-    await adminPage.getByLabel('Paid on').fill('2026-06-15');
+    const paidOn = today();
+    await adminPage.getByLabel('Paid on').fill(paidOn);
     await adminPage.getByLabel('Payment mode').selectOption('neft');
     await adminPage.getByLabel('Transaction / UTR reference').fill(`UTR-${runId}`);
     await adminPage.getByLabel('Processing note').fill(`Retain this note ${runId}`);
@@ -167,7 +156,7 @@ test.describe('payments, budgets, locks, exports, and accessibility', () => {
     await expect(adminPage.locator('.client-error-summary')).toContainText('remaining approved balance');
     await expect(adminPage.locator('#settle-sheet')).not.toBeVisible();
     await expect(amount).toHaveValue('6,000.00');
-    await expect(adminPage.getByLabel('Paid on')).toHaveValue('2026-06-15');
+    await expect(adminPage.getByLabel('Paid on')).toHaveValue(paidOn);
     await expect(adminPage.getByLabel('Payment mode')).toHaveValue('neft');
     await expect(adminPage.getByLabel('Transaction / UTR reference')).toHaveValue(`UTR-${runId}`);
     await expect(adminPage.getByLabel('Processing note')).toHaveValue(`Retain this note ${runId}`);

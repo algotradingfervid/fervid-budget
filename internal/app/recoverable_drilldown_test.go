@@ -4,7 +4,6 @@ import (
 	"fervidbudget/internal/store"
 	"fmt"
 	"html"
-	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -21,8 +20,8 @@ func TestRecoverableDashboardDrilldownsMatchOutstandingPopulation(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	dashboard := responseBody(t, s.request(http.MethodGet, "/recoverables", nil, ""))
+	s.loginAdmin()
+	dashboard := s.get("/recoverables")
 	link := func(label, value string) string {
 		t.Helper()
 		matches := regexp.MustCompile(`data-label="` + label + `"><a href="([^"]+)">` + value + `</a>`).FindStringSubmatch(dashboard)
@@ -35,7 +34,7 @@ func TestRecoverableDashboardDrilldownsMatchOutstandingPopulation(t *testing.T) 
 		return len(regexp.MustCompile(`<a href="/recoverables/[0-9]+">`).FindAllString(body, -1))
 	}
 	for _, href := range []string{link("Category", "ICD"), link("Counterparty", "Same Counterparty")} {
-		body := responseBody(t, s.request(http.MethodGet, href, nil, ""))
+		body := s.get(href)
 		if count(body) != 1 {
 			t.Fatalf("dashboard count 1 links to %d records at %s; unpaid/reconciled must not widen the drilldown", count(body), href)
 		}
@@ -54,7 +53,7 @@ func TestRecoverableDashboardDrilldownsMatchOutstandingPopulation(t *testing.T) 
 		filter string
 		want   int
 	}{{"", 3}, {"&ageing=unpaid", 1}, {"&ageing=recovered", 1}, {"&ageing=outstanding", 1}} {
-		body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/recoverables/list?category=%d%s", cat, tc.filter), nil, ""))
+		body := s.get(fmt.Sprintf("/recoverables/list?category=%d%s", cat, tc.filter))
 		if count(body) != tc.want {
 			t.Fatalf("view %q got%d want%d", tc.filter, count(body), tc.want)
 		}

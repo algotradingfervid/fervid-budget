@@ -38,6 +38,13 @@ export interface Shot {
   skipAxe?: boolean;
   /** Capture the entire page however tall it is, instead of the two-screenful cap. */
   fullHeight?: boolean;
+  /**
+   * Capture only the browser window, scrolled to the top. For a panel opened
+   * over a long page: the panel is fixed to the window, so a full-page capture
+   * of a long list stretches the page behind it and leaves the panel and the
+   * sidebar wherever the window happened to be when the page was stitched.
+   */
+  windowOnly?: boolean;
   /** Expected HTTP status, when the point of the shot is a refusal. */
   expectStatus?: number;
 }
@@ -202,7 +209,7 @@ export const SHOTS: Shot[] = [
     id: 'requester/choose-type',
     role: 'requester',
     title: 'Choosing what kind of request to raise',
-    shows: 'Step one of raising a request: the four type cards and what each is for.',
+    shows: 'Step one of raising a request: the five type cards and what each is for.',
     url: '/requests/new',
   },
   {
@@ -261,8 +268,8 @@ export const SHOTS: Shot[] = [
     shows: 'The refusal shown when a request is submitted without the details it requires.',
     url: '/requests/new?type=reimbursement',
     skipAxe: true,
-    // The new-request form carries no inline error banner: a refused submission
-    // renders the error page instead. Reaching it needs a real POST that the
+    // A refused submission redraws the form with its error band and field
+    // messages. Reaching it needs a real POST that the
     // browser will not block, and every field is marked `required` — so this
     // builds a deliberately incomplete submission and posts it, rather than
     // trying to drive the form and quietly capturing a pristine one, which is
@@ -516,21 +523,21 @@ export const SHOTS: Shot[] = [
     role: 'manager',
     title: 'The monthly report',
     shows: 'Spending by month across the whole organisation.',
-    url: '/reports/monthly',
+    url: `/reports/monthly?from=${e.reportFrom}&to=${e.reportTo}`,
   },
   {
     id: 'manager/reports-projects',
     role: 'manager',
     title: 'The report by project',
     shows: 'The same figures grouped by project instead of by month.',
-    url: '/reports/projects',
+    url: `/reports/projects?from=${e.reportFrom}&to=${e.reportTo}`,
   },
   {
     id: 'manager/reports-heads',
     role: 'manager',
     title: 'The report by expense head',
     shows: 'Spending broken down to the individual budget line.',
-    url: '/reports/heads',
+    url: `/reports/heads?from=${e.reportFrom}&to=${e.reportTo}`,
   },
   {
     id: 'manager/payments-refused',
@@ -606,6 +613,10 @@ export const SHOTS: Shot[] = [
       await page.fill('input[name="amount"]', '5000');
       const mode = page.locator('select[name="payment_mode"]');
       if ((await mode.count()) > 0) await mode.selectOption({ index: 1 }).catch(() => undefined);
+      // The transaction reference is required, so the form refuses to open the
+      // confirmation panel without one.
+      const reference = page.locator('input[name="reference_no"]');
+      if ((await reference.count()) > 0) await reference.fill('UTR000123456');
       await page.locator('button[hx-post*="settlement-preview"]').first().click();
     },
   },
@@ -673,7 +684,7 @@ export const SHOTS: Shot[] = [
     role: 'accounts',
     title: 'The payments ledger',
     shows: 'Every payment recorded, filtered by month.',
-    url: '/payments',
+    url: `/payments?month=${e.busyPaymentMonth}`,
   },
   {
     id: 'accounts/payments-ledger-empty',
@@ -733,6 +744,7 @@ export const SHOTS: Shot[] = [
     shows: 'The panel for creating an account: email, name, roles and a starting password.',
     url: '/users',
     openSheet: 'user-new',
+    windowOnly: true,
   },
   {
     id: 'admin/user-edit-sheet',
@@ -741,6 +753,7 @@ export const SHOTS: Shot[] = [
     shows: 'The panel for changing somebody’s roles, approver or password.',
     url: '/users',
     openSheet: `user-${e.editableUser}`,
+    windowOnly: true,
   },
   {
     id: 'admin/roles',
@@ -785,7 +798,7 @@ export const SHOTS: Shot[] = [
     role: 'admin',
     title: 'Budgets',
     shows: 'The figures each head is allowed, month by month.',
-    url: '/budgets',
+    url: `/budgets?month=${e.openMonth}`,
   },
   {
     id: 'admin/months',

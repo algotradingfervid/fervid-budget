@@ -4,7 +4,7 @@ export default page({
   section: 'requester',
   slug: 'choosing-a-request-type',
   title: 'Choosing a request type',
-  summary: 'Vendor invoice, reimbursement, employee advance or vendor advance — which one you want, and why it matters.',
+  summary: 'Vendor invoice, vendor advance, reimbursement, employee advance or deposit or guarantee — which one you want, and why it matters.',
   blocks: [
     prose(
       `Raising a request is two screens. The first asks one question — what kind of payment is this —
@@ -13,11 +13,11 @@ export default page({
     ),
 
     section('The chooser'),
-    shot('requester/choose-type', 'Step 1 of 2. Four cards, each with a one-line description and a tag saying what that type will ask for.'),
+    shot('requester/choose-type', 'Step 1 of 2. Five cards, each with a one-line description and a tag saying what that type will ask for.'),
     steps([
       { text: 'Select **+ New request**, from the dashboard or from **My requests**.' },
       {
-        text: 'Read the four cards and select the one that describes your money.',
+        text: 'Read the five cards and select the one that describes your money.',
         note: 'Selecting a card opens the form for that type. Nothing is saved yet.',
       },
     ]),
@@ -27,14 +27,15 @@ export default page({
        **Cancel**, at the top right, takes you back to your home screen without raising anything.`,
     ),
 
-    section('The four types'),
+    section('The five types'),
     table(
       ['Type', 'Use it when', 'The card’s tag'],
       [
         ['**Vendor invoice payment**', 'You have an invoice from a vendor and it needs paying.', 'Needs invoice number and date'],
         ['**Vendor advance**', 'Money to a vendor before any invoice exists — a deposit against an order.', 'Needs a reason for the advance'],
         ['**Reimbursement**', 'You already spent your own money for the company and want it back.', 'Paid to you · needs the expense date'],
-        ['**Employee advance**', 'Money to you up front for organisation spending you are about to make.', 'Usually recoverable'],
+        ['**Employee advance**', 'Money to you up front for organisation spending you are about to make.', 'Paid to you · usually recoverable'],
+        ['**Deposit or guarantee**', 'EMD, PBG, ICD or a security deposit — money paid to another company or authority that comes back.', 'Paid to the counterparty · always recoverable'],
       ],
       'The wording is the chooser’s own.',
     ),
@@ -71,29 +72,50 @@ export default page({
     shot('requester/form-employee-advance', 'The employee advance form. It opens on the recoverable treatment, already categorised.'),
     prose(
       `Use this when the organisation is handing you money to spend on its behalf. **Paid to** is your
-       name again, and the form asks **What the money is for**. This is the one type that opens on
-       **Refundable or recoverable** rather than **Budget expense**, because money advanced to a person
-       is money the organisation expects to see accounted for. You can still switch it to a budget
-       expense — see [Budget spend or money you expect back](page:requester/budget-and-recoverable).`,
+       name again — the hint says *An employee advance always pays the person raising it* — and the
+       form asks **What the money is for**. It opens on **Refundable or recoverable** rather than
+       **Budget expense**, because money advanced to a person is money the organisation expects to see
+       accounted for. On the recoverable treatment the **Category** is fixed at **Employee advance** and
+       cannot be changed; its hint reads *An employee advance is always in this category. A deposit,
+       guarantee or loan is raised as its own request type.* It is the only type that lets you choose
+       its treatment, so you can still switch it to a budget expense — see
+       [Budget spend or money you expect back](page:requester/budget-and-recoverable).`,
+    ),
+
+    subsection('Deposit or guarantee'),
+    prose(
+      `Use this when money goes to another company or authority and is expected to come back — an
+       earnest money deposit on a tender, a performance bank guarantee, an inter-corporate deposit, a
+       security deposit. It is always recoverable: under **How this is treated** the form states
+       *Refundable or recoverable.* rather than offering a choice. It asks for **Recoverable details** —
+       a **Category** from your administrator's list (every category except Employee advance), an
+       **Expected return date**, **Repayment or refund terms**, and the extra field the category needs —
+       and a **Who is paid** fieldset with one required field, **Paid to**. You type the payee's name
+       yourself; the placeholder reads *Counterparty company or tender authority*, and the hint says it
+       is never you: *money advanced to yourself is an employee advance.*`,
     ),
 
     section('Choosing between them'),
     tip(
       `The banner at the foot of the chooser is the shortest rule there is: *If the money leaves the
-       company and never comes back, it is an expense. If it is a deposit, a guarantee, or something
-       you will repay, pick the type that fits and mark it recoverable on the next screen.*`,
+       company and never comes back, it is an expense. A deposit or guarantee paid to another company
+       or authority is money the company expects back — raise it as a deposit or guarantee, paid to
+       them. Money advanced to you that you will account for is an employee advance, paid to you.*`,
       'Not sure which one?',
     ),
     prose(
       `Two questions settle almost every case. *Who is being paid?* — a vendor takes you to the two
-       vendor types, yourself to the other two. *Has the money been spent yet?* — spent takes you to
-       vendor invoice or reimbursement, not yet takes you to one of the advances.`,
+       vendor types, yourself to reimbursement or employee advance, and another company or authority
+       holding money that will come back to a deposit or guarantee. *Has the money been spent yet?* —
+       spent takes you to vendor invoice or reimbursement, not yet takes you to one of the advances.`,
     ),
     note(
-      `"Recoverable" is not one of the four types. It is a *treatment* — a choice you make on the next
-       screen, available on every type — so there is no card for it. Typing a type into the address
-       that has no card here brings you back to this screen with a message saying it is not a request
-       type the system raises.`,
+      `"Recoverable" is a *treatment*, not a type. A vendor invoice payment, a vendor advance and a
+       reimbursement are always budget expenses; a deposit or guarantee is always recoverable; only an
+       employee advance lets you choose. Typing a type into the address that has no card here brings
+       you back to this screen with the message *That is not a request type this system raises. Pick
+       one below — a deposit or guarantee has its own card, and an advance to yourself is an employee
+       advance.*`,
     ),
 
     section('Changing your mind'),
@@ -116,8 +138,9 @@ export default page({
       },
       {
         q: 'Can I change the type after submitting?',
-        a: `No. The type is fixed when the request is created. Withdraw the request and raise it again
-            under the right type — see [Changing or withdrawing a request](page:requester/editing-and-withdrawing).`,
+        a: `No. The type is fixed when the request is created. Withdraw the request while it is still
+            awaiting approval and raise it again under the right type — see
+            [Changing or withdrawing a request](page:requester/editing-and-withdrawing).`,
       },
     ]),
   ],

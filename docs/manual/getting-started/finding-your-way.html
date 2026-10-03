@@ -133,7 +133,7 @@
 <p>Some entries carry a small count. Each one counts a different thing, and an entry with nothing to count draws no number at all rather than a bare zero.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Entry</th><th scope="col">What its number counts</th></tr></thead><tbody>
 <tr><td>Notifications</td><td>Notifications you have not opened yet</td></tr>
-<tr><td>Approvals</td><td>Requests waiting on a decision from you</td></tr>
+<tr><td>Approvals</td><td>Requests waiting on a decision from you: requests awaiting your approval and, if your roles let you decide shortfalls, partial payments sent back to you for review</td></tr>
 <tr><td>Accounts queue</td><td>Approved requests nobody has claimed and that are not on hold</td></tr>
 <tr><td>Payments ledger</td><td>Recorded payments with no document attached to them</td></tr>
 <tr><td>Monthly plans</td><td>Budget months that are still open</td></tr>
@@ -145,9 +145,9 @@
 <p>That is why two people at the same desk can open the same product and see menus of very different lengths. Taking the four roles the product ships with:</p>
 <div class="table-wrap"><table><caption>Read from the four accounts used to capture the screenshots in this manual.</caption><thead><tr><th scope="col">If your roles are</th><th scope="col">The sidebar lists</th></tr></thead><tbody>
 <tr><td>Requester</td><td>My requests, and nothing else. No approvals queue, no payments, no budget screens.</td></tr>
-<tr><td>Approver</td><td>My requests, Approvals, Variance grid and Reports.</td></tr>
+<tr><td>Manager</td><td>My requests, Approvals, Variance grid and Reports.</td></tr>
 <tr><td>Accounts</td><td>My requests, Accounts queue, Recoverables, Payments ledger, Variance grid and Reports.</td></tr>
-<tr><td>Administrator</td><td>Every entry in the table above, including the Masters and Admin groups.</td></tr>
+<tr><td>Admin</td><td>Every entry in the table above, including the Masters and Admin groups.</td></tr>
 </tbody></table></div>
 <p><strong>Home</strong>, <strong>Notifications</strong> and the <strong>Coming soon</strong> group need no permission, so everybody has those. Your organisation may also have roles of its own making, in which case your menu is whatever those roles add up to. <a href="../reference/permissions-matrix.html">The permission matrix</a> lists exactly which role reaches what, and <a href="../admin/roles-and-permissions.html">Roles and permissions</a> explains how an administrator changes it.</p>
 <h3 id="what-happens-if-you-go-there-anyway">What happens if you go there anyway</h3>
@@ -172,10 +172,10 @@
 <aside class="callout callout-note"><p>One screen does not use the band: a single request opens with the request's own head instead — its number, its amount and its title. <a href="../getting-started/a-request-in-detail.html">Anatomy of a request</a> takes that screen apart.</p></aside>
 <h2 id="the-block-at-the-bottom">The block at the bottom</h2>
 <p>At the foot of the sidebar sit your initials in a circle, your name, and a short line beneath it. Under that is <strong>Log out</strong>.</p>
-<p>The line under your name is a property of the account itself, not the list of roles that decides what your menu holds. Two people can both read the same word there and still see different menus. To find out which roles you actually hold, ask an administrator to look you up on <a href="../admin/people.html">People and accounts</a>.</p>
-<aside class="callout callout-tip"><p><strong>Log out</strong> is the only way out. There is nothing else in the sidebar that ends your session, so use it on any machine other people can reach.</p></aside>
+<p>The line under your name lists the roles your account holds — for example &quot;Accounts&quot; or &quot;Manager&quot;. When you hold more than one, they are all listed, separated by a dot. Those roles are what decide your menu, so this line is the quickest answer to &quot;why can I see this?&quot;. <a href="../admin/people.html">People and accounts</a> explains how an administrator changes them.</p>
+<aside class="callout callout-tip"><p><strong>Log out</strong> is the only way out, and it signs you out on every device and browser at once, not only the one in front of you. Use it on any machine other people can reach.</p></aside>
 <h2 id="on-a-small-screen">On a small screen</h2>
-<p>Below roughly 860 pixels of width — a phone, or a narrow window — the sidebar is not drawn at all. In its place you get a bar across the top carrying a back or home control, the screen's name and a notification icon with your unread count on it, and a bar of tabs fixed along the bottom. The tabs are built from your permissions in the same way the sidebar is: <strong>Home</strong>, then your main list, then one large centre action — approving, paying or raising, whichever is the first of those you are allowed to do — then payments or the budget grid, then <strong>More</strong>, which opens the same grouped menu the sidebar holds. The screenshots in this manual were all taken on a wide screen, so they show the sidebar.</p>
+<p>Below roughly 860 pixels of width — a phone, or a narrow window — the sidebar is not drawn at all. In its place you get a bar across the top carrying a back or home control, the screen's name and a notification icon with your unread count on it, and a bar of tabs fixed along the bottom. The tabs are built from your permissions in the same way the sidebar is: <strong>Home</strong>, then your main list, then one large centre action — approving, paying or raising, whichever is the first of those you are allowed to do — then payments or the budget grid, then <strong>More</strong>, which opens the same grouped menu the sidebar holds, with <strong>Log out</strong> at the foot under <strong>Session</strong>. The screenshots in this manual were all taken on a wide screen, so they show the sidebar.</p>
 <dl class="faq"><dt>An entry I used yesterday has gone.</dt><dd><p>Your roles changed. The menu is rebuilt from your permissions on every page load, so a role taken away removes its entries at once. An administrator can tell you what you now hold.</p></dd>
 <dt>I can see a screen but a control on it is missing.</dt><dd><p>Reaching a screen and acting on it are separate permissions. An approver can open a request, for example, and still not be offered the buttons that decide it if the request was not sent to them.</p></dd>
 <dt>What does the number beside Payments ledger mean? It is not the number of payments.</dt><dd><p>It counts payments that have no document attached, so it goes down as receipts are added rather than up as payments are recorded.</p></dd>

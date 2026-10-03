@@ -1,3 +1,9 @@
+/*
+  Budget screens — layout rules on top of fervid-ds.css for the variance grid
+  (.matrix.grid), the expense heads editor (.heads-editor, .heads-setup-form)
+  and the inline budget editor (.budget-editor).
+*/
+
 /* Bounded names preserve financial columns and editable field widths. */
 .matrix.grid { table-layout: fixed; min-width: 1580px; width: 100%; }
 /* Exact currency must fit its column; the surrounding card owns scrolling. */

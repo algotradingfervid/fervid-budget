@@ -108,26 +108,27 @@
 <main class="doc">
 <div class="wrap">
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Raising requests</p>
-<header class="page-head"><h1>Choosing a request type</h1><p class="lede">Vendor invoice, reimbursement, employee advance or vendor advance — which one you want, and why it matters.</p></header>
+<header class="page-head"><h1>Choosing a request type</h1><p class="lede">Vendor invoice, vendor advance, reimbursement, employee advance or deposit or guarantee — which one you want, and why it matters.</p></header>
 <p>Raising a request is two screens. The first asks one question — what kind of payment is this — and the answer decides which fields the second screen puts in front of you. There is no way to change the type afterwards, so it is worth a moment.</p>
 <h2 id="the-chooser">The chooser</h2>
 <figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/choose-type.png" aria-label="Enlarge: Step 1 of 2. Four cards, each with a one-line description and a tag saying what that type will ask for.">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/choose-type.png" aria-label="Enlarge: Step 1 of 2. Five cards, each with a one-line description and a tag saying what that type will ask for.">
     <img src="../assets/shots/requester/choose-type.png" alt="Step one of raising a request: the four type cards and what each is for." loading="lazy" width="1440">
   </button>
-  <figcaption>Step 1 of 2. Four cards, each with a one-line description and a tag saying what that type will ask for. </figcaption>
+  <figcaption>Step 1 of 2. Five cards, each with a one-line description and a tag saying what that type will ask for. </figcaption>
 </figure>
 <ol class="steps">
 <li>Select <strong>+ New request</strong>, from the dashboard or from <strong>My requests</strong>.</li>
-<li>Read the four cards and select the one that describes your money.<p class="step-note">Selecting a card opens the form for that type. Nothing is saved yet.</p></li>
+<li>Read the five cards and select the one that describes your money.<p class="step-note">Selecting a card opens the form for that type. Nothing is saved yet.</p></li>
 </ol>
 <p>The heading asks <em>What are you asking to be paid?</em> and the line under it promises the rest: <em>Pick a type. The form only asks for what that type needs. Nothing is saved until you submit.</em> <strong>Cancel</strong>, at the top right, takes you back to your home screen without raising anything.</p>
-<h2 id="the-four-types">The four types</h2>
+<h2 id="the-five-types">The five types</h2>
 <div class="table-wrap"><table><caption>The wording is the chooser’s own.</caption><thead><tr><th scope="col">Type</th><th scope="col">Use it when</th><th scope="col">The card’s tag</th></tr></thead><tbody>
 <tr><td><strong>Vendor invoice payment</strong></td><td>You have an invoice from a vendor and it needs paying.</td><td>Needs invoice number and date</td></tr>
 <tr><td><strong>Vendor advance</strong></td><td>Money to a vendor before any invoice exists — a deposit against an order.</td><td>Needs a reason for the advance</td></tr>
 <tr><td><strong>Reimbursement</strong></td><td>You already spent your own money for the company and want it back.</td><td>Paid to you · needs the expense date</td></tr>
-<tr><td><strong>Employee advance</strong></td><td>Money to you up front for organisation spending you are about to make.</td><td>Usually recoverable</td></tr>
+<tr><td><strong>Employee advance</strong></td><td>Money to you up front for organisation spending you are about to make.</td><td>Paid to you · usually recoverable</td></tr>
+<tr><td><strong>Deposit or guarantee</strong></td><td>EMD, PBG, ICD or a security deposit — money paid to another company or authority that comes back.</td><td>Paid to the counterparty · always recoverable</td></tr>
 </tbody></table></div>
 <h3 id="vendor-invoice-payment">Vendor invoice payment</h3>
 <figure class="shot">
@@ -160,16 +161,18 @@
   </button>
   <figcaption>The employee advance form. It opens on the recoverable treatment, already categorised. </figcaption>
 </figure>
-<p>Use this when the organisation is handing you money to spend on its behalf. <strong>Paid to</strong> is your name again, and the form asks <strong>What the money is for</strong>. This is the one type that opens on <strong>Refundable or recoverable</strong> rather than <strong>Budget expense</strong>, because money advanced to a person is money the organisation expects to see accounted for. You can still switch it to a budget expense — see <a href="../requester/budget-and-recoverable.html">Budget spend or money you expect back</a>.</p>
+<p>Use this when the organisation is handing you money to spend on its behalf. <strong>Paid to</strong> is your name again — the hint says <em>An employee advance always pays the person raising it</em> — and the form asks <strong>What the money is for</strong>. It opens on <strong>Refundable or recoverable</strong> rather than <strong>Budget expense</strong>, because money advanced to a person is money the organisation expects to see accounted for. On the recoverable treatment the <strong>Category</strong> is fixed at <strong>Employee advance</strong> and cannot be changed; its hint reads <em>An employee advance is always in this category. A deposit, guarantee or loan is raised as its own request type.</em> It is the only type that lets you choose its treatment, so you can still switch it to a budget expense — see <a href="../requester/budget-and-recoverable.html">Budget spend or money you expect back</a>.</p>
+<h3 id="deposit-or-guarantee">Deposit or guarantee</h3>
+<p>Use this when money goes to another company or authority and is expected to come back — an earnest money deposit on a tender, a performance bank guarantee, an inter-corporate deposit, a security deposit. It is always recoverable: under <strong>How this is treated</strong> the form states <em>Refundable or recoverable.</em> rather than offering a choice. It asks for <strong>Recoverable details</strong> — a <strong>Category</strong> from your administrator's list (every category except Employee advance), an <strong>Expected return date</strong>, <strong>Repayment or refund terms</strong>, and the extra field the category needs — and a <strong>Who is paid</strong> fieldset with one required field, <strong>Paid to</strong>. You type the payee's name yourself; the placeholder reads <em>Counterparty company or tender authority</em>, and the hint says it is never you: <em>money advanced to yourself is an employee advance.</em></p>
 <h2 id="choosing-between-them">Choosing between them</h2>
-<aside class="callout callout-tip"><p class="callout-title">Not sure which one?</p><p>The banner at the foot of the chooser is the shortest rule there is: <em>If the money leaves the company and never comes back, it is an expense. If it is a deposit, a guarantee, or something you will repay, pick the type that fits and mark it recoverable on the next screen.</em></p></aside>
-<p>Two questions settle almost every case. <em>Who is being paid?</em> — a vendor takes you to the two vendor types, yourself to the other two. <em>Has the money been spent yet?</em> — spent takes you to vendor invoice or reimbursement, not yet takes you to one of the advances.</p>
-<aside class="callout callout-note"><p>&quot;Recoverable&quot; is not one of the four types. It is a <em>treatment</em> — a choice you make on the next screen, available on every type — so there is no card for it. Typing a type into the address that has no card here brings you back to this screen with a message saying it is not a request type the system raises.</p></aside>
+<aside class="callout callout-tip"><p class="callout-title">Not sure which one?</p><p>The banner at the foot of the chooser is the shortest rule there is: <em>If the money leaves the company and never comes back, it is an expense. A deposit or guarantee paid to another company or authority is money the company expects back — raise it as a deposit or guarantee, paid to them. Money advanced to you that you will account for is an employee advance, paid to you.</em></p></aside>
+<p>Two questions settle almost every case. <em>Who is being paid?</em> — a vendor takes you to the two vendor types, yourself to reimbursement or employee advance, and another company or authority holding money that will come back to a deposit or guarantee. <em>Has the money been spent yet?</em> — spent takes you to vendor invoice or reimbursement, not yet takes you to one of the advances.</p>
+<aside class="callout callout-note"><p>&quot;Recoverable&quot; is a <em>treatment</em>, not a type. A vendor invoice payment, a vendor advance and a reimbursement are always budget expenses; a deposit or guarantee is always recoverable; only an employee advance lets you choose. Typing a type into the address that has no card here brings you back to this screen with the message <em>That is not a request type this system raises. Pick one below — a deposit or guarantee has its own card, and an advance to yourself is an employee advance.</em></p></aside>
 <h2 id="changing-your-mind">Changing your mind</h2>
 <p>The form carries a <strong>← Change type</strong> button at the top right. It takes you back to the chooser. Nothing you have typed is kept when you swap type, because a different type is a different set of fields — so change type before you fill the form in, not after.</p>
 <dl class="faq"><dt>I paid a vendor out of my own pocket. Which type?</dt><dd><p>Reimbursement. The organisation is paying <em>you</em> back, so the payee is you, not the vendor — and the vendor invoice type would ask you to name a vendor as the payee.</p></dd>
 <dt>The vendor I need is not in the list.</dt><dd><p>Vendors come from the vendor master, which administrators maintain. Ask for the vendor to be added; you cannot type a payee that is not on the list.</p></dd>
-<dt>Can I change the type after submitting?</dt><dd><p>No. The type is fixed when the request is created. Withdraw the request and raise it again under the right type — see <a href="../requester/editing-and-withdrawing.html">Changing or withdrawing a request</a>.</p></dd></dl>
+<dt>Can I change the type after submitting?</dt><dd><p>No. The type is fixed when the request is created. Withdraw the request while it is still awaiting approval and raise it again under the right type — see <a href="../requester/editing-and-withdrawing.html">Changing or withdrawing a request</a>.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../requester/what-you-can-do.html"><span>Previous</span>What a requester can do</a><a class="pager-next" href="../requester/raising-a-request.html"><span>Next</span>Raising a request</a></nav>
 </div>
 </main>

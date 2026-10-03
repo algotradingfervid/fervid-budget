@@ -35,20 +35,23 @@ export default page({
     note(
       `You can also start from the payment form itself. Opening it without naming a request shows
        a picker of approved requests; choosing one claims it exactly as the queue button does.
-       [Recording a payment](page:accounts/recording-a-payment) shows the picker.`,
+       [Recording a payment](page:accounts/recording-a-payment) shows the picker. And an approved,
+       unclaimed request that is not on hold carries **Record payment** in the action bar of its
+       own screen, which claims it the same way.`,
     ),
 
     section('What the claim does'),
     prose(
       `The request moves to \`processing\` and your name goes on it. Everybody who can see the
        request sees that — the queue, the request screen and the history all say the same thing,
-       and a line appears in the history reading “reserved it for processing”.`,
+       and a line appears in the history with your name and the words “reserved the request for
+       processing”.`,
     ),
     shot('accounts/queue-processing', 'The Processing tab. Your own claims say **Reserved by you** and offer **Resume**; a colleague’s names them and offers **View** only.'),
     prose(
-      `Only three kinds of request can be claimed: approved, unclaimed, and not on hold. Anything
-       else refuses, and it refuses with a screen that explains which of the three failed rather
-       than an error — see [reservations and
+      `Only a request that is approved, unclaimed and not on hold can be claimed. Anything else
+       refuses, and it refuses with a screen that explains which of the three failed rather than
+       an error — see [reservations and
        conflicts](page:accounts/reservations-and-conflicts).`,
     ),
 
@@ -108,8 +111,9 @@ export default page({
       },
       {
         q: 'Does a claim expire on its own?',
-        a: `No. After the configured number of days a reminder goes out and the queue flags it, but
-            nothing is ever released automatically — a released request can be taken and paid by
+        a: `No. Once it has been open for the number of days an administrator has configured, a
+            reminder goes out; after one day the queue flags it and **Resume** opens the
+            stale-reservation screen. Nothing is ever released automatically — a released request can be taken and paid by
             somebody else, and the product will not risk that on a timer.`,
       },
       {

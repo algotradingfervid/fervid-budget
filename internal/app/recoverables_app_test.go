@@ -9,39 +9,8 @@ import (
 	"testing"
 
 	"fervidbudget/internal/auth"
+	"fervidbudget/internal/store"
 )
-
-// seedRecoverable inserts a recoverable request and, when paidOn is given, its
-// settled payment. It writes both the category code and the category id — the
-// shape CreateRequest produces — so the register's joins are exercised the way
-// the real form drives them.
-func seedRecoverable(t *testing.T, s *appTestServer, headID int64, number, code, counterparty, expectedReturn, paidOn string, amount int64) int64 {
-	t.Helper()
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var catID int64
-	if err := s.st.DB().QueryRowContext(s.ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&catID); err != nil {
-		t.Fatal(err)
-	}
-	res, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO payment_requests
-		(number,status,treatment,type,recoverable_category,recoverable_category_id,head_id,amount,purpose,counterparty,
-		 expected_return_date,repayment_notes,requester_id,manager_id,approved_amount,approved_by,approved_at,submitted_at)
-		VALUES(?, 'completed','recoverable','recoverable',?,?,?,?, 'Inter-corporate deposit',?,?, 'Recover on maturity',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-		number, code, catID, headID, amount, counterparty, expectedReturn, admin.ID, admin.ID, amount, admin.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reqID, _ := res.LastInsertId()
-	if paidOn != "" {
-		if _, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO payments(head_id,paid_on,amount,vendor_payee,entered_by,request_id,settlement) VALUES(?,?,?,?,?,?, 'settled')`,
-			headID, paidOn, amount, counterparty, admin.ID, reqID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return reqID
-}
 
 // assertTCardsLabelled fails when any <td> inside a table.t-cards lacks a
 // data-label attribute. Below 860 px the CSS restacks rows into cards and reads
@@ -69,15 +38,15 @@ func assertTCardsLabelled(t *testing.T, body string) {
 	}
 }
 
-func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) { // G18
+func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recoverable")
 	seedRecoverable(t, s, headID, "PR-2026-000101", "icd", "Beacon Infra Ltd", "2027-09-30", "2026-08-15", 900000)
 	seedRecoverable(t, s, headID, "PR-2026-000102", "emd", "Ridge Metro tender authority", "2026-01-31", "2026-01-05", 200000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/recoverables", nil, ""))
-	for _, want := range []string{
+	body := s.get("/recoverables")
+	mustContain(t, "recoverables dashboard", body,
 		"Recoverable payments",
 		"Kept out of budget actuals on purpose", // .banner.brand explainer
 		"Track each return and reconciliation",  // .banner.locked
@@ -85,16 +54,8 @@ func TestRecoverablesDashboardRendersMetricsAndRollups(t *testing.T) { // G18
 		"By category", "By counterparty",
 		"Beacon Infra Ltd", "Ridge Metro tender authority",
 		"ICD", "EMD", // the category names, which only render if the id link resolves
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables dashboard missing %q", want)
-		}
-	}
-	for _, want := range []string{`class="metric-strip"`, `class="metric warn"`, `class="banner brand"`, `class="banner locked"`, `class="t-cards"`, "<tfoot>"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables dashboard missing design-system markup %q", want)
-		}
-	}
+	)
+	mustContain(t, "recoverables dashboard design-system markup", body, `class="metric-strip"`, `class="metric warn"`, `class="banner brand"`, `class="banner locked"`, `class="t-cards"`, "<tfoot>")
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
@@ -106,19 +67,11 @@ func TestRecoverablesListScreenAndExport(t *testing.T) {
 	_, headID := s.seedHead("Recoverable")
 	seedRecoverable(t, s, headID, "PR-2026-000101", "icd", "Beacon Infra Ltd", "2027-09-30", "2026-08-15", 900000)
 	seedRecoverable(t, s, headID, "PR-2026-000102", "emd", "Ridge Metro tender authority", "2026-01-31", "2026-01-05", 200000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/recoverables/list", nil, ""))
-	for _, want := range []string{"All recoverables", "Beacon Infra Ltd", "PR-2026-000101", "Ridge Metro tender authority"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables list missing %q", want)
-		}
-	}
-	for _, want := range []string{`class="t-cards"`, `class="m-only recovery-filters"`, `class="pill recoverable"`, "<tfoot>", `name="ageing"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverables list missing design-system markup %q", want)
-		}
-	}
+	body := s.get("/recoverables/list")
+	mustContain(t, "recoverables list", body, "All recoverables", "Beacon Infra Ltd", "PR-2026-000101", "Ridge Metro tender authority")
+	mustContain(t, "recoverables list design-system markup", body, `class="t-cards"`, `class="m-only recovery-filters"`, `class="pill recoverable"`, "<tfoot>", `name="ageing"`)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
@@ -128,7 +81,7 @@ func TestRecoverablesListScreenAndExport(t *testing.T) {
 	assertTCardsLabelled(t, body)
 
 	// The ageing filter narrows the register.
-	overdue := responseBody(t, s.request(http.MethodGet, "/recoverables/list?ageing=overdue", nil, ""))
+	overdue := s.get("/recoverables/list?ageing=overdue")
 	if !strings.Contains(overdue, "PR-2026-000102") || strings.Contains(overdue, "PR-2026-000101") {
 		t.Fatal("ageing=overdue must keep only the row past its expected return date")
 	}
@@ -162,45 +115,33 @@ func TestRecoverablesListViewableByAccountsRole(t *testing.T) {
 	}
 }
 
-func TestRecoverableDetailScreen(t *testing.T) { // G17
+func TestRecoverableDetailScreen(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recoverable")
 	reqID := seedRecoverable(t, s, headID, "PR-2026-000097", "emd", "Coastal Power Utilities Ltd", "2026-06-30", "2026-02-12", 200000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", reqID), nil, ""))
-	for _, want := range []string{
+	body := s.get(fmt.Sprintf("/recoverables/%d", reqID))
+	mustContain(t, "recoverable detail", body,
 		"PR-2026-000097", "Coastal Power Utilities Ltd", "EMD",
 		"Past its expected return date", // the overdue banner copy
 		"Recoverable details", "Latest payment", "History and conversation",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverable detail missing %q", want)
-		}
-	}
-	for _, want := range []string{`class="req-head"`, `class="banner warn"`, `class="dl"`, `class="thread"`, `class="comment-box"`, `class="action-bar"`, `class="pill recoverable"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("recoverable detail missing design-system markup %q", want)
-		}
-	}
+	)
+	mustContain(t, "recoverable detail design-system markup", body, `class="req-head"`, `class="banner warn"`, `class="dl"`, `class="thread"`, `class="comment-box"`, `class="action-bar"`, `class="pill recoverable"`)
 	if strings.Contains(body, `class="badge`) {
 		t.Fatal("templates must use .pill, never .badge (D5)")
 	}
-	// The comment box posts to Phase 2's existing conversation route, not a new one.
+	// The comment box posts to the request's existing conversation route, not a new one.
 	if !strings.Contains(body, fmt.Sprintf(`action="/requests/%d/comment"`, reqID)) {
 		t.Fatal("comment box must post to the Phase-2 request comment route")
 	}
 	// A non-recoverable request is not reachable through this screen.
-	admin, err := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := s.st.DB().ExecContext(s.ctx, `INSERT INTO payment_requests(number,status,treatment,type,head_id,amount,purpose,requester_id,manager_id,submitted_at)
-		VALUES('PR-2026-000098','pending','budget','vendor_invoice',?,?, 'Rent',?,?,CURRENT_TIMESTAMP)`, headID, int64(100000), admin.ID, admin.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	budgetID, _ := res.LastInsertId()
+	admin := s.admin()
+	budgetID := s.insertRequest(t, map[string]any{
+		"number": requestNumber(98), "status": "pending", "treatment": "budget", "type": "vendor_invoice",
+		"head_id": headID, "amount": int64(100000), "purpose": "Rent",
+		"requester_id": admin.ID, "manager_id": admin.ID, "submitted_at": sqlNow,
+	})
 	resp := s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", budgetID), nil, "")
 	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
@@ -213,9 +154,9 @@ func TestRecoverableDetailShowsUnpaidState(t *testing.T) {
 	if _, err := s.st.DB().Exec(`UPDATE payment_requests SET status='approved' WHERE id=?`, reqID); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", reqID), nil, ""))
+	body := s.get(fmt.Sprintf("/recoverables/%d", reqID))
 	if !strings.Contains(body, "Approved but not yet paid") {
 		t.Fatal("an unpaid recoverable must say so rather than render an empty payment block")
 	}
@@ -226,7 +167,7 @@ func TestRecoverableDetailShowsUnpaidState(t *testing.T) {
 
 func TestRecoverableListCSVRouteBeatsDetailWildcard(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	// /recoverables/list.csv is a literal pattern and must win over /recoverables/{id}.
 	resp := s.request(http.MethodGet, "/recoverables/list.csv", nil, "")
 	requireStatus(t, resp, http.StatusOK)
@@ -236,18 +177,15 @@ func TestRecoverableListCSVRouteBeatsDetailWildcard(t *testing.T) {
 	}
 }
 
-func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) { // D6, V4
+// Recoverable categories are managed on the Configuration screen.
+func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) {
 	s := newAppTestServer(t)
 	_, headID := s.seedHead("Recoverable")
 	seedRecoverable(t, s, headID, "PR-2026-000701", "emd", "Ridge Metro tender authority", "2026-11-30", "", 200000)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
-	for _, want := range []string{"Recoverable categories", "EMD", "ICD", "Related project", "Counterparty company", "Nothing extra"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("configuration screen missing %q", want)
-		}
-	}
+	body := s.get("/configuration")
+	mustContain(t, "configuration screen", body, "Recoverable categories", "EMD", "ICD", "Related project", "Counterparty company", "Nothing extra")
 	// One descriptive Requires column, never the raw flags.
 	for _, forbidden := range []string{`name="requires_project"`, `name="requires_counterparty"`} {
 		if strings.Contains(body, forbidden) {
@@ -285,9 +223,11 @@ func TestConfigurationRecoverableCategoriesFieldset(t *testing.T) { // D6, V4
 	}
 }
 
-func TestStandaloneRecoverableCategoriesScreenIsGone(t *testing.T) { // D6 proof of absence
+// There is no standalone recoverable-categories screen; Configuration is the
+// only place they are managed.
+func TestStandaloneRecoverableCategoriesScreenIsGone(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	resp := s.request(http.MethodGet, "/recoverable-categories", nil, "")
 	requireStatus(t, resp, http.StatusNotFound)
 	_ = responseBody(t, resp)
@@ -315,9 +255,9 @@ func TestRecoverableCategorySaveRequiresPermission(t *testing.T) {
 	_ = responseBody(t, resp)
 }
 
-func TestNoRecoverableRepaymentTracking(t *testing.T) { // X2
+func TestNoRecoverableRepaymentTracking(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	// No repayment surface exists: plausible repayment routes must be unrouted (404).
 	for _, path := range []string{"/recoverables/1/repay", "/recoverables/list/repay", "/configuration/recoverable-categories/1/repay"} {
 		resp := s.request(http.MethodGet, path, nil, "")
@@ -337,9 +277,9 @@ func TestNoRecoverableRepaymentTracking(t *testing.T) { // X2
 	_ = responseBody(t, resp)
 }
 
-func TestNoForfeitureRoute(t *testing.T) { // X4
+func TestNoForfeitureRoute(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	// Forfeiture / write-off is out of scope: no route or store method converts a
 	// recoverable into a budget expense, so plausible forfeiture paths are unrouted.
 	for _, path := range []string{"/recoverables/1/forfeit", "/recoverables/1/write-off", "/recoverables/list/forfeit"} {
@@ -354,9 +294,8 @@ func TestNoForfeitureRoute(t *testing.T) { // X4
 		t.Fatalf("forfeiture POST status = %d, want 404/405 (no forfeiture/write-off path exists); body: %s", resp.StatusCode, body)
 	}
 	_ = responseBody(t, resp)
-	// And no store method either — the half the coverage matrix claimed and the
-	// test never checked (recoverables-9). Same shape as TestNoRefundRoute: s.st
-	// is *store.Store, so reflect enumerates every pointer-receiver method.
+	// And no store method either. Same shape as TestNoRefundRoute: s.st is
+	// *store.Store, so reflect enumerates every pointer-receiver method.
 	st := reflect.TypeOf(s.st)
 	for i := 0; i < st.NumMethod(); i++ {
 		name := strings.ToLower(st.Method(i).Name)
@@ -368,18 +307,14 @@ func TestNoForfeitureRoute(t *testing.T) { // X4
 	}
 }
 
-// Phase 5, Task 6: the reminder thresholds are admin-set data on the
+// The reminder thresholds are admin-set data on the
 // Configuration screen, not constants in the scheduler.
 func TestConfigurationRemindersFieldsetPersistsThresholds(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	body := responseBody(t, s.request(http.MethodGet, "/configuration", nil, ""))
-	for _, want := range []string{"Reminders and ageing", `name="reminder_pending_days"`, `name="reminder_repeat_days"`, `name="reminder_stale_days"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("configuration screen missing %q", want)
-		}
-	}
+	body := s.get("/configuration")
+	mustContain(t, "configuration screen", body, "Reminders and ageing", `name="reminder_pending_days"`, `name="reminder_repeat_days"`, `name="reminder_stale_days"`)
 
 	form := url.Values{
 		"reminder_pending_days": {"5"}, "reminder_repeat_days": {"2"}, "reminder_stale_days": {"4"},
@@ -394,5 +329,65 @@ func TestConfigurationRemindersFieldsetPersistsThresholds(t *testing.T) {
 	}
 	if th.PendingAfterDays != 5 || th.RepeatEveryDays != 2 || th.StaleAfterDays != 4 {
 		t.Fatalf("thresholds after save = %+v, want 5/2/4", th)
+	}
+}
+
+// The recoverables register is a second view over payment_requests, so it
+// applies the caller's request data scope; otherwise recoverable_report:view
+// would hand over every counterparty, amount, requester and repayment note in
+// the company.
+func TestRecoverablesRegisterAppliesTheRequestDataScope(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, _ := s.seedHead("Recoverable scope")
+	other := s.seedRequester("other-rec@example.test", "Other Requester", "OtherRecPass123")
+	id := s.seedRecoverableRequest(951, other.ID, admin.ID, "icd", "Kalyani Steels", 500000)
+
+	// A role that pairs the register with a narrower request scope, as an
+	// administrator may build in the role editor.
+	s.seedProbeUser("narrow@example.test", "Narrow Reader", "NarrowPass1234", "Register reader",
+		[]store.Grant{
+			{Resource: "recoverable_report", Action: "view"},
+			{Resource: "recoverable_report", Action: "export"},
+			{Resource: "request", Action: "view"},
+		},
+		[]store.ScopeGrant{{Resource: "request", Scope: "own"}})
+	s.login("narrow@example.test", "NarrowPass1234")
+
+	// The control: the same caller is refused the request itself.
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/requests/%d", id), nil, ""), http.StatusNotFound)
+
+	list := s.get("/recoverables/list")
+	if strings.Contains(list, "Kalyani Steels") {
+		t.Fatal("the register lists a recoverable this caller is refused on /requests/{id}")
+	}
+	csv := s.get("/recoverables/list.csv")
+	for _, leak := range []string{"Kalyani Steels", "Other Requester"} {
+		if strings.Contains(csv, leak) {
+			t.Fatalf("the CSV discloses %q to a caller outside its data scope", leak)
+		}
+	}
+	requireStatus(t, s.request(http.MethodGet, fmt.Sprintf("/recoverables/%d", id), nil, ""), http.StatusNotFound)
+
+	// And an administrator, who holds request=all, still sees everything.
+	s.loginAdmin()
+	if body := s.get("/recoverables/list"); !strings.Contains(body, "Kalyani Steels") {
+		t.Fatal("the scope filter hides a row from a caller who holds request=all")
+	}
+}
+
+// The register shows every column its CSV exports, including Status, Requester
+// and Repayment Notes, so the download never says more than the screen.
+func TestRecoverablesRegisterShowsEveryColumnItsCSVExports(t *testing.T) {
+	s := newAppTestServer(t)
+	admin, _ := s.seedHead("Column parity")
+	requester := s.seedRequester("columns@example.test", "Column Requester", "ColumnPass1234")
+	s.seedRecoverableRequest(961, requester.ID, admin.ID, "icd", "Parity Counterparty", 400000)
+
+	s.loginAdmin()
+	body := s.get("/recoverables/list")
+	for _, want := range []string{">Status<", ">Requester<", ">Repayment notes<", "Column Requester"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the register does not carry %q, which its own CSV exports", want)
+		}
 	}
 }

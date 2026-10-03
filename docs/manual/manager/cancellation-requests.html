@@ -118,7 +118,7 @@
   <figcaption>The Cancellations tab of the approvals queue. </figcaption>
 </figure>
 <h2 id="opening-the-decision">Opening the decision</h2>
-<p>Select the request from the <strong>Cancellations</strong> tab, or open it from anywhere and select <strong>Decide the cancellation</strong>. Either way you land on the cancellation screen, which is a stripped-back version of the request built around the one question you have to answer.</p>
+<p>Select the request from the <strong>Cancellations</strong> tab (or open it from anywhere), then select <strong>Decide the cancellation</strong> in the bar along the bottom. That opens the cancellation screen, a stripped-back version of the request built around the one question you have to answer.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/manager/cancellation-decision.png" aria-label="Enlarge: The cancellation screen. Payment is frozen while you decide.">
     <img src="../assets/shots/manager/cancellation-decision.png" alt="The screen for accepting or declining a raiser’s request to cancel." loading="lazy" width="1440">
@@ -155,7 +155,7 @@
   </button>
   <figcaption> </figcaption>
 </figure></li>
-<li>Select <strong>Decline and unfreeze</strong>.</li>
+<li>Select <strong>Decline and unfreeze</strong>.<p class="step-note">You land back on the Cancellations tab, and the request is gone from it.</p></li>
 </ol>
 <div class="table-wrap"><table class="fields"><caption>The three cancellation panels and what each asks for.</caption><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Note</strong></td><td><span class="opt">Optional</span></td><td>On the accept panel. Recorded in the history.</td></tr>
@@ -164,7 +164,7 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p>Declining unfreezes payment and puts the request back to <code>approved</code>. If the accounts team had parked the request on hold before the cancellation was asked for, that hold comes back with it — only Accounts can lift a hold.</p></aside>
 <h2 id="cancelling-a-request-nobody-asked-about">Cancelling a request nobody asked about</h2>
-<p>You can also cancel an approved request on your own initiative, without anybody asking. The control is on the request itself and reads <strong>Cancel with reason</strong>; it appears while the request is <code>approved</code> and you are its approver.</p>
+<p>You can also cancel an approved request on your own initiative, without anybody asking. The control is on the request itself and reads <strong>Cancel with reason</strong>; it appears while the request is <code>approved</code>, nothing has been paid against it, and you are its approver. It opens the cancellation screen, where a second <strong>Cancel with reason</strong> opens the panel; the button inside reads <strong>Cancel request</strong>. Afterwards you land back on the request.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/manager/outright-cancel-sheet.png" aria-label="Enlarge: Cancelling an approved request when the requester has not asked.">
     <img src="../assets/shots/manager/outright-cancel-sheet.png" alt="The approver cancelling an approved request on their own initiative." loading="lazy" width="1440">
@@ -183,14 +183,16 @@
 <h2 id="when-a-cancellation-decision-is-refused">When a cancellation decision is refused</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">What you see</th><th scope="col">Why</th></tr></thead><tbody>
 <tr><td><em>Only the approver this request was sent to can decide its cancellation.</em></td><td>You opened somebody else’s cancellation. The approver named on the request has to decide it.</td></tr>
-<tr><td>A message saying to say why it should still be paid</td><td>You declined without filling in the reason.</td></tr>
-<tr><td>A message saying a reason is required to cancel a request</td><td>You used <strong>Cancel with reason</strong> and left the box empty.</td></tr>
-<tr><td>A message saying there is no cancellation to decide on a request in that state</td><td>Somebody has already decided it. Reload and read the status pill.</td></tr>
+<tr><td><em>say why it should still be paid</em></td><td>You declined without filling in the reason.</td></tr>
+<tr><td><em>a reason is required to cancel a request</em></td><td>You used <strong>Cancel with reason</strong> and left the box empty.</td></tr>
+<tr><td>A message such as <em>there is no cancellation to decide on an approved request</em></td><td>Somebody has already decided it. Reload and read the status pill.</td></tr>
+<tr><td><em>a payment has already been recorded; continue the remaining balance or resolve it through partial review instead of cancelling</em></td><td>Money has already been paid against the request, so it can no longer be cancelled.</td></tr>
+<tr><td><em>this request changed; reload and review it before deciding</em></td><td>The request changed after you opened the decision. Reload it, read what changed, and decide again.</td></tr>
 <tr><td><em>… somebody else changed this request a moment ago — reload it and look again</em></td><td>Two people acted on the request at once. Reload it; the first decision stands.</td></tr>
 </tbody></table></div>
 <dl class="faq"><dt>The requester asked to cancel and I approved it by mistake.</dt><dd><p>Approving is refused while a cancellation is pending — the message tells you to decide the cancellation first, and points out that declining it is what returns the request to approved.</p></dd>
-<dt>Can I cancel a request that has already been paid?</dt><dd><p>No. Cancellation applies to an approved request that has not been settled. Once a payment is recorded the request is closed a different way — talk to the accounts team about <a href="../accounts/correcting-a-payment.html">correcting or voiding the payment</a>.</p></dd>
-<dt>Who is told when I decide?</dt><dd><p>The requester and the accountant assigned to the request. The decision and any wording you gave are in the history for anybody else who looks.</p></dd></dl>
+<dt>Can I cancel a request that has already been paid?</dt><dd><p>No. Cancellation applies only to an approved request with nothing paid against it — once any payment is recorded, even a first installment, <strong>Cancel with reason</strong> is no longer offered. Talk to the accounts team about <a href="../accounts/correcting-a-payment.html">correcting or voiding the payment</a>.</p></dd>
+<dt>Who is told when I decide?</dt><dd><p>When you accept or decline a cancellation the requester was asking for, the requester and the accountant assigned to the request are notified. When you cancel outright, the requester is. The decision and any wording you gave are in the history for anybody else who looks. Which messages go out depends on how your organisation has set up <a href="../admin/notification-rules.html">notification rules</a>.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../manager/reassigning.html"><span>Previous</span>Reassigning an approval</a><a class="pager-next" href="../manager/shortfall-review.html"><span>Next</span>Reviewing a shortfall</a></nav>
 </div>
 </main>

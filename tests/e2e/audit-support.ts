@@ -1,32 +1,16 @@
 /**
  * Shared support for the QA audit suite (`audit-*.spec.ts`).
  *
- * These helpers exist because the audit asks a question the original suite does
- * not: "what can a person holding exactly one role do?" Answering it needs a
- * user whose role set is exact, and a way to see a bare HTTP status rather than
- * a rendered page.
+ * The audit asks a question the shipped suite does not: "what can a person
+ * holding exactly one role do?" Answering it needs a user whose role set is
+ * exact, and a way to see a bare HTTP status rather than a rendered page.
  *
- * WHY THIS FILE AND NOT fixtures.ts — `fixtures.ts` is shipped, green and
- * relied on by ten spec files; the audit adds to the repo without touching it.
- * Import from both.
- *
- * THE TRAP THIS FILE EXISTS TO AVOID. `store.CreateUser` calls
- * `assignDefaultRoleTx` (internal/store/migrations.go:501), which gives every
- * new user the **Accounts** system role — "Admin" only when the legacy role
- * field is literally `admin`. The "＋ Add user" sheet posts no `role_ids`, so a
- * freshly created user is an accountant holding payment create/edit/void/
- * process/settle/mark_partial/hold and request view-with-scope-all.
- *
- * The edit sheet renders the current assignment pre-checked, and
- * `store.SetUserRoles` (internal/store/permissions.go:460) DELETEs the whole set
- * before re-inserting, so the checkbox state at save time is authoritative.
- * Ticking "Manager" on a new user therefore yields Accounts **+** Manager —
- * which is what `fixtures.createApproverUser` does. For a permission probe that
- * is useless: the subject holds two roles' grants and every refusal you expected
- * turns into a 200.
- *
- * `createUserWithExactRoles` unchecks every box before ticking the ones asked
- * for, so the subject holds precisely the grants under test.
+ * Why exact roles need care: the "Add user" sheet insists on at least one role,
+ * and the user edit sheet replaces the whole role set with whatever boxes are
+ * ticked when it is saved. A probe user holding one role more than intended
+ * sees that role's grants too, so createUserWithExactRoles creates the user as
+ * a Requester and then unticks every role before ticking the ones asked for
+ * (possibly none).
  */
 import { expect, type APIResponse, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { fixturePassword, login, openNewUserSheet } from './fixtures';
@@ -85,11 +69,10 @@ export async function createUserWithExactRoles(
 }
 
 /**
- * Rewrites an existing user's role set to exactly `roles`.
- *
- * Unchecking first is the whole point — see the file header. Kept separate from
- * creation so a test can re-grant mid-flight and prove that a permission change
- * takes effect on the next request rather than at next login.
+ * Rewrites an existing user's role set to exactly `roles`, unticking every
+ * role first (see the file header). Separate from creation so a test can change
+ * a user's roles mid-test and prove the change applies to their next request
+ * rather than at their next sign-in.
  */
 export async function setExactRoles(adminPage: Page, email: string, roles: RoleName[]) {
   await adminPage.goto('/users');
@@ -133,14 +116,37 @@ export async function asRole(
 /**
  * The CSRF token for a context, read from the `fervid_csrf` cookie.
  *
- * `internal/auth/auth.go:187` sets it with `HttpOnly: false` and the templates
- * echo the same value into a hidden `csrf` field, so the cookie is the token —
- * which is what makes a forged POST testable without scraping a page.
+ * The cookie is readable by scripts and the forms echo the same value in a
+ * hidden `csrf` field, so the cookie is the token. That lets a test build a
+ * valid (or deliberately forged) POST without scraping a page.
  */
 export async function csrfToken(context: BrowserContext): Promise<string> {
   const cookie = (await context.cookies()).find(c => c.name === 'fervid_csrf');
   if (!cookie?.value) throw new Error('no fervid_csrf cookie — is this context signed in?');
   return cookie.value;
+}
+
+/**
+ * The request's current revision, as the decision forms carry it.
+ *
+ * Approve, return, reject, cancel and the cancellation decision are all bound
+ * to the request as the decider saw it: the form posts a hidden `revision`
+ * field and the server refuses a missing or out-of-date one. The value does not
+ * depend on who reads it, but only some screens render it, so this looks on
+ * the request page (the approver's decision sheets), the cancellation screen
+ * and the edit form, in that order, as `page` sees them.
+ *
+ * Read it immediately before the POST: any change to the request, including
+ * one made by somebody else, gives it a new revision.
+ */
+export async function requestRevision(page: Page, requestId: number): Promise<string> {
+  for (const path of [`/requests/${requestId}`, `/requests/${requestId}/cancellation`, `/requests/${requestId}/edit`]) {
+    const response = await page.request.get(path, { maxRedirects: 0, failOnStatusCode: false });
+    if (response.status() !== 200) continue;
+    const match = /name="revision" value="([^"]+)"/.exec(await response.text());
+    if (match) return match[1];
+  }
+  throw new Error(`request ${requestId}: no screen this user can open shows its revision`);
 }
 
 export interface Probe {
@@ -160,16 +166,16 @@ export interface Probe {
  * login page — turning a refusal into an apparent success.
  */
 export async function probeGet(page: Page, path: string): Promise<Probe> {
-  return describe(await page.request.get(path, { maxRedirects: 0, failOnStatusCode: false }));
+  return toProbe(await page.request.get(path, { maxRedirects: 0, failOnStatusCode: false }));
 }
 
 /**
  * POSTs a form through a signed-in context, attaching a valid CSRF token unless
  * told otherwise.
  *
- * `csrf: 'omit'` sends no token, `csrf: 'bogus'` sends a wrong one — both must
- * be refused by `withCSRF` (internal/auth/auth.go:171). Anything else is used
- * verbatim as the token, which is how a cross-session token is tested.
+ * `csrf: 'omit'` sends no token, `csrf: 'bogus'` sends a wrong one; the server
+ * must refuse both. Anything else is used verbatim as the token, which is how a
+ * token from another session is tested.
  */
 export async function probePost(
   page: Page,
@@ -182,14 +188,14 @@ export async function probePost(
   if (mode === 'valid') body.csrf = await csrfToken(page.context());
   else if (mode === 'bogus') body.csrf = 'not-a-real-token';
   else if (mode !== 'omit') body.csrf = mode;
-  return describe(await page.request.post(path, { form: body, maxRedirects: 0, failOnStatusCode: false }));
+  return toProbe(await page.request.post(path, { form: body, maxRedirects: 0, failOnStatusCode: false }));
 }
 
 /** An unauthenticated probe — no cookies at all. */
 export async function probeAnonymous(browser: Browser, path: string, baseURL: string): Promise<Probe> {
   const context = await browser.newContext();
   try {
-    return describe(
+    return toProbe(
       await context.request.get(new URL(path, baseURL).toString(), { maxRedirects: 0, failOnStatusCode: false })
     );
   } finally {
@@ -197,7 +203,8 @@ export async function probeAnonymous(browser: Browser, path: string, baseURL: st
   }
 }
 
-async function describe(response: APIResponse): Promise<Probe> {
+/** Reduces a response to its bare outcome, without following a redirect. */
+export async function toProbe(response: APIResponse): Promise<Probe> {
   const status = response.status();
   const location = response.headers()['location'] ?? null;
   let body = '';

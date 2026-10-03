@@ -127,16 +127,16 @@
   <figcaption> </figcaption>
 </figure></li>
 </ol>
-<aside class="callout callout-note"><p>You can also start from the payment form itself. Opening it without naming a request shows a picker of approved requests; choosing one claims it exactly as the queue button does. <a href="../accounts/recording-a-payment.html">Recording a payment</a> shows the picker.</p></aside>
+<aside class="callout callout-note"><p>You can also start from the payment form itself. Opening it without naming a request shows a picker of approved requests; choosing one claims it exactly as the queue button does. <a href="../accounts/recording-a-payment.html">Recording a payment</a> shows the picker. And an approved, unclaimed request that is not on hold carries <strong>Record payment</strong> in the action bar of its own screen, which claims it the same way.</p></aside>
 <h2 id="what-the-claim-does">What the claim does</h2>
-<p>The request moves to <code>processing</code> and your name goes on it. Everybody who can see the request sees that — the queue, the request screen and the history all say the same thing, and a line appears in the history reading “reserved it for processing”.</p>
+<p>The request moves to <code>processing</code> and your name goes on it. Everybody who can see the request sees that — the queue, the request screen and the history all say the same thing, and a line appears in the history with your name and the words “reserved the request for processing”.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/accounts/queue-processing.png" aria-label="Enlarge: The Processing tab. Your own claims say **Reserved by you** and offer **Resume**; a colleague’s names them and offers **View** only.">
     <img src="../assets/shots/accounts/queue-processing.png" alt="Requests somebody has claimed, and who is holding each one." loading="lazy" width="1440">
   </button>
   <figcaption>The Processing tab. Your own claims say <strong>Reserved by you</strong> and offer <strong>Resume</strong>; a colleague’s names them and offers <strong>View</strong> only. </figcaption>
 </figure>
-<p>Only three kinds of request can be claimed: approved, unclaimed, and not on hold. Anything else refuses, and it refuses with a screen that explains which of the three failed rather than an error — see <a href="../accounts/reservations-and-conflicts.html">reservations and conflicts</a>.</p>
+<p>Only a request that is approved, unclaimed and not on hold can be claimed. Anything else refuses, and it refuses with a screen that explains which of the three failed rather than an error — see <a href="../accounts/reservations-and-conflicts.html">reservations and conflicts</a>.</p>
 <h2 id="coming-back-to-a-claim">Coming back to a claim</h2>
 <p>A claim survives you closing the browser. Go back to the <strong>Processing</strong> tab and select <strong>Resume</strong> on your own row, and you are returned to the payment form with nothing lost — the form saves nothing until you confirm, so there is nothing to lose.</p>
 <aside class="callout callout-tip"><p>If <strong>Resume</strong> takes you to a screen headed <strong>Pick one</strong> rather than to the form, the claim has been open longer than a day. That screen is a nudge, not a punishment: choose <strong>Carry on and record the payment</strong> to continue.</p></aside>
@@ -157,7 +157,7 @@
 <h2 id="claims-that-are-not-yours">Claims that are not yours</h2>
 <p>You can see who holds every claim, and you cannot take one off them. Handing a colleague’s claim to somebody else needs an administrator; if a request is stuck with somebody who is away, ask one. The alternative — waiting — is safe, because a claim blocks payment and nothing else.</p>
 <dl class="faq"><dt>I selected <strong>Take for processing</strong> and got a screen saying a colleague took it first.</dt><dd><p>Two of you pressed the button within moments of each other and the product gave it to one. Nothing was saved and no payment was created. The screen offers you the queue and a read-only view of the request.</p></dd>
-<dt>Does a claim expire on its own?</dt><dd><p>No. After the configured number of days a reminder goes out and the queue flags it, but nothing is ever released automatically — a released request can be taken and paid by somebody else, and the product will not risk that on a timer.</p></dd>
+<dt>Does a claim expire on its own?</dt><dd><p>No. Once it has been open for the number of days an administrator has configured, a reminder goes out; after one day the queue flags it and <strong>Resume</strong> opens the stale-reservation screen. Nothing is ever released automatically — a released request can be taken and paid by somebody else, and the product will not risk that on a timer.</p></dd>
 <dt>Can I claim a request that is on hold?</dt><dd><p>No. A hold blocks payment until Accounts lifts it. Open the request, read the reply, and select <strong>Release hold</strong> first — <a href="../accounts/holding-a-request.html">putting a request on hold</a> covers both halves.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../accounts/the-payment-queue.html"><span>Previous</span>The payment queue</a><a class="pager-next" href="../accounts/recording-a-payment.html"><span>Next</span>Recording a payment</a></nav>
 </div>

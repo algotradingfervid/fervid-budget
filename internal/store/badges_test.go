@@ -18,24 +18,8 @@ func newBadgeStore(t *testing.T) (*Store, context.Context, User, int64) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	ctx := t.Context()
-	actorID, err := s.CreateUser(ctx, "badges@example.test", "Badge Actor", "hash", "admin", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actor, err := s.UserByID(ctx, actorID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projectID, err := s.UpsertProject(ctx, 0, "Badge Project", true, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	headID, err := s.UpsertHead(ctx, 0, projectID, "Badge Head", "5", true, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s, ctx, actor, headID
+	actor := seedUser(t, s, "badges@example.test", "Badge Actor", "admin")
+	return s, t.Context(), actor, seedHead(t, s, "Badge Project", "Badge Head")
 }
 
 func badgeKeys(counts map[string]int) []string {

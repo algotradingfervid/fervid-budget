@@ -118,12 +118,13 @@
   </button>
   <figcaption>The heads list. Every head in the company, grouped by project and editable in place. <span class="shot-note">Long screen — showing the top of the page.</span></figcaption>
 </figure>
-<p>The dataset behind this capture has 229 heads across 24 projects, so the table is long. It is ordered by project and then by head, and each row is its own little form with its own <strong>Save</strong>.</p>
+<p>The screen is titled <strong>Heads</strong> and sits under <strong>Masters</strong> in the side menu. The dataset behind this capture has 230 heads across 25 projects, so the table is long. It is ordered by project and then by head, and each row is its own little form with its own <strong>Save</strong>.</p>
+<p>Without permission to edit heads, the row boxes are greyed out and the last column reads <code>Read only</code>. The add form appears only for someone allowed to create heads.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What it holds</th></tr></thead><tbody>
-<tr><td>Project</td><td>Which project the head belongs to. A select, so it can be changed — see the warning below.</td></tr>
+<tr><td>Project</td><td>Which project the head belongs to. A select, but a head that has been used cannot move — see the warning below.</td></tr>
 <tr><td>Head</td><td>The name of the line.</td></tr>
 <tr><td>Due</td><td>The day of the month the spend is expected by. It drives the grid’s <code>Overdue</code> markers.</td></tr>
-<tr><td>Status</td><td><code>Active</code> or retired. Untick to retire.</td></tr>
+<tr><td>Status</td><td>A tick box reading <code>Active</code>, or <code>Inactive</code> once the head is retired. Untick to retire.</td></tr>
 <tr><td>Order</td><td>Where the head sits within its project. Lower first; ties fall back to alphabetical.</td></tr>
 <tr><td>Update</td><td>The <strong>Save</strong> for that row.</td></tr>
 </tbody></table></div>
@@ -131,14 +132,14 @@
 <ol class="steps">
 <li>Choose a <strong>Project</strong> in the form at the top.<p class="step-note">Only active projects are offered here. A new head cannot be filed under a retired project.</p></li>
 <li>Type a <strong>Head name</strong>.</li>
-<li>Type a <strong>Due day</strong>.<p class="step-note">A day of the month from 1 to 31. Anything else is refused with <code>due day must be a day from 1 to 31</code>.</p></li>
+<li>Type a <strong>Due day</strong> if the head has a usual payment day.<p class="step-note">A day of the month from 1 to 31, or leave it blank. Anything else is refused with <code>due day must be a day from 1 to 31</code>.</p></li>
 <li>Set <strong>Order</strong> if the head should sit somewhere particular within its project.</li>
 <li>Leave <strong>Active</strong> ticked.</li>
 <li>Select <strong>Add Head</strong>.<p class="step-note">The head appears in the table. It has no budget yet — set that on <a href="../admin/budgets.html">Budgets</a>, month by month.</p></li>
 </ol>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Project</strong></td><td><span class="req">Required</span></td><td>Required. Active projects only.</td></tr>
-<tr><td><strong>Head name</strong></td><td><span class="req">Required</span></td><td>Required. An empty name is refused with <code>project and head name are required</code>.</td></tr>
+<tr><td><strong>Head name</strong></td><td><span class="req">Required</span></td><td>Required. A name of only spaces is refused with <code>project and head name are required</code>. Two heads in the same project cannot share a name: that is refused with <code>A record with this name already exists.</code></td></tr>
 <tr><td><strong>Due day</strong></td><td><span class="opt">Optional</span></td><td>A number from 1 to 31, or blank. It is what the variance grid uses to decide whether a head is overdue in the month you are looking at.</td></tr>
 <tr><td><strong>Order</strong></td><td><span class="opt">Optional</span></td><td>Sort position within the project.</td></tr>
 <tr><td><strong>Active</strong></td><td><span class="opt">Optional</span></td><td>Untick to retire the head. See below.</td></tr>
@@ -149,19 +150,26 @@
 <li>Select <strong>Save</strong> on that row.</li>
 </ol>
 <p>Renaming a head is safe: it keeps its identity, so every budget and every payment already booked against it follows the new name.</p>
-<aside class="callout callout-warning"><p class="callout-title">Moving a head between projects</p><p>Changing the <strong>Project</strong> on a row is not a cosmetic move. It takes every payment ever recorded against that head into the other project’s variance, retrospectively, and there is no undo beyond setting it back. Change it only when a head genuinely belongs somewhere else, and check the variance grid afterwards.</p></aside>
+<aside class="callout callout-warning"><p class="callout-title">Moving a head between projects</p><p>You can change the <strong>Project</strong> on a row only while the head has never been used. Once it has a budget figure, a payment or a request against it, saving it under another project is refused with <code>a head with financial history cannot move between projects; create a new head</code>. Create the head again under the right project and retire the old one instead.</p></aside>
 <aside class="callout callout-note"><p>The row select lists every project, including retired ones — a retired project reads <code>(retired)</code> after its name. That is deliberate: a head whose project has been retired needs a matching option in its own row, or saving anything else about it would move it somewhere nobody chose.</p></aside>
 <h2 id="retiring-a-head">Retiring a head</h2>
 <p>There is no delete. Untick <strong>Active</strong> and save the row.</p>
+<h3 id="the-warning-page">The warning page</h3>
+<p>If requests that could still end in a payment are filed under the head — pending, returned, approved, awaiting a cancellation decision, being processed or under partial review — saving does not happen straight away. A page headed with the head name, for example <strong>Deactivate Payroll?</strong>, opens instead, saying &quot;Nothing has been saved yet.&quot; It gives the count of unfinished requests, explains that &quot;A payment needs an active head, so none of these can be paid while it is inactive. Reactivate the head to pay them.&quot;, and lists each request with its number, title, status and amount.</p>
+<ol class="steps">
+<li>Open any request in the list if you want to check it first — each number is a link.</li>
+<li>Tick <strong>I understand these requests cannot be paid until the head is active again</strong>.</li>
+<li>Select <strong>Deactivate anyway</strong>.<p class="step-note"><strong>Cancel</strong> goes back to the heads screen and changes nothing.</p></li>
+</ol>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
-<tr><td><strong>New requests and payments</strong></td><td><span class="opt">Optional</span></td><td>A payment booked against a retired head is refused with <code>This project/head is inactive.</code></td></tr>
+<tr><td><strong>New requests and payments</strong></td><td><span class="opt">Optional</span></td><td>The request form no longer offers the head, and a request that still names it is refused with <code>that budget head has been retired — choose a head that is still open</code>. A payment booked against a retired head is refused with <code>This project/head is inactive.</code></td></tr>
 <tr><td><strong>Budgets</strong></td><td><span class="opt">Optional</span></td><td>A retired head keeps its row on <a href="../admin/budgets.html">Budgets</a> for any month in which it has a budget figure or a payment. It carries a <code>Retired</code> pill and its budget box is disabled, with the hint &quot;Retired: kept for history, not editable.&quot;</td></tr>
 <tr><td><strong>The variance grid</strong></td><td><span class="opt">Optional</span></td><td>Same rule: the row stays for any month it has a budget or spending in, and its Action cell reads <code>Retired</code> instead of offering <strong>Add</strong>. In a month where it has neither, it drops off both screens.</td></tr>
 <tr><td><strong>History</strong></td><td><span class="opt">Optional</span></td><td>Every figure already recorded stays exactly where it is.</td></tr>
 </tbody></table></div>
-<aside class="callout callout-tip"><p>Retire a head at the end of a month rather than in the middle of one. Anything approved against it before you retire it still has to be paid, and the payment will be refused.</p></aside>
+<aside class="callout callout-tip"><p>Retire a head at the end of a month rather than in the middle of one. Anything approved against it before you retire it still has to be paid, and the payment will be refused until the head is active again. The warning page lists those requests, so read it rather than ticking through it.</p></aside>
 <dl class="faq"><dt>Two projects have a head with the same name. Is that a problem?</dt><dd><p>No — it is the normal shape. Each project keeps its own budget for its own copy, and the grid shows them as separate rows under separate project headings.</p></dd>
-<dt>What does the Due day actually change?</dt><dd><p>It is the day the spend is expected by, and it is what the variance grid uses to mark a head <code>Overdue</code> when the month has moved past it and nothing has been paid. It changes no approval and blocks nothing.</p></dd>
+<dt>What does the Due day actually change?</dt><dd><p>It is the day the spend is expected by, and it is what the variance grid uses to mark a head <code>Overdue</code> when it has a budget, the day has passed and nothing has been paid. It changes no approval and blocks nothing.</p></dd>
 <dt>Can I delete a head I created by mistake this morning?</dt><dd><p>No. Untick <strong>Active</strong> and save. If nothing was ever booked against it, a retired head is invisible everywhere that matters.</p></dd>
 <dt>I retired a head and it vanished from a month.</dt><dd><p>A retired head is shown only for months in which it has a budget figure or a payment. In a month where it has neither there is nothing to show, and nothing has been lost — check a month it was actually used in.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../admin/projects.html"><span>Previous</span>Projects</a><a class="pager-next" href="../admin/budgets.html"><span>Next</span>Budgets</a></nav>

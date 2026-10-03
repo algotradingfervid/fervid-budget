@@ -12,13 +12,12 @@ import (
 func recoveryFixture(t *testing.T) (*Store, User, int64, int64) {
 	t.Helper()
 	s := newTestStore(t)
-	ctx := context.Background()
-	u, h := seedActorAndHead(t, s, ctx)
-	id := seedRecoverableRequestOnly(t, s, ctx, u, h, 0, "PR-REC-1", "completed", "employee_advance", "", "2026-06-01", 1200000, false)
+	u, h := seedActorAndHead(t, s)
+	id := seedRecoverableRequestOnly(t, s, u, h, 0, "PR-REC-1", "completed", "employee_advance", "", "2026-06-01", 1200000, false)
 	if _, err := s.DB().Exec(`UPDATE payment_requests SET type='employee_advance' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
-	payRecoverable(t, s, ctx, u, h, id, "2026-01-02", 700000)
+	payRecoverable(t, s, u, h, id, "2026-01-02", 700000)
 	return s, u, h, id
 }
 func recoveryInput(token string, amount int64) RecoveryInput {
@@ -44,7 +43,7 @@ func TestRecoveryLifecyclePreservesPaymentsAndAggregatesInstallments(t *testing.
 	if len(rows) != 1 || rows[0].Amount != 500000 || rows[0].PaidAmount != 700000 || rows[0].RecoveredAmount != 200000 || rows[0].Counterparty != u.Name {
 		t.Fatalf("after return %+v", rows)
 	}
-	payRecoverable(t, s, ctx, u, h, id, "2026-03-01", 500000)
+	payRecoverable(t, s, u, h, id, "2026-03-01", 500000)
 	rows, err = s.RecoverableReport(ctx, RecoverableReportOptions{Viewer: RecoverableViewerAll()})
 	if err != nil {
 		t.Fatal(err)
@@ -156,10 +155,11 @@ func TestRecoveryAuthorizationEnforcedAtStoreAndHistory(t *testing.T) {
 	if _, err = s.DB().Exec(`INSERT INTO user_roles(user_id,role_id) VALUES(?,?)`, outsider.ID, roleID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.RecordRecovery(ctx, outsider, id, recoveryInput("outside-scope-event-token", 100000)); !errors.Is(err, ErrForbidden) {
+	// A request outside the actor's scope is answered as if it did not exist.
+	if _, err = s.RecordRecovery(ctx, outsider, id, recoveryInput("outside-scope-event-token", 100000)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("outside write %v", err)
 	}
-	if _, err = s.RecoveryEvents(ctx, outsider, id); !errors.Is(err, ErrForbidden) {
+	if _, err = s.RecoveryEvents(ctx, outsider, id); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("outside history %v", err)
 	}
 	if _, err = s.DB().Exec(`DELETE FROM role_permissions WHERE role_id=? AND resource='payment'`, roleID); err != nil {
@@ -215,5 +215,30 @@ func TestRecoverableNamedDepositPayeeIsCounterpartyFallback(t *testing.T) {
 	rows, err = s.RecoverableReport(context.Background(), RecoverableReportOptions{Counterparty: "Metro Tender Authority", Viewer: RecoverableViewerAll()})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("counterparty drilldown %+v %v", rows, err)
+	}
+}
+
+// Re-sending the same recovery (same token) is idempotent, but re-sending the
+// token with a changed amount is refused rather than confirmed.
+func TestRecoveryReplayCannotConfirmDifferentAmount(t *testing.T) {
+	ctx := context.Background()
+	s, actor, _, id := recoveryFixture(t)
+	in := recoveryInput("changed-recovery-confirmation", 200000)
+	first, err := s.RecordRecovery(ctx, actor, id, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.RecordRecovery(ctx, actor, id, in)
+	if err != nil || again != first {
+		t.Fatalf("identical retry must be idempotent: %d %v", again, err)
+	}
+	in.Amount = 300000
+	in.Reference = "CHANGED-RECEIPT"
+	if _, err := s.RecordRecovery(ctx, actor, id, in); !errors.Is(err, ErrValidation) {
+		t.Fatalf("edited old confirmation returns %v, falsely confirming changed recovery", err)
+	}
+	rows, err := s.RecoveryEvents(ctx, actor, id)
+	if err != nil || len(rows) != 1 || rows[0].Amount != 200000 {
+		t.Fatalf("replay changed history: %+v %v", rows, err)
 	}
 }

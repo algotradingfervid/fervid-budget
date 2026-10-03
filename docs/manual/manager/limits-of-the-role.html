@@ -109,9 +109,9 @@
 <div class="wrap">
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Approving</p>
 <header class="page-head"><h1>What an approver cannot see</h1><p class="lede">The screens the approver role does not reach, and what to do when you need them.</p></header>
-<p>The approver role is deliberately narrow. It carries the decisions on a request, the variance grid and the reports — and nothing else. This page sets out what it does not reach, so you can tell a permission from a fault and know who to ask.</p>
+<p>The approver role is deliberately narrow. It carries the decisions on a request, the documents attached to requests, the variance grid and the reports — and nothing else. This page sets out what it does not reach, so you can tell a permission from a fault and know who to ask.</p>
 <h2 id="the-whole-of-the-role">The whole of the role</h2>
-<p>Taken from the running system, these are every permission the approver role holds:</p>
+<p>These are every permission the built-in approver role holds, as the product sets it up. An administrator can change the role, so yours may differ:</p>
 <div class="table-wrap"><table><caption>The approver role, in full.</caption><thead><tr><th scope="col">Permission</th><th scope="col">What it lets you do</th></tr></thead><tbody>
 <tr><td><code>approval:approve</code></td><td>Approve a pending request</td></tr>
 <tr><td><code>approval:return</code></td><td>Return a pending request for correction</td></tr>
@@ -121,12 +121,13 @@
 <tr><td><code>approval:accept_partial</code></td><td>Close a shortfall review, or raise a concern about one</td></tr>
 <tr><td><code>request:view</code></td><td>Read any request in the organisation</td></tr>
 <tr><td><code>request:comment</code></td><td>Post in a request’s conversation</td></tr>
+<tr><td><code>attachment:view</code></td><td>Download the documents attached to a request, and the proof on a payment you are reviewing</td></tr>
 <tr><td><code>grid:view</code></td><td>Open the variance grid</td></tr>
 <tr><td><code>report:view</code></td><td>Open the reports</td></tr>
 </tbody></table></div>
 <p>Anything not on that list is closed to you. Your sidebar is built from the same list, which is why it is shorter than a colleague's: <strong>Home</strong>, <strong>Notifications</strong>, <strong>My requests</strong>, <strong>Approvals</strong>, <strong>Variance grid</strong> and <strong>Reports</strong>, plus the four <em>Soon</em> announcements everybody sees.</p>
 <h2 id="the-payments-ledger">The payments ledger</h2>
-<p>The approver role holds no payment permission of any kind. There is no <strong>Payments</strong> entry in your sidebar, and following a link to the payments ledger — or to any single payment — answers with the Forbidden screen.</p>
+<p>The approver role holds no payment permission of any kind. There is no <strong>Payments ledger</strong> entry in your sidebar, and following a link to the payments ledger — or to any single payment — answers with the Forbidden screen.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/manager/payments-refused.png" aria-label="Enlarge: An approver opening the payments ledger. The role does not carry that permission.">
     <img src="../assets/shots/manager/payments-refused.png" alt="An approver opening the payments ledger. The approver role does not carry that permission." loading="lazy" width="1440">
@@ -134,17 +135,12 @@
   <figcaption>An approver opening the payments ledger. The role does not carry that permission. </figcaption>
 </figure>
 <p>The screen gives you a code, a sentence — <em>You do not have permission to perform this action.</em> — and a request ID worth quoting if you report it. <strong>Return to dashboard</strong> and <strong>Go back</strong> are the only two ways on.</p>
-<p>You will meet it if you follow the payment link from the recent-payments list under <a href="../manager/the-variance-grid.html">the variance grid</a>, or the <strong>Export CSV</strong> control on <a href="../manager/reports.html">Reports</a>.</p>
-<aside class="callout callout-note"><p>You are not cut off from payment facts entirely. A request that has been paid shows its <strong>Payment outcome</strong> on the request itself — approved against paid, and the difference — and a shortfall review shows the payment in detail, including its mode and reference. What you cannot open is the ledger of all payments.</p></aside>
+<p>The screens you use do not link you there — payment numbers on a request are plain text for you, and the grid and the reports leave out their payment lists — so you meet it only by following a bookmarked or pasted link to a payment.</p>
+<aside class="callout callout-note"><p>You are not cut off from payment facts entirely. A request that has been paid shows its <strong>Payment outcome</strong> on the request itself — approved against paid, and the difference — and lists each payment's number, date, amount and reference under <strong>Payment history</strong>. A shortfall review shows the payment in detail, including its mode and reference, and any proof of payment Accounts attached. What you cannot open is the ledger of all payments.</p></aside>
 <h2 id="the-documents-on-a-request-you-are-approving">The documents on a request you are approving</h2>
-<aside class="callout callout-warning"><p class="callout-title">You cannot open the attachments</p><p>The approver role does not carry the attachment permission. On a request you are being asked to approve, the Attachments section lists each document by name, size and date, and the count sits beside the heading — but no <strong>Download</strong> control is drawn beside them, and the download address refuses you. You can see that an invoice exists. You cannot read it in Fervid Budget.</p></aside>
-<p>What to do instead, in order of how much trouble it is for everybody:</p>
-<div class="table-wrap"><table><thead><tr><th scope="col">Option</th><th scope="col">How</th></tr></thead><tbody>
-<tr><td>Ask the requester for the document</td><td>Post in the request’s conversation. They get the message and everybody can see it was asked.</td></tr>
-<tr><td>Ask an administrator to open it</td><td>The administrator role carries the attachment permission and can read anything on the request.</td></tr>
-<tr><td>Return the request</td><td>If the paperwork is missing rather than unreadable, <a href="../manager/returning-for-correction.html">return it</a> and say what you need.</td></tr>
-</tbody></table></div>
-<aside class="callout callout-note"><p>If your organisation needs approvers to read invoices, that is a change to the role rather than to your account. An administrator can add the permission from <a href="../admin/roles-and-permissions.html">Roles and permissions</a>.</p></aside>
+<p>You can read them. On any request you can see, the Attachments section lists each document by name, size and date with a <strong>Download</strong> button beside it. The same holds for the proof of payment on a shortfall review.</p>
+<p>If there is nothing to download, no document was attached. Ask for it in the request’s conversation, or <a href="../manager/returning-for-correction.html">return the request</a> and say what you need.</p>
+<aside class="callout callout-note"><p>If you see no <strong>Download</strong> button beside a document, your account's roles do not carry the attachment permission — for example because your organisation changed the approver role or gave you a custom one. An administrator can check it in <a href="../admin/roles-and-permissions.html">Roles and permissions</a>.</p></aside>
 <h2 id="the-masters-and-the-registers">The masters and the registers</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">Screen</th><th scope="col">Why it is closed to you</th><th scope="col">Who to ask</th></tr></thead><tbody>
 <tr><td>The vendor master and vendor bank details</td><td>Needs the vendor permission, which the approver role does not hold. The payee name on the request is all you get.</td><td>An administrator — see <a href="../admin/vendors.html">Vendors</a></td></tr>
@@ -157,21 +153,22 @@
 <div class="table-wrap"><table><thead><tr><th scope="col"></th><th scope="col">Why not</th></tr></thead><tbody>
 <tr><td>Raise a request of your own</td><td>The approver role carries no create permission. If you also need to raise requests, ask for the requester role to be added to your account.</td></tr>
 <tr><td>Record a payment</td><td>Settlement belongs to the accounts team. Approving is where your part ends.</td></tr>
+<tr><td>Export the reports or the variance grid</td><td>Both exports need their own permission, which the approver role does not hold, so no export control is drawn on either screen. The approvals queue and <strong>My requests</strong> do offer <strong>Export CSV</strong>.</td></tr>
 <tr><td>Change a request’s project, head or amount before approving</td><td>An approver changes only the amount approved, and only downwards. For anything else, return the request.</td></tr>
 <tr><td>Undo a rejection</td><td>Rejection is final by design. A new request has to be raised.</td></tr>
-<tr><td>Approve on somebody else’s behalf</td><td>Only the approver named on the request can decide it. <a href="../manager/reassigning.html">Reassign it</a> instead.</td></tr>
+<tr><td>Approve on somebody else’s behalf</td><td>Only the approver named on the request can decide it. If they cannot act, they or an administrator can <a href="../manager/reassigning.html">reassign it</a>.</td></tr>
 <tr><td>Approve your own request</td><td>Refused outright, and a requester is never offered their own name as approver.</td></tr>
 </tbody></table></div>
 <h2 id="reading-a-refusal">Reading a refusal</h2>
 <p>Two different refusals mean two different things, and it is worth telling them apart before you ask for help.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">What you see</th><th scope="col">What it means</th></tr></thead><tbody>
-<tr><td>The <strong>Forbidden</strong> screen</td><td>Your role does not reach that screen at all. Nothing about the record is the problem.</td></tr>
-<tr><td><em>You do not have permission to perform this action.</em> on a request</td><td>You reached the request, but you are not the person entitled to take that action on it — usually because you are not its approver.</td></tr>
-<tr><td><em>The requested record was not found.</em></td><td>The record is outside what your account may see, or it does not exist.</td></tr>
+<tr><td>The <strong>Forbidden</strong> screen after following a link to a screen</td><td>Your role does not reach that screen at all. Nothing about the record is the problem.</td></tr>
+<tr><td>The <strong>Forbidden</strong> screen after pressing a button on a request</td><td>You reached the request, but you are not the person entitled to take that action on it — usually because you are not its approver. The sentence is usually <em>You do not have permission to perform this action.</em>; some actions name the reason, such as <em>Only the approver this request was sent to can decide its cancellation.</em></td></tr>
+<tr><td><em>The requested record was not found.</em></td><td>The record is outside what your account may see, or it does not exist. Approving a request that is not routed to you also answers this way.</td></tr>
 </tbody></table></div>
 <p><a href="../reference/permissions-matrix.html">The permission matrix</a> sets out all four built-in roles side by side, and <a href="../reference/error-messages.html">Messages and refusals</a> explains what the product says when it will not do something.</p>
 <dl class="faq"><dt>A colleague with the same job title can see the payments ledger and I cannot.</dt><dd><p>Then their account holds a second role. Roles stack: somebody who is both an approver and an accountant reaches both sets of screens. An administrator can tell you what your account carries.</p></dd>
-<dt>I am being asked to approve an invoice I cannot read.</dt><dd><p>Ask for it in the request’s conversation, or return the request. Approving a figure you have not been able to check is a decision to make deliberately, not by default.</p></dd>
+<dt>I am being asked to approve an invoice that is not attached.</dt><dd><p>Ask for it in the request’s conversation, or return the request. Approving a figure you have not been able to check is a decision to make deliberately, not by default.</p></dd>
 <dt>Can I be given more permissions?</dt><dd><p>Yes, but by an administrator and as a change to a role or to your account's roles — not from any screen you can reach. See <a href="../admin/roles-and-permissions.html">Roles and permissions</a>.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../manager/reports.html"><span>Previous</span>Reports</a></nav>
 </div>

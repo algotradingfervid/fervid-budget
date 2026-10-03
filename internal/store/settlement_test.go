@@ -1,0 +1,303 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
+
+// settlementDisplayFixture takes one request to partial_review the way the
+// product does — reserved by the accountant, paid short, marked partial — and
+// returns the people involved.
+func settlementDisplayFixture(t *testing.T, s *Store, seq int) (acc, req, mgr User, headID, id int64) {
+	t.Helper()
+	ctx := t.Context()
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	var err error
+	if mgr, err = s.UserByID(ctx, mgrID); err != nil {
+		t.Fatal(err)
+	}
+	id = seedApprovedRequest(t, s, seq, req.ID, mgrID, headID, 500000, 500000)
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{HeadID: headID, PaidOn: "2026-06-15", Amount: 300000, VendorPayee: "Acme"}, "partial", "short pay", nil); err != nil {
+		t.Fatal(err)
+	}
+	return acc, req, mgr, headID, id
+}
+
+// A concern is a question to Accounts, and the request says so until Accounts
+// answers. The status never changes (there is no extra state in the machine);
+// the row carries a flag the display reads.
+func TestRaiseConcernMarksTheRequestUnderDiscussionUntilAccountsAnswers(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgr, _, id := settlementDisplayFixture(t, s, 1)
+
+	before, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.ConcernOpen {
+		t.Fatalf("a fresh partial review has no open concern")
+	}
+	if err := s.RaiseConcern(ctx, mgr, id, "Why was the balance withheld?"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != "partial_review" || !after.ConcernOpen {
+		t.Fatalf("after a concern: status=%q concern_open=%v, want partial_review with the concern open", after.Status, after.ConcernOpen)
+	}
+	// The manager talking to themselves, or the requester chiming in, does not
+	// answer the question: it was asked of Accounts.
+	if _, err := s.AddRequestComment(ctx, mgr, id, "Still waiting."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRequestComment(ctx, req, id, "I can wait."); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Request(ctx, id); !r.ConcernOpen {
+		t.Fatalf("a comment from the manager or the requester must not close the concern")
+	}
+	// The accountant who recorded the shortfall answers, and the display returns
+	// to the ordinary partial review.
+	if _, err := s.AddRequestComment(ctx, acc, id, "The vendor agreed to the retention."); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Request(ctx, id); r.ConcernOpen {
+		t.Fatalf("the holder's reply must close the concern")
+	}
+	// A second concern reopens it; accepting the shortfall ends the discussion.
+	if err := s.RaiseConcern(ctx, mgr, id, "Show me the agreement."); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Request(ctx, id); !r.ConcernOpen {
+		t.Fatalf("a second concern must reopen the discussion")
+	}
+	if err := s.AcceptPartial(ctx, mgr, id, ""); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Request(ctx, id); r.ConcernOpen || r.Status != "completed_partial" {
+		t.Fatalf("accepting closes the request and the concern: status=%q concern_open=%v", r.Status, r.ConcernOpen)
+	}
+}
+
+// "Needs me" is the one predicate the design turns
+// on. A partial review is the manager's to decide, and an open concern is the
+// holder's to answer, so both belong in it.
+func TestNeedsMeCountsPartialReviewsForTheManagerAndOpenConcernsForTheHolder(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, _, mgr, _, id := settlementDisplayFixture(t, s, 1)
+
+	needsMe := func(viewer int64) int {
+		n, err := s.CountRequests(ctx, RequestListOptions{Scope: "all", ViewerID: viewer, Bucket: "needs-me"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if got := needsMe(mgr.ID); got != 1 {
+		t.Fatalf("manager's needs-me with a partial review waiting = %d, want 1", got)
+	}
+	if got := needsMe(acc.ID); got != 0 {
+		t.Fatalf("holder's needs-me with nothing asked of them = %d, want 0", got)
+	}
+	if err := s.RaiseConcern(ctx, mgr, id, "Why short?"); err != nil {
+		t.Fatal(err)
+	}
+	if got := needsMe(acc.ID); got != 1 {
+		t.Fatalf("holder's needs-me with an open concern = %d, want 1", got)
+	}
+	if got := needsMe(mgr.ID); got != 1 {
+		t.Fatalf("the manager still owes the decision while the concern is open: needs-me = %d, want 1", got)
+	}
+	if _, err := s.AddRequestComment(ctx, acc, id, "Answered."); err != nil {
+		t.Fatal(err)
+	}
+	if got := needsMe(acc.ID); got != 0 {
+		t.Fatalf("holder's needs-me after answering = %d, want 0", got)
+	}
+	// The row is reachable through the assigned scope with the status named,
+	// which is what the approvals queue's tab and the dashboard area ask for.
+	list, err := s.ListRequests(ctx, RequestListOptions{Scope: "assigned", ViewerID: mgr.ID, Statuses: []string{"partial_review"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != id {
+		t.Fatalf("assigned partial_review list = %+v, want the one review", list)
+	}
+}
+
+// Every screen that reads a Request has to be able to name who
+// holds it, so the holder's name rides on the row itself rather than on one
+// queue query.
+func TestRequestRowsCarryTheHolderName(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, headID := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, req.ID, mgrID, headID, 500000, 500000)
+	r, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ProcessingByName != "" {
+		t.Fatalf("unreserved request names a holder: %q", r.ProcessingByName)
+	}
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ = s.Request(ctx, id); r.ProcessingByName != acc.Name {
+		t.Fatalf("Request().ProcessingByName = %q, want %q", r.ProcessingByName, acc.Name)
+	}
+	list, err := s.ListRequests(ctx, RequestListOptions{Scope: "all", Statuses: []string{"processing"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ProcessingByName != acc.Name {
+		t.Fatalf("ListRequests holder name = %+v, want %q", list, acc.Name)
+	}
+}
+
+// The four settlement notices speak of the amount paid ({{paid_amount}}), not the
+// amount requested ({{amount}}). Migration v14 carries that wording onto an
+// installed database without touching a template an administrator has edited.
+func TestMigrationV14RewritesOnlyTheUneditedSettlementTemplates(t *testing.T) {
+	s := newTestStore(t)
+	for _, event := range []string{"payment_settled", "payment_partial_review", "payment_partial_accepted", "payment_partial_concern"} {
+		var subject, body string
+		if err := s.DB().QueryRow(`SELECT subject_template, body_template FROM notification_settings WHERE event=?`, event).Scan(&subject, &body); err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+		if strings.Contains(body, "{{amount}}") || strings.Contains(subject, "{{amount}}") {
+			t.Fatalf("%s still fills the paid figure from the requested amount:\n%s\n%s", event, subject, body)
+		}
+		if !strings.Contains(body, "{{paid_amount}}") {
+			t.Fatalf("%s body never names the amount paid:\n%s", event, body)
+		}
+	}
+	// An installed database: two rows still on the old default, one the admin
+	// rewrote. Only the two are corrected.
+	for event, old := range oldSettlementTemplates {
+		if _, err := s.DB().Exec(`UPDATE notification_settings SET subject_template=?, body_template=? WHERE event=?`, old.Subject, old.Body, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	custom := "{{approver}} accepted {{number}} — our own wording"
+	if _, err := s.DB().Exec(`UPDATE notification_settings SET body_template=? WHERE event='payment_partial_accepted'`, custom); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := upPaidAmountTemplates(tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("upPaidAmountTemplates: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"payment_settled", "payment_partial_review", "payment_partial_concern"} {
+		var body string
+		if err := s.DB().QueryRow(`SELECT body_template FROM notification_settings WHERE event=?`, event).Scan(&body); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(body, "{{paid_amount}}") {
+			t.Fatalf("%s was left on the old default after v14:\n%s", event, body)
+		}
+	}
+	var kept string
+	if err := s.DB().QueryRow(`SELECT body_template FROM notification_settings WHERE event='payment_partial_accepted'`).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept != custom {
+		t.Fatalf("v14 overwrote an administrator's own wording: %q", kept)
+	}
+}
+
+// Paying the whole remaining balance cannot be recorded as a short payment.
+func TestFullBalanceCannotEnterShortfallReview(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgr, head := seedRequestParty(t, s)
+	id := seedApprovedRequest(t, s, 1, req.ID, mgr, head, 1200000, 1200000)
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "installment", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatal(err)
+	}
+	_, err := historicalSettlement(ctx, s, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 500000}, "partial", "Disputed remaining balance", nil)
+	if !errors.Is(err, ErrValidation) {
+		r, _ := s.Request(ctx, id)
+		t.Fatalf("full balance partial returned %v with state=%s paid=%d; want refusal", err, r.Status, r.PaidAmount)
+	}
+}
+
+// After a short payment is continued and a second short payment is accepted,
+// the request's paid amount and the grid count every instalment once, and the
+// accepted deduction cannot be reopened.
+func TestContinuedShortfallThenAcceptedDeductionKeepsCumulativeAccounting(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	acc, req, mgrID, head := seedRequestParty(t, s)
+	mgr, err := s.UserByID(ctx, mgrID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := seedApprovedRequest(t, s, 1, req.ID, mgrID, head, 1200000, 1200000)
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000}, "partial", "Only part delivered", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ContinuePartial(ctx, mgr, id, "Pay balance after inspection"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveRequest(ctx, acc, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 300000}, "partial", "Final two thousand remains disputed", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AcceptPartial(ctx, mgr, id, "Accept documented reduction of two thousand"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Request(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "completed_partial" || r.PaidAmount != 1000000 || *r.ApprovedAmount != 1200000 {
+		t.Fatalf("wrong final obligation: %+v", r)
+	}
+	grid, err := s.Grid(ctx, "2026-06", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual int64
+	for _, row := range grid.Rows {
+		if row.HeadID == head {
+			actual = row.Actual
+		}
+	}
+	if actual != 1000000 {
+		t.Fatalf("budget actual=%d, want only payouts1000000", actual)
+	}
+	history, err := s.RequestPayments(ctx, id)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("history %v error%v", history, err)
+	}
+	if err := s.ContinuePartial(ctx, mgr, id, "Try reopening accepted deduction"); !errors.Is(err, ErrValidation) {
+		t.Fatalf("accepted deduction reopened: %v", err)
+	}
+}

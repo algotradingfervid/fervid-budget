@@ -2,9 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"html/template"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
@@ -129,7 +129,7 @@ func TestLoginPreservesOnlyAuthorizedInternalDestination(t *testing.T) {
 }
 func TestVendorModesValidationHistoryAndBackupHelp(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	actor, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	if err := s.st.SetAppSetting(s.ctx, actor, "payment_modes", "NEFT, UPI, Card"); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestVendorModesValidationHistoryAndBackupHelp(t *testing.T) {
 	if _, err := store.CreateBackup(s.ctx, store.BackupOptions{DBPath: s.cfg.DBPath, AttachmentDir: s.cfg.AttachmentDir, BackupDir: s.cfg.BackupDir, Now: func() time.Time { return time.Date(2026, 9, 25, 10, 30, 0, 0, time.UTC) }}); err != nil {
 		t.Fatal(err)
 	}
-	body = responseBody(t, s.request(http.MethodGet, "/backups", nil, ""))
+	body = s.get("/backups")
 	for _, want := range []string{"25 Sep 2026", "--restore", "not restore-tested", "Restore safely", "Test Admin"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("backup missing %s", want)
@@ -191,8 +191,8 @@ func TestPaymentEntryUsesConfiguredVendorDefaultAndProtectsDestination(t *testin
 	if err := s.st.ReserveRequest(s.ctx, actor, reqID); err != nil {
 		t.Fatal(err)
 	}
-	s.login(s.cfg.AdminEmail, testAdminPassword)
-	body := responseBody(t, s.request("GET", strconvPath("/payments/new?request=%d", reqID), nil, ""))
+	s.loginAdmin()
+	body := responseBody(t, s.request("GET", fmt.Sprintf("/payments/new?request=%d", reqID), nil, ""))
 	for _, want := range []string{`value="upi" selected>UPI`, `value="neft" >NEFT`, `private-supplier@upi`, `654321123`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q", want)
@@ -225,7 +225,7 @@ func TestPaymentEntryUsesConfiguredVendorDefaultAndProtectsDestination(t *testin
 	if err = s.st.UpdateRolePermissions(s.ctx, actor, roleID, filtered, scopes); err != nil {
 		t.Fatal(err)
 	}
-	body = responseBody(t, s.request("GET", strconvPath("/payments/new?request=%d", reqID), nil, ""))
+	body = responseBody(t, s.request("GET", fmt.Sprintf("/payments/new?request=%d", reqID), nil, ""))
 	if strings.Contains(body, "private-supplier@upi") || strings.Contains(body, "654321123") {
 		t.Fatal("bank destination disclosed without permission")
 	}
@@ -242,7 +242,7 @@ func TestVendorHistoryShowsNamedChangesWithoutInventingOldHistory(t *testing.T) 
 		t.Fatalf("invented old history: %v", old)
 	}
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	created := s.postForm("/vendors", url.Values{"name": {"History UX"}, "contact_person": {"Old contact"}})
 	location := created.Header.Get("Location")
 	created.Body.Close()
@@ -260,33 +260,25 @@ func TestVendorHistoryShowsNamedChangesWithoutInventingOldHistory(t *testing.T) 
 
 func TestRoleAuditHTMLShowsPermissionScopeDeltasAndAuthorizedRoleLink(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 	actor, _ := s.st.UserByEmail(s.ctx, s.cfg.AdminEmail)
 	id, err := s.st.CreateRole(s.ctx, actor, "UX Audit Role", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	form := url.Values{"role_id": {strconvPath("%d", id)}, "name": {"UX Audit Role"}, "perm": {"request:view"}, "scope_request": {"own"}}
+	form := url.Values{"role_id": {fmt.Sprintf("%d", id)}, "name": {"UX Audit Role"}, "perm": {"request:view"}, "scope_request": {"own"}}
 	saved := s.postForm("/roles", form)
 	requireStatus(t, saved, 303)
 	saved.Body.Close()
-	body := responseBody(t, s.request("GET", strconvPath("/audit?entity=role&id=%d", id), nil, ""))
-	for _, want := range []string{"Payment requests · View: Not granted → Granted", "Payment requests · Record access: None → Own", strconvPath(`href="/roles?role=%d"`, id), "UX Audit Role", "Test Admin"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("role audit HTML missing %q", want)
-		}
-	}
+	body := responseBody(t, s.request("GET", fmt.Sprintf("/audit?entity=role&id=%d", id), nil, ""))
+	mustContain(t, "role audit HTML", body, "Payment requests · View: Not granted → Granted", "Payment requests · Record access: None → Own", fmt.Sprintf(`href="/roles?role=%d"`, id), "UX Audit Role", "Test Admin")
 	form.Del("perm")
 	form.Del("scope_request")
 	saved = s.postForm("/roles", form)
 	requireStatus(t, saved, 303)
 	saved.Body.Close()
-	body = responseBody(t, s.request("GET", strconvPath("/audit?entity=role&id=%d", id), nil, ""))
-	for _, want := range []string{"Payment requests · View: Granted → Not granted", "Payment requests · Record access: Own → None"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("revocation audit missing %q", want)
-		}
-	}
+	body = responseBody(t, s.request("GET", fmt.Sprintf("/audit?entity=role&id=%d", id), nil, ""))
+	mustContain(t, "revocation audit", body, "Payment requests · View: Granted → Not granted", "Payment requests · Record access: Own → None")
 	roles, err := s.st.AllRoles(s.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +312,7 @@ func TestRoleAuditHTMLShowsPermissionScopeDeltasAndAuthorizedRoleLink(t *testing
 	if _, err = s.st.DB().Exec(`INSERT INTO user_roles(user_id,role_id) VALUES(?,?)`, actor.ID, limitedRole); err != nil {
 		t.Fatal(err)
 	}
-	body = responseBody(t, s.request("GET", strconvPath("/audit?entity=role&id=%d", id), nil, ""))
+	body = responseBody(t, s.request("GET", fmt.Sprintf("/audit?entity=role&id=%d", id), nil, ""))
 	if strings.Contains(body, "Open affected role") {
 		t.Fatal("role link shown without role:view")
 	}

@@ -19,7 +19,7 @@ export default page({
     prose(
       'Six fieldsets, top to bottom: **Request numbering**, **Attachments**, **Urgency**, ' +
       '**Approvals**, **Payments**, and **Reminders and ageing**. One **Save configuration** button ' +
-      'at the foot covers all six. **Discard** leaves without saving.\n\n' +
+      'at the foot covers all six. **Discard** leaves without saving and takes you back to Home.\n\n' +
       'Below the save bar sits a seventh block, **Recoverable categories**, which is not part of the ' +
       'same form and has its own page: ' +
       '[Recoverable categories](page:admin/recoverable-categories).',
@@ -35,7 +35,7 @@ export default page({
     fields([
       { name: 'Prefix', required: false, note: 'The letters at the front. Seeded as `PR`.' },
       { name: 'Year segment', required: false, note: '`Calendar year`, `Financial year` or `None`.' },
-      { name: 'Number width', required: false, note: 'How many digits the running number is padded to. Seeded as `6`.' },
+      { name: 'Number width', required: true, note: 'How many digits the running number is padded to. Whole numbers from 1 to 12; seeded as `6`. Anything outside that range is refused with "Number width must be a whole number from 1 to 12." and nothing on the screen is saved.' },
     ]),
     warning(
       'Changing the numbering changes new requests only. Everything already numbered keeps the number ' +
@@ -51,7 +51,7 @@ export default page({
         required: false,
         note: 'Turning it on does not block submission. The hint explains why: it asks for an exception reason when no document is attached, because legitimate documents are sometimes genuinely unavailable.',
       },
-      { name: 'Maximum file size (MB)', required: false, note: 'The largest file the product will accept. Seeded as `10`.' },
+      { name: 'Maximum file size (MiB)', required: false, note: 'The largest file the product will accept. Whole numbers from 1 to 20 — the hint adds that one MiB is 1,048,576 bytes. Seeded as `10`. Anything outside that range is refused with "Maximum file size must be a whole number from 1 to 20 MiB." and nothing on the screen is saved.' },
     ]),
 
     section('Urgency'),
@@ -86,25 +86,24 @@ export default page({
         note: 'Greyed out and unticked. The hint says it is reserved for a future version, and that the status model already has room for it. It does nothing today.',
       },
     ]),
+    prose(
+      'The line under the block repeats the rule: "Self-approval is blocked always. A person can never ' +
+      'approve a request they raised, whatever roles they hold."',
+    ),
 
     section('Payments'),
     fields([
-      {
-        name: 'Allow direct payments without a request',
-        required: false,
-        note: 'Off by default. The hint states what turning it on costs: every new payment normally starts from an approved request, and switching this on demands a written reason and is flagged in the audit log.',
-      },
       {
         name: 'Payment modes offered',
         required: false,
         note: 'Comma separated, in the order the payment form should offer them. Seeded as `NEFT, RTGS, UPI, Cheque, Cash, Card, DD`.',
       },
     ]),
-    warning(
-      'A payment without a request is a payment nobody approved. Leaving **Allow direct payments ' +
-      'without a request** off is what keeps the approval trail unbroken, and it is off for that ' +
-      'reason. Turn it on only if you have a process for reviewing what comes through it.',
-      'Direct payments',
+    note(
+      'There is no switch for payments without a request. The note under the block says so plainly: ' +
+      '"Every payment starts from an approved request. There is no direct-entry path, and no setting ' +
+      'that opens one." A payment nobody approved cannot be recorded, so the approval trail stays unbroken.',
+      'No direct payments',
     ),
 
     section('Reminders and ageing'),
@@ -142,8 +141,10 @@ export default page({
       'Opening this screen needs the configuration view grant and saving needs the edit grant; both ' +
       'sit in the **Administration** row of ' +
       '[Roles and permissions](page:admin/roles-and-permissions). The **Recoverable categories** block ' +
-      'at the foot follows the **Recoverables** row instead, which is why somebody can be able to see ' +
-      'the settings and not touch the categories, or the reverse.',
+      'at the foot follows the **Recoverables** row instead: its **Save** and **Delete** buttons and the ' +
+      'add form appear only for somebody whose role can edit or delete categories. That is why one person ' +
+      'can save the settings and not touch the categories, and another the reverse — though both need the ' +
+      'configuration view grant to open the screen at all.',
     ),
 
     faq([

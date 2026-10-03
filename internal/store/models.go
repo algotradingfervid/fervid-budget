@@ -1,3 +1,8 @@
+// models.go holds the plain data types the store reads and writes and the
+// sentinel errors callers branch on. The types carry no behaviour. Money is
+// always int64 paise (1/100 rupee); months are "YYYY-MM" and dates
+// "YYYY-MM-DD" strings.
+
 package store
 
 import (
@@ -5,31 +10,59 @@ import (
 	"time"
 )
 
+// Sentinel errors. Store methods wrap them with a readable message
+// (fmt.Errorf("%w: ...")), so callers test them with errors.Is and the
+// handlers map them to HTTP answers.
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrForbidden    = errors.New("forbidden")
-	ErrLockedMonth  = errors.New("month is locked")
-	ErrValidation   = errors.New("validation failed")
-	ErrDuplicate    = errors.New("duplicate value")
+	// ErrNotFound means the requested row does not exist (a 404).
+	ErrNotFound = errors.New("not found")
+	// ErrForbidden means the actor may not do this to this row (a 403), or the
+	// row is not in a state that allows it.
+	ErrForbidden = errors.New("forbidden")
+	// ErrLockedMonth means the change falls in a month an administrator locked.
+	ErrLockedMonth = errors.New("month is locked")
+	// ErrValidation means the input is wrong; the message says what to fix.
+	ErrValidation = errors.New("validation failed")
+	// ErrDuplicate means a unique value (email, name, number) is already taken.
+	ErrDuplicate = errors.New("duplicate value")
+	// ErrInactiveHead means the payment names a head or project that is inactive.
 	ErrInactiveHead = errors.New("project or head is inactive")
 )
 
+// User is one account. Role is the older single-role column, kept in step with
+// the assigned roles ("admin" or "data_entry"); permissions come from the roles.
 type User struct {
+	ID           int64
+	Email        string
+	Name         string
+	PasswordHash string
+	Role         string
+	Active       bool
+	// DefaultApproverID is who approves this user's requests unless the request
+	// names someone else; 0 means none. A user is never their own default
+	// approver — SaveUser refuses it.
+	DefaultApproverID int64
+	// SessionVersion goes up when the password changes or the account is
+	// deactivated, which ends every existing session.
 	SessionVersion int64
-	ID             int64
-	Email          string
-	Name           string
-	PasswordHash   string
-	Role           string
-	Active         bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	// DefaultApproverID is who approves this user's requests unless the request
-	// says otherwise (G9); 0 means none. A user is never their own default —
-	// SetUserDefaultApprover enforces it.
-	DefaultApproverID int64
+	// requestCache is an opaque value the auth layer attaches to the signed-in
+	// user for the length of one request (its permission cache). The store
+	// never reads it; users loaded from the database never carry one.
+	requestCache any
 }
 
+// WithRequestCache returns a copy of u carrying c. See User.requestCache.
+func (u User) WithRequestCache(c any) User {
+	u.requestCache = c
+	return u
+}
+
+// RequestCache returns the value WithRequestCache attached, or nil.
+func (u User) RequestCache() any { return u.requestCache }
+
+// Project groups budget heads.
 type Project struct {
 	ID        int64
 	Name      string
@@ -38,6 +71,8 @@ type Project struct {
 	CreatedAt time.Time
 }
 
+// Head is a budget line inside a project that budgets and payments are
+// recorded against. DueDay is an optional day of the month ("1"–"31").
 type Head struct {
 	ID        int64
 	ProjectID int64
@@ -51,7 +86,7 @@ type Head struct {
 
 // RecoverableCategory is one admin-configurable kind of recoverable payment.
 //
-// Code is the stable identity and never changes once created: Phase 2 stores it
+// Code is the stable identity and never changes once created: requests store it
 // in payment_requests.recoverable_category and the request validator resolves
 // the field rules by it, so renaming a category must not orphan its requests.
 // Name is the display label an admin is free to edit.
@@ -74,6 +109,7 @@ type RecoverableCategoryUsage struct {
 	InUse int
 }
 
+// Budget is the amount planned for one head in one month.
 type Budget struct {
 	ID        int64
 	HeadID    int64
@@ -83,6 +119,8 @@ type Budget struct {
 	UpdatedAt time.Time
 }
 
+// MonthPlan is one row of the monthly plans screen: a month's status, who
+// created it, and its budget-versus-actual totals.
 type MonthPlan struct {
 	Month         string
 	Status        string
@@ -99,6 +137,8 @@ type MonthPlan struct {
 	LockReason    string
 }
 
+// Payment is one ledger row: money that left the bank against a head (or, for
+// a recoverable request, against no head).
 type Payment struct {
 	ID            int64
 	HeadID        int64
@@ -120,18 +160,19 @@ type Payment struct {
 	VoidedAt      *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
-	// Phase 3 linkage. RequestID is nil for every historical payment, which is
-	// what keeps those rows editable and voidable (X6); a non-nil RequestID
-	// makes the payment immutable (S12).
+	// RequestID is nil for a payment entered directly in the ledger, which
+	// keeps it editable and voidable. A payment that settles a request has it
+	// set and cannot be edited, voided or given new attachments.
 	RequestID     *int64
 	Settlement    string // "" (historical) | "settled" | "partial"
 	PartialReason string
-	// Treatment is the linked request's treatment ("" for a historical payment).
-	// A "recoverable" payment has no head (v8), so a screen reads this to name it
-	// rather than print an empty "Project / Head" (recoverables-2).
+	// Treatment is the linked request's treatment ("" for a payment with no
+	// request). A "recoverable" payment has no head, so a screen reads this to
+	// name it rather than print an empty "Project / Head".
 	Treatment string
 }
 
+// Attachment is a file stored against a ledger payment.
 type Attachment struct {
 	ID           int64
 	PaymentID    int64
@@ -152,11 +193,13 @@ type AttachmentInput struct {
 	SizeBytes    int64
 }
 
+// BudgetInput is one head's amount on the budget form.
 type BudgetInput struct {
 	HeadID int64
 	Amount int64
 }
 
+// MonthLock records who locked a month, when, and why.
 type MonthLock struct {
 	Month     string
 	LockedBy  int64
@@ -165,6 +208,8 @@ type MonthLock struct {
 	Reason    string
 }
 
+// AuditEntry is one audit-log row as read back. BeforeJSON and AfterJSON are
+// the stored snapshots ("" when none).
 type AuditEntry struct {
 	ID         int64
 	ActorID    *int64
@@ -179,6 +224,8 @@ type AuditEntry struct {
 	CreatedAt  time.Time
 }
 
+// GridRow is one head on the budget-versus-actual grid. Status is one of
+// "over", "under", "on-track", "unbudgeted", "not-paid" or "no-activity".
 type GridRow struct {
 	ProjectID       int64
 	Project         string
@@ -193,6 +240,8 @@ type GridRow struct {
 	Status          string
 }
 
+// ProjectTotal is the budget, actual and variance summed over a set of rows:
+// one project, or the whole grid.
 type ProjectTotal struct {
 	ProjectID       int64
 	Project         string
@@ -202,24 +251,29 @@ type ProjectTotal struct {
 	VariancePercent string
 }
 
+// GridData is the whole budget-versus-actual grid for one month.
 type GridData struct {
-	NoActivity int
+	Month    string
+	Rows     []GridRow
+	Groups   []GridGroup
+	Projects []ProjectTotal // each group's total, in the same order
+	Total    ProjectTotal
+	// Filtered is true when a status or search filter is on; ScopeLabel then
+	// reads "Filtered subtotal" instead of "Company total".
 	Filtered   bool
 	ScopeLabel string
-	Month      string
-	Rows       []GridRow
-	Projects   []ProjectTotal
-	Groups     []GridGroup
-	Total      ProjectTotal
 	Locked     bool
 	Lock       MonthLock
+	// Row counts by status, for the summary chips.
 	Over       int
-	Unbudgeted int
 	Under      int
 	OnTrack    int
+	Unbudgeted int
 	NotPaid    int
+	NoActivity int
 }
 
+// GridGroup is one project's rows on the grid with their total.
 type GridGroup struct {
 	ProjectID int64
 	Project   string
@@ -227,10 +281,12 @@ type GridGroup struct {
 	Total     ProjectTotal
 }
 
+// ReportRow is one line of the budget report: a head, a project or a whole
+// month, depending on the report mode.
 type ReportRow struct {
+	Period          string
 	ProjectID       int64
 	HeadID          int64
-	Period          string
 	Project         string
 	Head            string
 	Budget          int64
@@ -243,14 +299,14 @@ type ReportRow struct {
 // fields are computed against RecoverableReportOptions.AsOf, never time.Now(),
 // so both the screens and their tests are deterministic.
 type RecoverableRow struct {
-	PaidAmount         int64
-	RecoveredAmount    int64
 	RequestID          int64
 	Number             string
 	Category           string
 	Counterparty       string
 	Project            string
 	Amount             int64
+	PaidAmount         int64
+	RecoveredAmount    int64
 	PaidOn             string // "" when approved but not yet paid
 	ExpectedReturnDate string
 	RepaymentNotes     string
@@ -261,7 +317,7 @@ type RecoverableRow struct {
 	// turns on beyond the status itself — who holds the reservation, and
 	// whether a partial review has an unanswered concern — so the register
 	// reads "With Accounts — taken by …" and "Partial — under discussion"
-	// exactly as the request behind it does (settlement-7/-8 review).
+	// exactly as the request behind it does.
 	ProcessingBy     *int64
 	ProcessingByName string
 	ConcernOpen      bool
@@ -272,6 +328,7 @@ type RecoverableRow struct {
 	AgeingTone       string // pill modifier: "bad" | "neutral" | "approved" | "hold"
 }
 
+// RecoverableReportOptions filters and orders the recoverables register.
 type RecoverableReportOptions struct {
 	From         string // optional YYYY-MM; filters on paid_on
 	To           string // optional YYYY-MM
@@ -290,18 +347,18 @@ type RecoverableReportOptions struct {
 // four readers over `payment_requests`-as-recoverables needs it and none of them
 // can be trusted to default: the register is a second view over the requests
 // table, so a read that forgets the viewer discloses every counterparty, amount
-// and repayment note in the company (F-G-016/F-E-03).
+// and repayment note in the company.
 //
 // **The zero value sees nothing.** That is deliberate and it is the whole point of
 // the type. `permissions.go` already documents an empty data scope as "no scope at
-// all", and `canViewRequest` returns false for it, so denying matches both. It
+// all", and RequestInScope returns false for it, so denying matches both. It
 // also fails in the safe direction: a caller who forgets to set Viewer gets an
 // empty screen, which someone reports, rather than a silent disclosure, which
 // nobody does.
 type RecoverableViewer struct {
-	// Scope is the caller's `request` data scope: ScopeAll, "assigned", "own", or
-	// "" for none. Narrower than the holder's real scope is allowed — that is how
-	// a URL filter works — but the caller must never widen it here.
+	// Scope is the caller's `request` data scope: ScopeAll, ScopeAssigned,
+	// ScopeOwn, or "" for none. Narrower than the holder's real scope is allowed —
+	// that is how a URL filter works — but the caller must never widen it here.
 	Scope string
 	// ViewerID is the reader's user id, consulted for "own" and "assigned".
 	ViewerID int64
@@ -340,61 +397,60 @@ type RecoverableRollup struct {
 	ExpectedBack string // earliest expected_return_date in the group
 }
 
+// PaymentInput is a payment as submitted by a form.
 type PaymentInput struct {
-	ExpectedPaid  *int64 // displayed cumulative amount; rejects a stale installment form
-	SubmissionKey string // unique browser confirmation; retries cannot create another installment
-	HeadID        int64
-	PaidOn        string
-	Amount        int64
-	VendorPayee   string
-	PaymentMode   string
-	InvoiceNo     string
-	ReferenceNo   string
-	Remarks       string
-	// Now is the injected clock validatePayment measures PaidOn against
-	// (F-D-06): a payment dated after Now's date is refused, because money
-	// cannot have left the bank in the future. Zero means "no clock supplied",
-	// and the check then measures against time.Now().UTC() — the default is
-	// enforcement, never a skip, because a rule that switches itself off when a
-	// caller forgets to pass a clock is not a rule. Injection is for tests that
-	// need to pin the day. Mirrors LinkableOptions.Now.
+	HeadID      int64
+	PaidOn      string
+	Amount      int64
+	VendorPayee string
+	PaymentMode string
+	InvoiceNo   string
+	ReferenceNo string
+	Remarks     string
+	// ExpectedPaid is the amount already paid that the form displayed; a
+	// payment against a request is refused when it no longer matches, so a
+	// stale installment form cannot overpay.
+	ExpectedPaid *int64
+	// SubmissionKey is a one-time key from the browser form, so a retried
+	// submit cannot record the same installment twice.
+	SubmissionKey string
+	// Now is the clock PaidOn is checked against: a payment dated after Now's
+	// day (server local time) is refused, because money cannot have left the
+	// bank in the future. Zero means time.Now(). Tests set it to pin the day.
 	Now time.Time
 }
 
+// PaymentListOptions filters the payment ledger.
 type PaymentListOptions struct {
-	VendorID  int64
-	Offset    int
+	Month     string
 	ProjectID int64
 	HeadID    int64
-	Month     string
+	VendorID  int64
 	Query     string
-	Status    string
+	Status    string // "" = not voided | "voided" | "all"
 	Limit     int
-	// Scope + ViewerID enforce the `payment` data scope (F-A-04 / F-G-003),
-	// mirroring RequestListOptions: "own" (and "assigned", which has no
-	// routed-to meaning on the ledger and narrows the same way rather than
-	// silently widening) filter on entered_by = ViewerID; only "all" leaves
-	// the list unrestricted. "" and any other value read no rows at all — the
-	// ledger fails closed, exactly as requestWhere does (fixwave rbac-2), so a
-	// role with payment:view and no scope sees an empty ledger, never every
-	// payment. Callers that mean "everything" say ScopeAll.
+	Offset    int
+	// Scope and ViewerID apply the viewer's payment data scope. "own" and
+	// "assigned" (which has no routed-to meaning on the ledger) both keep the
+	// payments the viewer entered; only ScopeAll leaves the list unrestricted.
+	// "" and any other value read no rows, so a role with payment:view and no
+	// scope sees an empty ledger, never every payment.
 	Scope    string
 	ViewerID int64
 	// ExcludeRecoverable leaves out payments that settle a recoverable request.
-	// The variance grid sets it: a recoverable is a deposit, not budget spend,
-	// and its totals already leave them out (V2, recoverables-2).
+	// The variance grid sets it: a recoverable is a deposit, not budget spend.
 	ExcludeRecoverable bool
 }
 
+// Request is one payment request with the names its screens show joined in.
 type Request struct {
-	PaidAmount                int64 // sum of immutable, nonvoided payments
 	ID                        int64
 	Number                    string
 	Status                    string
 	Treatment                 string
 	Type                      string
 	RecoverableCategory       string // code: emd|pbg|icd|employee_advance|security_deposit|other
-	RecoverableCategoryID     *int64 // linked by Phase 4
+	RecoverableCategoryID     *int64
 	ProjectID                 *int64
 	Project                   string // joined name; retained even when project inactive
 	HeadID                    *int64
@@ -437,14 +493,15 @@ type Request struct {
 	// (the request stays 'partial_review'), exactly as on_hold is a flag on
 	// 'approved': the display reads "Partial — under discussion" from it.
 	ConcernOpen      bool
+	PaidAmount       int64 // sum of the request's payments that are not voided
 	ReminderLastSent *time.Time
 	SubmittedAt      *time.Time
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
 
+// RequestInput is a request as submitted by the new-request or edit form.
 type RequestInput struct {
-	DuplicateReason           string
 	Treatment                 string
 	Type                      string
 	RecoverableCategory       string
@@ -467,28 +524,44 @@ type RequestInput struct {
 	UrgencyReason             string
 	AttachmentExceptionReason string
 	ManagerID                 int64
-	// RequesterID is filled by the store from the actor, never from the form.
-	// It exists so validateRequestInput can reject self-approval (G8).
+	// DuplicateReason explains why the requester went ahead although a similar
+	// request exists.
+	DuplicateReason string
+	// RequesterID is filled by the store from the actor, never from the form,
+	// so validateRequestInput can reject a requester approving their own request.
 	RequesterID int64
 	// Attachments are staged by the handler and written in the same transaction
-	// as the request itself. D1 removed drafts, so there is no earlier moment at
-	// which a file could be attached.
+	// as the request itself; there are no drafts, so there is no earlier moment
+	// at which a file could be attached.
 	Attachments []AttachmentInput
 }
 
+// RequestListOptions filters request lists.
 type RequestListOptions struct {
-	VendorID int64
-	Scope    string // "own" | "assigned" | "held" | "all" — "held" is the viewer's own reservations
+	// Scope is the viewer's request data scope (ScopeOwn, ScopeAssigned or
+	// ScopeAll, see request_scope.go). It says which requests the viewer may see
+	// at all; a URL may narrow it and must never widen it. Anything else reads
+	// no rows.
+	Scope    string
 	ViewerID int64
-	Status   string   // "" or "all" = any status; otherwise exact status
-	Statuses []string // optional explicit set; wins over Status when non-empty
-	Bucket   string   // "" | "open" | "closed" | "needs-me" | "all"
+	// RoutedToViewer keeps only the requests whose approver is the viewer: the
+	// approvals queue, its badge and the dashboard's "awaiting your approval"
+	// area. It is a filter inside the scope, not a scope of its own, so an
+	// approver's own raised requests never appear in their approval queue.
+	RoutedToViewer bool
+	// HeldByViewer keeps only the requests the viewer has reserved for payment:
+	// the accountant's "concerns to answer" list. Also a filter inside the scope.
+	HeldByViewer bool
+	Status       string   // "" or "all" = any status; otherwise exact status
+	Statuses     []string // optional explicit set; wins over Status when non-empty
+	Bucket       string   // "" | "open" | "closed" | "needs-me" | "all"
 	// ConcernOpen narrows to partial reviews whose concern Accounts has not
 	// yet answered — the accountant's "concerns to answer" list.
 	ConcernOpen bool
 	Type        string
 	Treatment   string
 	ProjectID   int64
+	VendorID    int64
 	Query       string
 	Limit       int
 }
@@ -497,8 +570,9 @@ type RequestListOptions struct {
 // Nothing is ever released automatically — a bank transfer may be under way.
 const StaleReservation = 24 * time.Hour
 
+// LinkableOptions selects rows for the Accounts queue and the payment picker.
 type LinkableOptions struct {
-	Scope    string // "own" | "assigned" | "all", from auth.Scope
+	Scope    string // the viewer's request data scope (ScopeOwn | ScopeAssigned | ScopeAll), from auth.Scope
 	ViewerID int64
 	Status   string // "" (picker pool, including unavailable) | "approved" (unclaimed, not held) | "processing" | "hold" | "partial_review" | "paid"
 	Query    string
@@ -530,6 +604,7 @@ type LinkableSet struct {
 	Counts      LinkableCounts
 }
 
+// RequestComment is one message in a request's conversation.
 type RequestComment struct {
 	ID         int64
 	RequestID  int64
@@ -539,6 +614,7 @@ type RequestComment struct {
 	CreatedAt  time.Time
 }
 
+// RequestAttachment is a file stored against a request (not a payment).
 type RequestAttachment struct {
 	ID           int64
 	RequestID    int64
@@ -552,7 +628,7 @@ type RequestAttachment struct {
 
 // ThreadEntry is one line of the merged history-and-conversation stream that
 // `.thread` renders. Events, comments and attachments are one chronological
-// list, not three (UI/UX §9; request-detail-employee.html).
+// list, not three.
 type ThreadEntry struct {
 	Kind      string // "event" | "comment" | "attachment"
 	Action    string // audit action for events; "" for comments
@@ -567,12 +643,15 @@ type ThreadEntry struct {
 	CreatedAt time.Time
 }
 
+// ThreadChange is one field an event changed, shown as "was → now".
 type ThreadChange struct {
 	Field string
 	Was   string
 	Now   string
 }
 
+// AuditInput is one audit-log row to write. Before and After are stored as JSON.
+// Build it with auditBy inside the store.
 type AuditInput struct {
 	ActorID    *int64
 	ActorName  string
@@ -586,7 +665,7 @@ type AuditInput struct {
 }
 
 // SimilarRequestOptions drives the duplicate check. It is advisory: the result
-// is shown to the person and never gates the submit (G6).
+// is shown to the person and never gates the submit.
 type SimilarRequestOptions struct {
 	ExcludeID int64
 	VendorID  int64

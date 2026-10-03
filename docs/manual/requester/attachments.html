@@ -109,7 +109,7 @@
 <div class="wrap">
 <p class="crumb"><a href="../index.html">Manual</a> <span>/</span> Raising requests</p>
 <header class="page-head"><h1>Attaching documents</h1><p class="lede">Adding invoices and receipts, and what to do when you do not have one yet.</p></header>
-<p>A request with the invoice attached is a request your approver can decide without writing back to you. Every screen you can raise or correct a request on carries an uploader, and everything you attach stays with the request for the rest of its life.</p>
+<p>A request with the invoice attached is a request your approver can decide without writing back to you. Every screen you can raise or correct a request on carries an uploader, and everything you attach stays with the request for the rest of its life. Only the person who raised a request can add documents to it.</p>
 <h2 id="attaching-a-document-as-you-raise-a-request">Attaching a document as you raise a request</h2>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/requester/form-vendor-invoice.png" aria-label="Enlarge: The uploader sits in the Purpose and documents fieldset, below the purpose box.">
@@ -117,7 +117,7 @@
   </button>
   <figcaption>The uploader sits in the Purpose and documents fieldset, below the purpose box. </figcaption>
 </figure>
-<p>The uploader is labelled <strong>Add invoice, receipt or proof</strong>, with the accepted shape underneath: <em>PDF, JPG or PNG up to 10 MB</em>. The size is a setting your administrator controls, so the number you see may differ from the one here. Below that is a <strong>Choose File</strong> control, reading <em>No file chosen</em> until you pick something.</p>
+<p>The uploader is labelled <strong>Add invoice, receipt or proof</strong>, with the accepted shape underneath: <em>PDF, JPG or PNG up to 10 MiB</em>. The size is a setting your administrator controls — any whole number from 1 to 20 MiB — so the number you see may differ from the one here. Below that is a <strong>Choose File</strong> control, reading <em>No file chosen</em> until you pick something.</p>
 <ol class="steps">
 <li>Select <strong>Choose File</strong>.</li>
 <li>Pick the invoice, receipt or proof from your machine.</li>
@@ -136,23 +136,25 @@
   <figcaption>The Attachments section on a request with nothing attached: the count says 0 files and the body says so too. </figcaption>
 </figure>
 <p>Every request has an <strong>Attachments</strong> section between the details and the conversation. The count sits at the right of the heading — <em>0 files</em>, <em>1 file</em>, and so on. With nothing attached the body reads <strong>No documents attached.</strong></p>
-<p>Each document that is there gets a row: a small square with the file type, the file name, its size, the date it was added, and a <strong>Download</strong> button. Uploading also drops a line into <strong>History and conversation</strong>, so the story of the request shows when a document arrived and who put it there.</p>
+<p>Each document that is there gets a row: a small square with the file type, the file name, its size, the date it was added, and a <strong>Download</strong> button. Uploading also drops an <strong>Attachment added</strong> line, with the file name and size, into <strong>History and conversation</strong>, so the story of the request shows when each document arrived.</p>
 <h3 id="downloading">Downloading</h3>
-<p><strong>Download</strong> opens the file exactly as it was uploaded. You can download documents on any request you can see, which for a requester means your own requests — including documents that somebody else attached to your request.</p>
+<p><strong>Download</strong> opens the file exactly as it was uploaded. You can download documents on any request you can see, which for a requester means your own requests.</p>
 <h2 id="adding-a-document-later">Adding a document later</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">Request status</th><th scope="col">Can you add a document?</th><th scope="col">Where</th></tr></thead><tbody>
 <tr><td><code>pending</code> — awaiting approval</td><td>Yes</td><td><strong>Edit request</strong> → <strong>Add another document</strong></td></tr>
 <tr><td><code>returned</code> — sent back to you</td><td>Yes</td><td>The correction form → <strong>Attach the corrected document</strong></td></tr>
-<tr><td><code>approved</code> and everything after it</td><td>No</td><td>The request is locked; ask in the conversation instead</td></tr>
+<tr><td><code>approved</code> and on hold with Accounts</td><td>Yes</td><td>The hold banner → <strong>Add a document</strong> → <strong>Attach it</strong></td></tr>
+<tr><td><code>approved</code> and everything after it, otherwise</td><td>No</td><td>The request is locked; ask in the conversation instead</td></tr>
 <tr><td><code>rejected</code>, <code>withdrawn</code>, <code>cancelled</code></td><td>No</td><td>The request is closed</td></tr>
 </tbody></table></div>
 <p>On a returned request the uploader is worded for the job in hand — <strong>Attach the corrected document</strong> — and sits with the fields your approver is most likely to have asked about. See <a href="../requester/when-a-request-is-returned.html">When a request comes back to you</a>.</p>
+<p>When Accounts put an approved request on hold — often to ask for a missing receipt — the amber hold banner on the request carries its own <strong>Add a document</strong> control and an <strong>Attach it</strong> button. It takes one file at a time, and it is there only while the hold lasts. See <a href="../requester/getting-paid.html">Getting paid</a>.</p>
 <h2 id="what-you-cannot-do">What you cannot do</h2>
 <aside class="callout callout-warning"><p class="callout-title">Uploads are permanent</p><p>A document cannot be removed once it is attached. There is no delete control, and no route behind one. If you attach the wrong file, attach the right one as well and say which is which in the conversation — the record of what was uploaded is deliberately permanent.</p></aside>
-<p>There is also a hard ceiling above whatever your administrator has set: a file larger than 20 MiB is refused outright with <code>files must be 20 MiB or smaller</code>, whatever the form says.</p>
+<p>The size figure the uploader quotes is the real limit. A larger file is refused with a message quoting that same figure — for example <code>files must be 10 MiB or smaller. Choose the attachment again after correcting it</code>. Your administrator can raise the limit, but never above 20 MiB. A file that is not a genuine PDF, JPG or PNG — whatever its name says — is refused with <code>attach a PDF, JPG or PNG file whose contents match its extension. Choose the attachment again after correcting it</code>.</p>
 <dl class="faq"><dt>The invoice has not arrived yet. Should I wait?</dt><dd><p>No. Raise the request, say so in <strong>Purpose</strong> — or in the exception field if your organisation requires a document — and attach the invoice when it comes, while the request is still awaiting approval.</p></dd>
-<dt>My file will not upload.</dt><dd><p>Check the size against the figure the uploader quotes, and against the 20 MiB ceiling. A scan at full resolution is often the culprit; re-export it smaller.</p></dd>
-<dt>Can my approver attach something?</dt><dd><p>Anybody who can reach the request and holds the permission to add documents can attach one. Whatever they add shows in the same list and in the same history stream.</p></dd>
+<dt>My file will not upload.</dt><dd><p>Check the size against the figure the uploader quotes, and that the file really is a PDF, JPG or PNG. A scan at full resolution is often the culprit; re-export it smaller.</p></dd>
+<dt>Can my approver attach something?</dt><dd><p>No. Documents on a request come only from the person who raised it — on the form, the edit form, the correction screen or the hold banner. Anybody else is refused with <em>Only the person who raised a request may add documents to it.</em> Your approver can ask for a document in the conversation, or return the request so you can attach it.</p></dd>
 <dt>I attached the file but the request was refused. Was it kept?</dt><dd><p>No. The document and the request are written in one go, so a refused submission leaves nothing behind. Attach it again with your corrected form.</p></dd></dl>
 <nav class="pager" aria-label="Within this section"><a class="pager-prev" href="../requester/budget-and-recoverable.html"><span>Previous</span>Budget spend or money you expect back</a><a class="pager-next" href="../requester/urgent-requests.html"><span>Next</span>Marking a request urgent</a></nav>
 </div>

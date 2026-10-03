@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"sort"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 // adminPerms is the seeded Admin role: every canonical (resource, action) pair.
-// There is no wildcard to lean on any more — matching is exact.
+// There is no wildcard: matching is exact.
 func adminPerms() store.PermissionSet {
 	return store.NewPermissionSet(store.AllGrants(), nil)
 }
@@ -56,15 +57,13 @@ func visibleLabels(groups []NavGroup, includeSoon bool) []string {
 	return labels
 }
 
-// specLabels mirrors buildShell's Soon derivation so the expectation tracks
-// the unbuiltPrefixes switch instead of duplicating the list. When a phase
-// builds a screen and deletes its line there, this starts expecting it.
+// specLabels lists navSpec's labels the way buildShell sees them, so the
+// expectation tracks navSpec instead of duplicating it.
 func specLabels(includeSoon bool) []string {
 	spec := make([]NavGroup, 0, len(navSpec))
 	for _, group := range navSpec {
 		items := make([]NavItem, 0, len(group.Items))
 		for _, item := range group.Items {
-			item.Soon = item.Soon || !routeBuilt(item.Href)
 			items = append(items, item)
 		}
 		spec = append(spec, NavGroup{Title: group.Title, Items: items})
@@ -91,11 +90,8 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 			perms: adminPerms(),
 			want:  specLabels(false),
 		},
-		// These lists are the screens that exist *today*. "Recoverables" is
-		// permitted but not built yet, so it carries Soon and appears in the
-		// coming-soon count below instead. The phase that builds each one drops
-		// its flag and moves it here — Phase 2 did so for "My requests", and
-		// Phase 3 has just done so for "Accounts queue".
+		// These lists are the built screens each role may open; unbuilt ones
+		// carry Soon and are counted in the coming-soon test instead.
 		{
 			name:  "data entry sees only its own screens",
 			perms: dataEntryPerms(),
@@ -104,7 +100,7 @@ func TestBuildShellFiltersNavByPermission(t *testing.T) {
 		{
 			// Home and the notification centre: the two items with no Resource.
 			// The centre is ungated on purpose — every row it can return is already
-			// scoped to the signed-in user (G19, F-F-05).
+			// scoped to the signed-in user.
 			name:  "no grants leaves only ungated items",
 			perms: store.NewPermissionSet(nil, nil),
 			want:  []string{"Home", "Notifications"},
@@ -133,9 +129,7 @@ func TestBuildShellKeepsComingSoonAndDropsEmptyGroups(t *testing.T) {
 		}
 	}
 	// The four future products: Invoices, Payments received, Inventory and
-	// Purchase orders. "My requests" left this count when Phase 2 built
-	// /requests, "Accounts queue" when Phase 3 built /accounts-queue, and
-	// "Recoverables" when Phase 4 built /recoverables. A Soon item may carry
+	// Purchase orders. A Soon item may carry
 	// the href its screen will occupy; the template renders it without one, so
 	// it cannot become a clickable dead end.
 	soon := 0
@@ -169,11 +163,10 @@ func TestResolveTabsPicksTheCentreActionByPermission(t *testing.T) {
 		wantRight []string
 	}{
 		// The centre action falls through any candidate whose screen is not
-		// built. /requests/new and — since Phase 2 Task 25 — /approvals both
-		// exist, so approval:approve is now the first candidate that resolves
-		// and an approver who can also pay lands on Approve rather than falling
-		// through to Pay. TestTabBarNeverLinksToAnUnbuiltRoute keeps the two in
-		// step: a screen leaves unbuiltPrefixes and its tab lights up here.
+		// built. /requests/new and /approvals both exist, so approval:approve
+		// is the first candidate that resolves and an approver who can also pay
+		// lands on Approve rather than Pay. TestTabBarNeverLinksToAnUnbuiltRoute
+		// checks every tab against the real route table.
 		//
 		// Every tab is gated on the verb its own route is gated on. wantLeft says
 		// which of Requests / Budget / nothing the case is entitled to, because a
@@ -259,9 +252,8 @@ func TestNavContainsNoRoleNames(t *testing.T) {
 	}
 }
 
-// The gates and the engine have to speak one language. Phase 0 wrote these
-// against interim Casbin verbs; point the DB engine at a verb the vocabulary
-// does not carry and the item silently disappears for everyone, forever.
+// Every nav and tab gate must name a permission in the canonical vocabulary:
+// a gate on an unknown verb silently hides the item from everyone.
 func TestNavAndTabGatesUseTheCanonicalVocabulary(t *testing.T) {
 	for _, group := range navSpec {
 		for _, item := range group.Items {
@@ -291,8 +283,7 @@ func TestNavItemsHaveKeysIconsAndReachableHrefs(t *testing.T) {
 				t.Fatalf("duplicate nav key %q", item.Key)
 			}
 			seen[item.Key] = true
-			// A Soon item may declare the href its screen will occupy — that is
-			// how the phase which builds it knows where to land, and
+			// A Soon item may declare the href its screen will occupy;
 			// TestEveryLinkedNavItemResolves starts checking it the moment the
 			// flag drops. The template renders Soon items without an href
 			// regardless, so declaring one cannot produce a clickable dead end.
@@ -311,14 +302,13 @@ func TestNavItemsHaveKeysIconsAndReachableHrefs(t *testing.T) {
 
 // Every nav item that renders as a link must lead somewhere. Items whose
 // screen is not built yet carry Soon and render as announcements instead, so
-// this is what stops a phase shipping a nav entry that 404s -- and what forces
-// the phase that does build the screen to drop the flag.
+// no nav entry may 404, and building a screen means dropping its flag.
 func TestEveryLinkedNavItemResolves(t *testing.T) {
 	s := newAppTestServer(t)
-	s.login(s.cfg.AdminEmail, testAdminPassword)
+	s.loginAdmin()
 
-	// Iterate the built shell, not navSpec: buildShell is where Soon is derived
-	// from unbuiltPrefixes, so this checks what a user is actually shown.
+	// Iterate the built shell, not navSpec, so this checks what a user is
+	// actually shown.
 	for _, group := range buildShell(adminPerms()) {
 		for _, item := range group.Items {
 			if item.Soon || item.Href == "" {
@@ -328,31 +318,37 @@ func TestEveryLinkedNavItemResolves(t *testing.T) {
 			body := responseBody(t, resp)
 			if resp.StatusCode != http.StatusOK {
 				t.Errorf("nav item %q links to %s, which returns %d (mark it Soon until the screen exists)\n%s",
-					item.Label, item.Href, resp.StatusCode, truncateForLog(body))
+					item.Label, item.Href, resp.StatusCode, firstLines(body))
 			}
 		}
 	}
 }
 
-func truncateForLog(s string) string {
-	if len(s) > 200 {
-		return s[:200] + "…"
-	}
-	return s
-}
-
 // The tab bar is the only navigation a phone has, so a tab pointing at a
-// screen that does not exist is a dead end with no way around it. This fails
-// until the phase that builds the screen removes its unbuiltPrefixes entry.
+// screen that does not exist is a dead end with no way around it. This test
+// checks every tab's link against the real route table.
 func TestTabBarNeverLinksToAnUnbuiltRoute(t *testing.T) {
 	for _, perms := range []store.PermissionSet{adminPerms(), dataEntryPerms(), store.NewPermissionSet(nil, nil)} {
 		tabs := resolveTabs(perms)
 		all := append([]TabItem{tabs.Fab}, tabs.Left...)
 		all = append(all, tabs.Right...)
 		for _, tab := range all {
-			if !routeBuilt(tab.Href) {
+			if !routeServed(tab.Href) {
 				t.Errorf("tab %q links to %s, which no route serves", tab.Label, tab.Href)
 			}
 		}
 	}
+}
+
+// routeServed reports whether the app's route table has a route for a GET of
+// href, rather than leaving it to the catch-all 404 handler. An empty href or
+// a "#" toggle (the More sheet) is not a route and counts as served.
+func routeServed(href string) bool {
+	if href == "" || strings.HasPrefix(href, "#") {
+		return true
+	}
+	mux := http.NewServeMux()
+	(&App{}).routes(mux)
+	_, pattern := mux.Handler(httptest.NewRequest(http.MethodGet, href, nil))
+	return pattern != "" && pattern != "GET /"
 }

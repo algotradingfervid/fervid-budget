@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// DailyBackup is the automated daily backup of §10. The server runs it in
+// DailyBackup is the automated daily backup. The server runs it in
 // serve mode beside the reminder scheduler, in its own goroutine: the backup
 // is a VACUUM INTO read under WAL, so requests keep reading and writing while
 // it runs.
@@ -89,12 +89,14 @@ func (d DailyBackup) Scheduler(ctx context.Context, interval time.Duration, now 
 	}
 }
 
+// runLogged runs RunIfDue and logs a failure, unless ctx was cancelled.
 func (d DailyBackup) runLogged(ctx context.Context, now time.Time) {
 	if _, _, err := d.RunIfDue(ctx, now); err != nil && ctx.Err() == nil {
 		d.logger().ErrorContext(ctx, "daily backup failed", "error", err)
 	}
 }
 
+// logger is d.Log, or the default logger when unset.
 func (d DailyBackup) logger() *slog.Logger {
 	if d.Log != nil {
 		return d.Log

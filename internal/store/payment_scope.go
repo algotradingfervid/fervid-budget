@@ -1,3 +1,5 @@
+// payment_scope.go holds the visibility re-check that Accounts' write paths
+// run inside their transaction before they touch a request.
 package store
 
 import (
@@ -5,29 +7,15 @@ import (
 	"database/sql"
 )
 
-// A reservation does not preserve visibility after a role or activity change.
-// Check the current row scope on the writer transaction, so permission edits
-// cannot race a previously opened payment confirmation.
+// paymentRequestScopeTx re-checks, inside the writer transaction, that the actor
+// may still see the request they are about to reserve, settle or review. Holding
+// a reservation or knowing the id does not preserve visibility after a role or
+// activity change, and reading the permissions in the same transaction means a
+// permission edit cannot race a payment form that was opened earlier.
+//
+// A request the actor may not see answers ErrNotFound, exactly as a request that
+// does not exist, so the id space cannot be probed.
 func paymentRequestScopeTx(ctx context.Context, tx *sql.Tx, actorID, requestID int64) error {
-	var allowed int
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_requests r JOIN users u ON u.id=? AND u.active=1
- WHERE r.id=? AND EXISTS (
- SELECT 1 FROM user_roles ur JOIN role_data_scope ds ON ds.role_id=ur.role_id
- WHERE ur.user_id=u.id AND ds.resource='request' AND
- (ds.scope='all' OR (ds.scope='own' AND r.requester_id=u.id) OR
- (ds.scope='assigned' AND (r.manager_id=u.id OR r.requester_id=u.id))))`, actorID, requestID).Scan(&allowed)
-	if err != nil {
-		return err
-	}
-	if allowed == 0 {
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_requests WHERE id=?`, requestID).Scan(&exists); err != nil {
-			return err
-		}
-		if exists == 0 {
-			return ErrNotFound
-		}
-		return ErrForbidden
-	}
-	return nil
+	_, _, err := requestVisibleTx(ctx, tx, actorID, requestID)
+	return err
 }

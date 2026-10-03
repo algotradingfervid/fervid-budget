@@ -9,16 +9,16 @@ import (
 func TestInstallmentCannotBeCancelledAndHidden(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	acc, requester, managerID, headID := seedRequestParty(t, s, ctx)
+	acc, requester, managerID, headID := seedRequestParty(t, s)
 	manager, err := s.UserByID(ctx, managerID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := seedApprovedRequest(t, s, ctx, 1, requester.ID, managerID, headID, 1200000, 1200000)
+	id := seedApprovedRequest(t, s, 1, requester.ID, managerID, headID, 1200000, 1200000)
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000, SubmissionKey: "integration-cancel-first"}, "installment", "", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{PaidOn: "2026-06-15", Amount: 700000, SubmissionKey: "integration-cancel-first"}, "installment", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	for name, action := range map[string]func() error{
@@ -52,7 +52,7 @@ func TestInstallmentCannotBeCancelledAndHidden(t *testing.T) {
 	if err := s.ReserveRequest(ctx, acc, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := historicalSettlement(s, ctx, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 500000, SubmissionKey: "integration-cancel-second"}, "settled", "", nil); err != nil {
+	if _, err := historicalSettlement(ctx, s, acc, id, PaymentInput{PaidOn: "2026-06-16", Amount: 500000, SubmissionKey: "integration-cancel-second"}, "settled", "", nil); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -113,7 +113,7 @@
 <p>Reassigning is the way out. It moves the decision to another approver, keeping the request's number, its amount and its whole history.</p>
 <h2 id="reassigning-an-approval">Reassigning an approval</h2>
 <ol class="steps">
-<li>Open the request. The control sits in the bar along the bottom, at the far right.</li>
+<li>Open the request. The control sits in the bar along the bottom, at the far right. On a request in partial review it is on the request page, not on the partial-review screen.</li>
 <li>Select <strong>Reassign approval</strong>.<p class="step-note">The panel names the person who currently holds it — <em>Currently with Karthik Bose</em>.</p></li>
 <li>Choose the new approver from <strong>Send it to</strong>. The list starts on <em>Choose an approver</em>.<figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/manager/reassign-sheet.png" aria-label="Enlarge: ">
@@ -133,7 +133,7 @@
 <h2 id="who-may-reassign">Who may reassign</h2>
 <p>Two people. The approver the request was sent to may hand it on — it is theirs to decide, so it is theirs to give away. And an administrator may move any request, which is the way out when the named approver is on leave, has left or has lost the approver role: the case that most needs rescuing is a request routed to somebody who can no longer act, and if only that person could hand it on there would be no way out of it. So if a colleague has left mid-decision, ask an administrator; you do not need the colleague to do anything.</p>
 <p>Nobody else. Another manager who can see the request cannot move it, and nobody — not even an administrator — can reassign a request to themselves. Being able to see a request is not the same as being able to decide it, and reassigning must not become a way of making it yours.</p>
-<aside class="callout callout-note"><p>The control appears while the request is waiting on its approver — <code>pending</code>, returned for correction, awaiting a cancellation decision, or in partial review — and only to somebody who may use it, when there is somebody else to send it to. If no other eligible approver exists in the organisation, the button is not drawn at all — there is no message, because there is nothing to offer. Ask an administrator to give somebody the approver role.</p></aside>
+<aside class="callout callout-note"><p>The control appears while the request is waiting on its approver — <code>pending</code>, returned for correction, awaiting a cancellation decision, or in partial review — and only to somebody who may use it. If nobody else in the organisation can approve, the button still appears but every name in <strong>Send it to</strong> is greyed out, so there is nobody to choose. Ask an administrator to give somebody the approver role.</p></aside>
 <h2 id="what-changes-and-what-does-not">What changes and what does not</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col"></th><th scope="col">After a reassignment</th></tr></thead><tbody>
 <tr><td>The request number</td><td>Unchanged</td></tr>
@@ -150,10 +150,11 @@
 <tr><td><em>Choose the approver this request should go to.</em></td><td>No name was picked from the list.</td></tr>
 <tr><td><em>Give a reason for the reassignment.</em></td><td>The <strong>Why</strong> box was empty.</td></tr>
 <tr><td><em>Only the approver this request was sent to, or an administrator, can reassign it.</em></td><td>You are not the approver named on it. Ask them, or an administrator.</td></tr>
-<tr><td>A message saying an approved (or completed, rejected, withdrawn or cancelled) request cannot be reassigned</td><td>Nothing is waiting on an approver: it is with Accounts, or it is closed.</td></tr>
-<tr><td>A message saying you cannot reassign a request to yourself</td><td>You picked your own name. A request is never handed to the person moving it.</td></tr>
-<tr><td>A message saying that person cannot approve requests</td><td>The chosen account no longer carries the approver role. Pick another, or ask an administrator.</td></tr>
-<tr><td>A message saying a request cannot be reassigned to its own requester</td><td>You picked the person who raised it. Nobody may approve their own request.</td></tr>
+<tr><td>A message such as <em>an approved request cannot be reassigned</em> (or a request with Accounts, a completed, rejected, withdrawn or cancelled one)</td><td>Nothing is waiting on an approver: it is with Accounts, or it is closed.</td></tr>
+<tr><td><em>this request is with … now, so it is not yours to reassign</em></td><td>Somebody moved the request to another approver after you opened it.</td></tr>
+<tr><td><em>you cannot reassign a request to yourself</em></td><td>You picked your own name. A request is never handed to the person moving it.</td></tr>
+<tr><td><em>that person cannot approve requests — choose one of the approvers offered</em></td><td>The chosen account is deactivated or no longer carries the approver role. Pick another, or ask an administrator.</td></tr>
+<tr><td><em>a request cannot be reassigned to its own requester</em></td><td>You picked the person who raised it. Nobody may approve their own request.</td></tr>
 </tbody></table></div>
 <aside class="callout callout-tip"><p>Reassigning is not a way to avoid a decision you find awkward. It is recorded with your name and your reason, in a stream the requester reads. Say something true and specific — <em>I am on leave from Friday</em> rather than <em>not mine</em>.</p></aside>
 <dl class="faq"><dt>Can I reassign a request to myself?</dt><dd><p>No — nobody can, an administrator included. A stranded request is picked up by an administrator moving it to you, and that move is recorded with their name and reason. Nor can a request be reassigned to the person who raised it.</p></dd>

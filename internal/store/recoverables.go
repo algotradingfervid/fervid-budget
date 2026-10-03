@@ -1,23 +1,23 @@
+// recoverables.go covers money that is expected to come back: deposits,
+// guarantees and advances raised with the "recoverable" treatment. It holds the
+// admin-managed recoverable categories (with their migration and seed) and the
+// recoverables register: the list, the dashboard tiles and the grouped totals.
+// Every register query applies the viewer's request scope in SQL.
 package store
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
 
-// recoverableCategorySeed is the six default categories.
-//
-// code is the bridge to Phase 2. payment_requests.recoverable_category already
-// stores exactly these codes, and validateRequestInput keyed its hardcoded
-// rules map on them, so the code — not the display name — is the stable
-// identity. name is the admin-editable label the screens show.
-//
-// The flags reproduce recoverableCategoryRules exactly. Moving validation from
-// that map onto these rows must change no behaviour, and
-// TestSeededCategoriesMatchPhase2Rules fails if the two ever drift.
+// recoverableCategorySeed is the six default categories. code is the stable
+// identity that payment_requests.recoverable_category stores; name is the
+// label an admin may rename. The flags match recoverableCategoryRules exactly,
+// and TestSeededCategoriesMatchPhase2Rules fails if the two ever drift.
 var recoverableCategorySeed = []struct {
 	code, name     string
 	proj, cp, sort int
@@ -31,9 +31,9 @@ var recoverableCategorySeed = []struct {
 }
 
 // upRecoverableCategories is migration v6: it creates the admin-configurable
-// recoverable_categories table, seeds the six defaults and links the requests
-// Phase 2 already wrote. It is idempotent — re-running on a migrated database
-// inserts nothing new and re-links nothing.
+// recoverable_categories table, seeds the six defaults and links existing
+// requests to them. It is idempotent: re-running it on a migrated database
+// inserts and re-links nothing.
 func upRecoverableCategories(tx *sql.Tx) error {
 	if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS recoverable_categories (
@@ -60,14 +60,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recoverable_categories_name_nocase ON reco
 	return backfillRecoverableCategoryIDs(tx)
 }
 
-// backfillRecoverableCategoryIDs links payment_requests rows to their category
-// row by the Phase-2 code.
-//
-// Phase 2 wrote recoverable_category (the code) and hardcoded
-// recoverable_category_id to NULL because recoverable_categories did not exist
-// yet. Every Phase-4 register query joins on the id, so without this an
-// installed database renders a blank category for every request ever raised.
-// It only fills NULLs, so it never overwrites a deliberate later change.
+// backfillRecoverableCategoryIDs sets recoverable_category_id on requests
+// written before the categories table existed, matching on the stored category
+// code. The register joins on the id, so without this older requests would show
+// a blank category. It only fills NULLs, so it never overwrites a later change.
 func backfillRecoverableCategoryIDs(tx *sql.Tx) error {
 	_, err := tx.Exec(`UPDATE payment_requests
 		SET recoverable_category_id = (SELECT rc.id FROM recoverable_categories rc WHERE rc.code = payment_requests.recoverable_category)
@@ -113,9 +109,8 @@ func categoryCode(name string) string {
 }
 
 // recoverableRules is the rule set validateRequestInput enforces, read from the
-// table rather than the built-in map so a category an admin adds is usable at
-// once (V4). Only active categories are offered, so deactivating one stops new
-// requests naming it — which is the whole point of the Active switch.
+// table so a category an admin adds is usable at once. Only active categories
+// are included, so deactivating one stops new requests from naming it.
 func (s *Store) recoverableRules(ctx context.Context) (map[string]recoverableRule, error) {
 	cats, err := s.ListRecoverableCategories(ctx, true)
 	if err != nil {
@@ -130,14 +125,14 @@ func (s *Store) recoverableRules(ctx context.Context) (map[string]recoverableRul
 
 // recoverableCategoryLink resolves a request's category code to the row id
 // stored in payment_requests.recoverable_category_id, or nil when the request
-// is not recoverable. Every Phase-4 register query joins on that id.
+// is not recoverable. The register queries join on that id.
 func (s *Store) recoverableCategoryLink(ctx context.Context, treatment, code string) (any, error) {
 	if treatment != "recoverable" || strings.TrimSpace(code) == "" {
 		return nil, nil
 	}
 	var id int64
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // validation already rejected unknown codes
 	}
 	if err != nil {
@@ -146,10 +141,13 @@ func (s *Store) recoverableCategoryLink(ctx context.Context, treatment, code str
 	return id, nil
 }
 
+// recoverableCategorySelect reads recoverable_categories rows for
+// scanRecoverableCategory.
 const recoverableCategorySelect = `SELECT id,code,name,requires_project,requires_counterparty,active,sort_order,created_at
 	FROM recoverable_categories`
 
-func scanRecoverableCategory(sc interface{ Scan(...any) error }) (RecoverableCategory, error) {
+// scanRecoverableCategory reads one recoverableCategorySelect row.
+func scanRecoverableCategory(sc rowScanner) (RecoverableCategory, error) {
 	var c RecoverableCategory
 	var rp, rc, active int
 	if err := sc.Scan(&c.ID, &c.Code, &c.Name, &rp, &rc, &active, &c.SortOrder, &c.CreatedAt); err != nil {
@@ -159,6 +157,8 @@ func scanRecoverableCategory(sc interface{ Scan(...any) error }) (RecoverableCat
 	return c, nil
 }
 
+// ListRecoverableCategories lists the categories in display order, only the
+// active ones when activeOnly is set.
 func (s *Store) ListRecoverableCategories(ctx context.Context, activeOnly bool) ([]RecoverableCategory, error) {
 	q := recoverableCategorySelect
 	if activeOnly {
@@ -181,12 +181,15 @@ func (s *Store) ListRecoverableCategories(ctx context.Context, activeOnly bool) 
 	return out, rows.Err()
 }
 
+// UpsertRecoverableCategory creates a category (id 0) or updates one, and
+// returns its id. A new category's code is derived from its name; an existing
+// category keeps its code, because requests resolve their rules by it.
 func (s *Store) UpsertRecoverableCategory(ctx context.Context, actor User, id int64, name string, requiresProject, requiresCounterparty, active bool, sortOrder int) (int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return 0, fmt.Errorf("%w: recoverable category name is required", ErrValidation)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -226,41 +229,13 @@ func (s *Store) UpsertRecoverableCategory(ctx context.Context, actor User, id in
 	return savedID, nil
 }
 
-// DeleteRecoverableCategory removes a category outright, refusing while any
-// request still points at it (F-E-06).
-//
-// recoverable_category:delete has been a grantable permission since Phase 4 with
-// nothing behind it: the only mutating route calls UpsertRecoverableCategory,
-// which only ever INSERTs or UPDATEs, so an administrator could grant "delete"
-// on this resource and buy exactly nothing. This is the store half of consuming
-// it.
-//
-// The refusal, not the delete, is the point. payment_requests.recoverable_category_id
-// deliberately carries no REFERENCES clause — the v3 schema comment explains why
-// (a forward foreign key to a table Phase 4 had not created yet would have made
-// every request write fail) — so the database will NOT stop a delete from
-// orphaning history. Nothing would break loudly: the register would render a
-// blank category for every affected request and the rules that category enforced
-// would quietly stop applying. So the pre-check is the only guard there is, and
-// it runs inside the same transaction as the DELETE, which is what stops a
-// request raised between the count and the write from being orphaned anyway.
-//
-// It mirrors DeleteRole's holder pre-check exactly: an ErrForbidden carrying the
-// count, so the handler can say how many rather than "you do not have
-// permission". The count asks the same question ListRecoverableCategoriesWithUsage
-// answers as InUse — the number of requests whose recoverable_category_id is this
-// row — so the Delete button's refusal and the "in use" figure printed beside it
-// can never disagree. TestDeleteRecoverableCategoryRefusalAgreesWithInUse pins that.
-//
-// Deactivating (active=0) remains the ordinary way to retire a category, and is
-// the only thing that works once it has been used. That is the Phase-4 design
-// ("no hard delete... a category may be referenced by historical requests"), and
-// this makes the permission honest without softening it: delete is for a
-// category added by mistake, before anything has named it.
+// DeleteRecoverableCategory removes a category that no request uses yet, such
+// as one added by mistake. A category in use is refused with ErrForbidden and
+// the number of requests using it; deactivating it is the way to retire it. The
+// check runs in the same transaction as the delete, because the database has no
+// foreign key that would stop a delete from orphaning requests. The count is
+// the same one ListRecoverableCategoriesWithUsage shows as InUse.
 func (s *Store) DeleteRecoverableCategory(ctx context.Context, actor User, id int64) error {
-	// beginWriteTx takes the write lock with the transaction's first statement:
-	// this is a read-then-write, the shape that hands the loser SQLITE_BUSY when
-	// the transaction starts as a reader.
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
@@ -269,7 +244,7 @@ func (s *Store) DeleteRecoverableCategory(ctx context.Context, actor User, id in
 
 	var name string
 	err = tx.QueryRowContext(ctx, `SELECT name FROM recoverable_categories WHERE id=?`, id).Scan(&name)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -294,6 +269,7 @@ func (s *Store) DeleteRecoverableCategory(ctx context.Context, actor User, id in
 	return tx.Commit()
 }
 
+// pluralRequests is "request" or "requests" for n.
 func pluralRequests(n int) string {
 	if n == 1 {
 		return "request"
@@ -301,6 +277,8 @@ func pluralRequests(n int) string {
 	return "requests"
 }
 
+// ListRecoverableCategoriesWithUsage lists every category with the number of
+// requests that use it, for the configuration screen.
 func (s *Store) ListRecoverableCategoriesWithUsage(ctx context.Context) ([]RecoverableCategoryUsage, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.code,c.name,c.requires_project,c.requires_counterparty,c.active,c.sort_order,c.created_at,
 		(SELECT COUNT(*) FROM payment_requests pr WHERE pr.recoverable_category_id=c.id)
@@ -328,36 +306,31 @@ func (s *Store) ListRecoverableCategoriesWithUsage(ctx context.Context) ([]Recov
 // that died before any money left never held money, so it is not outstanding.
 const recoverableBaseWhere = `pr.treatment='recoverable' AND (pr.status NOT IN ('rejected','cancelled','withdrawn') OR EXISTS(SELECT 1 FROM payments live_pay WHERE live_pay.request_id=pr.id AND live_pay.voided_at IS NULL))`
 
-// Outstanding is actual payouts less immutable return/reconciliation events.
-// Aggregate payouts before joining so installments cannot duplicate a request.
+// recoverableAmount is a recoverable's outstanding balance: what was paid out
+// (voided payments excluded) less what came back (recovery events). It uses the
+// py and re aliases that recoverableJoins adds.
 const recoverableAmount = `COALESCE(py.amount,0)-COALESCE(re.amount,0)`
+
+// recoverableJoins adds, per request, the paid total, first payment id and
+// date (py) and the recovered total (re). Payments are summed before the join,
+// so a request paid in installments still appears once.
 const recoverableJoins = ` LEFT JOIN (SELECT request_id,MIN(id) AS id,SUM(amount) AS amount,MIN(paid_on) AS paid_on FROM payments WHERE voided_at IS NULL GROUP BY request_id) py ON py.request_id=pr.id
  LEFT JOIN (SELECT request_id,SUM(amount) AS amount FROM recovery_events GROUP BY request_id) re ON re.request_id=pr.id `
+
+// recoverableCounterparty is who owes the money back: the employee for an
+// employee advance, otherwise the counterparty, else the payee.
 const recoverableCounterparty = `CASE WHEN pr.type='employee_advance' AND pr.recoverable_category='employee_advance' THEN COALESCE(NULLIF(u.name,''),'Employee') ELSE COALESCE(NULLIF(pr.counterparty,''),NULLIF(pr.vendor_payee,''),'Not recorded') END`
 
 // recoverableScope is the row-visibility half of recoverableBaseWhere: the same
-// predicate the app's canViewRequest applies, expressed for the `pr` alias so
-// every recoverable read enforces it in SQL rather than after the fact.
-//
-// It mirrors canViewRequest and NOT requestWhere, deliberately. The two already
-// differ — requestWhere's "assigned" is `manager_id` alone, while canViewRequest
-// admits `manager_id OR requester_id` — and canViewRequest is the authority on
-// whether a caller may see a given row, because it is what /requests/{id} answers
-// with. A register that showed a row whose detail page 404s, or hid one whose
-// detail page opens, would be the same class of disagreement F-G-016 was.
-//
-// An unrecognised or empty scope returns `AND 0`: no rows. See RecoverableViewer.
+// request data scope the detail page applies, expressed in SQL for the `pr`
+// alias so every recoverable read enforces it in the query rather than after
+// the fact. The register is a second view over payment_requests, and a row it
+// shows whose detail page answers 404, or one it hides whose detail page opens,
+// would be a disagreement about who may see what. An unrecognised or empty
+// scope reads no rows. See RecoverableViewer.
 func recoverableScope(v RecoverableViewer) (string, []any) {
-	switch v.Scope {
-	case ScopeAll:
-		return "", nil
-	case "assigned":
-		return ` AND (pr.manager_id=? OR pr.requester_id=?)`, []any{v.ViewerID, v.ViewerID}
-	case "own":
-		return ` AND pr.requester_id=?`, []any{v.ViewerID}
-	default:
-		return ` AND 0`, nil
-	}
+	predicate, args := requestScopeSQL("pr", v.Scope, v.ViewerID)
+	return ` AND ` + predicate, args
 }
 
 // recoverableAgeing turns a row's payment state and its distance from the
@@ -381,6 +354,12 @@ func recoverableAgeing(paidOn, expectedReturn string, onHold bool, days int) (la
 	}
 }
 
+// RecoverableReport lists the recoverables the viewer may see, with what was
+// paid out, what has come back, what is outstanding and how the expected return
+// date compares to AsOf (today when zero). Filters combine with AND: a payment
+// month range (From/To), category, counterparty, an ageing bucket and a
+// free-text search. Order picks the sort; the default puts overdue rows first,
+// then the soonest expected return.
 func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOptions) ([]RecoverableRow, error) {
 	asOf := opts.AsOf
 	if asOf.IsZero() {
@@ -430,21 +409,20 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 		args = append(args, cp)
 	}
 	switch opts.Ageing {
-	case "outstanding":
+	case "outstanding", "overdue", "due30", "later":
 		q += ` AND (` + recoverableAmount + `)>0`
+	}
+	switch opts.Ageing {
 	case "overdue":
-		q += ` AND (` + recoverableAmount + `)>0`
 		// Paid rows only, as recoverableAgeing and RecoverableMetrics decide it:
 		// the tile links here, so the filter must list what the tile counts.
 		q += ` AND COALESCE(py.paid_on,'') <> '' AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date < ?`
 		args = append(args, today)
 	case "due30":
-		q += ` AND (` + recoverableAmount + `)>0`
 		q += ` AND COALESCE(pr.expected_return_date,'') <> '' AND pr.expected_return_date >= ?
 			AND julianday(pr.expected_return_date) - julianday(?) <= 30`
 		args = append(args, today, today)
 	case "later":
-		q += ` AND (` + recoverableAmount + `)>0`
 		q += ` AND (COALESCE(pr.expected_return_date,'') = '' OR julianday(pr.expected_return_date) - julianday(?) > 30)`
 		args = append(args, today)
 	case "unpaid":
@@ -452,9 +430,8 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 	case "recovered":
 		q += ` AND py.id IS NOT NULL AND (` + recoverableAmount + `)=0`
 	}
-	if search := strings.ToLower(strings.TrimSpace(opts.Query)); search != "" {
+	if search := escapeLike(opts.Query); search != "" {
 		q += ` AND (lower(pr.number) LIKE ? ESCAPE '\' OR lower(COALESCE(pr.counterparty,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(p.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(u.name,'')) LIKE ? ESCAPE '\' OR lower(COALESCE(pr.vendor_payee,'')) LIKE ? ESCAPE '\')`
-		search = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
 		needle := "%" + search + "%"
 		args = append(args, needle, needle, needle, needle, needle)
 	}
@@ -509,6 +486,10 @@ func (s *Store) RecoverableReport(ctx context.Context, opts RecoverableReportOpt
 	return out, rows.Err()
 }
 
+// RecoverableMetrics totals the register for the dashboard tiles: the
+// outstanding balance, the part overdue, the part due within 30 days of asOf,
+// and what was paid out on recoverables in asOf's month. It sums the same rows
+// RecoverableReport lists, so the tiles and the list always agree.
 func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time, viewer RecoverableViewer) (RecoverableMetrics, error) {
 	if asOf.IsZero() {
 		asOf = time.Now()
@@ -540,6 +521,9 @@ func (s *Store) RecoverableMetrics(ctx context.Context, asOf time.Time, viewer R
 	return m, err
 }
 
+// RecoverableRollups groups the outstanding recoverables by "category" or
+// "counterparty", with each group's count, outstanding and overdue amounts, and
+// oldest payment and expected-return dates, largest balance first.
 func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Time, viewer RecoverableViewer) ([]RecoverableRollup, error) {
 	if asOf.IsZero() {
 		asOf = time.Now()
@@ -556,9 +540,8 @@ func (s *Store) RecoverableRollups(ctx context.Context, by string, asOf time.Tim
 	default:
 		return nil, fmt.Errorf("%w: unknown recoverable rollup dimension %q", ErrValidation, by)
 	}
-	// The overdue column carries the same `paid <> ''` guard as the tile
-	// (F-E-05): the category and counterparty rows sit above a Total row that
-	// reads RecoverableMetrics, and must add up to it (recoverables-1).
+	// The overdue column counts only paid rows, like the overdue tile: these rows
+	// sit above a Total row read from RecoverableMetrics and must add up to it.
 	scopeClause, scopeArgs := recoverableScope(viewer)
 	args := append([]any{today}, scopeArgs...)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+label+` AS grp, `+detail+`,

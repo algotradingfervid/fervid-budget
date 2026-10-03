@@ -113,7 +113,7 @@
 <p>There are 21 resources and 66 permissions between them. Four roles ship with the product, and this is what each of them holds.</p>
 <div class="table-wrap"><table><caption>The four built-in roles, as they stand in this system today. Both the descriptions and the counts are read from the live data.</caption><thead><tr><th scope="col">Role</th><th scope="col">What it is for</th><th scope="col">Permissions held</th><th scope="col">People holding it</th></tr></thead><tbody>
 <tr><td>Requester</td><td>Raise and manage your own payment requests.</td><td>9 of 66</td><td>30</td></tr>
-<tr><td>Manager</td><td>Review and decide on payment requests.</td><td>10 of 66</td><td>12</td></tr>
+<tr><td>Manager</td><td>Review and decide on payment requests.</td><td>11 of 66</td><td>12</td></tr>
 <tr><td>Accounts</td><td>Process approved requests and record payments.</td><td>19 of 66</td><td>10</td></tr>
 <tr><td>Admin</td><td>Full administrative access.</td><td>All 66</td><td>4</td></tr>
 </tbody></table></div>
@@ -128,7 +128,7 @@
 <tr><td><code>approval</code></td><td><code>reject</code></td><td>—</td><td>✓</td><td>—</td><td>✓</td></tr>
 <tr><td><code>approval</code></td><td><code>return</code></td><td>—</td><td>✓</td><td>—</td><td>✓</td></tr>
 <tr><td><code>attachment</code></td><td><code>create</code></td><td>✓</td><td>—</td><td>✓</td><td>✓</td></tr>
-<tr><td><code>attachment</code></td><td><code>view</code></td><td>✓</td><td>—</td><td>✓</td><td>✓</td></tr>
+<tr><td><code>attachment</code></td><td><code>view</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
 <tr><td><code>audit</code></td><td><code>view</code></td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 <tr><td><code>backup</code></td><td><code>create</code></td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 <tr><td><code>backup</code></td><td><code>view</code></td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
@@ -188,7 +188,7 @@
 <tr><td><code>vendor_bank</code></td><td><code>edit</code></td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 <tr><td><code>vendor_bank</code></td><td><code>view</code></td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 </tbody></table></div>
-<p>The roles screen does not draw all 66 rows. It groups them into nine pages and seven action columns, so one tick there can stand for several permissions at once — the <strong>Approve</strong> cell on the Payment requests row covers all six <code>approval</code> actions together. Every row carries an Advanced disclosure listing its individual permissions, which is where you go when you need one of them and not the rest.</p>
+<p>The roles screen does not draw all 66 rows. It groups them into nine pages and seven action columns, so one tick there can stand for several permissions at once — the <strong>Approve</strong> cell on the Payment requests row covers five <code>approval</code> actions together (approve, reject, return, reassign and accept_partial), while the sixth, <code>approval:cancel</code>, sits in the <strong>Cancel</strong> cell with <code>request:withdraw</code> and <code>request:cancel</code>. Every row carries an Advanced disclosure listing its individual permissions, which is where you go when you need one of them and not the rest.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/admin/roles.png" aria-label="Enlarge: The roles screen with the Accounts role open. On the right, **Records it can see** is the data scope for that row.">
     <img src="../assets/shots/admin/roles.png" alt="The permission matrix: what each role may do, and how much data it may see." loading="lazy" width="1440">
@@ -219,7 +219,7 @@
 <p>A requester's menu has three live entries: Home, Notifications and <strong>My requests</strong>. Every other screen in the product is closed to them — the approvals queue, the payment queue, the payments ledger, the recoverables register, the variance grid, budgets, monthly plans, reports, vendors, projects, heads, and the whole of administration.</p>
 <aside class="callout callout-note"><p>Within their own requests a requester can do a great deal: raise, edit, withdraw, comment, attach documents, ask for a cancellation and re-raise a rejected request. What they cannot do is see anybody else's.</p></aside>
 <h3 id="manager">Manager</h3>
-<p>An approver adds <strong>Approvals</strong>, <strong>Variance grid</strong> and <strong>Reports</strong>. They cannot reach the payments ledger, the payment queue, the recoverables register, budgets, monthly plans, the vendor, project and head masters, or any administration screen. They can read the variance grid but not export it, and read reports but not export those either.</p>
+<p>An approver adds <strong>Approvals</strong>, <strong>Variance grid</strong> and <strong>Reports</strong>. They cannot reach the payments ledger, the payment queue, the recoverables register, budgets, monthly plans, the vendor, project and head masters, or any administration screen. They can read the variance grid but not export it, and read reports but not export those either, so neither screen shows them an export button. Without <code>payment:view</code> they also do not get the list of recent payments on the variance grid. They can open and download the documents attached to a request — the Manager role holds <code>attachment:view</code> — but cannot add any.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/manager/payments-refused.png" aria-label="Enlarge: The payments ledger opened by an approver. The role holds no `payment:view`, so the address answers 403.">
     <img src="../assets/shots/manager/payments-refused.png" alt="An approver opening the payments ledger. The approver role does not carry that permission." loading="lazy" width="1440">
@@ -228,7 +228,7 @@
 </figure>
 <h3 id="accounts">Accounts</h3>
 <p>The accounts role adds <strong>Accounts queue</strong>, <strong>Recoverables</strong> and <strong>Payments ledger</strong>, and keeps the variance grid and reports. It cannot reach the approvals queue — no approval permission at all — nor budgets, monthly plans, the masters or administration. It can export reports and the recoverables list, but not the variance grid.</p>
-<aside class="callout callout-warning"><p><code>reservation:reassign</code> is an administrator permission. An accountant can release a claim they hold themselves, but taking one off a colleague is not theirs to do. Somebody who tries is told &quot;Only the person holding this reservation can release it.&quot;</p></aside>
+<aside class="callout callout-warning"><p><code>reservation:reassign</code> is an administrator permission. An accountant can release a claim they hold themselves, but taking one off a colleague is not theirs to do. Somebody who opens the release screen for a colleague's claim is told &quot;Only the person holding this reservation can release it.&quot;; a release sent from a page that went out of date while the claim changed hands is refused with &quot;Only the assignee may release this request&quot;.</p></aside>
 <h3 id="admin">Admin</h3>
 <p>The administrator holds all 66 permissions and reaches every screen. The full menu is what that looks like.</p>
 <figure class="shot">
@@ -237,7 +237,7 @@
   </button>
   <figcaption>An administrator’s sidebar, here on the Configuration screen: Requests, Payments, Budget, Reports, Masters and Admin, every group present. </figcaption>
 </figure>
-<aside class="callout callout-note"><p>Holding every permission is still not holding every seat. Some acts are tied to the person, not the grant: only the person who raised a request may edit it or ask for it to be cancelled, and only the approver a request was sent to may decide it. An administrator holding <code>request:cancel</code> is still refused the cancellation form on somebody else's request.</p></aside>
+<aside class="callout callout-note"><p>Holding every permission is still not holding every seat. Some acts are tied to the person, not the grant: only the person who raised a request may edit it or ask for it to be cancelled, and only the approver a request was sent to may decide it. An administrator holding <code>request:cancel</code> is still refused the cancellation form on somebody else's request. The one exception runs the other way: holding <code>user:edit</code> as well as <code>approval:reassign</code> lets an administrator hand a request to a different approver when its own approver cannot act.</p></aside>
 <aside class="callout callout-tip"><p>Roles are data, not code. If a role is the wrong shape for how your organisation works, an administrator can change it or copy it into a new one — see <a href="../admin/roles-and-permissions.html">Roles and permissions</a>.</p></aside>
 <dl class="faq"><dt>My colleague can open a screen I cannot.</dt><dd><p>That is roles, not a fault. Each screen is tied to a permission, and your menu lists only what your roles carry. Ask an administrator if you need one added.</p></dd>
 <dt>I opened a request URL a colleague sent me and got &quot;not found&quot;, but they can see it.</dt><dd><p>Your data scope does not reach it. A Requester's scope is <code>own</code>, so anything raised by somebody else answers 404 whether or not it exists. See <a href="../reference/error-messages.html">Messages and refusals</a>.</p></dd>

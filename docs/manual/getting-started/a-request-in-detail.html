@@ -127,12 +127,13 @@
 <tr><td>The badge</td><td>The status in words. Here, &quot;Awaiting approval&quot;.</td></tr>
 <tr><td>The sentence beside it</td><td>Who owes the next move — &quot;Waiting on Manish Patel&quot; here. It reads &quot;Waiting on you&quot; in brand colour when that person is you.</td></tr>
 </tbody></table></div>
-<aside class="callout callout-note"><p>A request marked urgent carries a red <strong>Urgent</strong> flag in front of its status badge. A request Accounts has parked shows <strong>On hold</strong> in place of its normal badge, because that is the truth about it while the hold lasts.</p></aside>
+<aside class="callout callout-note"><p>A request marked urgent carries a red <strong>Urgent</strong> flag in front of its status badge. A request Accounts has parked shows <strong>On hold</strong> in place of its normal badge, because that is the truth about it while the hold lasts. While somebody in Accounts has the request reserved, the badge names them: &quot;With Accounts — taken by&quot; and their name, or &quot;taken by you&quot;.</p></aside>
 <h3 id="banners">Banners</h3>
 <p>Between the head and the details, the request may raise a banner about its own state. Each one carries the words the person responsible actually wrote, not a paraphrase.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Banner</th><th scope="col">When it appears</th></tr></thead><tbody>
 <tr><td><strong>Approved requests are locked</strong></td><td>You raised it, it is approved, and you can no longer edit it.</td></tr>
-<tr><td><strong>This request is on hold</strong></td><td>Accounts has parked it, with the reason they gave and a note that payment is blocked until they lift it.</td></tr>
+<tr><td><strong>This request is on hold</strong></td><td>Accounts has parked it, with the question they asked and a note that payment is blocked until they lift it. The person who raised it also gets an <strong>Add a document</strong> box and an <strong>Attach it</strong> button here, to send what Accounts asked for.</td></tr>
+<tr><td><strong>… raised a concern about the partial payment</strong></td><td>The approver has questioned a short payment and Accounts has not answered yet.</td></tr>
 <tr><td><strong>Payment is frozen</strong></td><td>A cancellation has been asked for, and nobody can reserve or pay the request until the approver decides.</td></tr>
 <tr><td><strong>… sent this back</strong></td><td>The approver returned it for correction, quoting what they wrote.</td></tr>
 <tr><td><strong>… rejected this</strong></td><td>The approver rejected it, quoting the reason.</td></tr>
@@ -158,25 +159,27 @@
 <p>Compare the two screenshots on this page. The vendor invoice above shows <strong>Vendor</strong>, <strong>Invoice number</strong> and <strong>Invoice date</strong>; the employee advance below shows <strong>Paid to</strong> and <strong>Advance reason</strong> instead. Nothing was hidden — those requests were never asked for those fields. <a href="../requester/choosing-a-request-type.html">Choosing a request type</a> explains which type asks for what.</p>
 <h2 id="payment-outcome">Payment outcome</h2>
 <figure class="shot">
-  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-completed.png" aria-label="Enlarge: The same screen after the money has gone out. A Payment outcome block has appeared between the details and the attachments.">
+  <button class="shot-btn" type="button" data-full="../assets/shots/requester/detail-completed.png" aria-label="Enlarge: The same screen after the money has gone out. Payment outcome and Payment history have appeared between the details and the attachments.">
     <img src="../assets/shots/requester/detail-completed.png" alt="A finished request, showing the payment recorded against it." loading="lazy" width="1440">
   </button>
-  <figcaption>The same screen after the money has gone out. A Payment outcome block has appeared between the details and the attachments. </figcaption>
+  <figcaption>The same screen after the money has gone out. Payment outcome and Payment history have appeared between the details and the attachments. </figcaption>
 </figure>
-<p>Once a payment has been recorded against the request, a <strong>Payment outcome</strong> block appears. It sets what was approved beside what was actually paid, and names the difference — because a difference that has been agreed and a difference that is still owed must never read the same.</p>
+<p>Once a payment has been recorded against the request, a <strong>Payment outcome</strong> block appears. It sets what was approved beside what has been paid so far, and names the difference — because a difference that has been agreed and a difference that is still owed must never read the same. Its third line depends on where the request stands.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Line</th><th scope="col">What it means</th></tr></thead><tbody>
 <tr><td>Approved</td><td>The figure the approver signed off.</td></tr>
-<tr><td>Paid on <em>(date)</em></td><td>What Accounts actually paid, and when.</td></tr>
-<tr><td><strong>Difference · confirmed settled by Accounts</strong></td><td>The payment closed the request. In the screenshot the difference is <code>₹0.00</code>.</td></tr>
-<tr><td><strong>Still owed to the payee</strong></td><td>Accounts paid short and said so. The balance has not been written off.</td></tr>
+<tr><td>Total paid to date</td><td>Everything Accounts has paid against the request so far, across every payment.</td></tr>
+<tr><td><strong>Difference · confirmed settled by Accounts</strong></td><td>The request is completed. In the screenshot the difference is <code>₹0.00</code>. If Accounts closed it for less than the approved figure, the line reads <strong>Difference · agreed deduction or adjustment · confirmed settled by Accounts</strong>.</td></tr>
+<tr><td><strong>Still owed to the payee · remaining approved balance</strong></td><td>Part has been paid and the rest is still approved for payment — an installment.</td></tr>
+<tr><td><strong>Still owed to the payee · awaiting manager decision</strong></td><td>Accounts paid short and has asked the approver to decide about the rest.</td></tr>
+<tr><td><strong>Balance written off · shortfall accepted by …</strong></td><td>The approver accepted the short payment, and the balance will not be paid.</td></tr>
 </tbody></table></div>
-<p>When Accounts records a genuine short payment, their explanation appears under the block in a banner of its own. <a href="../requester/getting-paid.html">Getting paid</a> covers this from the raiser's side and <a href="../manager/shortfall-review.html">Reviewing a shortfall</a> from the approver's.</p>
+<p>When Accounts gives a reason for paying less, it appears under the block in a banner headed with their name and &quot;provided this settlement reason&quot;. Under that, <strong>Payment history</strong> lists every payment linked to the request — its number, date, amount and reference — so a request paid in installments shows each one. <a href="../requester/getting-paid.html">Getting paid</a> covers this from the raiser's side and <a href="../manager/shortfall-review.html">Reviewing a shortfall</a> from the approver's.</p>
 <h2 id="attachments">Attachments</h2>
-<p>Under the details sits <strong>Attachments</strong>, with a file count on the right. Each document is one row: an icon for its kind, the file name, its size, and the date it was added. A <strong>Download</strong> button on the right appears if your permissions let you open documents. With nothing attached the section reads &quot;No documents attached&quot;, as it does in both screenshots on this page.</p>
-<p>Adding documents is done from the request form and the edit form, not from here. See <a href="../requester/attachments.html">Attaching documents</a>.</p>
+<p>Under the details sits <strong>Attachments</strong>, with a file count on the right. Each document is one row: an icon for its kind, the file name, its size, and the date it was added. A <strong>Download</strong> button on the right appears if your permissions let you open documents — all four built-in roles, Requester, Manager, Accounts and Admin, can. With nothing attached the section reads &quot;No documents attached&quot;, as it does in both screenshots on this page.</p>
+<p>Adding documents is done from the request form and the edit form, not from here — except while the request is on hold, when its raiser can add one from the hold banner. See <a href="../requester/attachments.html">Attaching documents</a>.</p>
 <h2 id="history-and-conversation">History and conversation</h2>
 <p>The last section is the request's whole life in order, oldest first, under the heading <strong>History and conversation</strong>. The line beside it states the rule plainly: everyone who can see this request sees this whole stream. There is no private channel on a request.</p>
-<p>The finished request above shows four entries: &quot;Rahul Gupta submitted request PR-2026-000537 for ₹5,300.00&quot;, &quot;Manish Patel approved request PR-2026-000537 for ₹5,300.00&quot; with the field it changed shown underneath as <strong>Approved amount</strong> and its new value, then the accountant's two lines — &quot;Harsh Agarwal reserved the request for processing&quot; and &quot;Harsh Agarwal settled the request as completed&quot;. Every line starts with the name of the person who did it, and each carries the date and time it happened.</p>
+<p>The finished request above shows four entries: &quot;Rahul Gupta submitted request PR-2026-000537 for ₹5,300.00&quot;, &quot;Manish Patel approved request PR-2026-000537 for ₹5,300.00&quot; with the field it changed shown underneath as <strong>Approved amount</strong> and its new value, then the accountant's two lines — reserving the request for processing, and settling it as completed. Each line carries the date and time it happened. Lines written today start with the name of the person who acted, for example &quot;Harsh Agarwal reserved the request for processing&quot;; the two accountant lines in this screenshot were recorded before that and read without a name.</p>
 <p>Comments and attached documents appear in the same stream, in place. Below it, if you are allowed to comment, is an <strong>Add a comment</strong> box and a <strong>Post comment</strong> button. The box says what it does: anyone who can see this request will see your comment.</p>
 <aside class="callout callout-warning"><p>Nothing in the thread can be edited or deleted, including your own comments. It is the record of what happened. Read a comment back before you post it.</p></aside>
 <h2 id="the-action-bar">The action bar</h2>
@@ -189,15 +192,17 @@
 <p>The row of buttons at the foot is the only part of this screen that differs between people. It is built from two things: what your permissions allow, and where you sit on this particular request — whether you raised it, and whether it was sent to you to decide. The request's current status then decides which of those actions still make sense.</p>
 <p>In the approver's screenshot the bar reads <strong>Reject</strong>, <strong>Return for correction</strong>, <strong>Approve ₹80,700.00</strong> and <strong>Reassign approval</strong>. On the raiser's screenshot of a request in the same state, the same bar reads <strong>Edit request</strong> and <strong>Withdraw</strong>. Same screen, same status, different seat.</p>
 <div class="table-wrap"><table><caption>Each control also needs the matching permission. Holding the seat is not enough on its own.</caption><thead><tr><th scope="col">Control</th><th scope="col">Offered to</th><th scope="col">While the request is</th></tr></thead><tbody>
-<tr><td><strong>Edit request</strong></td><td>The person who raised it</td><td>Awaiting approval, or returned for correction</td></tr>
+<tr><td><strong>Edit request</strong></td><td>The person who raised it</td><td>Awaiting approval</td></tr>
+<tr><td><strong>Edit every field</strong>, <strong>Save corrections</strong>, <strong>Resubmit for approval</strong></td><td>The person who raised it, on the correction screen that opens in place of this one</td><td>Returned for correction</td></tr>
 <tr><td><strong>Withdraw</strong></td><td>The person who raised it</td><td>Awaiting approval</td></tr>
-<tr><td><strong>Request cancellation</strong></td><td>The person who raised it</td><td>Approved</td></tr>
+<tr><td><strong>Request cancellation</strong></td><td>The person who raised it</td><td>Approved, with nothing paid against it yet</td></tr>
 <tr><td><strong>Raise it again</strong></td><td>The person who raised it</td><td>Rejected</td></tr>
 <tr><td><strong>Approve …</strong>, <strong>Return for correction</strong>, <strong>Reject</strong></td><td>The approver it was sent to</td><td>Awaiting approval</td></tr>
-<tr><td><strong>Reassign approval</strong></td><td>Anybody who may reassign approvals</td><td>Awaiting approval</td></tr>
-<tr><td><strong>Cancel with reason</strong></td><td>The approver it was sent to</td><td>Approved</td></tr>
+<tr><td><strong>Reassign approval</strong></td><td>The approver it was sent to, or an administrator who may edit users — either way holding the reassign permission</td><td>Awaiting approval, returned for correction, cancellation requested, or paid short and back with the approver</td></tr>
+<tr><td><strong>Cancel with reason</strong></td><td>The approver it was sent to</td><td>Approved, with nothing paid against it yet</td></tr>
 <tr><td><strong>Decide the cancellation</strong></td><td>The approver it was sent to</td><td>Cancellation requested</td></tr>
 <tr><td><strong>Decide the partial payment</strong></td><td>The approver it was sent to</td><td>Paid short and back with the approver</td></tr>
+<tr><td><strong>Record payment</strong></td><td>The accounts team</td><td>Approved, claimed by nobody and not on hold</td></tr>
 <tr><td><strong>Put on hold</strong></td><td>The accounts team</td><td>Approved and not already held</td></tr>
 <tr><td><strong>Keep on hold</strong>, <strong>Release hold</strong></td><td>The accounts team</td><td>On hold</td></tr>
 <tr><td><strong>View the payment</strong></td><td>Anybody who may see payments</td><td>Carrying a recorded payment</td></tr>

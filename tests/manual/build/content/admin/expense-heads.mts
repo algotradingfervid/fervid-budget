@@ -1,4 +1,4 @@
-import { page, prose, section, shot, steps, note, warning, tip, table, fields, faq } from '../../schema.mts';
+import { page, prose, section, subsection, shot, steps, note, warning, tip, table, fields, faq } from '../../schema.mts';
 
 export default page({
   section: 'admin',
@@ -19,16 +19,19 @@ export default page({
     section('The screen'),
     shot('admin/heads', 'The heads list. Every head in the company, grouped by project and editable in place.'),
     prose(
-      'The dataset behind this capture has 229 heads across 24 projects, so the table is long. It is ' +
-      'ordered by project and then by head, and each row is its own little form with its own **Save**.',
+      'The screen is titled **Heads** and sits under **Masters** in the side menu. The dataset behind ' +
+      'this capture has 230 heads across 25 projects, so the table is long. It is ordered by project ' +
+      'and then by head, and each row is its own little form with its own **Save**.\n\n' +
+      'Without permission to edit heads, the row boxes are greyed out and the last column reads ' +
+      '`Read only`. The add form appears only for someone allowed to create heads.',
     ),
     table(
       ['Column', 'What it holds'],
       [
-        ['Project', 'Which project the head belongs to. A select, so it can be changed — see the warning below.'],
+        ['Project', 'Which project the head belongs to. A select, but a head that has been used cannot move — see the warning below.'],
         ['Head', 'The name of the line.'],
         ['Due', 'The day of the month the spend is expected by. It drives the grid’s `Overdue` markers.'],
-        ['Status', '`Active` or retired. Untick to retire.'],
+        ['Status', 'A tick box reading `Active`, or `Inactive` once the head is retired. Untick to retire.'],
         ['Order', 'Where the head sits within its project. Lower first; ties fall back to alphabetical.'],
         ['Update', 'The **Save** for that row.'],
       ],
@@ -42,8 +45,8 @@ export default page({
       },
       { text: 'Type a **Head name**.' },
       {
-        text: 'Type a **Due day**.',
-        note: 'A day of the month from 1 to 31. Anything else is refused with `due day must be a day from 1 to 31`.',
+        text: 'Type a **Due day** if the head has a usual payment day.',
+        note: 'A day of the month from 1 to 31, or leave it blank. Anything else is refused with `due day must be a day from 1 to 31`.',
       },
       { text: 'Set **Order** if the head should sit somewhere particular within its project.' },
       { text: 'Leave **Active** ticked.' },
@@ -54,7 +57,7 @@ export default page({
     ]),
     fields([
       { name: 'Project', required: true, note: 'Required. Active projects only.' },
-      { name: 'Head name', required: true, note: 'Required. An empty name is refused with `project and head name are required`.' },
+      { name: 'Head name', required: true, note: 'Required. A name of only spaces is refused with `project and head name are required`. Two heads in the same project cannot share a name: that is refused with `A record with this name already exists.`' },
       { name: 'Due day', required: false, note: 'A number from 1 to 31, or blank. It is what the variance grid uses to decide whether a head is overdue in the month you are looking at.' },
       { name: 'Order', required: false, note: 'Sort position within the project.' },
       { name: 'Active', required: false, note: 'Untick to retire the head. See below.' },
@@ -70,10 +73,10 @@ export default page({
       'booked against it follows the new name.',
     ),
     warning(
-      'Changing the **Project** on a row is not a cosmetic move. It takes every payment ever recorded ' +
-      'against that head into the other project’s variance, retrospectively, and there is no undo ' +
-      'beyond setting it back. Change it only when a head genuinely belongs somewhere else, and check ' +
-      'the variance grid afterwards.',
+      'You can change the **Project** on a row only while the head has never been used. Once it has a ' +
+      'budget figure, a payment or a request against it, saving it under another project is refused ' +
+      'with `a head with financial history cannot move between projects; create a new head`. Create ' +
+      'the head again under the right project and retire the old one instead.',
       'Moving a head between projects',
     ),
     note(
@@ -85,11 +88,29 @@ export default page({
 
     section('Retiring a head'),
     prose('There is no delete. Untick **Active** and save the row.'),
+    subsection('The warning page'),
+    prose(
+      'If requests that could still end in a payment are filed under the head — pending, returned, ' +
+      'approved, awaiting a cancellation decision, being processed or under partial review — saving ' +
+      'does not happen straight away. A page headed with the head name, for example **Deactivate Payroll?**, opens ' +
+      'instead, saying "Nothing has been saved yet." It gives the count of unfinished requests, ' +
+      'explains that "A payment needs an active head, so none of these can be paid while it is ' +
+      'inactive. Reactivate the head to pay them.", and lists each request with its number, title, ' +
+      'status and amount.',
+    ),
+    steps([
+      { text: 'Open any request in the list if you want to check it first — each number is a link.' },
+      { text: 'Tick **I understand these requests cannot be paid until the head is active again**.' },
+      {
+        text: 'Select **Deactivate anyway**.',
+        note: '**Cancel** goes back to the heads screen and changes nothing.',
+      },
+    ]),
     fields([
       {
         name: 'New requests and payments',
         required: false,
-        note: 'A payment booked against a retired head is refused with `This project/head is inactive.`',
+        note: 'The request form no longer offers the head, and a request that still names it is refused with `that budget head has been retired — choose a head that is still open`. A payment booked against a retired head is refused with `This project/head is inactive.`',
       },
       {
         name: 'Budgets',
@@ -110,7 +131,8 @@ export default page({
 
     tip(
       'Retire a head at the end of a month rather than in the middle of one. Anything approved against ' +
-      'it before you retire it still has to be paid, and the payment will be refused.',
+      'it before you retire it still has to be paid, and the payment will be refused until the head is ' +
+      'active again. The warning page lists those requests, so read it rather than ticking through it.',
     ),
 
     faq([
@@ -120,7 +142,7 @@ export default page({
       },
       {
         q: 'What does the Due day actually change?',
-        a: 'It is the day the spend is expected by, and it is what the variance grid uses to mark a head `Overdue` when the month has moved past it and nothing has been paid. It changes no approval and blocks nothing.',
+        a: 'It is the day the spend is expected by, and it is what the variance grid uses to mark a head `Overdue` when it has a budget, the day has passed and nothing has been paid. It changes no approval and blocks nothing.',
       },
       {
         q: 'Can I delete a head I created by mistake this morning?',

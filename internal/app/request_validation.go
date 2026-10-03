@@ -1,13 +1,17 @@
 package app
 
 import (
-	"fervidbudget/internal/store"
 	"strings"
-	"time"
+
+	"fervidbudget/internal/store"
 )
 
-// All currently applicable field errors are shown together; store validation
-// remains the authority at write time.
+// Per-field error messages for the request form.
+
+// requestFieldErrors checks the posted request and returns a message for every
+// field that needs fixing, keyed by the field's id in the form, so all of them
+// can be shown at once. It repeats only the basic rules; the store's
+// validation on save is the one that decides.
 func requestFieldErrors(in store.RequestInput) map[string]string {
 	out := map[string]string{}
 	require := func(id, value, message string) {
@@ -16,7 +20,7 @@ func requestFieldErrors(in store.RequestInput) map[string]string {
 		}
 	}
 	date := func(id, value, message string) {
-		if _, err := time.Parse("2006-01-02", value); err != nil {
+		if !validDateInput(value) {
 			out[id] = message
 		}
 	}

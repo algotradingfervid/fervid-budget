@@ -112,22 +112,28 @@
 <p>The vendor master is the list of everybody the company pays that is not an employee. A requester picks from it rather than typing a name, so the same supplier is spelt the same way on every request, and the reporting can add them up.</p>
 <p>A vendor record has four ordinary parts — identity, statutory numbers, contact details and notes — and one restricted part, the bank block, which is covered on its own page: <a href="../admin/vendor-bank-details.html">Vendor bank details</a>.</p>
 <h2 id="the-vendor-list">The vendor list</h2>
-<p>The line under the heading is a summary of the master itself: how many vendors are active, how many are missing a GSTIN, and the reminder that bank details are visible only with permission.</p>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/admin/vendors.png" aria-label="Enlarge: The vendor list. The sub-line under the heading counts what is there and what is missing.">
+    <img src="../assets/shots/admin/vendors.png" alt="Every vendor, with how much has been paid to each." loading="lazy" width="1440">
+  </button>
+  <figcaption>The vendor list. The sub-line under the heading counts what is there and what is missing. </figcaption>
+</figure>
+<p>The line under the heading is a summary of the master itself: how many vendors are active, how many active vendors are missing a GSTIN, and the reminder that bank details are visible only with permission.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Column</th><th scope="col">What it shows</th></tr></thead><tbody>
-<tr><td>Vendor</td><td>The name, linking to the record. Its categories, if any, sit underneath.</td></tr>
+<tr><td>Vendor</td><td>The short name if the vendor has one, otherwise the full name, linking to the record. When a short name is shown, the full name sits underneath, followed by the categories, if any.</td></tr>
 <tr><td>Type</td><td><code>Company</code>, <code>Proprietor</code> or <code>Individual</code>.</td></tr>
 <tr><td>GSTIN</td><td>The number, or a <code>Missing</code> pill.</td></tr>
 <tr><td>City</td><td>From the contact block, or an em dash.</td></tr>
-<tr><td>Paid this year</td><td>What has actually gone out to this vendor.</td></tr>
-<tr><td>Open requests</td><td>How many requests naming this vendor are still in flight.</td></tr>
+<tr><td>Paid this year</td><td>What has actually gone out to this vendor this calendar year, voided payments excluded. It reads <code>Restricted</code> unless your role can view every payment, not only some.</td></tr>
+<tr><td>Open requests</td><td>How many requests naming this vendor are still in flight. It reads <code>Restricted</code> unless your role can view every request, not only some.</td></tr>
 <tr><td>Status</td><td><code>Active</code> or <code>Inactive</code>.</td></tr>
 </tbody></table></div>
-<p>The row across the foot totals the two figures for whatever the filters left on screen, and says how many of the whole master you are looking at.</p>
+<p>The row across the foot totals the two figures for whatever the filters left on screen, and says how many of the whole master you are looking at. The list is sorted by name and shows at most 300 vendors; narrow the filters if the one you want is not there.</p>
 <h3 id="the-gstin-banner">The GSTIN banner</h3>
-<p>When any vendor has no GSTIN, a banner appears above the filters counting them. It is a nudge, not a block — the wording is explicit that &quot;They can still be paid. The gap shows up in vendor reporting until someone fills it in.&quot; <strong>Show them</strong> filters the list down to exactly those vendors, and <strong>Show all</strong> puts it back.</p>
+<p>When any active vendor has no GSTIN, a banner appears above the filters counting them. It is a nudge, not a block — the wording is explicit that &quot;They can still be paid. The gap shows up in vendor reporting until someone fills it in.&quot; <strong>Show them</strong> filters the list down to exactly those vendors, and <strong>Show all</strong> puts it back.</p>
 <h3 id="finding-a-vendor">Finding a vendor</h3>
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
-<tr><td><strong>Search</strong></td><td><span class="opt">Optional</span></td><td>Matches on name, GSTIN, PAN or city.</td></tr>
+<tr><td><strong>Search</strong></td><td><span class="opt">Optional</span></td><td>Matches any part of the name, short name, GSTIN, PAN or city.</td></tr>
 <tr><td><strong>Type</strong></td><td><span class="opt">Optional</span></td><td><code>All types</code>, <code>Company</code>, <code>Proprietor</code> or <code>Individual</code>.</td></tr>
 <tr><td><strong>Category</strong></td><td><span class="opt">Optional</span></td><td>The categories that exist in the master, offered as a list.</td></tr>
 <tr><td><strong>Status</strong></td><td><span class="opt">Optional</span></td><td><code>Active</code> by default, or <code>Inactive</code>, or <code>All</code>. An inactive vendor will not appear until you change this.</td></tr>
@@ -137,6 +143,12 @@
 <li>Select <strong>Apply</strong>.</li>
 </ol>
 <h2 id="adding-a-vendor">Adding a vendor</h2>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/admin/vendor-new.png" aria-label="Enlarge: The blank vendor form. Only two fields carry the required marker.">
+    <img src="../assets/shots/admin/vendor-new.png" alt="The blank vendor form, including the bank details block." loading="lazy" width="1440">
+  </button>
+  <figcaption>The blank vendor form. Only two fields carry the required marker. </figcaption>
+</figure>
 <ol class="steps">
 <li>Select <strong>＋ Add vendor</strong>.</li>
 <li>Type the <strong>Vendor name</strong>. It must be unique across the master.</li>
@@ -148,17 +160,17 @@
 <div class="table-wrap"><table class="fields"><thead><tr><th scope="col">Field</th><th scope="col"></th><th scope="col">What it is for</th></tr></thead><tbody>
 <tr><td><strong>Vendor name</strong></td><td><span class="req">Required</span></td><td>The full legal name. Marked required on the form.</td></tr>
 <tr><td><strong>Short name</strong></td><td><span class="opt">Optional</span></td><td>Used in lists and dropdowns when the full name is unwieldy.</td></tr>
-<tr><td><strong>Type</strong></td><td><span class="req">Required</span></td><td><code>Company</code>, <code>Proprietor</code> or <code>Individual</code>.</td></tr>
+<tr><td><strong>Type</strong></td><td><span class="req">Required</span></td><td><code>Company</code>, <code>Proprietor</code> or <code>Individual</code>. A new vendor starts as <code>Company</code>.</td></tr>
 <tr><td><strong>Categories</strong></td><td><span class="opt">Optional</span></td><td>Comma separated. Used for vendor reporting, and it is what fills the Category filter on the list.</td></tr>
 <tr><td><strong>Status</strong></td><td><span class="opt">Optional</span></td><td><code>Active</code> or <code>Inactive</code>. Inactive vendors disappear from new requests but stay on old ones.</td></tr>
 <tr><td><strong>GSTIN</strong></td><td><span class="opt">Optional</span></td><td>Exactly 15 characters, or blank. Anything else is refused with <code>a GSTIN is 15 characters; leave it blank if the vendor has none</code>. It is stored upper-case.</td></tr>
-<tr><td><strong>PAN</strong></td><td><span class="opt">Optional</span></td><td>Recorded as given.</td></tr>
+<tr><td><strong>PAN</strong></td><td><span class="opt">Optional</span></td><td>Stored upper-case. It is not otherwise checked.</td></tr>
 <tr><td><strong>MSME / Udyam number</strong></td><td><span class="opt">Optional</span></td><td>Recorded as given.</td></tr>
 <tr><td><strong>TDS section</strong></td><td><span class="opt">Optional</span></td><td><code>Not applicable</code>, <code>194C — contractors</code>, <code>194J — professional</code> or <code>194Q — purchase of goods</code>.</td></tr>
 <tr><td><strong>Default TDS rate</strong></td><td><span class="opt">Optional</span></td><td>A rate for reference. The product never computes tax from it.</td></tr>
 <tr><td><strong>Contact person</strong></td><td><span class="opt">Optional</span></td><td>Who to speak to.</td></tr>
 <tr><td><strong>Phone</strong></td><td><span class="opt">Optional</span></td><td>Recorded as given.</td></tr>
-<tr><td><strong>Email</strong></td><td><span class="opt">Optional</span></td><td>Recorded as given.</td></tr>
+<tr><td><strong>Email</strong></td><td><span class="opt">Optional</span></td><td>The browser checks that it looks like an email address.</td></tr>
 <tr><td><strong>Billing address</strong></td><td><span class="opt">Optional</span></td><td>Free text.</td></tr>
 <tr><td><strong>City</strong></td><td><span class="opt">Optional</span></td><td>Shown on the vendor list and searchable.</td></tr>
 <tr><td><strong>State</strong></td><td><span class="opt">Optional</span></td><td>Free text.</td></tr>
@@ -167,6 +179,12 @@
 </tbody></table></div>
 <aside class="callout callout-note"><p class="callout-title">TDS is recorded, not calculated</p><p>The statutory block is a record, not a calculator. The hint beside it says so: the numbers are recorded for reference only, this system never computes tax, and Accounts confirms deductions outside it.</p></aside>
 <h2 id="one-vendor-in-detail">One vendor in detail</h2>
+<figure class="shot">
+  <button class="shot-btn" type="button" data-full="../assets/shots/admin/vendor-detail.png" aria-label="Enlarge: A vendor record. The same form as the blank one, with a bar of tabs above it — **Record**, **Requests**, **Payments** and **History** — and the created and last-edited dates at the foot.">
+    <img src="../assets/shots/admin/vendor-detail.png" alt="A vendor’s details, bank information and payment history." loading="lazy" width="1440">
+  </button>
+  <figcaption>A vendor record. The same form as the blank one, with a bar of tabs above it — <strong>Record</strong>, <strong>Requests</strong>, <strong>Payments</strong> and <strong>History</strong> — and the created and last-edited dates at the foot. </figcaption>
+</figure>
 <p>The record is the form. There is no read-only view and no separate edit screen — if your role carries the vendor edit permission you can change what you are looking at and select <strong>Save vendor</strong>; if it does not, every box is disabled and the only control is <strong>Back to vendors</strong>. The foot of the form carries the record’s dates: when it was created, and when it was last edited.</p>
 <aside class="callout callout-warning"><p class="callout-title">The Requests, Payments and History tabs</p><p><strong>Requests</strong>, <strong>Payments</strong> and <strong>History</strong> are working links to this vendor’s supporting records. Each needs its corresponding request, payment or audit permission, and record lists obey your data scope. Open a linked record and use the contextual back link to return to the vendor.</p>
 <p>Vendor Payments contains payments linked to requests naming this vendor; historical unlinked payments cannot be attributed to a vendor ID with certainty. Use the broader ledger for those historical records.</p></aside>
@@ -179,7 +197,7 @@
 </ol>
 <p>The hint under the field is the whole rule: inactive vendors disappear from new requests but stay on old ones. Nothing already raised, approved or paid is touched, and the vendor is still reachable from the list once you set the Status filter to <code>Inactive</code> or <code>All</code>.</p>
 <aside class="callout callout-tip"><p>A vendor cannot be deleted. If a record was created twice by mistake, retire the wrong one and note in <strong>Internal notes</strong> which record replaced it — the requests already pointing at it keep pointing at it.</p></aside>
-<dl class="faq"><dt>A requester says a vendor is missing from their picker.</dt><dd><p>The picker offers active vendors only. Check the record’s <strong>Status</strong>, and check the spelling — the picker matches on name, GSTIN and city.</p></dd>
+<dl class="faq"><dt>A requester says a vendor is missing from their picker.</dt><dd><p>The picker offers active vendors only. Check the record’s <strong>Status</strong>, and check the spelling — the picker matches on name, short name, GSTIN and city, not PAN.</p></dd>
 <dt>Can a requester add a vendor themselves?</dt><dd><p>Only if their role carries the vendor create permission. The picker offers <strong>＋ Add a new vendor</strong> to somebody who could actually complete it, and to nobody else.</p></dd>
 <dt>Two vendors have the same name.</dt><dd><p>They cannot. The name is unique across the master and the check ignores case, so a duplicate save is refused with <code>A record with this name already exists.</code></p></dd>
 <dt>Why can I not see the bank block on a vendor?</dt><dd><p>It is a separate permission from the rest of the record. See <a href="../admin/vendor-bank-details.html">Vendor bank details</a>.</p></dd></dl>

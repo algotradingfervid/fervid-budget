@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,20 +263,6 @@ func TestCSRFAndLogoutLifecycle(t *testing.T) {
 		t.Fatal("matching CSRF header was rejected")
 	}
 
-	protected := manager.CSRFMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	rejected := httptest.NewRecorder()
-	protected.ServeHTTP(rejected, httptest.NewRequest(http.MethodPost, "/", nil))
-	if rejected.Code != http.StatusForbidden {
-		t.Fatalf("missing CSRF status = %d, want 403", rejected.Code)
-	}
-	accepted := httptest.NewRecorder()
-	protected.ServeHTTP(accepted, header)
-	if accepted.Code != http.StatusNoContent {
-		t.Fatalf("valid CSRF status = %d, want 204", accepted.Code)
-	}
-
 	logout := httptest.NewRecorder()
 	manager.Logout(logout)
 	session := cookieByName(t, logout, sessionCookie)
@@ -308,5 +295,38 @@ func TestSecurityCSRFCannotBeForgedOrTransferredBetweenSessions(t *testing.T) {
 	forged.Header.Set("X-CSRF-Token", "attacker")
 	if manager.CheckCSRF(forged) {
 		t.Fatal("unsigned double-submit accepted")
+	}
+}
+
+// A password longer than bcrypt's 72-byte limit is refused (counting bytes, not
+// characters), so no accepted password is silently truncated.
+func TestPasswordValidationMatchesBcryptByteLimit(t *testing.T) {
+	for _, value := range []string{strings.Repeat("a", 72) + "1", strings.Repeat("界", 24) + "A1"} {
+		if err := ValidatePassword(value); err == nil {
+			t.Fatalf("accepted %d-byte password that bcrypt cannot hash", len(value))
+		}
+	}
+	if err := ValidatePassword(strings.Repeat("a", 71) + "1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Deactivating a user ends their sessions for good: reactivating them does not
+// bring back a session issued before the deactivation.
+func TestReactivationDoesNotReviveOldSession(t *testing.T) {
+	manager, st := newTestManager(t)
+	u := createTestUser(t, st, "reactivate@example.invalid", "data_entry", true)
+	request := authenticatedRequest(t, manager, u, "GET", "/")
+	if err := st.UpdateUser(t.Context(), u.ID, u.Name, u.Role, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.userFromRequest(request); ok {
+		t.Fatal("deactivated session accepted")
+	}
+	if err := st.UpdateUser(t.Context(), u.ID, u.Name, u.Role, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.userFromRequest(request); ok {
+		t.Fatal("reactivation revived a session issued before deactivation")
 	}
 }

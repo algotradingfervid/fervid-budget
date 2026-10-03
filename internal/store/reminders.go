@@ -1,3 +1,7 @@
+// reminders.go finds requests that need a reminder, records that one was sent,
+// and reads the reminder thresholds. The scheduler that sends them lives in
+// internal/notify.
+
 package store
 
 import (
@@ -8,9 +12,7 @@ import (
 	"time"
 )
 
-// collectRequests drains a requestSelect result set. The scheduler's two
-// queries are the only list reads outside requests.go, so the loop lives here
-// rather than being duplicated in each.
+// collectRequests drains a requestSelect result set and closes it.
 func collectRequests(rows *sql.Rows) ([]Request, error) {
 	defer rows.Close()
 	var out []Request
@@ -24,36 +26,16 @@ func collectRequests(rows *sql.Rows) ([]Request, error) {
 	return out, rows.Err()
 }
 
-// Reminder scheduling.
+// Reminder thresholds are admin-set (Configuration, Reminders and ageing) and
+// the current time is passed in, so the scheduler is deterministic under test.
 //
-// Two things are deliberately parameters rather than constants:
-//
-//   - now, so a test can pin "three days later" without sleeping, and so the
-//     whole scheduler is deterministic.
-//   - the thresholds, which are admin-set data (Configuration → Reminders and
-//     ageing). The old hardcoded 3 and 1 are gone.
-//
-// A "day" here is an elapsed 24-hour period, not a calendar-date boundary
-// (F-F-08). The audit found a `calendarDaysBetween` helper documented as the
-// semantics, unit-tested, and called from nowhere in production, while both
-// queries below did elapsed-time arithmetic. Elapsed days won, and the helper
-// is gone, for three reasons:
-//
-//  1. A calendar-day boundary is only meaningful in a timezone, and this app has
-//     no timezone setting to name one. The DB stores UTC, so a UTC boundary
-//     would roll over at 05:30 for the finance team this product is built for —
-//     a reminder "after 3 calendar days" firing at 5:30 in the morning is not
-//     what anybody meant.
-//  2. RepeatEveryDays is unusable under calendar semantics: a reminder sent at
-//     23:55 would be "a day old" five minutes later and re-sent at midnight,
-//     every night. All three thresholds are one admin control group, so they
-//     have to read the same way.
-//  3. The queries take an injected now and compare stored timestamps, which is
-//     what makes the scheduler deterministic under test. Date-boundary
-//     arithmetic in SQL means date(…, 'localtime') and the server's zone, which
-//     is neither injectable nor the organisation's.
-//
-// So the product copy should say "3 days", not "3 calendar days".
+// A "day" is an elapsed 24-hour period, not a calendar day:
+//   - the app has no timezone setting, and a UTC midnight boundary would fall
+//     at 05:30 for users in India;
+//   - "repeat every 1 day" would otherwise re-send at every midnight, even for
+//     a reminder sent at 23:55;
+//   - comparing stored timestamps against the passed-in time keeps the queries
+//     simple and testable.
 
 // ReminderThresholds is how long to wait before the first reminder, how often to
 // repeat it, and how long a reservation may sit before it is stale. Every value
@@ -69,6 +51,20 @@ const (
 	defaultRepeatEveryDays  = 1
 	defaultStaleAfterDays   = 1
 )
+
+// withDefaults replaces any value that is not positive with its default.
+func (t ReminderThresholds) withDefaults() ReminderThresholds {
+	if t.PendingAfterDays <= 0 {
+		t.PendingAfterDays = defaultPendingAfterDays
+	}
+	if t.RepeatEveryDays <= 0 {
+		t.RepeatEveryDays = defaultRepeatEveryDays
+	}
+	if t.StaleAfterDays <= 0 {
+		t.StaleAfterDays = defaultStaleAfterDays
+	}
+	return t
+}
 
 // ReminderThresholds reads the three admin-set keys, falling back to the
 // defaults when a key is unset, blank or not a positive integer. Garbage must
@@ -98,12 +94,7 @@ func (s *Store) ReminderThresholds(ctx context.Context) (ReminderThresholds, err
 // cadence. A request on hold is excluded: it is waiting on the requester by
 // design, and nagging the approver about it is noise.
 func (s *Store) RequestsPendingReminder(ctx context.Context, now time.Time, th ReminderThresholds) ([]Request, error) {
-	if th.PendingAfterDays <= 0 {
-		th.PendingAfterDays = defaultPendingAfterDays
-	}
-	if th.RepeatEveryDays <= 0 {
-		th.RepeatEveryDays = defaultRepeatEveryDays
-	}
+	th = th.withDefaults()
 	firstDue := now.UTC().AddDate(0, 0, -th.PendingAfterDays)
 	repeatDue := now.UTC().AddDate(0, 0, -th.RepeatEveryDays)
 	rows, err := s.db.QueryContext(ctx, requestSelect+`
@@ -120,12 +111,7 @@ func (s *Store) RequestsPendingReminder(ctx context.Context, now time.Time, th R
 // RequestsStaleProcessing returns requests reserved by an accountant that have
 // sat in processing past the configured threshold with no settlement recorded.
 func (s *Store) RequestsStaleProcessing(ctx context.Context, now time.Time, th ReminderThresholds) ([]Request, error) {
-	if th.StaleAfterDays <= 0 {
-		th.StaleAfterDays = defaultStaleAfterDays
-	}
-	if th.RepeatEveryDays <= 0 {
-		th.RepeatEveryDays = defaultRepeatEveryDays
-	}
+	th = th.withDefaults()
 	staleBefore := now.UTC().AddDate(0, 0, -th.StaleAfterDays)
 	repeatDue := now.UTC().AddDate(0, 0, -th.RepeatEveryDays)
 	rows, err := s.db.QueryContext(ctx, requestSelect+`
@@ -139,18 +125,10 @@ func (s *Store) RequestsStaleProcessing(ctx context.Context, now time.Time, th R
 	return collectRequests(rows)
 }
 
-// ReminderAudit is the witness half of MarkReminderSent (F-F-02).
-//
-// The stale-reservation screen tells an accountant "a reminder went out", and
-// the "Who has been told" thread printed directly underneath it is built from
-// the audit log — so a reminder that wrote no audit row could never be
-// corroborated by the one list on the page that exists to corroborate it.
-//
-// Label names which reminder went out, because both reminders land on the same
-// request's trail and two rows reading "Reminder sent" tell a reader nothing.
-// Recipients is who was told, which is the literal question that section asks;
-// the caller passes the people it actually delivered to rather than resolving
-// them again, so the row cannot claim somebody the delivery missed.
+// ReminderAudit describes a sent reminder for the request's audit trail, which
+// the request screen shows as "Who has been told". Label names which reminder
+// it was; Recipients are the people it was actually delivered to, as reported
+// by the sender.
 type ReminderAudit struct {
 	Label      string
 	Recipients []string
@@ -161,15 +139,15 @@ type ReminderAudit struct {
 // name in front of the verb, so it may not be blank.
 const reminderActor = "Fervid Budget"
 
-// MarkReminderSent records that a reminder went out. The timestamp is what stops
-// the next tick sending the same one again inside the repeat window; the audit
-// row is what lets anyone check that it happened at all (F-F-02).
+// MarkReminderSent records that a reminder went out. The timestamp stops the
+// next tick sending the same one again inside the repeat window; the audit row
+// records who was told.
 //
 // Both writes are one transaction, and a request that is not there is refused
 // rather than silently audited: an audit row asserting a reminder for a row that
 // does not exist is worse than no row.
 func (s *Store) MarkReminderSent(ctx context.Context, requestID int64, now time.Time, rec ReminderAudit) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -200,8 +178,9 @@ func (s *Store) MarkReminderSent(ctx context.Context, requestID int64, now time.
 	return tx.Commit()
 }
 
-// ResetReminder clears the timer so the wait starts again — used when a request
-// moves to a new person, since the new owner has not been waited on yet.
+// ResetReminder clears the timer so the wait starts again. Only tests call it:
+// the request writes that hand a request to a new person clear
+// reminder_last_sent themselves, inside their own transaction.
 func (s *Store) ResetReminder(ctx context.Context, requestID int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE payment_requests SET reminder_last_sent=NULL WHERE id=?`, requestID)
 	return classify(err)

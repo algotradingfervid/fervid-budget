@@ -1,0 +1,372 @@
+{{/* Recording a payment against an approved request: the entry form
+     (payment_form), the settlement confirmation (settlement_sheet, wrapped in a
+     full page by settlement_confirm when JavaScript is off), and the request
+     picker (payment_pick_request, with its htmx-refreshed list
+     payment_pick_options and row picker_row). Each {{define}} is rendered by
+     name from the Go handlers. */}}
+{{/* The payment entry form. Nothing here writes: the primary button posts to
+     the settlement preview, which saves nothing, and only the confirmation in
+     that sheet posts to /payments. The preview is URL-encoded (formenctype, and
+     hx-include lists the text fields for htmx), so the file is sent exactly
+     once, by the final multipart POST. The ₹ sits in the .cur prefix, so the
+     amount input uses amountValue, not money, which already adds one. */}}
+{{define "payment_form"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Accounts · payment entry</div>
+    <h1>Record the payment</h1>
+    <p class="sub">{{.Request2.Number}} · {{.Request2.Vendor}} · one approval, linked payments</p>
+  </div>
+</section>
+
+<div class="reserve-bar">
+  <span class="rb-dot" aria-hidden="true"></span>
+  <b>Reserved by you</b>
+  <span class="rb-meta">since {{hhmm .Request2.ProcessingAt}} · nobody else can process this request</span>
+  {{if .Perms.Can "reservation" "release"}}<span class="rb-actions"><a class="btn small outline" href="/requests/{{.Request2.ID}}/reservation">Release</a></span>{{end}}
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-head"><h2>What was approved</h2><a class="small" href="/requests/{{.Request2.ID}}">Open the request →</a></div>
+  <dl class="dl">
+    <div><dt>Approved amount</dt><dd class="big">{{money (approvedOf .Request2)}}</dd></div>
+    <div><dt>Approved by</dt><dd>{{.Request2.ApprovedByName}}{{if .Request2.ApprovedAt}} · {{datep .Request2.ApprovedAt}}{{end}}</dd></div>
+    <div><dt>Payee</dt><dd>{{.Request2.Vendor}}</dd></div>
+    <div>
+      <dt>Charge to</dt>
+      <dd>{{if eq .Request2.Treatment "recoverable"}}<span class="pill recoverable">Recoverable</span> Not charged to a budget{{if .Request2.Project}} · {{.Request2.Project}}{{end}}{{else}}{{.Request2.Project}} / {{.Request2.Head}}{{end}}</dd>
+    </div>
+    <div style="grid-column:1/-1"><dt>Purpose</dt><dd>{{.Request2.Purpose}}</dd></div>
+  </dl>
+</div>
+
+<form method="post" action="/payments" enctype="multipart/form-data" data-payment-entry>
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="request_id" value="{{.Request2.ID}}">
+  <input type="hidden" name="submission_key" value="{{.SubmissionKey}}">
+  <input type="hidden" name="expected_paid" value="{{.Request2.PaidAmount}}">
+  <input type="hidden" name="head_id" value="{{.SelectedHeadID}}">
+  <input type="hidden" name="vendor_payee" value="{{.Request2.Vendor}}">
+  <input type="hidden" name="invoice_no" value="{{.Request2.InvoiceNo}}">
+  {{if .Vendor.Bank}}
+    <section class="banner">
+      <div>
+        <b>Vendor payment destination · {{.Vendor.Name}}</b>{{if .Vendor.Bank.UPIID}}
+          <p>UPI ID: <strong>{{.Vendor.Bank.UPIID}}</strong></p>
+        {{end}}{{if .Vendor.Bank.AccountNumber}}
+          <p>Bank: {{.Vendor.Bank.AccountName}} · account {{.Vendor.Bank.AccountNumber}} · IFSC {{.Vendor.Bank.IFSC}}</p>
+        {{end}}
+        <p>Use the destination that matches the payment mode. Confirm current details with the vendor before making a transfer.</p>
+      </div>
+    </section>
+  {{end}}
+  <fieldset>
+    <legend>Payment</legend>
+    <div class="form-grid">
+      <div class="field span-6">
+        <label for="approved">Remaining approved balance</label>
+        <input id="approved" value="{{money (sub (approvedOf .Request2) .Request2.PaidAmount)}}" readonly
+               data-approved="{{sub (approvedOf .Request2) .Request2.PaidAmount}}">
+        <span class="hint">A payment can never exceed this. Earlier installments are already deducted.</span>
+      </div>
+      <div class="field span-6 money-field">
+        <label for="amount">Amount actually paid <span class="req" aria-hidden="true">*</span></label>
+        <span class="money-wrap"><span class="cur" aria-hidden="true">₹</span><input id="amount" name="amount" inputmode="decimal" value="{{if .PaymentAmount}}{{.PaymentAmount}}{{else}}{{amountValue .Payment.Amount}}{{end}}" required></span>
+        <span class="in-words">{{inWords .Payment.Amount}}</span>
+      </div>
+      <div class="field span-12">
+        <div class="banner good" id="diff-banner" style="margin:0">
+          <span class="b-ico" aria-hidden="true">✓</span>
+          <div><b id="diff-text">Matches the approved amount exactly</b>
+            <p>You will be asked whether this settles the obligation in full or leaves a balance due.</p></div>
+        </div>
+      </div>
+      {{/* Warns about a locked month before the form is filled in, not after
+           submit. It sits directly above "Paid on", the field that decides it,
+           at every width; changing the date asks GET /payments/lock-status and
+           swaps in the banner for the new date's month. */}}
+      {{template "payment_lock_banner" .}}
+      <div class="field span-4 m-half">
+        <label for="paid_on">Paid on <span class="req" aria-hidden="true">*</span></label><input id="paid_on" name="paid_on" type="date" value="{{.Payment.PaidOn}}" required
+               hx-get="/payments/lock-status" hx-trigger="change" hx-target="#lock-banner" hx-swap="outerHTML"></div>
+      <div class="field span-4 m-half"><label for="payment_mode">Payment mode <span class="req" aria-hidden="true">*</span></label>
+        <select id="payment_mode" name="payment_mode" required>
+          <option value="">Choose…</option>
+          {{range .PaymentModeChoices}}<option value="{{.Value}}" {{select .Value $.Payment.PaymentMode}}>{{.Label}}</option>{{end}}
+        </select>
+      </div>
+      <div class="field span-4">
+        <label for="reference_no">Transaction / UTR reference <span class="req" aria-hidden="true">*</span></label><input id="reference_no" name="reference_no" data-payment-reference class="num" value="{{.Payment.ReferenceNo}}" required>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Proof and notes</legend>
+    <div class="form-grid">
+      <div class="field span-12">
+        <span class="flabel">Payment advice or proof</span>
+        <label class="uploader">
+        <div class="up-ico" aria-hidden="true">⇪</div>
+        <b>Add the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+      </div>
+      <div class="field span-12">
+        <label for="remarks">Processing note <span class="opt" aria-hidden="true">optional</span></label>
+        <textarea id="remarks" name="remarks">{{.Payment.Remarks}}</textarea>
+        <span class="hint">This system does no tax arithmetic. Record what you did so the trail explains the difference.</span>
+      </div>
+    </div>
+  </fieldset>
+
+  <div id="settle-mount"></div>
+
+  {{/* The preview and the write are both gated on payment:settle, so the
+       button is too. A role that can reserve a request but not settle it gets
+       this explanation instead of a button whose POST would answer 403. */}}
+  {{if not (.Perms.Can "payment" "settle")}}
+  <div class="banner warn">
+    <span class="b-ico" aria-hidden="true">i</span>
+    <div>
+      <b>You can take a request but cannot settle a payment</b>
+      <p>Recording the settlement needs the payment:settle permission, which your role does not hold. Release the reservation so a colleague can record it, or ask an administrator for the permission.</p>
+    </div>
+  </div>
+  {{end}}
+  <div class="action-bar">
+    <span class="ab-note d-only">Nothing is saved until you confirm on the next step.</span>
+    <span class="row-end"></span>
+    {{if .Perms.Can "reservation" "release"}}<a class="btn outline" href="/requests/{{.Request2.ID}}/reservation">Cancel and release</a>{{end}}
+    {{if .Perms.Can "payment" "settle"}}<button class="btn primary" type="submit"
+            formaction="/requests/{{.Request2.ID}}/settlement-preview" formmethod="post" formenctype="application/x-www-form-urlencoded"
+            hx-post="/requests/{{.Request2.ID}}/settlement-preview"
+            hx-include="#amount, #paid_on, #payment_mode, #reference_no, #remarks, [name=csrf], [name=head_id], [name=vendor_payee], [name=invoice_no]"
+            hx-target="#settle-mount" hx-swap="innerHTML">Payment settled →</button>{{end}}
+  </div>
+</form>
+{{template "bottom" .}}
+{{end}}
+
+{{/* The settlement confirmation sheet, delivered two ways. With htmx it is
+     swapped into #settle-mount inside the live entry form, so the form's own
+     file input posts with the confirmation and the advice is uploaded once.
+     Without JavaScript, settlement_confirm wraps it in a full page that
+     re-offers the upload and carries every typed field forward as hidden
+     inputs. Nothing has been saved yet when this is shown. */}}
+{{define "settlement_sheet"}}
+<div class="overlay" id="settle-sheet">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settle-title">
+    <div class="sh-head">
+      <div><h2 id="settle-title">Confirm the payment</h2><p class="sh-sub">{{.Request2.Number}} · {{.Request2.Vendor}}</p></div>
+      {{/* On the htmx path the sheet is inside the live form, so the closers
+           dismiss it in place and the typed amount, mode and reference survive.
+           Anchors, not buttons: a button here would submit the form it sits
+           in, and without JavaScript the href is the way back. */}}
+      {{if not .ReserveMine}}<a class="sh-close" href="/requests/{{.Request2.ID}}" aria-label="Close">✕</a>{{else if .Settlement.Fragment}}<a class="sh-close" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet" aria-label="Close">✕</a>{{else}}<button class="sh-close" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate aria-label="Close">✕</button>{{end}}
+    </div>
+    <div class="sh-body stack-12">
+      {{if .Error}}
+        <div class="banner bad" style="margin:0">
+          <span class="b-ico" aria-hidden="true">✕</span>
+          <div>
+            <b>{{.Error}}</b>
+            <p>{{if .ReserveMine}}Nothing has been saved. Correct it and confirm again.{{else}}Your entered figures are shown below for reference. Open the request to see its current status.{{end}}</p>
+          </div>
+        </div>
+      {{end}}
+      {{if not .ReserveMine}}
+        <div class="banner warn" role="status">
+          <div>
+            <b>{{if and (eq .Request2.Status "processing") .Request2.ProcessingBy}}Reserved by {{.Request2.ProcessingByName}}{{else}}This request is not available for you to pay{{end}}</b>
+            <p>Confirmation is disabled because you no longer hold an active reservation.</p>
+          </div>
+        </div>
+      {{end}}
+      <div class="compare">
+        <div class="cmp-row"><span class="l">Remaining before this payment</span><span class="v">{{money .Settlement.Approved}}</span></div>
+        <div class="cmp-row"><span class="l">Actually paid</span><span class="v">{{money .Settlement.Paid}}</span></div>
+        {{if .Settlement.Match}}
+        <div class="cmp-row match"><span class="l">Difference</span><span class="v">{{money 0}}</span></div>
+        {{else}}
+        <div class="cmp-row diff">
+          <span class="l">Difference</span><span class="v">{{if lt .Settlement.Difference 0}}Amount exceeds the remaining approved balance{{else}}{{money .Settlement.Difference}} remaining{{end}} ⚠</span>
+        </div>
+        {{end}}
+      </div>
+
+      <fieldset style="border:0;padding:0;margin:0;min-width:0" {{if not .ReserveMine}}disabled{{end}}>
+      <div>
+        <span class="flabel" style="margin-bottom:6px">{{if not .ReserveMine}}Your previous settlement choices (not saved).{{else if .Settlement.Match}}This matches the approved amount. Confirm to close the request.{{else if lt .Settlement.Difference 0}}Reduce the payment amount to the remaining approved balance.{{else}}Choose what happens to the remaining balance.{{end}}</span>
+        <div class="choice">
+          {{if gt .Settlement.Difference 0}}<label><input type="radio" name="settlement" value="installment" required {{if eq .Settlement.Settlement "installment"}}checked{{end}}><span><b>Installment — pay the balance later</b><small>{{money .Settlement.Difference}} remains approved on this request. Record the next payment here.</small></span><span class="outcome warn">Keep payable</span></label>{{end}}
+          <label>
+            <input type="radio" name="settlement" value="settled" required {{if eq .Settlement.Settlement "settled"}}checked{{end}}>
+            <span><b>Fully settled</b><small>The obligation is discharged. Deductions such as TDS or retention were handled outside this system.</small></span>
+            <span class="outcome good">Completed</span>
+          </label>
+          <label>
+            <input type="radio" name="settlement" value="partial" {{if eq .Settlement.Settlement "partial"}}checked{{end}}>
+            <span><b>Ask manager to accept a shortfall</b><small>Pause further payment while the approver decides whether to write off the remaining balance.</small></span>
+            <span class="outcome warn">Manager review</span>
+          </label>
+        </div>
+      </div>
+
+      {{/* aria-required, not required: a hidden required control makes the form
+           unsubmittable in Chrome. The store re-enforces this server-side. */}}
+      <div class="field">
+        <label for="partial_reason">Reason for any deduction or shortfall <span class="req" aria-hidden="true">*</span></label>
+        <textarea id="partial_reason" name="partial_reason" aria-required="true" placeholder="Required for a short payment that closes the obligation or asks for a writeoff. Explain the deduction or agreed adjustment.">{{.Settlement.PartialReason}}</textarea>
+      </div>
+
+      </fieldset>
+      {{if .ReserveMine}}<div class="banner info" style="margin:0">
+        <span class="b-ico" aria-hidden="true">i</span>
+        <div>
+          <b>Confirming saves the payment</b>
+          <p>It cannot be edited or cancelled afterwards. Choose an installment to keep the remaining approved balance payable.</p>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    <div class="sh-foot">
+      {{if not .ReserveMine}}<a class="btn outline" href="/requests/{{.Request2.ID}}">View request</a><a class="btn outline" href="/accounts-queue">Back to the queue</a>{{else if .Settlement.Fragment}}<a class="btn outline" href="/payments/new?request={{.Request2.ID}}" data-close="settle-sheet">Go back</a>{{else}}<button class="btn outline" type="submit" formaction="/payments/new?request={{.Request2.ID}}" formmethod="post" formnovalidate>Go back</button>{{end}}
+      <span class="row-end"></span>
+      {{if .ReserveMine}}<button class="btn primary" type="submit" formaction="/payments" formmethod="post">Confirm and save payment</button>{{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "settlement_confirm"}}
+{{template "top" .}}
+<div class="reserve-bar">
+  <span class="rb-dot" aria-hidden="true"></span>
+  <b>{{if .ReserveMine}}Reserved by you{{else if and (eq .Request2.Status "processing") .Request2.ProcessingBy}}Reserved by {{.Request2.ProcessingByName}}{{else}}Reservation no longer active{{end}}</b>
+  <span class="rb-meta">since {{hhmm .Request2.ProcessingAt}}</span>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>{{if .ReserveMine}}Payment about to be saved{{else}}Your unsaved payment details{{end}}</h2><span class="pill neutral no-dot">Not saved yet</span></div>
+  <dl class="dl">
+    <div><dt>Paid on</dt><dd>{{index .Settlement.Fields "paid_on"}}</dd></div>
+    <div><dt>Mode</dt><dd>{{paymentMode (index .Settlement.Fields "payment_mode")}}</dd></div>
+    <div><dt>Reference</dt><dd class="num">{{index .Settlement.Fields "reference_no"}}</dd></div>
+    <div style="grid-column:1/-1"><dt>Processing note</dt><dd>{{index .Settlement.Fields "remarks"}}</dd></div>
+  </dl>
+</div>
+
+<form method="post" action="/payments" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="request_id" value="{{.Request2.ID}}">
+  {{range $k, $v := .Settlement.Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
+  {{if .ReserveMine}}<div class="field">
+    <span class="flabel">Payment advice or proof <span class="opt" aria-hidden="true">optional</span></span>
+    <label class="uploader">
+    <div class="up-ico" aria-hidden="true">⇪</div>
+    <b>Attach the bank advice</b><small>PDF, JPG or PNG up to {{.AttachmentMaxMB}} MiB. Uploaded once, when you confirm.</small><input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" hidden></label>
+  </div>
+  {{end}}
+  {{template "settlement_sheet" .}}
+</form>
+{{template "bottom" .}}
+{{end}}
+
+{{/* The request picker's list. A takeable .co is a submit button inside a POST
+     form, not a link, because selecting one reserves the request and a GET
+     must never change anything. A taken .co.is-taken links to the read-only
+     request instead. Without htmx the search is a plain GET on /payments/new,
+     which renders the same list from this template. */}}
+{{define "payment_pick_options"}}
+{{/* role="group", not "listbox": a listbox requires option children, and these
+     rows are forms and links, not options. "group" keeps the accessible name.
+     The keyboard handling in fervid-app.js keys off the .combo-list selector,
+     not the role. */}}
+<div class="combo-list" id="picker-list" role="group" aria-label="Approved requests">
+  {{range .Linkable.Available}}
+  {{/* Taking a request needs reservation:reserve, as in the queue. Without it
+       the row is still shown, as the same read-only link a taken request gets,
+       rather than a button the route would answer 403 to. */}}
+  {{if $.Perms.Can "reservation" "reserve"}}
+  <form method="post" action="/requests/{{.ID}}/record-payment"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="co" type="submit">{{template "picker_row" .}}</button>
+  </form>
+  {{else}}
+  <a class="co is-taken" href="/requests/{{.ID}}">{{template "picker_row" .}}</a>
+  {{end}}
+  {{end}}
+  {{range .Linkable.Unavailable}}
+  <a class="co is-taken" href="/requests/{{.ID}}">
+    <span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
+      <small>{{if .OnHold}}On hold — {{.HoldReason}}{{else if .ProcessingByName}}Reserved by {{.ProcessingByName}} at {{hhmm .ProcessingAt}} — you cannot take this one{{else}}{{reqStatus .Status}} — you cannot take this one{{end}}</small></span>
+    <span class="co-amt">{{money (sub (approvedOf .) .PaidAmount)}}</span>
+  </a>
+  {{end}}
+  {{if and (not .Linkable.Available) (not .Linkable.Unavailable)}}
+    <div class="co">
+      <span class="co-main"><b>No approved requests match</b><small>Clear the search, or check the queue.</small></span>
+    </div>
+  {{end}}
+</div>
+{{end}}
+
+{{/* One takeable row's contents, so the button and the read-only link that may
+     stand in for it cannot describe the same request differently. Dot is one
+     store.Request. */}}
+{{define "picker_row"}}<span class="co-main"><b>{{.Number}} · {{.Vendor}}</b>
+    <small>{{if .Urgent}}<span class="pill urgent">Urgent</span> {{end}}{{.RequesterName}} · {{if eq .Treatment "recoverable"}}Recoverable{{if .Project}} · {{.Project}}{{end}}{{else}}{{.Project}} / {{.Head}}{{end}}{{if .NeededBy}} · needed {{dateLong .NeededBy}}{{end}}</small></span>
+  <span class="co-amt">{{money (sub (approvedOf .) .PaidAmount)}}</span>{{end}}
+
+{{define "payment_pick_request"}}
+{{template "top" .}}
+<section class="page-banner">
+  <div>
+    <div class="eyebrow">Accounts · new payment</div>
+    <h1>Which approved request is this for?</h1>
+    <p class="sub">Every payment belongs to exactly one approved request.</p>
+  </div>
+  <div class="pb-actions">
+    {{if .Perms.Can "payment" "process"}}<a class="btn outline" href="/accounts-queue">Open the queue</a>{{end}}
+  </div>
+</section>
+
+<div class="banner info">
+  <span class="b-ico" aria-hidden="true">i</span>
+  <div>
+    <b>Free payment entry has been removed</b>
+    <p>Payments recorded before this module remain in the ledger as history. New money out starts here.</p>
+  </div>
+</div>
+
+<form class="field" method="get" action="/payments/new" style="margin-bottom:4px">
+  <label for="picker">Search approved requests</label>
+  <span class="combo">
+    <input class="combo-input" id="picker" name="q" value="{{.Query}}" autocomplete="off"
+           hx-get="/payments/new/options" hx-trigger="keyup changed delay:250ms, search"
+           hx-target="#picker-list" hx-swap="outerHTML">
+    <span class="combo-caret" aria-hidden="true">▾</span>
+  </span>
+  <span class="hint">Search by request number, requester, payee, project, head or amount.</span>
+</form>
+
+{{template "payment_pick_options" .}}
+
+<div class="section-head"><h2>Recently paid by you</h2></div>
+<div class="table-wrap">
+  <table class="t-cards">
+    <thead><tr><th>Request</th><th>Payee</th><th class="num">Paid</th><th>Date</th><th>Status</th></tr></thead>
+    <tbody>
+      {{range .RecentPaid}}
+      <tr>
+        <td class="t-lead" data-label="Request"><a href="/payments/{{.PaymentID}}">{{.Number}}</a></td>
+        <td data-label="Payee">{{.Payee}}</td>
+        <td class="num" data-label="Paid">{{money .Amount}}</td>
+        <td data-label="Date">{{dateLong .PaidOn}}</td>
+        <td data-label="Status">{{if eq .Status "partial_review"}}<span class="pill partial">Partial — manager review</span>{{else if eq .Status "completed_partial"}}<span class="pill completed-partial">Completed — partial accepted</span>{{else}}<span class="pill completed">Completed</span>{{end}}</td>
+      </tr>
+      {{else}}<tr><td colspan="5" class="empty">You have not recorded a payment yet.</td></tr>{{end}}
+    </tbody>
+  </table>
+</div>
+{{template "bottom" .}}
+{{end}}

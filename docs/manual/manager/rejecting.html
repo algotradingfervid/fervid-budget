@@ -130,7 +130,7 @@
 </tbody></table></div>
 <aside class="callout callout-warning"><p class="callout-title">There is no undo</p><p><strong>Reject permanently</strong> is the last press. Nothing about a rejected request can be changed afterwards — not the reason, not the status.</p></aside>
 <h2 id="what-a-rejected-request-looks-like">What a rejected request looks like</h2>
-<p>The status pill reads <strong>Rejected — final</strong>, and the line beside it says <em>Closed. Raise a new request if needed.</em> Your reason is shown twice: once in a banner across the top of the request, headed with your name, and again as a line in the history with the time you took the decision.</p>
+<p>The status pill reads <strong>Rejected — final</strong>, and the line beside it says <em>Closed. Raise a new request if needed</em> Your reason is shown twice: once in a banner across the top of the request, headed with your name, and again as a line in the history with the time you took the decision.</p>
 <figure class="shot">
   <button class="shot-btn" type="button" data-full="../assets/shots/manager/detail-rejected.png" aria-label="Enlarge: A rejected request. The reason sits in a banner and in the history.">
     <img src="../assets/shots/manager/detail-rejected.png" alt="A rejected request from the approver’s side, with the reason recorded." loading="lazy" width="1440">
@@ -140,9 +140,10 @@
 <p>The requester can raise a replacement from the rejected request — a new request, with a new number, carrying nothing of this one but whatever they copy across. <a href="../requester/after-a-rejection.html">After a rejection</a> covers their side.</p>
 <h2 id="when-rejection-is-refused">When rejection is refused</h2>
 <div class="table-wrap"><table><thead><tr><th scope="col">What you see</th><th scope="col">Why</th></tr></thead><tbody>
-<tr><td>A message saying a reason is required to reject a request</td><td>The reason box was empty. It is checked before anything else.</td></tr>
+<tr><td><em>a reason is required to reject a request</em></td><td>The reason box was empty. It is checked before anything else.</td></tr>
 <tr><td><em>You do not have permission to perform this action.</em></td><td>You are not the approver this request was routed to.</td></tr>
-<tr><td>A message saying a request in that state cannot be rejected</td><td>Only a <code>pending</code> request can be rejected. Somebody has already decided it, or the requester withdrew it.</td></tr>
+<tr><td><em>this request changed; reload and review it before deciding</em></td><td>The request changed after you opened it. Reload it, read what changed, and decide again.</td></tr>
+<tr><td>A message such as <em>an approved request cannot be rejected</em></td><td>Only a <code>pending</code> request can be rejected. Somebody has already decided it, or the requester withdrew it.</td></tr>
 </tbody></table></div>
 <h2 id="choosing-between-reject-and-return">Choosing between reject and return</h2>
 <p>The question is not how annoyed you are with the request; it is whether the same money, spent the same way, could ever be right.</p>

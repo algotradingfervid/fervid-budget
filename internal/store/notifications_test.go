@@ -10,7 +10,7 @@ import (
 func TestMailSettingsRoundTripAndNeverStoreAPassword(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	in := MailSettings{SMTPHost: "smtp.test", SMTPPort: 2525, SMTPUsername: "u",
 		SMTPFromName: "Fervid", SMTPFromAddr: "no@reply.test", ManagementRecipients: "boss@test",
 		BaseURL: "https://budget.fervid.test"}
@@ -47,7 +47,7 @@ func TestMailSettingsRoundTripAndNeverStoreAPassword(t *testing.T) {
 func TestMailSettingsNormalisesBaseURL(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	if err := s.SetMailSettings(ctx, actor, MailSettings{BaseURL: "https://budget.test/ "}); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestMailSettingsNormalisesBaseURL(t *testing.T) {
 func TestNotificationSettingUpsertAndFetch(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	in := NotificationSetting{Event: "request_approved", EmailEnabled: true, ToRecipients: "ops@test",
 		IncludeRequester: true, IncludeAccounts: true, SubjectTemplate: "S {{number}}", BodyTemplate: "B {{amount}}"}
 	if err := s.SetNotificationSetting(ctx, actor, in); err != nil {
@@ -88,7 +88,7 @@ func TestNotificationSettingUpsertAndFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Screen order is the seeded sort_order, and notification_settings is
-	// append-only across migrations — v9 adds nine more events (F-F-06). So this
+	// append-only across migrations — v9 adds nine more events. So this
 	// pins that v7's twelve come first and in their seeded order, which is what
 	// the screen's order actually means, rather than a total that grows with each
 	// migration that adds an event.
@@ -107,7 +107,7 @@ func TestNotificationSettingUpsertAndFetch(t *testing.T) {
 func TestSetNotificationSettingRejectsUnknownEvent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	actor, _ := seedActorAndHead(t, s, ctx)
+	actor, _ := seedActorAndHead(t, s)
 	err := s.SetNotificationSetting(ctx, actor, NotificationSetting{Event: "invented_event", EmailEnabled: true})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown event = %v, want ErrNotFound", err)
