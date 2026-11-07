@@ -14,7 +14,7 @@ import (
 // succeeded, and a mail outage must not make it look as if it failed. The
 // in-app row is written before any email is tried (see notify.Service.Notify),
 // so it survives a mail failure. An urgent request also raises the urgent
-// event when it is submitted or approved.
+// event when it is submitted, re-raised or approved.
 func (a *App) fire(r *http.Request, event string, reqID int64) {
 	if a.notify == nil || reqID == 0 {
 		return
@@ -31,8 +31,9 @@ func (a *App) fire(r *http.Request, event string, reqID int64) {
 			"request_id", requestID(r), "event", event, "payment_request", req.Number, "error", err)
 	}
 	// An urgent request raises its own event on top of the ordinary one, at both
-	// send points; notify resolves the recipients from the request's status.
-	if req.Urgent && (event == notify.EventRequestSubmitted || event == notify.EventRequestApproved) {
+	// send points (a re-raise is a new submission); notify resolves the
+	// recipients from the request's status.
+	if req.Urgent && (event == notify.EventRequestSubmitted || event == notify.EventRequestReraised || event == notify.EventRequestApproved) {
 		if err := a.notify.Notify(ctx, notify.EventRequestUrgent, req); err != nil {
 			a.log.WarnContext(ctx, "urgent notification not delivered",
 				"request_id", requestID(r), "payment_request", req.Number, "error", err)

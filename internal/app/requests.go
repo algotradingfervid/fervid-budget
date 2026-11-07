@@ -262,6 +262,7 @@ func (a *App) renderRejectedRequestForm(w http.ResponseWriter, r *http.Request, 
 	data.DuplicateReason = in.DuplicateReason
 	data.RequestRawAmount = r.FormValue("amount")
 	data.RequestFieldErrors = requestFieldErrors(in)
+	addStoreFieldError(data.RequestFieldErrors, refusal)
 	if in.Type == "vendor_invoice" {
 		data.Similar, err = a.st.DuplicateInvoices(r.Context(), in, store.RequestListOptions{Scope: a.auth.Scope(auth.CurrentUser(r), "request"), ViewerID: auth.CurrentUser(r).ID})
 		if err != nil {
@@ -894,6 +895,7 @@ func (a *App) renderRejectedEdit(w http.ResponseWriter, r *http.Request, stored 
 	data.RequestRevision = r.FormValue("revision") // keep the posted revision, so a stale form stays stale
 	data.RequestRawAmount = r.FormValue("amount")
 	data.RequestFieldErrors = requestFieldErrors(in)
+	addStoreFieldError(data.RequestFieldErrors, refusal)
 	data.DuplicateReason = in.DuplicateReason
 	name := "request_edit"
 	if stored.Status == "returned" {

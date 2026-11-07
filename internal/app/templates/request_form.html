@@ -673,10 +673,11 @@
     <legend>Who approves it</legend>
     <div class="form-grid">
       <div class="field span-6">
-        <label for="apr">Approver <span class="req" aria-hidden="true">*</span></label>
-        <select id="apr" name="manager_id" required>
+        <label for="apr">Approver <span class="req" aria-hidden="true">*</span></label>{{with index .RequestFieldErrors "approver"}}<span class="field-error-message" id="error-approver">{{.}}</span>{{end}}
+        <select id="apr" name="manager_id" required {{if eq (index .Settings "allow_approver_choice") "0"}}disabled{{end}} {{if index .RequestFieldErrors "approver"}}aria-invalid="true" aria-describedby="error-approver"{{end}}>
           {{range .Approvers}}<option value="{{.ID}}" {{if eq $.Request2.ManagerID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
         </select>
+        {{if eq (index .Settings "allow_approver_choice") "0"}}<input type="hidden" name="manager_id" value="{{.Request2.ManagerID}}">{{end}}
         <span class="hint">Changing this moves the request to the new approver and notifies them. Your own name is never in this list.</span>
       </div>
     </div>

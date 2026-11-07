@@ -209,7 +209,7 @@ func nullableText(s string) any {
 // start: there are no drafts. The row, its number and any documents staged on
 // the form are written in one transaction, and the new id is returned.
 func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) (int64, error) {
-	in, categoryID, err := s.prepareRequestInput(ctx, actor, in)
+	in, categoryID, err := prepareRequestInput(ctx, s.db, actor, in)
 	if err != nil {
 		return 0, err
 	}
@@ -232,6 +232,9 @@ func (s *Store) CreateRequest(ctx context.Context, actor User, in RequestInput) 
 		return 0, err
 	}
 	defer tx.Rollback()
+	if err := requireApproverChoice(ctx, tx, actor.ID, in.ManagerID, 0); err != nil {
+		return 0, err
+	}
 	if err := requireDuplicateReasonTx(ctx, tx, in, 0); err != nil {
 		return 0, err
 	}
@@ -314,7 +317,7 @@ var editableStatuses = map[string]bool{"returned": true, "pending": true}
 // UpdateRequest saves the requester's corrections to a pending or returned
 // request, validated exactly as a new request is.
 func (s *Store) UpdateRequest(ctx context.Context, actor User, id int64, in RequestInput) error {
-	in, categoryID, err := s.prepareRequestInput(ctx, actor, in)
+	in, categoryID, err := prepareRequestInput(ctx, s.db, actor, in)
 	if err != nil {
 		return err
 	}
@@ -384,7 +387,7 @@ func requireRevision(ctx context.Context, tx *sql.Tx, req Request, revision, msg
 // attachment policy counts the request's documents: a request whose only
 // document is the one being uploaded must pass.
 func (s *Store) EditRequest(ctx context.Context, actor User, id int64, e RequestEdit) error {
-	in, categoryID, err := s.prepareRequestInput(ctx, actor, e.Input)
+	in, categoryID, err := prepareRequestInput(ctx, s.db, actor, e.Input)
 	if err != nil {
 		return err
 	}
@@ -439,6 +442,9 @@ func (s *Store) updateRequestTx(ctx context.Context, tx *sql.Tx, actor User, id 
 	}
 	if !editableStatuses[before.Status] {
 		return fmt.Errorf("%w: %s cannot be edited", ErrValidation, statusPhrase(before.Status))
+	}
+	if err := requireApproverChoice(ctx, tx, actor.ID, in.ManagerID, before.ManagerID); err != nil {
+		return err
 	}
 	if before.VendorID == nil || *before.VendorID != in.VendorID || before.InvoiceNo != in.InvoiceNo || before.InvoiceDate != in.InvoiceDate {
 		if err := requireDuplicateReasonTx(ctx, tx, in, id); err != nil {

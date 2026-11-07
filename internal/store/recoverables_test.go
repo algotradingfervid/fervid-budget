@@ -916,7 +916,7 @@ func TestActiveCategoriesAreTheOptionsTheRequestFormMustRender(t *testing.T) {
 	}
 	// The rule set the validator enforces is built from the same query, so what
 	// the form offers and what a submit is allowed to name cannot drift.
-	rules, err := s.recoverableRules(ctx)
+	rules, err := recoverableRules(ctx, s.db)
 	if err != nil {
 		t.Fatal(err)
 	}

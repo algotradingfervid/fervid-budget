@@ -13,8 +13,13 @@ import (
 
 // AppSetting returns the value of a runtime setting, or "" if it is unset.
 func (s *Store) AppSetting(ctx context.Context, key string) (string, error) {
+	return appSetting(ctx, s.db, key)
+}
+
+// appSetting reads a setting through q (the database or a transaction).
+func appSetting(ctx context.Context, q rowQuerier, key string) (string, error) {
 	var v string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key=?`, key).Scan(&v)
+	err := q.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key=?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
