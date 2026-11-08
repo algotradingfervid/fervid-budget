@@ -2,8 +2,10 @@
 // field rules (validateRequestInput), clearing fields the chosen type does not
 // use, database checks on the ids the form names (approver, project, head,
 // vendor), the urgency and attachment policies, and the duplicate-invoice
-// guard. prepareRequestInput runs them in one fixed order for both a new
-// request and an edit, so the two can never validate differently.
+// guard. prepareRequestInput runs them in one fixed order for a new request,
+// an edit and a re-raise, so they can never validate differently.
+// requireApproverChoice applies the allow_approver_choice setting inside each
+// writer's transaction.
 package store
 
 import (
@@ -237,10 +239,11 @@ func scrubFieldsNotOwned(in RequestInput) RequestInput {
 // requireApprover refuses an approver who could not decide the request: the
 // person must be active and hold approval:approve. The form only offers such
 // people (ListApprovers), but a hand-made POST could name anybody, and a
-// request routed to someone who cannot approve it would be stuck for good.
-func (s *Store) requireApprover(ctx context.Context, managerID int64) error {
+// request routed to someone who cannot approve it would be stuck for good. It
+// reads through q (the database or the caller's transaction).
+func requireApprover(ctx context.Context, q rowQuerier, managerID int64) error {
 	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users u
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM users u
  JOIN user_roles ur ON ur.user_id=u.id
  JOIN role_permissions rp ON rp.role_id=ur.role_id
  WHERE u.id=? AND u.active=1 AND rp.resource='approval' AND rp.action='approve'`, managerID).Scan(&n); err != nil {
@@ -257,14 +260,14 @@ func (s *Store) requireApprover(ctx context.Context, managerID int64) error {
 // must be open and belong to the project the request names (or, with no head,
 // the project must be open), and the vendor must still be active. The head test
 // uses the same condition as ListHeads(ctx, true), which builds the form's list.
-func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error {
-	if err := s.requireApprover(ctx, in.ManagerID); err != nil {
+func validateRequestRefs(ctx context.Context, q rowQuerier, in RequestInput) error {
+	if err := requireApprover(ctx, q, in.ManagerID); err != nil {
 		return err
 	}
 	if in.HeadID > 0 {
 		var projectID int64
 		var headActive, projectActive int
-		err := s.db.QueryRowContext(ctx, `SELECT h.project_id, h.active, p.active
+		err := q.QueryRowContext(ctx, `SELECT h.project_id, h.active, p.active
  FROM heads h JOIN projects p ON p.id=h.project_id WHERE h.id=?`, in.HeadID).
 			Scan(&projectID, &headActive, &projectActive)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -286,7 +289,7 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 		// A recoverable may link a project without a head, so the project is
 		// checked on its own: the register groups recoverables by it.
 		var active int
-		err := s.db.QueryRowContext(ctx, `SELECT active FROM projects WHERE id=?`, in.ProjectID).Scan(&active)
+		err := q.QueryRowContext(ctx, `SELECT active FROM projects WHERE id=?`, in.ProjectID).Scan(&active)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: that project does not exist", ErrValidation)
 		}
@@ -299,7 +302,7 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 	}
 	if in.VendorID > 0 {
 		var status string
-		err := s.db.QueryRowContext(ctx, `SELECT status FROM vendors WHERE id=?`, in.VendorID).Scan(&status)
+		err := q.QueryRowContext(ctx, `SELECT status FROM vendors WHERE id=?`, in.VendorID).Scan(&status)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: that vendor does not exist", ErrValidation)
 		}
@@ -319,29 +322,30 @@ func (s *Store) validateRequestRefs(ctx context.Context, in RequestInput) error 
 // that pay the requester get the actor as payee, unused fields are cleared,
 // then the field rules, the database references and the urgency policy are
 // checked. It returns the cleaned input and the recoverable category's row id
-// (nil when the request is not recoverable). It needs no transaction.
-func (s *Store) prepareRequestInput(ctx context.Context, actor User, in RequestInput) (RequestInput, any, error) {
+// (nil when the request is not recoverable). It reads through q: the database,
+// or the caller's write transaction (ReraiseRequest validates inside its own).
+func prepareRequestInput(ctx context.Context, q querier, actor User, in RequestInput) (RequestInput, any, error) {
 	in.RequesterID = actor.ID
 	if forcesRequesterPayee(in.Type) {
 		in.VendorID = 0
 		in.VendorPayee = actor.Name
 	}
 	in = scrubFieldsNotOwned(in)
-	rules, err := s.recoverableRules(ctx)
+	rules, err := recoverableRules(ctx, q)
 	if err != nil {
 		return in, 0, err
 	}
 	if err := validateRequestInput(in, rules); err != nil {
 		return in, 0, err
 	}
-	if err := s.validateRequestRefs(ctx, in); err != nil {
+	if err := validateRequestRefs(ctx, q, in); err != nil {
 		return in, 0, err
 	}
-	categoryID, err := s.recoverableCategoryLink(ctx, in.Treatment, in.RecoverableCategory)
+	categoryID, err := recoverableCategoryLink(ctx, q, in.Treatment, in.RecoverableCategory)
 	if err != nil {
 		return in, 0, err
 	}
-	mode, err := s.urgencyMode(ctx)
+	mode, err := urgencyMode(ctx, q)
 	if err != nil {
 		return in, 0, err
 	}
@@ -351,11 +355,42 @@ func (s *Store) prepareRequestInput(ctx context.Context, actor User, in RequestI
 	return in, categoryID, nil
 }
 
+// ErrApproverNotDefault refuses a request routed to anybody but the
+// requester's default approver while the allow_approver_choice setting is off.
+// It is a sentinel so the request forms can show it on the approver field.
+var ErrApproverNotDefault = fmt.Errorf("%w: requests must go to your default approver — ask an administrator if your default approver is missing or should change", ErrValidation)
+
+// requireApproverChoice applies the allow_approver_choice setting ('1', the
+// default, lets the requester choose; '0' does not) to the approver the
+// requester is sending a request to. With choice off the approver must be the
+// requester's current users.default_approver_id. current is the approver the
+// request already has (0 for a new request): keeping it is not a choice, so an
+// edit that leaves it alone passes even when an approver's reassignment, or a
+// request raised while choice was on, means it is not the default. It reads
+// through q, so writers call it with their transaction.
+func requireApproverChoice(ctx context.Context, q rowQuerier, requesterID, managerID, current int64) error {
+	choice, err := appSetting(ctx, q, "allow_approver_choice")
+	if err != nil {
+		return err
+	}
+	if choice != "0" || (current > 0 && managerID == current) {
+		return nil
+	}
+	var defaultApprover sql.NullInt64
+	if err := q.QueryRowContext(ctx, `SELECT default_approver_id FROM users WHERE id=?`, requesterID).Scan(&defaultApprover); err != nil {
+		return err
+	}
+	if !defaultApprover.Valid || defaultApprover.Int64 != managerID {
+		return ErrApproverNotDefault
+	}
+	return nil
+}
+
 // urgencyMode returns the configured urgency policy: "reason" (the default:
 // an urgent request must say why), "free" (no reason needed) or "disabled"
 // (nothing may be marked urgent).
-func (s *Store) urgencyMode(ctx context.Context) (string, error) {
-	mode, err := s.AppSetting(ctx, "urgency_mode")
+func urgencyMode(ctx context.Context, q rowQuerier) (string, error) {
+	mode, err := appSetting(ctx, q, "urgency_mode")
 	if err != nil {
 		return "", err
 	}

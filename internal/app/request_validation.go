@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"strings"
 
 	"fervidbudget/internal/store"
@@ -60,4 +61,12 @@ func requestFieldErrors(in store.RequestInput) map[string]string {
 		require("terms", in.RepaymentNotes, "Enter repayment or refund terms.")
 	}
 	return out
+}
+
+// addStoreFieldError ties a store refusal that belongs to one field to that
+// field's message, so the form highlights it as it does requestFieldErrors.
+func addStoreFieldError(out map[string]string, refusal error) {
+	if errors.Is(refusal, store.ErrApproverNotDefault) {
+		out["approver"] = "Requests must go to your default approver."
+	}
 }

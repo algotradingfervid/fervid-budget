@@ -407,7 +407,7 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 	if newManagerID == actor.ID {
 		return fmt.Errorf("%w: you cannot reassign a request to yourself", ErrValidation)
 	}
-	if err := s.requireApprover(ctx, newManagerID); err != nil {
+	if err := requireApprover(ctx, s.db, newManagerID); err != nil {
 		return err
 	}
 	tx, err := s.beginWriteTx(ctx)
@@ -464,6 +464,12 @@ func (s *Store) ReassignRequest(ctx context.Context, actor User, id, newManagerI
 // ReraiseRequest copies the requester's own rejected request into a new
 // request, which is pending from the start with its own number. It returns the
 // new request's id.
+//
+// The copy is a new request, so inside the transaction it is validated exactly
+// as CreateRequest validates one (prepareRequestInput, then the approver-choice
+// rule): an approver who can no longer approve, a retired project or head, an
+// inactive vendor or an urgency flag the policy now forbids is refused with the
+// message a new request would get.
 func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64, error) {
 	tx, err := s.beginWriteTx(ctx)
 	if err != nil {
@@ -479,6 +485,13 @@ func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64
 	}
 	if src.Status != "rejected" {
 		return 0, fmt.Errorf("%w: only a rejected request can be re-raised", ErrValidation)
+	}
+	in, _, err := prepareRequestInput(ctx, tx, actor, requestInputOf(src))
+	if err != nil {
+		return 0, err
+	}
+	if err := requireApproverChoice(ctx, tx, actor.ID, in.ManagerID, 0); err != nil {
+		return 0, err
 	}
 	year, err := requestNumberYear(tx, time.Now().UTC())
 	if err != nil {
@@ -518,6 +531,26 @@ func (s *Store) ReraiseRequest(ctx context.Context, actor User, id int64) (int64
 		return 0, err
 	}
 	return newID, nil
+}
+
+// requestInputOf is a stored request as the form would post it, so a re-raise
+// can be validated by the same code as a new request.
+func requestInputOf(r Request) RequestInput {
+	id := func(p *int64) int64 {
+		if p == nil {
+			return 0
+		}
+		return *p
+	}
+	return RequestInput{
+		Treatment: r.Treatment, Type: r.Type, RecoverableCategory: r.RecoverableCategory,
+		ProjectID: id(r.ProjectID), HeadID: id(r.HeadID), VendorID: id(r.VendorID),
+		VendorPayee: r.VendorPayee, ShortTitle: r.ShortTitle, Amount: r.Amount, Purpose: r.Purpose,
+		NeededBy: r.NeededBy, InvoiceNo: r.InvoiceNo, InvoiceDate: r.InvoiceDate, ExpenseDate: r.ExpenseDate,
+		AdvanceReason: r.AdvanceReason, Counterparty: r.Counterparty, ExpectedReturnDate: r.ExpectedReturnDate,
+		RepaymentNotes: r.RepaymentNotes, Urgent: r.Urgent, UrgencyReason: r.UrgencyReason,
+		AttachmentExceptionReason: r.AttachmentExceptionReason, ManagerID: r.ManagerID,
+	}
 }
 
 // RequestCancellation lets the requester ask for an approved request to be

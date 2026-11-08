@@ -110,9 +110,10 @@ func categoryCode(name string) string {
 
 // recoverableRules is the rule set validateRequestInput enforces, read from the
 // table so a category an admin adds is usable at once. Only active categories
-// are included, so deactivating one stops new requests from naming it.
-func (s *Store) recoverableRules(ctx context.Context) (map[string]recoverableRule, error) {
-	cats, err := s.ListRecoverableCategories(ctx, true)
+// are included, so deactivating one stops new requests from naming it. It reads
+// through q (the database or the caller's transaction).
+func recoverableRules(ctx context.Context, q querier) (map[string]recoverableRule, error) {
+	cats, err := listRecoverableCategories(ctx, q, true)
 	if err != nil {
 		return nil, err
 	}
@@ -126,12 +127,12 @@ func (s *Store) recoverableRules(ctx context.Context) (map[string]recoverableRul
 // recoverableCategoryLink resolves a request's category code to the row id
 // stored in payment_requests.recoverable_category_id, or nil when the request
 // is not recoverable. The register queries join on that id.
-func (s *Store) recoverableCategoryLink(ctx context.Context, treatment, code string) (any, error) {
+func recoverableCategoryLink(ctx context.Context, q rowQuerier, treatment, code string) (any, error) {
 	if treatment != "recoverable" || strings.TrimSpace(code) == "" {
 		return nil, nil
 	}
 	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT id FROM recoverable_categories WHERE code=?`, code).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // validation already rejected unknown codes
 	}
@@ -160,12 +161,18 @@ func scanRecoverableCategory(sc rowScanner) (RecoverableCategory, error) {
 // ListRecoverableCategories lists the categories in display order, only the
 // active ones when activeOnly is set.
 func (s *Store) ListRecoverableCategories(ctx context.Context, activeOnly bool) ([]RecoverableCategory, error) {
-	q := recoverableCategorySelect
+	return listRecoverableCategories(ctx, s.db, activeOnly)
+}
+
+// listRecoverableCategories is ListRecoverableCategories through q (the
+// database or a transaction).
+func listRecoverableCategories(ctx context.Context, q querier, activeOnly bool) ([]RecoverableCategory, error) {
+	query := recoverableCategorySelect
 	if activeOnly {
-		q += ` WHERE active=1`
+		query += ` WHERE active=1`
 	}
-	q += ` ORDER BY sort_order,name`
-	rows, err := s.db.QueryContext(ctx, q)
+	query += ` ORDER BY sort_order,name`
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
