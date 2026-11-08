@@ -10,8 +10,8 @@ PUBLIC_URL="${FERVID_PUBLIC_URL:?Set FERVID_PUBLIC_URL explicitly}"
 APP_DIR=/opt/fervid-budget
 SSH_OPTS=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=20)
 cd "$(dirname "$0")"
-export GOTOOLCHAIN=go1.27.1
-[[ "$(go env GOVERSION)" == go1.27.1 ]] || { echo "Go 1.27.1 is required"; exit 1; }
+export GOTOOLCHAIN=go1.27.3
+[[ "$(go env GOVERSION)" == go1.27.3 ]] || { echo "Go 1.27.3 is required"; exit 1; }
 [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || { echo "Commit the reviewed changes before deploying"; exit 1; }
 release_dir="$(mktemp -d)"
 trap 'rm -rf "$release_dir"' EXIT
